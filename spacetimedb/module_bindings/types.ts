@@ -165,6 +165,7 @@ export const MatchPlayer = __t.object("MatchPlayer", {
   hasPose: __t.bool(),
   statsReportedAt: __t.u64(),
   updatedAt: __t.timestamp(),
+  left: __t.bool(),
 });
 export type MatchPlayer = __Infer<typeof MatchPlayer>;
 

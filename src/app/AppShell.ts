@@ -577,12 +577,6 @@ export class AppShell implements ShellContext {
       })
     );
     card.appendChild(el('p', 'muted', 'Sign-in is handled by SpacetimeAuth — no password to remember.'));
-    card.appendChild(
-      button('PLAY AS GUEST (BETA)', 'btn nf-wide-btn', () => {
-        void this.connectAccount();
-      })
-    );
-    card.appendChild(el('p', 'muted', 'Guest accounts live in this browser only — sign in to keep them everywhere.'));
     if (APP_CONFIG.p2pEnabled) {
       card.appendChild(
         button('PLAY WITHOUT AN ACCOUNT (P2P / OFFLINE)', 'btn nf-wide-btn', () => this.launchLegacy({}))
@@ -594,21 +588,79 @@ export class AppShell implements ShellContext {
 
   private renderOnboarding(): void {
     const wrap = el('div', 'nf-page onboarding-page');
-    wrap.appendChild(el('div', 'menu-title', 'CHOOSE YOUR COLONY'));
-    wrap.appendChild(el('p', 'menu-sub', 'Your colony is permanent for official play'));
-    const cards = el('div', 'nf-colony-cards');
-    let picked = -1;
-    const nameInput = el('input', 'nf-input big') as HTMLInputElement;
-    nameInput.maxLength = 16;
-    nameInput.placeholder = 'PLAYER NAME (3–16)';
-    const continueBtn = el('button', 'btn primary', 'ENTER THE FALL') as HTMLButtonElement;
-    continueBtn.type = 'button';
-    continueBtn.disabled = true;
+    this.screenHost.appendChild(wrap);
+    // Two steps: the name first, then the colony menu. A reload resumes mid-flow (a name that
+    // already landed jumps straight to the colony step).
+    const me = ClientCache.shared.playerByHex(this.myHex());
+    if (me?.playerName) this.renderColonyStep(wrap);
+    else this.renderNameStep(wrap);
+  }
 
+  /** Onboarding, step 1 — the name the colonies will remember. */
+  private renderNameStep(wrap: HTMLElement): void {
+    clear(wrap);
+    wrap.appendChild(el('div', 'menu-title', 'ENTER THE FALL'));
+    wrap.appendChild(el('p', 'menu-sub', 'Choose the name the colonies will remember'));
+
+    const card = el('div', 'nf-onb-card');
+    const input = el('input', 'nf-input big nf-onb-name') as HTMLInputElement;
+    input.maxLength = 16;
+    input.placeholder = 'LIBERATOR NAME';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    const hint = el('div', 'nf-onb-hint', '3–16 CHARACTERS');
+    card.appendChild(input);
+    card.appendChild(hint);
+
+    const next = el('button', 'btn primary nf-wide-btn', 'CONTINUE') as HTMLButtonElement;
+    next.type = 'button';
+    next.disabled = true;
     const repaint = (): void => {
-      const cards2 = [...cards.children] as HTMLElement[];
-      cards2.forEach((c, i) => c.classList.toggle('selected', i === picked));
-      continueBtn.disabled = picked < 0 || nameInput.value.trim().length < 3;
+      const value = input.value.trim();
+      const ok = value.length >= 3;
+      next.disabled = !ok;
+      hint.classList.toggle('bad', value.length > 0 && !ok);
+      hint.textContent = value.length > 0 && !ok ? 'AT LEAST 3 CHARACTERS' : '3–16 CHARACTERS';
+    };
+    input.addEventListener('input', repaint);
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !next.disabled) next.click();
+    });
+    next.addEventListener('click', () => {
+      const value = input.value.trim();
+      if (value.length < 3) return;
+      setPlayerName(value);
+      this.renderColonyStep(wrap); // straight into the colony menu — the P2P select, as a confirm step
+    });
+
+    wrap.appendChild(card);
+    wrap.appendChild(next);
+    repaint();
+    window.setTimeout(() => input.focus(), 80);
+  }
+
+  /** Onboarding, step 2 — the in-game COLONY SELECT: champions on the stage, three lit cards, confirm. */
+  private renderColonyStep(wrap: HTMLElement): void {
+    clear(wrap);
+    wrap.appendChild(el('div', 'menu-title', 'SELECT COLONY'));
+    wrap.appendChild(el('p', 'menu-sub', 'Your colony is permanent for official play'));
+
+    const stage = el('div', 'nf-onb-stage');
+    const cards = el('div', 'nf-colony-cards');
+    wrap.appendChild(stage);
+    wrap.appendChild(cards);
+
+    const confirm = el('button', 'btn primary nf-wide-btn', 'CONFIRM COLONY') as HTMLButtonElement;
+    confirm.type = 'button';
+    confirm.disabled = true;
+    wrap.appendChild(confirm);
+
+    let picked = -1;
+    const cardEls: HTMLButtonElement[] = [];
+    const repaint = (): void => {
+      cardEls.forEach((c, i) => c.classList.toggle('selected', i === picked));
+      confirm.disabled = picked < 0;
+      confirm.textContent = picked < 0 ? 'CONFIRM COLONY' : `CONFIRM ${COLONIES[picked].name}`;
     };
 
     COLONIES.forEach((colony, index) => {
@@ -618,23 +670,41 @@ export class AppShell implements ShellContext {
       card.appendChild(el('span', 'nf-colony-emblem', colony.symbol));
       card.appendChild(el('span', 'nf-colony-name', colony.name));
       card.appendChild(el('span', 'nf-colony-blurb', colony.desc));
+      const bonus = el('span', 'nf-colony-bonus');
+      for (const line of colony.bonus) {
+        const neg = line.trim().startsWith('-');
+        const row = el('span', `nf-colony-bonus-row ${neg ? 'neg' : 'pos'}`);
+        row.appendChild(el('i', '', neg ? '\u25bc' : '\u25b2'));
+        row.appendChild(el('span', '', line.trim().replace(/^[+\-\s]+/, '')));
+        bonus.appendChild(row);
+      }
+      card.appendChild(bonus);
+      card.appendChild(el('span', 'nf-colony-pick', 'SELECTED'));
       card.addEventListener('click', () => {
         picked = index;
         repaint();
       });
+      cardEls.push(card);
       cards.appendChild(card);
     });
 
-    nameInput.addEventListener('input', repaint);
-    wrap.appendChild(cards);
-    wrap.appendChild(nameInput);
-    wrap.appendChild(continueBtn);
-    continueBtn.addEventListener('click', () => {
-      continueBtn.disabled = true;
-      if (picked >= 0) chooseColony(picked);
-      setPlayerName(nameInput.value.trim());
+    confirm.addEventListener('click', () => {
+      if (picked < 0) return;
+      confirm.disabled = true;
+      confirm.textContent = `JOINING ${COLONIES[picked].name}\u2026`;
+      chooseColony(picked);
     });
-    this.screenHost.appendChild(wrap);
+
+    repaint();
+    // The champions, live — the same lobby line-up the in-game COLONY SELECT stages.
+    window.setTimeout(() => {
+      if (!stage.isConnected) return;
+      const acc = selectionToWire(loadSelection());
+      this.stagePartyAvatars(
+        stage,
+        COLONIES.map((colony, i) => ({ id: `colony-${colony.id}`, colony: i, acc, me: false, ready: true }))
+      );
+    }, 80);
   }
 
   private renderHome(): void {

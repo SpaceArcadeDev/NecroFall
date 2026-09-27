@@ -48,6 +48,7 @@ function nowMicros(ctx: any): bigint {
 /** The caller's live match seat, if any — a player may only be in one match (plan §73.9). */
 function activeMatchFor(ctx: any, identity: any): any | undefined {
   for (const mp of ctx.db.match_player.identity.filter(identity)) {
+    if (mp.left) continue; // an abandoned seat never counts as "in a match"
     const m = ctx.db.match.match_id.find(mp.match_id);
     if (m && m.status !== 2) return m;
   }

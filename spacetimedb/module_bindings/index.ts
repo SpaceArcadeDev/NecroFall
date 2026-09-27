@@ -48,6 +48,7 @@ import GrantItemAdminReducer from "./grant_item_admin_reducer";
 import JoinPartyReducer from "./join_party_reducer";
 import JoinPartyByCodeReducer from "./join_party_by_code_reducer";
 import KickFromPartyReducer from "./kick_from_party_reducer";
+import LeaveMatchReducer from "./leave_match_reducer";
 import LeavePartyReducer from "./leave_party_reducer";
 import RecordProfileViewReducer from "./record_profile_view_reducer";
 import ReportMatchStatsReducer from "./report_match_stats_reducer";
@@ -364,6 +365,7 @@ const reducersSchema = __reducers(
   __reducerSchema("join_party", JoinPartyReducer),
   __reducerSchema("join_party_by_code", JoinPartyByCodeReducer),
   __reducerSchema("kick_from_party", KickFromPartyReducer),
+  __reducerSchema("leave_match", LeaveMatchReducer),
   __reducerSchema("leave_party", LeavePartyReducer),
   __reducerSchema("record_profile_view", RecordProfileViewReducer),
   __reducerSchema("report_match_stats", ReportMatchStatsReducer),

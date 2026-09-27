@@ -236,6 +236,95 @@
 .onboarding-page .menu-title { font-size: clamp(24px, 4.6vw, 40px); animation: nf-title-glow 4.5s ease-in-out infinite; }
 .onboarding-page .nf-colony-cards { margin-top: 6px; }
 .onboarding-page .btn { width: min(420px, 92vw); justify-content: center; }
+/* step 1 — the name: one big field in a card, a live hint, one wide button */
+.nf-onb-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, 92vw);
+  margin-top: 12px;
+  padding: 22px 20px 16px;
+  border-radius: 18px;
+  background: rgba(14, 9, 26, 0.55);
+  border: 1px solid var(--ui-border);
+  backdrop-filter: blur(7px);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.45);
+}
+.nf-onb-card .nf-onb-name {
+  width: 100%;
+  text-align: center;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+.nf-onb-hint { font-size: 10px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
+.nf-onb-hint.bad { color: #ff8f8f; }
+/* step 2 — the in-game COLONY SELECT as a confirm step: champion stage, three lit cards */
+.nf-onb-stage {
+  width: min(680px, 96vw);
+  height: min(30vh, 210px);
+  min-height: 120px;
+  margin-top: 4px;
+  position: relative;
+}
+.nf-onb-stage canvas { display: block; width: 100% !important; height: 100% !important; }
+.nf-colony-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: min(720px, 96vw);
+}
+.nf-colony-card {
+  appearance: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(150, 120, 220, 0.32);
+  background: linear-gradient(180deg, rgba(38, 24, 58, 0.85), rgba(16, 10, 28, 0.92));
+  color: var(--ui-text);
+  font-family: inherit;
+  transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.nf-colony-card:hover { border-color: color-mix(in srgb, var(--nf-colony) 65%, transparent); transform: translateY(-2px); }
+.nf-colony-card.selected {
+  border-color: var(--nf-colony);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--nf-colony) 38%, transparent), inset 0 0 26px color-mix(in srgb, var(--nf-colony) 10%, transparent);
+}
+.nf-colony-emblem {
+  font-size: 26px;
+  line-height: 1;
+  color: var(--nf-colony);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--nf-colony) 60%, transparent);
+}
+.nf-colony-name { font-size: 15px; font-weight: 900; letter-spacing: 0.22em; color: var(--nf-colony); }
+.nf-colony-blurb { font-size: 11.5px; line-height: 1.45; color: var(--ui-text-muted); }
+.nf-colony-bonus { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
+.nf-colony-bonus-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.nf-colony-bonus-row i { font-style: normal; font-size: 9px; }
+.nf-colony-bonus-row.pos { color: #8ef0b6; }
+.nf-colony-bonus-row.neg { color: #ff9d9d; }
+.nf-colony-pick {
+  margin-top: 4px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.26em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nf-colony);
+  color: var(--nf-colony);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.nf-colony-card.selected .nf-colony-pick { opacity: 1; }
+/* short frames: the champion stage is the first luxury to go */
+@media (max-height: 520px) {
+  .nf-onb-stage { display: none; }
+}
 
 /* ---------------------------------------------------------------- home (live planet backdrop) */
 /* Wordmark on top, the player's OWN character staged centre (the same lobby

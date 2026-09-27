@@ -227,6 +227,7 @@ export class ClientCache {
   activeMatchFor(hex: string): MatchRow | null {
     for (const row of this.list<MatchPlayerRow>('matchPlayer')) {
       if (hexOf(row.identity) !== hex) continue;
+      if (row.left) continue; // an abandoned seat never counts as "in a match"
       const m = this.match(row.matchId);
       if (m && m.status !== 2) return m;
     }

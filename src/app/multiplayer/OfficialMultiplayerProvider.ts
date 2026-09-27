@@ -25,6 +25,7 @@ import {
   kickFromParty,
   leaveParty,
   setPartyLoadout,
+  leaveMatch as leaveMatchReducer,
 } from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
@@ -239,6 +240,21 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     // leaving: the disconnect lifecycle marks the seat disconnected.
   }
 
+  /**
+   * LEAVE MATCH (the pause menu): abandon the seat server-side and drop every local trace.
+   * `leftMatchId` makes sure nothing (row ticks, a reload) can pull this client back into the
+   * match it just left — the old bug was exactly that pull-back ("leave not working").
+   */
+  leaveMatch(): void {
+    if (!this.matchId) return;
+    this.leftMatchId = this.matchId;
+    this.resetMatch();
+    leaveMatchReducer();
+  }
+
+  /** The match id this session has already walked out of (never auto-rejoin it). */
+  private leftMatchId: number | null = null;
+
   /** The boot payload for the game, available once a match has started. */
   getMatchPayload(): OfficialMatchPayload | null {
     return this.payload;
@@ -430,6 +446,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     const mySeats = cache.matchPlayersOfSelf(this.myHex);
     if (mySeats.length === 0) return;
     for (const seat of mySeats) {
+      // A seat abandoned via LEAVE MATCH (this session or an earlier one) never pulls us back in.
+      if (seat.left || seat.matchId === this.leftMatchId) continue;
       const m = cache.match(seat.matchId);
       if (!m) {
         // The `match` row is NOT part of the matchmaking scope — pull the match
@@ -543,19 +561,20 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     return hex ? `og-${hex.slice(0, 12)}` : 'og-local';
   }
 
-  /** Rough server clock in micros, re-anchored whenever a server stamp is seen. */
+  /**
+   * Rough server clock in micros. The offset is sampled ONCE per anchor row (a new candidate or
+   * queue entry): `performance.now()` advances every call, so recomputing the offset each time
+   * pinned `serverNow` to the anchor and froze every deadline countdown at its full window —
+   * the "matchmaking countdown stuck at 5 and 10" bug.
+   */
   private serverOffsetUs = 0;
+  private serverAnchorUs = 0;
   private serverNowUs(): number {
     const cache = ClientCache.shared;
-    const q = cache.myQueue();
-    const c = cache.myCandidate();
-    const anchor = c?.createdAt ?? q?.queuedAt;
-    if (anchor) {
-      const localUs = Date.now() * 1000;
-      const estimated = Number(anchor) - (performance.now() * 1000);
-      // min-style re-anchor: network delay only ever makes the server look older
-      if (this.serverOffsetUs === 0 || estimated < this.serverOffsetUs) this.serverOffsetUs = estimated;
-      void localUs;
+    const anchorUs = Number(cache.myCandidate()?.createdAt ?? cache.myQueue()?.queuedAt ?? 0);
+    if (anchorUs && anchorUs !== this.serverAnchorUs) {
+      this.serverAnchorUs = anchorUs;
+      this.serverOffsetUs = anchorUs - performance.now() * 1000;
     }
     return performance.now() * 1000 + this.serverOffsetUs;
   }

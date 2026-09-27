@@ -18,6 +18,7 @@ import { match_event, match_tick } from '../schema/game';
 import { player_presence } from '../schema/player';
 import {
   EVENT_PLAYER_SPAWNED,
+  MATCH_FINISHED,
   MATCH_MAX_DURATION_US,
   MATCH_RUNNING,
   MAX_MOVE_SPEED,
@@ -77,6 +78,7 @@ export const submit_input = spacetimedb.reducer(
       if (m && m.status === MATCH_RUNNING) { target = s; break; }
     }
     if (!target) throw new SenderError('You are not in a running match.');
+    if (target.left) return; // abandoned seat — input never revives it
 
     const now = nowMicros(ctx);
     let row = seekInput(ctx, target.match_id, ctx.sender);
@@ -134,6 +136,7 @@ export const sync_pose = spacetimedb.reducer(
       if (m && m.status === MATCH_RUNNING) { target = s; break; }
     }
     if (!target) throw new SenderError('You are not in a running match.');
+    if (target.left) return; // abandoned seat — ignore late pose claims
 
     const now = nowMicros(ctx);
     let row = seekInput(ctx, target.match_id, ctx.sender);
@@ -304,9 +307,31 @@ function simulateMatch(ctx: any, m: any): void {
     return;
   }
   if (serverTick % 10n === 0n) {
-    const connected = players.filter(p => p.connected).length;
+    const connected = players.filter(p => p.connected && !p.left).length;
     if (connected === 0) finishMatchInternal(ctx, m.match_id, null, 'ALL LEFT');
   }
 }
 
 void player_presence;
+
+/**
+ * LEAVE MATCH (plan §27/§71) — abandon my live seat. The row stays as a tombstone: the sim
+ * skips it (exactly like a disconnect), it stops counting for "you are already in a match",
+ * and `finishMatchInternal` earns it no rewards or history. If it was the last live seat the
+ * match is over for everyone.
+ */
+export const leave_match = spacetimedb.reducer((ctx) => {
+  let seat: any | undefined;
+  for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
+    if (s.left) continue;
+    const m = ctx.db.match.match_id.find(s.match_id);
+    if (m && m.status !== MATCH_FINISHED) {
+      seat = s;
+      break;
+    }
+  }
+  if (!seat) return; // nothing to leave — idempotent
+  ctx.db.match_player.id.update({ ...seat, left: true, connected: false, updated_at: ctx.timestamp });
+  const remaining = [...ctx.db.match_player.match_id.filter(seat.match_id)].filter((p: any) => p.connected && !p.left).length;
+  if (remaining === 0) finishMatchInternal(ctx, seat.match_id, null, 'ALL LEFT');
+});

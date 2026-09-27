@@ -53,4 +53,6 @@ export interface OfficialGameBridge {
   sendLocalState(msg: OfficialStateMessage): void;
   /** The game is ready: hand it the remote-pose sink. */
   attachGame(api: OfficialGameApi): void;
+  /** The player pressed LEAVE MATCH: abandon the seat server-side (never auto-rejoin). */
+  leaveMatch(): void;
 }

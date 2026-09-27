@@ -83,6 +83,12 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
   const durationSeconds = Math.max(0, Number((nowUs - startedMicros) / 1_000_000n));
 
   for (const p of [...ctx.db.match_player.match_id.filter(matchId)]) {
+    if (p.left) {
+      // Abandoned seats earn nothing — only clear their in-match presence flag.
+      const presence = ctx.db.player_presence.identity.find(p.identity);
+      if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_ONLINE, last_seen: now });
+      continue;
+    }
     const won = winnerColony !== null && p.colony === winnerColony;
     const soft =
       (won ? REWARD_SOFT_WIN : REWARD_SOFT_LOSS) +

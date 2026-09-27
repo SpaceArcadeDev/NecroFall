@@ -225,6 +225,8 @@ export interface MatchPlayerRow {
   alive: boolean;
   hasPose: boolean;
   updatedAt: Timestamp;
+  /** The player pressed LEAVE MATCH — the seat is a tombstone (no rewards, not "in a match"). */
+  left: boolean;
 }
 
 export interface MatchHistoryRow {

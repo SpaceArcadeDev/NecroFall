@@ -38,4 +38,5 @@ export default __t.row({
   hasPose: __t.bool().name("has_pose"),
   statsReportedAt: __t.u64().name("stats_reported_at"),
   updatedAt: __t.timestamp().name("updated_at"),
+  left: __t.bool(),
 });

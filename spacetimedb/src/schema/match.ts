@@ -65,6 +65,12 @@ export const match_player = table(
     /** Last interim combat-stat report (micros) — rate-limits `report_match_stats`. */
     stats_reported_at: t.u64(),
     updated_at: t.timestamp(),
+    /**
+     * True once the player pressed LEAVE MATCH: the seat is a tombstone — the sim skips it
+     * (exactly like a disconnect), it no longer counts as "in a match", and it earns no
+     * rewards or history. Reconnection never revives it.
+     */
+    left: t.bool().default(false),
   }
 );
 

@@ -72,6 +72,9 @@ export interface SubmitInputArgs {
 }
 export const submitInput = (args: SubmitInputArgs): void => callReducer('submitInput', args);
 
+/** LEAVE MATCH — abandon the live seat; the row becomes a tombstone (plan §27/§71). */
+export const leaveMatch = (): void => callReducer('leaveMatch');
+
 export interface SyncPoseArgs {
   x: number;
   y: number;

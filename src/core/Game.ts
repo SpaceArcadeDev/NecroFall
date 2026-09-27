@@ -3718,11 +3718,20 @@ export class Game {
     this.ui.hidePauseMenu();
   }
 
-  /** Leaving mid-match is not the end of the match for the room: the survivors elect a new host. */
+  /** Leaving mid-match is not the end of the match: P2P elects a new host, OFFICIAL tombstones the seat. */
   private leaveMatch(): void {
     this.paused = false;
     this.ui.hidePauseMenu();
     this.ui.hideRespawn();
+    const official = this.officialMatch;
+    if (official) {
+      // OFFICIAL: abandon the seat server-side and detach — the shell takes the screen back and
+      // the match can never pull this client back in (the old "leave not working" bug).
+      this.officialMatch = null;
+      official.bridge.leaveMatch();
+      this.returnToMenu();
+      return;
+    }
     this.net.sendLeave();
     setTimeout(() => this.returnToMenu(), 260);
   }

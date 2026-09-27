@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="NecroFall">
+  <defs>
+    <radialGradient id="nf-sky" cx="50%" cy="32%" r="78%">
+      <stop offset="0" stop-color="#2a1745" />
+      <stop offset="0.55" stop-color="#150d24" />
+      <stop offset="1" stop-color="#0b0812" />
+    </radialGradient>
+    <linearGradient id="nf-sigil" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#efe4ff" />
+      <stop offset="0.6" stop-color="#b45cff" />
+      <stop offset="1" stop-color="#6f2bd0" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#nf-sky)" />
+  <circle cx="256" cy="256" r="158" fill="none" stroke="url(#nf-sigil)" stroke-width="16" opacity="0.75" />
+  <path d="M256 116 L336 262 H176 Z" fill="url(#nf-sigil)" opacity="0.92" />
+  <path d="M256 252 L328 384 H184 Z" fill="url(#nf-sigil)" opacity="0.5" />
+  <circle cx="256" cy="222" r="22" fill="#0b0812" />
+</svg>

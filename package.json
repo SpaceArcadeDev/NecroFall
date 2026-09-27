@@ -1,0 +1,23 @@
+{
+  "name": "necrofall",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NECROFALL - spherical mini-planet PvPvE auto-shooter (Three.js + TypeScript + WebRTC P2P)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "peerjs": "^1.5.4",
+    "spacetimedb": "^2.10.1",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

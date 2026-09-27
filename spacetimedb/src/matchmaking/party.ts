@@ -1,0 +1,144 @@
+// NECROFALL — parties (plan §72).
+//
+// Max 3 players for OFFICIAL play. A party queues as one atomic group: the
+// matchmaker never splits it, and the group only joins a candidate when every
+// member fits under the colony caps. (P2P lobbies keep their own rules and do
+// not use this table.)
+import { SenderError, t } from 'spacetimedb/server';
+import { spacetimedb } from '../schema';
+import { party, party_member } from '../schema/matchmaking';
+import { requirePlayer } from '../auth/authorization';
+
+export const MAX_PARTY = 3;
+
+/** Invite-code alphabet: uppercase, minus the lookalikes (I/O/0/1/B/8). */
+const CODE_ALPHABET = 'ACDEFGHJKMNPQRSTUVWXYZ23456789';
+
+/** Mint a short unique party invite code (same shape as player friend codes). */
+function allocatePartyCode(ctx: any): string {
+  for (let attempt = 0; attempt < 32; attempt++) {
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += CODE_ALPHABET[Math.floor(ctx.random() * CODE_ALPHABET.length)];
+    }
+    let taken = false;
+    for (const row of ctx.db.party.iter()) {
+      if (row.join_code === code) {
+        taken = true;
+        break;
+      }
+    }
+    if (!taken) return code;
+  }
+  return ctx.sender.toHexString().replace(/^0x/, '').slice(-6).toUpperCase();
+}
+
+function myMembership(ctx: any): any | undefined {
+  return ctx.db.party_member.identity.find(ctx.sender);
+}
+
+/** One join path shared by direct ids and invite codes. */
+function joinTarget(ctx: any, target: any, acc: string): void {
+  if (target.state !== 0) throw new SenderError('That party is in a match.');
+  const members = [...ctx.db.party_member.party_id.filter(target.party_id)];
+  if (members.length >= MAX_PARTY) throw new SenderError(`Parties hold at most ${MAX_PARTY} players.`);
+  ctx.db.party_member.insert({
+    id: 0,
+    party_id: target.party_id,
+    identity: ctx.sender,
+    joined_at: ctx.timestamp,
+    acc: clampAcc(acc),
+  });
+}
+
+/** The outfit wire is tiny ("hat,backpack,pet") — cap it so a client cannot stuff the row. */
+function clampAcc(acc: string): string {
+  return acc.slice(0, 96);
+}
+
+export const create_party = spacetimedb.reducer({ acc: t.string() }, (ctx, { acc }) => {
+  requirePlayer(ctx);
+  if (myMembership(ctx)) throw new SenderError('You are already in a party.');
+  const p = ctx.db.party.insert({
+    party_id: 0,
+    leader: ctx.sender,
+    state: 0,
+    created_at: ctx.timestamp,
+    join_code: allocatePartyCode(ctx),
+  });
+  ctx.db.party_member.insert({
+    id: 0,
+    party_id: p.party_id,
+    identity: ctx.sender,
+    joined_at: ctx.timestamp,
+    acc: clampAcc(acc),
+  });
+});
+
+export const join_party = spacetimedb.reducer({ party_id: t.u32(), acc: t.string() }, (ctx, { party_id, acc }) => {
+  requirePlayer(ctx);
+  if (myMembership(ctx)) throw new SenderError('Leave your current party first.');
+  const target = ctx.db.party.party_id.find(party_id);
+  if (!target) throw new SenderError('That party no longer exists.');
+  joinTarget(ctx, target, acc);
+});
+
+/** Invite-code join — the same flow as the P2P lobby's JOIN, for parties. */
+export const join_party_by_code = spacetimedb.reducer({ code: t.string(), acc: t.string() }, (ctx, { code, acc }) => {
+  requirePlayer(ctx);
+  if (myMembership(ctx)) throw new SenderError('Leave your current party first.');
+  const needle = code.trim().toUpperCase();
+  if (needle.length < 4) throw new SenderError('Enter a valid party code.');
+  let target: any | undefined;
+  for (const row of ctx.db.party.iter()) {
+    if (row.join_code && row.join_code === needle) {
+      target = row;
+      break;
+    }
+  }
+  if (!target) throw new SenderError('No party with that code.');
+  joinTarget(ctx, target, acc);
+});
+
+/** Keep the member's outfit current while they stand in the party (lobby-style avatars). */
+export const set_party_loadout = spacetimedb.reducer({ acc: t.string() }, (ctx, { acc }) => {
+  const member = myMembership(ctx);
+  if (!member) return;
+  ctx.db.party_member.id.update({ ...member, acc: clampAcc(acc) });
+});
+
+export const leave_party = spacetimedb.reducer((ctx) => {
+  const member = myMembership(ctx);
+  if (!member) return;
+  removeFromParty(ctx, member);
+});
+
+/** Leader-only removal. */
+export const kick_from_party = spacetimedb.reducer({ target: t.identity() }, (ctx, { target }) => {
+  const leaderMembership = myMembership(ctx);
+  if (!leaderMembership) throw new SenderError('You are not in a party.');
+  const partyRow = ctx.db.party.party_id.find(leaderMembership.party_id);
+  if (!partyRow || partyRow.leader.toHexString() !== ctx.sender.toHexString()) throw new SenderError('Only the leader can remove members.');
+  const victim = ctx.db.party_member.identity.find(target);
+  if (!victim || victim.party_id !== leaderMembership.party_id) return;
+  removeFromParty(ctx, victim);
+});
+
+/**
+ * Shared removal: keeps the leader seat filled. Also exported for the
+ * disconnect lifecycle so a dropped leader never orphans a party (plan §73).
+ */
+export function removeFromParty(ctx: any, member: any): void {
+  const partyId = member.party_id;
+  ctx.db.party_member.identity.delete(member.identity);
+  const remaining = [...ctx.db.party_member.party_id.filter(partyId)];
+  if (remaining.length === 0) {
+    ctx.db.party.party_id.delete(partyId);
+    return;
+  }
+  const partyRow = ctx.db.party.party_id.find(partyId);
+  if (partyRow && partyRow.leader.toHexString() === member.identity.toHexString()) {
+    remaining.sort((a, b) => Number(a.joined_at.microsSinceUnixEpoch - b.joined_at.microsSinceUnixEpoch));
+    ctx.db.party.party_id.update({ ...partyRow, leader: remaining[0].identity });
+  }
+}

@@ -1,0 +1,60 @@
+/* ==========================================================================
+   NECROFALL — mobile landscape gate.
+   A blocking panel for touch devices held in portrait; it asks the browser to
+   lock the screen to landscape and, where that is unsupported, waits for the
+   player to turn the device (the OS then rotates the page).
+   ========================================================================== */
+
+.rotate-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 22px;
+  background: radial-gradient(70% 60% at 50% 42%, rgba(60, 26, 108, 0.72), rgba(4, 2, 10, 0.94));
+  backdrop-filter: blur(5px);
+  pointer-events: auto;
+  text-align: center;
+}
+.rotate-gate.hidden { display: none; }
+
+.rotate-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 22px 20px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(20, 13, 34, 0.94), rgba(10, 7, 18, 0.96));
+  box-shadow: 0 0 0 1px rgba(150, 110, 255, 0.28), 0 18px 50px rgba(0, 0, 0, 0.6);
+}
+
+.rotate-icon {
+  font-size: 40px;
+  line-height: 1;
+  animation: nf-rotate-hint 2.4s ease-in-out infinite;
+}
+@keyframes nf-rotate-hint {
+  0%, 45% { transform: rotate(0deg); }
+  60%, 100% { transform: rotate(-90deg); }
+}
+
+.rotate-title {
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: #d9c7ff;
+}
+.rotate-sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #b6a8cf;
+}
+.rotate-skip {
+  opacity: 0.7;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}

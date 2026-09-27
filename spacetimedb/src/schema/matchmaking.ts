@@ -1,0 +1,91 @@
+// NECROFALL — matchmaking schema (plan §15/§72).
+//
+// Queue and candidate state are PRIVATE: clients only see their own slice
+// through the views in `src/views.ts` (plan §22). One global 1 Hz scan table
+// drives the 5 s fill window and the 10 s confirmation window (plan §40 bans
+// per-entity schedulers — there is one scanner for the whole queue).
+import { table, t } from 'spacetimedb/server';
+import { QUEUE_QUEUED } from '../constants';
+
+/** A pre-made group queuing together. Max size enforced by reducers (plan §72). */
+export const party = table(
+  { name: 'party', public: true },
+  {
+    party_id: t.u32().primaryKey().autoInc(),
+    leader: t.identity(),
+    /** PARTY_OPEN / PARTY_LOCKED */
+    state: t.u8(),
+    created_at: t.timestamp(),
+    /** Short shareable invite code — how friends join your party ('' = legacy row). */
+    join_code: t.string().default(''),
+  }
+);
+
+export const party_member = table(
+  { name: 'party_member', public: true },
+  {
+    id: t.u32().primaryKey().autoInc(),
+    party_id: t.u32().index('btree'),
+    /** One party per player: unique index enforces it. */
+    identity: t.identity().unique(),
+    joined_at: t.timestamp(),
+    /** Avatar outfit wire ("hat,backpack,pet") — renders every member's figure lobby-style. */
+    acc: t.string().default(''),
+  }
+);
+
+/** Internal queue row. One per player (identity is the primary key). */
+export const queue_entry = table(
+  { name: 'queue_entry' },
+  {
+    identity: t.identity().primaryKey(),
+    party_id: t.option(t.u32()),
+    colony: t.u8(),
+    skill_rating: t.u32(),
+    /** Micros since epoch — keep arithmetic simple inside the scanner. */
+    queued_at: t.u64(),
+    /** QUEUE_QUEUED / QUEUE_CANDIDATE / QUEUE_CONFIRMED */
+    status: t.u8(),
+    candidate_match_id: t.option(t.u32()),
+  }
+);
+
+/** A candidate being filled/confirmed before it becomes a real match. */
+export const candidate_match = table(
+  { name: 'candidate_match' },
+  {
+    match_id: t.u32().primaryKey().autoInc(),
+    created_at: t.u64(),
+    /** Server micros after which the fill window closes / confirmation expires. */
+    deadline: t.u64(),
+    /** CANDIDATE_FILLING / CANDIDATE_CONFIRMING / CANDIDATE_STARTED */
+    status: t.u8(),
+  }
+);
+
+export const match_candidate_player = table(
+  { name: 'match_candidate_player' },
+  {
+    id: t.u32().primaryKey().autoInc(),
+    match_id: t.u32().index('btree'),
+    /** At most one candidate seat per player — unique index enforces it. */
+    identity: t.identity().unique(),
+    colony: t.u8(),
+    confirmed: t.bool(),
+    confirmed_at: t.option(t.u64()),
+  }
+);
+
+/**
+ * The one global matchmaking scanner (1 Hz). A single schedule row lives for
+ * the lifetime of the database; every pass ages the fill/confirmation windows.
+ */
+export const matchmaking_scan = table(
+  { name: 'matchmaking_scan' },
+  {
+    scheduled_id: t.u64().primaryKey().autoInc(),
+    scheduled_at: t.scheduleAt(),
+  }
+);
+
+export const DEFAULT_QUEUE_STATUS = QUEUE_QUEUED;

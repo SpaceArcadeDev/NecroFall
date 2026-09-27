@@ -1,0 +1,13 @@
+# NECROFALL — never commit secrets or build output.
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+
+# SpacetimeDB generated client bindings: COMMIT them if your deploy workflow
+# wants deterministic builds (the loader picks them up from
+# spacetimedb/module_bindings/). Uncomment to keep them out of git instead.
+# spacetimedb/module_bindings/

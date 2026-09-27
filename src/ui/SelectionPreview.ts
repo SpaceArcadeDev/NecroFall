@@ -1,0 +1,1059 @@
+// NECROFALL — the selection screens' live 3D preview.
+//
+// Two jobs, one little scene:
+//  - COLONY select: the player figure, once per colony, each in ITS colony's colours doing its own
+//    pose and idle animation (HELIOS surges, AEGIS braces behind crossed arms, VANTA coils to
+//    spring), so the choice is a choice between silhouettes and not between three paragraphs.
+//  - NECROTECH select: a weapon model for the highlighted class, built to match what that class
+//    actually does (the rifle fires bolts, VOLT's coil discharges, PYRE's lance sprays, REAPER's
+//    scythe is what carves the 240° arc, ...).
+//
+// The preview is deliberately self-contained: its own renderer/canvas/scene, its own rAF loop that
+// only runs while a selection screen is open, no shadows and flat-shaded primitives, so it costs a
+// couple of dozen draw calls while a menu is up and nothing at all during a match.
+import * as THREE from 'three';
+import { COLONIES, IS_TOUCH } from '../core/Config';
+import { NecrotechDef } from '../necrotech/NecrotechData';
+import { buildWeaponModel } from '../necrotech/WeaponModels';
+import { buildPlayerModel, ModelParts } from '../player/Player';
+import { AvatarAccessories, disposeObject } from '../customization/AvatarAccessories';
+import { AccessoryCategory, AccessorySelection, EMPTY_SELECTION } from '../customization/AccessoryTypes';
+import { selectionFromWire } from '../customization/CustomizationStore';
+
+export type PreviewMode = 'colony' | 'necrotech' | 'customize' | 'lobby';
+
+/** One seat of the lobby line-up, as the lobby screen knows it (ids are the roster's). */
+export interface LobbyAvatarInfo {
+  id: string;
+  /** Colony index, or -1 while the player has not picked one. */
+  colony: number;
+  ready: boolean;
+  me: boolean;
+  /** Accessory wire form ("hat,backpack,pet"); empty/unknown falls back to nothing worn. */
+  acc: string;
+}
+
+/** A lobby avatar: a real player model + its outfit rig, plus the pad it stands on. */
+interface LobbyAvatarFig {
+  data: LobbyAvatarInfo;
+  parts: ModelParts;
+  acc: AvatarAccessories;
+  ringMat: THREE.MeshBasicMaterial;
+  /** The lit stage under the avatar (disc + rim + light pool + its own point light). */
+  pad: THREE.Group;
+  anchor: THREE.Vector3;
+}
+
+/**
+ * A soft round falloff, drawn once and reused by every avatar's light pool. The scene's lighting is
+ * deliberately dim (the menu backdrop is near-black), which left the near-black player bodies hard
+ * to read in the lobby — the pool plus each avatar's own point light is what makes them legible.
+ */
+let glowTex: THREE.CanvasTexture | null = null;
+function lightPoolTexture(): THREE.CanvasTexture {
+  if (glowTex) return glowTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  if (g) {
+    const grad = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.34)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+  }
+  glowTex = new THREE.CanvasTexture(c);
+  return glowTex;
+}
+
+interface FigureParts {
+  group: THREE.Group;
+  torso: THREE.Group;
+  armL: THREE.Group;
+  armR: THREE.Group;
+  /** Forearms rotate inside the shoulder groups, so a guard or a punch has a real elbow bend. */
+  elbowL: THREE.Group;
+  elbowR: THREE.Group;
+  legL: THREE.Group;
+  legR: THREE.Group;
+  /** Knees bend inside the hip groups — the difference between footwork and a stiff mannequin. */
+  kneeL: THREE.Group;
+  kneeR: THREE.Group;
+  handR: THREE.Group;
+  accentMats: THREE.MeshLambertMaterial[];
+  ringMat: THREE.MeshBasicMaterial;
+  /** Eased focus (0..1): how much this champion is currently in the spotlight. */
+  focusAmt: number;
+}
+
+const TAU = Math.PI * 2;
+/** The customize screen's floor is radius zero, and the avatar stands on the origin. */
+const ORIGIN = new THREE.Vector3(0, 0, 0);
+const UP_AXIS = new THREE.Vector3(0, 1, 0);
+
+// COLONY preview framing: the box is wide and short, so the champion's own height decides the
+// scale. The figures used to be framed far too small (~53 % of the frame filled), so they are
+// scaled up to a FILL fraction of the visible height — CAPPED, so "fill the space" can never turn
+// into a cropped torso. The fill is DEVICE-AWARE: a desktop stage is tall already and a full row of
+// champions at a high fill looked oversized there (user review), while a phone's stage is a shallow
+// strip above the cards, so the same champion should use much more of it.
+const COLONY_CAM_DIST = 5.1;
+const COLONY_FILL = 0.78;
+const COLONY_FILL_TOUCH = 0.88;
+const COLONY_SCALE_MAX = 1.5;
+const COLONY_SCALE_MAX_TOUCH = 1.65;
+/**
+ * Horizontal distance between two champion figures at their authored scale. What actually reads as
+ * "a gap" is the space between the lit rings under the champions (~2.3 m across at the default
+ * scale): at the old 1.85 the rings very nearly touched, so the line-up crowded itself even though
+ * the bodies were separated. 3.4 leaves ~1 m of visible ground between neighbouring rings (and
+ * ~0.9 m even while one of them is popped up by the focus zoom). The box shows 13–21 m of visible
+ * world at the figures' plane, so this spread still keeps clear air at the frame edges.
+ */
+const COLONY_SLOT = 3.4;
+/** Below this stage height (px) a TOUCH device is a phone-style strip, not a desktop stage. */
+const COLONY_SHALLOW = 160;
+/** A calm breath: one full inhale/exhale every ~3.4 s. The base layer of every champion's idle. */
+function breath(t: number, phase: number, period = 3.4): number {
+  return Math.sin((t / period) * TAU + phase);
+}
+
+/**
+ * Smooth 0..1 bump centred on phase `at` of a 0..1 cycle, with half-width `w`. Accent beats (a
+ * punch, a brace, a spring) ride on the continuous motion with these, so a beat ARRIVES and eases
+ * away instead of snapping — the whole difference between "alive" and "flailing".
+ */
+function bump(c: number, at: number, w: number): number {
+  const x = Math.abs(c - at) / w;
+  if (x >= 1) return 0;
+  const s = 1 - x;
+  return s * s * (3 - 2 * s);
+}
+
+/** Builds one player-shaped figure in a colony's colours. Bodies are near-black so the accent reads. */
+function buildFigure(color: number): FigureParts {
+  const group = new THREE.Group();
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x241d3a, flatShading: true });
+  const darkMat = new THREE.MeshLambertMaterial({ color: 0x151024, flatShading: true });
+  const accentMats: THREE.MeshLambertMaterial[] = [];
+  const accent = (emissive: number): THREE.MeshLambertMaterial => {
+    const m = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: emissive, flatShading: true });
+    accentMats.push(m);
+    return m;
+  };
+  const visorMat = accent(0.7);
+  const trimMat = accent(0.4);
+
+  // ---- legs (pivot at the hip so a pose can swing them); every joint is a SPHERE, which closes the
+  // gap that opens between two boxes the moment a limb swings — the single biggest reason a rig
+  // reads as janky instead of jointed
+  const legGeo = new THREE.BoxGeometry(0.24, 0.46, 0.26);
+  const shinGeo = new THREE.BoxGeometry(0.22, 0.44, 0.24);
+  const jointMat = new THREE.MeshLambertMaterial({ color: 0x2c2348, flatShading: true });
+  const mkLeg = (x: number): { hip: THREE.Group; knee: THREE.Group } => {
+    const hip = new THREE.Group();
+    hip.position.set(x, 0.94, 0);
+    const hipBall = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), jointMat);
+    const thigh = new THREE.Mesh(legGeo, bodyMat);
+    thigh.position.y = -0.24;
+    hip.add(hipBall, thigh);
+    const knee = new THREE.Group();
+    knee.position.y = -0.48;
+    const shin = new THREE.Mesh(shinGeo, darkMat);
+    shin.position.y = -0.22;
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.36), darkMat);
+    foot.position.set(0, -0.46, 0.06);
+    const kneeBall = new THREE.Mesh(new THREE.SphereGeometry(0.125, 10, 8), jointMat);
+    knee.add(kneeBall, shin, foot);
+    hip.add(knee);
+    group.add(hip);
+    return { hip, knee };
+  };
+  const legR = mkLeg(0.17);
+  const legL = mkLeg(-0.17);
+
+  // ---- torso: everything above the hips, so the whole upper body can lean as one
+  const torso = new THREE.Group();
+  torso.position.y = 0.94;
+  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.5, 0.34), bodyMat);
+  chest.position.y = 0.25;
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.38), trimMat);
+  belt.position.y = 0.02;
+  const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.08), visorMat);
+  chestPlate.position.set(0, 0.3, 0.18);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.34, 0.36), bodyMat);
+  head.position.y = 0.68;
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.11, 0.06), visorMat);
+  visor.position.set(0, 0.7, 0.19);
+  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.4, 0.16), darkMat);
+  pack.position.set(0, 0.28, -0.24);
+  torso.add(chest, belt, chestPlate, head, visor, pack);
+
+  // ---- arms (pivot at the shoulder, elbow inside it); the right hand is a weapon attach point
+  const armGeo = new THREE.BoxGeometry(0.16, 0.42, 0.18);
+  const mkArm = (x: number): { shoulder: THREE.Group; elbow: THREE.Group; hand: THREE.Group } => {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(x, 0.42, 0);
+    const shoulderPad = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.26), trimMat);
+    const upper = new THREE.Mesh(armGeo, bodyMat);
+    upper.position.y = -0.22;
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.44;
+    const elbowBall = new THREE.Mesh(new THREE.SphereGeometry(0.105, 9, 7), jointMat);
+    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.16), darkMat);
+    fore.position.y = -0.2;
+    const hand = new THREE.Group();
+    hand.position.y = -0.42;
+    hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.18), trimMat));
+    elbow.add(elbowBall, fore, hand);
+    shoulder.add(shoulderPad, upper, elbow);
+    torso.add(shoulder);
+    return { shoulder, elbow, hand };
+  };
+  const armR = mkArm(0.38);
+  const armL = mkArm(-0.38);
+  group.add(torso);
+
+  // ---- a flat ring of colony light under the feet: which champion is in focus is read from here
+  const ringMat = new THREE.MeshBasicMaterial({
+    color, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.78, 40), ringMat);
+  ring.geometry.rotateX(-Math.PI / 2);
+  ring.position.y = 0.02;
+  group.add(ring);
+
+  return {
+    group, torso,
+    armL: armL.shoulder, armR: armR.shoulder,
+    elbowL: armL.elbow, elbowR: armR.elbow,
+    legL: legL.hip, legR: legR.hip,
+    kneeL: legL.knee, kneeR: legR.knee,
+    handR: armR.hand, accentMats, ringMat,
+    focusAmt: 0,
+  };
+}
+
+/**
+ * HELIOS — the brawler at rest. A boxer's guard: lead fist up, weight forward, springing just
+ * enough on the balls of the feet to read as ready. Every ~7 s he snaps off a smooth one-two and
+ * settles back into the guard; the rest of the time he only breathes.
+ */
+function animateHelios(f: FigureParts, t: number, phase: number): void {
+  const br = breath(t, phase);
+  const spring = Math.sin((t / 2.3) * TAU + phase);      // light footwork, low amplitude
+  const c = (t / 7.2 + phase * 0.17) % 1;
+  const jab = Math.max(bump(c, 0.10, 0.06) * 0.8, bump(c, 0.28, 0.07));
+  const reset = bump(c, 0.55, 0.22);
+
+  f.torso.rotation.x = 0.24 + br * 0.012 + jab * 0.1;
+  f.torso.rotation.y = -jab * 0.22;
+  f.torso.rotation.z = spring * 0.012 + reset * 0.02;
+  f.armR.rotation.x = -1.02 - br * 0.015 - jab * 0.72;
+  f.armR.rotation.z = -0.42;
+  f.elbowR.rotation.x = -1.35 + br * 0.03 + jab * 0.95;
+  f.armL.rotation.x = 0.32 + br * 0.02 + jab * 0.22;
+  f.armL.rotation.z = 0.46;
+  f.elbowL.rotation.x = -1.15 + br * 0.03;
+  f.legR.rotation.x = 0.42 + spring * 0.015;
+  f.legL.rotation.x = -0.5 - spring * 0.015 - reset * 0.03;
+  f.kneeR.rotation.x = -0.3 - spring * 0.04 - jab * 0.12;
+  f.kneeL.rotation.x = -0.12 + spring * 0.03;
+  f.group.position.y = 0.06 + br * 0.008 + Math.abs(spring) * 0.006 + jab * 0.015;
+  // three-quarter stance, turning slowly: a showcase sway, never a twitch
+  f.group.rotation.y = -0.85 + Math.sin((t / 9) * TAU + phase) * 0.07 - jab * 0.06;
+}
+
+/**
+ * AEGIS — the wall. A LIVING guard, not a statue: the weight rolls from foot to foot under a
+ * breathing guard, the helm sweeps the field, and every few seconds he either presses the guard
+ * out at whatever is in front of him or settles heavily in behind it — two different accents, so
+ * the loop never reads as a single repeated twitch.
+ */
+function animateAegis(f: FigureParts, t: number, phase: number): void {
+  const br = breath(t, phase, 3.1);
+  const roll = Math.sin((t / 5) * TAU + phase);            // weight rocking foot to foot
+  const scan = Math.sin((t / 9.5) * TAU + phase * 0.6);    // slow sweep of the field
+  const c = (t / 5.6 + phase * 0.19) % 1;
+  const press = bump(c, 0.2, 0.22);                        // shove the guard forward
+  const settle = bump(c, 0.68, 0.24);                      // drop in behind it
+
+  // hips ride the roll and the knees answer it, so he looks PLANTED rather than glued in place
+  f.torso.position.x = roll * 0.035;
+  f.torso.rotation.x = 0.12 + br * 0.02 + press * 0.09 + settle * 0.05;
+  f.torso.rotation.y = scan * 0.11 + press * 0.05;
+  f.torso.rotation.z = roll * 0.05;
+  // the crossed guard: compresses on the breath, drives OUT on the press, tucks in on the settle
+  const guardX = -1.28 - br * 0.05 - press * 0.28 + settle * 0.1;
+  const guardZ = 0.58 + press * 0.16 - settle * 0.06;
+  f.armR.rotation.x = guardX;
+  f.armR.rotation.z = -guardZ;
+  f.elbowR.rotation.x = -1.6 + br * 0.07 + press * 0.52 - settle * 0.14;
+  f.armL.rotation.x = guardX - 0.08;
+  f.armL.rotation.z = guardZ;
+  f.elbowL.rotation.x = -1.6 + br * 0.07 + press * 0.52 - settle * 0.14;
+  // the loaded knee takes the weight as the body rolls on to it
+  f.legR.rotation.x = 0.3 + roll * 0.05;
+  f.legL.rotation.x = -0.34 - roll * 0.05;
+  f.kneeR.rotation.x = -0.5 - br * 0.04 - press * 0.16 - settle * 0.26 - Math.max(0, roll) * 0.14;
+  f.kneeL.rotation.x = -0.48 - br * 0.04 - press * 0.16 - settle * 0.26 - Math.max(0, -roll) * 0.14;
+  f.group.position.y = 0.06 + br * 0.012 - press * 0.02 - settle * 0.05;
+  f.group.rotation.y = roll * 0.06 + scan * 0.05;
+}
+
+/**
+ * VANTA — the runner, never quite still. A light, springy footwork cycle under the coiled stance
+ * with the arms counter-swinging, and every few seconds a gather-then-spring: the half-step before
+ * a sprint. Amplitudes stay small and slow ON PURPOSE — an avatar sprinting on the spot reads as
+ * jank; a runner shifting his weight from foot to foot reads as ready to go.
+ */
+function animateVanta(f: FigureParts, t: number, phase: number): void {
+  const c = (t / 5.2 + phase * 0.19) % 1;
+  const gather = bump(c, 0.3, 0.22);                       // sinks, arms drawn back
+  const spring = bump(c, 0.66, 0.16);                      // rises, lead arm drives out
+  const br = breath(t, phase, 4.4);
+  // the footwork fades out while he gathers and comes back as he springs — anticipation, then burst
+  const step = Math.sin((t / 1.35) * TAU + phase) * (1 - 0.75 * gather);
+  const bounce = Math.abs(step);
+
+  f.torso.position.x = step * 0.012;
+  f.torso.rotation.x = 0.45 + br * 0.02 + gather * 0.14 - spring * 0.12;
+  f.torso.rotation.z = step * 0.035 + (gather - spring) * 0.02;
+  // trailing and lead arms pump in counter-phase, then both load up for the spring
+  f.armR.rotation.x = 0.3 - step * 0.22 + gather * 0.22 - spring * 0.18;
+  f.armR.rotation.z = -0.28;
+  f.elbowR.rotation.x = -0.5 - gather * 0.35 + spring * 0.15;
+  f.armL.rotation.x = -0.62 + step * 0.24 + gather * 0.18 - spring * 0.42;
+  f.armL.rotation.z = 0.3;
+  f.elbowL.rotation.x = -0.95 + spring * 0.25;
+  // the legs pedal just enough to read as footwork; the gather sinks him, the spring lifts him
+  f.legR.rotation.x = 0.58 + step * 0.2 - gather * 0.3 + spring * 0.12;
+  f.legL.rotation.x = -0.3 - step * 0.2 + gather * 0.18 - spring * 0.08;
+  f.kneeR.rotation.x = -0.5 - bounce * 0.12 - gather * 0.5 + spring * 0.2;
+  f.kneeL.rotation.x = -0.28 - bounce * 0.1 - gather * 0.35 + spring * 0.15;
+  f.group.position.y = 0.05 + bounce * 0.018 + br * 0.006 - gather * 0.06 + spring * 0.03;
+  f.group.rotation.y = 0.95 + Math.sin((t / 7.5) * TAU + phase) * 0.05 + (spring - gather) * 0.06;
+}
+
+/** Runs the colony's own animation, eases the focus and paints the spotlight treatment. */
+function poseFigure(parts: FigureParts, colony: number, t: number, focus: number, dt: number, baseScale = 1): void {
+  const phase = colony * 2.1;
+  if (colony === 0) animateHelios(parts, t, phase);
+  else if (colony === 1) animateAegis(parts, t, phase);
+  else animateVanta(parts, t, phase);
+
+  // focus EASES in and out: popping a champion to a new scale in one frame was half of why the
+  // line-up read as janky. `baseScale` is the frame-filling factor the preview solved for the box.
+  parts.focusAmt += (focus - parts.focusAmt) * Math.min(1, dt * 7);
+  const f = parts.focusAmt;
+  parts.group.scale.setScalar(baseScale * (1 + f * 0.12));
+  parts.ringMat.opacity = 0.2 + f * 0.55 + 0.04 * Math.sin(t * 1.4 + colony);
+  for (const m of parts.accentMats) {
+    m.emissiveIntensity = 0.3 + f * 0.45 + 0.05 * Math.sin(t * 1.1 + colony * 1.3);
+  }
+}
+
+// The weapon models themselves live in necrotech/WeaponModels.ts: the same builders dress this
+// turntable AND are mounted in the players' hands during a match.
+
+
+
+
+// ---------------------------------------------------------------------------- the preview scene
+
+/**
+ * A small self-contained renderer that lives inside a selection screen. `setMode` moves its canvas
+ * into whichever screen is open and (re)builds that mode's models; while no mode is active the rAF
+ * loop is parked and the canvas detached, so a running match pays nothing for it.
+ */
+export class SelectionPreview {
+  private canvas: HTMLCanvasElement;
+  /** The box the canvas is mounted in while its screen is open — also the size source. */
+  private host: HTMLElement | null = null;
+  /** Created on first use: a menu that never opens a selection screen never makes a GL context. */
+  private renderer: THREE.WebGLRenderer | null = null;
+  private scene = new THREE.Scene();
+  private camera = new THREE.PerspectiveCamera(38, 4, 0.1, 60);
+  private mode: PreviewMode | null = null;
+  private t = 0;
+  private raf = 0;
+  private last = 0;
+  private width = 0;
+  private height = 0;
+
+  /** COLONY mode: one figure per colony, in COLONIES order. */
+  private figures: FigureParts[] = [];
+  /** COLONY mode: tallest champion measured at build time — the frame-filling scale reads it. */
+  private colonyTop = 1.85;
+  /** COLONY mode: the scale the figures are drawn at so they fill the box (1 = authored size). */
+  private colonyScale = 1;
+  private focus = 0;
+  private selected = -1;
+
+  /** NECROTECH mode: the weapon stand, one cached model per class index. */
+  private weaponPivot = new THREE.Group();
+  private weapons = new Map<number, THREE.Group>();
+  private weaponDefs: NecrotechDef[] = [];
+  private weaponIdx = 0;
+  private standRing: THREE.MeshBasicMaterial | null = null;
+  /** The back light behind the weapon stand: a halo panel (class-tinted) + a white point light. */
+  private standGlow: THREE.Mesh | null = null;
+  private standGlowMat: THREE.MeshBasicMaterial | null = null;
+  private standLight: THREE.PointLight | null = null;
+
+  /** CUSTOMIZE mode: one real player model (the same builder the match uses) plus its outfit. */
+  private avatarParts: ModelParts | null = null;
+  private avatarAcc: AvatarAccessories | null = null;
+  private avatarSel: AccessorySelection = { ...EMPTY_SELECTION };
+  /** The customize stage's lit pad (the same build the lobby line-up stands on). */
+  private avatarPad: THREE.Group | null = null;
+  /** CUSTOMIZE mode turntable: the player drags the avatar itself to turn it. */
+  private avatarYaw = 0;
+  private avatarYawTarget = 0;
+  private avatarYawVel = 0;
+  private dragging = false;
+  private dragX = 0;
+  private lastDragAt = -99;
+  private dragHost: HTMLElement | null = null;
+
+  /**
+   * LOBBY mode: one avatar per seat in a horizontal line-up, each wearing its player's own outfit
+   * (pets included). An ORTHOGRAPHIC camera is the point here: the seat cards below the rail are
+   * equal-width flex items, so seat i sits at (i + 0.5)/n of the row — and an ortho projection maps
+   * world x to rail x linearly, which lets every avatar stand EXACTLY above its own card whatever
+   * the player count, with accessories free to spill across the slot borders.
+   */
+  private lobbyCam = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 40);
+  private lobbyAvatars: LobbyAvatarFig[] = [];
+  private lobbyData: LobbyAvatarInfo[] = [];
+  private lobbySig = '';
+  private lobbyDirty = false;
+  /** Lobby-only lights, added with the line-up and removed with it (other modes stay as they were). */
+  private lobbyLights: THREE.Object3D[] = [];
+  /** Lobby turntable: the player drags the rail to turn the whole line-up (pets follow their own). */
+  private lobbyYaw = 0;
+  private lobbyYawTarget = 0;
+  private lobbyYawVel = 0;
+  private lobbyLastDragAt = -99;
+
+  constructor() {
+    this.canvas = document.createElement('canvas');
+    this.canvas.className = 'sel-preview-canvas';
+
+    // lighting: a cool sky, a warm key and a coloured rim so the emissive accents pop
+    this.scene.add(new THREE.HemisphereLight(0x9fb6ff, 0x1a1630, 1.25));
+    const key = new THREE.DirectionalLight(0xffffff, 1.7);
+    key.position.set(3.2, 5.5, 4.2);
+    this.scene.add(key);
+    const rim = new THREE.DirectionalLight(0x8fb0ff, 0.9);
+    rim.position.set(-4, 2.5, -3.5);
+    this.scene.add(rim);
+
+    this.camera.position.set(0, 1.5, 6.4);
+    this.camera.lookAt(0, 1, 0);
+  }
+
+  private ensureRenderer(): THREE.WebGLRenderer {
+    if (!this.renderer) {
+      this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: true });
+      this.renderer.setClearColor(0x000000, 0);
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    }
+    return this.renderer;
+  }
+
+  /**
+   * Switches the preview to a selection screen (or parks it). `container` is where the canvas is
+   * mounted while that screen is open — moving the SAME canvas is what keeps this to one context.
+   */
+  setMode(mode: PreviewMode | null, container: HTMLElement | null, defs: NecrotechDef[] = []): void {
+    if (mode === null) {
+      this.mode = null;
+      this.canvas.remove();
+      this.host = null;
+      this.detachDrag();
+      this.stop();
+      return;
+    }
+    if (container) {
+      this.host = container;
+      if (this.canvas.parentElement !== container) container.appendChild(this.canvas);
+      // the customize avatar AND the lobby line-up are turntables: dragging the box turns the body
+      if (mode === 'customize' || mode === 'lobby') this.attachDrag(container);
+      else this.detachDrag();
+    }
+    this.weaponDefs = defs;
+    this.ensureRenderer();
+    if (this.mode === mode) {
+      // Re-entering a mode: the lobby line-up is rebuilt so a joining player appears at once.
+      if (mode === 'lobby') this.lobbyDirty = true;
+      this.start();
+      return;
+    }
+    this.mode = mode;
+    this.t = 0;
+    this.buildScene();
+    this.start();
+  }
+
+  /** COLONY mode: 0/1/2 = which champion the pointer is on (also used for the picked one). */
+  setFocus(idx: number): void {
+    this.focus = idx;
+  }
+
+  /** COLONY mode: the colony this player has actually picked (-1 = none). */
+  setSelected(idx: number): void {
+    this.selected = idx;
+  }
+
+  /** NECROTECH mode: show the weapon of class `idx` (index into what was passed to `setMode`). */
+  showWeapon(idx: number): void {
+    this.weaponIdx = Math.max(0, idx);
+    this.updateWeaponVisibility();
+  }
+
+  /**
+   * LOBBY mode: the current roster. The line-up rebuilds itself only when the SET of seats or
+   * their outfits change; a ready toggle just repaints the ring, so nobody's avatar (or pet) is
+   * yanked out from under the lobby while people are readying up.
+   */
+  setLobbyAvatars(list: LobbyAvatarInfo[]): void {
+    this.lobbyData = list.map(p => ({ ...p }));
+    this.lobbyDirty = true;
+  }
+
+  /**
+   * CUSTOMIZE mode: dress the avatar in the player's SAVED selection. There is deliberately no
+   * hover override any more — the body only ever wears what has actually been equipped (user
+   * request), so this is a plain apply.
+   */
+  showAccessories(sel: AccessorySelection): void {
+    this.avatarSel = { ...sel };
+    if (!this.avatarAcc) return;
+    this.avatarAcc.set({ ...sel });
+  }
+
+  private stop(): void {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  private start(): void {
+    if (this.raf) return;
+    this.last = performance.now();
+    const loop = (now: number): void => {
+      this.raf = requestAnimationFrame(loop);
+      const dt = Math.min(0.05, (now - this.last) / 1000);
+      this.last = now;
+      this.update(dt);
+    };
+    this.raf = requestAnimationFrame(loop);
+  }
+
+  private buildScene(): void {
+    // every model this scene has ever held is discarded on a mode switch: the two modes share
+    // nothing, and a selection screen is not a place to grow a model cache across matches
+    this.disposeLobbyAvatars();
+    for (const child of [...this.scene.children]) {
+      if (child instanceof THREE.Light) continue;
+      this.scene.remove(child);
+    }
+    this.figures.length = 0;
+    this.weapons.clear();
+    this.weaponPivot = new THREE.Group();
+    this.standRing = null;
+    // the weapon stand's back light belongs to the necrotech mode alone — drop its buffers with it
+    if (this.standGlow) {
+      this.standGlow.removeFromParent();
+      disposeObject(this.standGlow);
+      this.standGlow = null;
+    }
+    this.standGlowMat = null;
+    this.standLight = null;
+    if (this.avatarAcc) {
+      this.avatarAcc.dispose();
+      this.avatarAcc = null;
+      this.avatarParts = null;
+    }
+    if (this.avatarPad) {
+      this.avatarPad.removeFromParent();
+      disposeObject(this.avatarPad);
+      this.avatarPad = null;
+    }
+
+    if (this.mode === 'colony') {
+      this.camera.position.set(0, 1.35, COLONY_CAM_DIST);
+      this.camera.lookAt(0, 0.95, 0);
+      this.colonyTop = 0;
+      COLONIES.forEach((c, idx) => {
+        const fig = buildFigure(c.color);
+        fig.group.position.x = (idx - 1) * COLONY_SLOT;
+        this.figures.push(fig);
+        this.scene.add(fig.group);
+        // measure the REAL height of each champion: the frame-filling scale below is solved from
+        // it, so the figures can never end up either tiny or cropped
+        const bb = new THREE.Box3().setFromObject(fig.group);
+        this.colonyTop = Math.max(this.colonyTop, bb.max.y);
+      });
+      if (this.colonyTop < 0.5) this.colonyTop = 1.85;
+    } else if (this.mode === 'necrotech') {      // Framed so NOTHING in the stage is sliced. Two opposite edges to respect: the pad's front
+      // rim used to be chopped by the frustum's bottom edge (aimed too high), and once the stage
+      // grew the backdrop ring / halo sat right ON the top edge — a circle with its crown flat
+      // against the frame reads as "cut off at the top". Raised the whole view ~0.15 so the ring
+      // keeps a band of air above it and the halo's soft top stays inside; the pad's rim ends just
+      // inside the bottom edge, and the strip below still overlaps the canvas's last pixels
+      // (see `.nt-screen .nt-grid`) so the base tucks behind the class list.
+      this.camera.position.set(0, 0.95, 3.9);
+      this.camera.lookAt(0, 0.75, 0);
+      // a hex pedestal + a ring of the CURRENT class colour, so the swap is visible even before the
+      // weapon itself is recognised
+      const plate = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.95, 1.1, 0.14, 6),
+        new THREE.MeshLambertMaterial({ color: 0x241d3a, flatShading: true })
+      );
+      plate.position.y = -0.07;
+      const plateRing = new THREE.Mesh(
+        new THREE.TorusGeometry(0.96, 0.032, 6, 6),
+        new THREE.MeshLambertMaterial({ color: 0x4a4066, flatShading: true })
+      );
+      plateRing.rotation.x = Math.PI / 2;
+      plateRing.rotation.z = Math.PI / 6;
+      plateRing.position.y = 0.02;
+      const backdropMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.22,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      this.standRing = backdropMat;
+      const backdrop = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.024, 6, 48), backdropMat);
+      backdrop.position.y = 1.0;
+      // ---- the back light: a soft halo right behind the weapon, plus a white point light lifting
+      // the model off the backdrop. The guns are deliberately dark primitives whose accents ARE the
+      // read, which against the menu's near-black screen left some classes as little more than a
+      // silhouette — the same treatment the item chips and the avatar pads get.
+      this.standGlowMat = new THREE.MeshBasicMaterial({
+        map: lightPoolTexture(), color: 0xffffff, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      });
+      // 2.1 keeps the soft top of the halo clear of the frame's top edge (2.4 reached NDC 1.04 and
+      // was sliced flat when the stage expanded); the glow still spills well past the backdrop ring
+      this.standGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 2.1), this.standGlowMat);
+      this.standGlow.position.set(0, 1.0, -0.75);
+      this.standLight = new THREE.PointLight(0xffffff, 8, 4.5, 2);
+      this.standLight.position.set(0, 1.3, 1.1);
+      this.scene.add(plate, plateRing, backdrop, this.standGlow, this.standLight);
+      this.weaponPivot.position.y = 1.0;
+      this.scene.add(this.weaponPivot);
+      // build every class's weapon lazily-but-eagerly: at most 11 small primitive groups, so the
+      // swap on hover is instant and never allocates mid-interaction
+      this.weaponDefs.forEach((def, idx) => {
+        const model = buildWeaponModel(def);
+        model.visible = false;
+        this.weapons.set(idx, model);
+        this.weaponPivot.add(model);
+      });
+      this.updateWeaponVisibility();
+    } else if (this.mode === 'customize') {
+      // ---- CUSTOMIZE: the player's own model, dressed with everything at once. Using the MATCH
+      // builder here is the whole trick — the menu cannot drift from the game.
+      this.camera.position.set(0, 1.78, 4.4);
+      this.camera.lookAt(0, 1.08, 0);
+      // the avatar's own lit pad — the same stage the lobby's line-up stands on, so the customize
+      // screen and the lobby read as one place (and the near-black body gets its light)
+      this.avatarPad = this.buildPad(0xb07aff, 1.35);
+      this.scene.add(this.avatarPad);
+      this.avatarParts = buildPlayerModel(0x8f6cff);
+      this.avatarParts.group.position.y = 0.02;
+      this.scene.add(this.avatarParts.group);
+      this.avatarAcc = new AvatarAccessories(
+        this.avatarParts.headMount,
+        this.avatarParts.backMount,
+        this.avatarParts.pack,
+        this.scene
+      );
+      this.avatarAcc.set(this.avatarSel, true);
+    }
+  }
+
+  private updateWeaponVisibility(): void {
+    for (const [idx, model] of this.weapons) model.visible = idx === this.weaponIdx;
+    const def = this.weaponDefs[this.weaponIdx];
+    if (def && this.standRing) this.standRing.color.setHex(def.stats.color);
+    // the back light follows the class too: hovering a card repaints the whole stage, not just the
+    // gun. The point light stays WHITE — its job is legibility, the halo's is identity.
+    if (def && this.standGlowMat) this.standGlowMat.color.setHex(def.stats.color);
+  }
+
+  /**
+   * Keeps the avatar filling the customize preview box at any shape: the distance is solved for
+   * both the vertical (head to toes) and the horizontal (wingtip to wingtip) extent, and the wider
+   * of the two wins — a tall phone column and a wide desktop panel both get the biggest body that
+   * still fits, wings included.
+   */
+  private frameAvatar(): void {
+    const H = 2.7;   // head, big hats and a little air
+    const W = 3.5;   // wingtip to wingtip (plus the pet's roam ring)
+    const vFov = (this.camera.fov * Math.PI) / 180;
+    const aspect = Math.max(0.3, this.camera.aspect || 1);
+    const tan = Math.tan(vFov / 2);
+    const dist = Math.max(H / 2 / tan, W / 2 / (tan * aspect));
+    // stand a little high and aim a little low: the lit pad under the avatar is part of the look,
+    // and a dead-level camera would show it edge-on as a line
+    this.camera.position.set(0, 1.78, dist);
+    this.camera.lookAt(0, 1.08, 0);
+  }
+
+  // ------------------------------------------------------------ avatar turntable (customize)
+
+  private attachDrag(el: HTMLElement): void {
+    if (this.dragHost === el) return;
+    this.detachDrag();
+    this.dragHost = el;
+    el.addEventListener('pointerdown', this.onDragDown);
+    el.addEventListener('pointermove', this.onDragMove);
+    el.addEventListener('pointerup', this.onDragUp);
+    el.addEventListener('pointercancel', this.onDragUp);
+  }
+
+  private detachDrag(): void {
+    const el = this.dragHost;
+    if (!el) return;
+    el.removeEventListener('pointerdown', this.onDragDown);
+    el.removeEventListener('pointermove', this.onDragMove);
+    el.removeEventListener('pointerup', this.onDragUp);
+    el.removeEventListener('pointercancel', this.onDragUp);
+    this.dragHost = null;
+    this.dragging = false;
+  }
+
+  private onDragDown = (e: PointerEvent): void => {
+    this.dragging = true;
+    this.dragX = e.clientX;
+    if (this.mode === 'lobby') {
+      this.lobbyYawVel = 0;
+      this.lobbyLastDragAt = this.t;
+    } else {
+      this.avatarYawVel = 0;
+      this.lastDragAt = this.t;
+    }
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* capture is best-effort (older WebKit) — dragging still works without it */
+    }
+    e.preventDefault();
+  };
+
+  private onDragMove = (e: PointerEvent): void => {
+    if (!this.dragging) return;
+    const dx = e.clientX - this.dragX;
+    this.dragX = e.clientX;
+    // the model TURNS WITH the pointer: drag right and the front follows
+    const yaw = dx * 0.012;
+    if (this.mode === 'lobby') {
+      this.lobbyYawTarget += yaw;
+      // a flick keeps coasting for roughly 0.6× the drag distance (decayed in update())
+      this.lobbyYawVel = yaw * 2.2;
+      this.lobbyLastDragAt = this.t;
+    } else {
+      this.avatarYawTarget += yaw;
+      this.avatarYawVel = yaw * 2.2;
+      this.lastDragAt = this.t;
+    }
+    e.preventDefault();
+  };
+
+  private onDragUp = (e: PointerEvent): void => {
+    if (!this.dragging) return;
+    this.dragging = false;
+    if (this.mode === 'lobby') this.lobbyLastDragAt = this.t;
+    else this.lastDragAt = this.t;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* released with the pointer already gone */
+    }
+  };
+
+  private update(dt: number): void {
+    this.t += dt;
+    const el = this.host;
+    const w = el ? el.clientWidth : 0;
+    const h = el ? el.clientHeight : 0;
+    if (w < 8 || h < 8) return;
+    if (w !== this.width || h !== this.height) {
+      this.width = w;
+      this.height = h;
+      this.renderer?.setSize(w, h, false);
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+    }
+
+    if (this.mode === 'colony') {
+      // Frame the champions to fill the box: solve the scale from the measured height against the
+      // visible world height at the figures' plane, clamp it (never shrink below the authored size,
+      // never blow the line-up up past the cap), then re-aim the camera on the scaled body so the
+      // leftover space is split evenly above the head and below the feet instead of pooling at the
+      // bottom of the frame (the "extra space at the bottom" report).
+      // A phone's stage is a SHALLOW strip (it shares the screen with three colony cards), so it
+      // may use most of its box; a desktop stage is tall already and keeps the calmer fill.
+      const touchStage = IS_TOUCH && this.height < COLONY_SHALLOW;
+      const fill = touchStage ? COLONY_FILL_TOUCH : COLONY_FILL;
+      const cap = touchStage ? COLONY_SCALE_MAX_TOUCH : COLONY_SCALE_MAX;
+      const visH = 2 * COLONY_CAM_DIST * Math.tan((this.camera.fov * Math.PI) / 360);
+      const scale = Math.min(cap, Math.max(1, (fill * visH) / this.colonyTop));
+      if (Math.abs(scale - this.colonyScale) > 0.001) this.colonyScale = scale;
+      const mid = (this.colonyScale * this.colonyTop) * 0.5;
+      this.camera.position.set(0, mid + 0.38, COLONY_CAM_DIST);
+      this.camera.lookAt(0, mid, 0);
+      // …but never let the spread push the outer rings off a narrow stage: a short/portrait-ish
+      // window is the one case where the authored slot can exceed the frame, so measure the room
+      // the visible world width actually has at the figures' plane and shrink the slot to fit.
+      const spread = Math.max(1, this.colonyScale / COLONY_SCALE_MAX);
+      const reach = 0.78 * this.colonyScale + 0.45; // ring radius + pose-swing headroom
+      const room = Math.max(1.6, (visH * this.camera.aspect) * 0.5 - reach);
+      const slot = Math.min(COLONY_SLOT * spread, room);
+      this.figures.forEach((fig, idx) => {
+        // the pointer's champion takes the spotlight; the picked colony keeps a base glow.
+        // The SLOT only spreads once a figure grows past the authored size — the desktop line-up
+        // keeps its reviewed spacing and only a phone's slightly larger champions move apart.
+        fig.group.position.x = (idx - 1) * slot;
+        const focus = idx === this.focus ? 1 : idx === this.selected ? 0.5 : 0.1;
+        poseFigure(fig, idx, this.t, focus, dt, this.colonyScale);
+      });
+    } else if (this.mode === 'lobby') {
+      if (this.lobbyDirty) this.rebuildLobby();
+      this.tickLobby(dt);
+    } else if (this.mode === 'necrotech') {
+      // a slow showcase turn with a small bob, so the silhouette is readable from every side
+      this.weaponPivot.rotation.y = this.t * 0.55;
+      this.weaponPivot.rotation.z = Math.sin(this.t * 0.8) * 0.06;
+      this.weaponPivot.position.y = 1.0 + Math.sin(this.t * 1.1) * 0.05;
+      // the halo breathes with the model, so the stage feels lit rather than painted
+      if (this.standGlowMat) this.standGlowMat.opacity = 0.46 + Math.sin(this.t * 1.3) * 0.07;
+    } else {
+      // CUSTOMIZE: a breathing idle with a slow three-quarter sway (never a full turntable — you
+      // are meeting your character, not inspecting a product). The camera re-frames on every
+      // update so the avatar fills whatever box the layout gives it.
+      this.frameAvatar();
+      const parts = this.avatarParts;
+      if (parts) {
+        const t = this.t;
+        // the turntable: drag sets the target, a flick coasts, and after a pause the avatar
+        // drifts gently on its own again
+        if (!this.dragging) {
+          this.avatarYawTarget += this.avatarYawVel * dt;
+          this.avatarYawVel *= Math.max(0, 1 - 3.5 * dt);
+        }
+        this.avatarYaw += (this.avatarYawTarget - this.avatarYaw) * Math.min(1, dt * 12);
+        const idle = this.dragging ? 0 : Math.min(1, Math.max(0, (t - this.lastDragAt - 1.2) / 1.6));
+        const breathe = Math.sin(t * 1.35);
+        parts.group.position.y = 0.02 + breathe * 0.012;
+        parts.group.rotation.y = this.avatarYaw + Math.sin(t * 0.32) * 0.1 * idle;
+        parts.torso.rotation.x = breathe * 0.014;
+        parts.armL.rotation.x = Math.sin(t * 0.9) * 0.05 - breathe * 0.01;
+        parts.armR.rotation.x = -Math.sin(t * 0.9) * 0.05 - breathe * 0.01;
+        this.avatarAcc?.tick(t, dt, 0);
+        const pet = this.avatarAcc?.petCtl;
+        if (pet) {
+          pet.setVisible(true);
+          pet.update(dt, ORIGIN, UP_AXIS, t, null);
+        }
+      }
+    }
+    this.renderer?.render(this.scene, this.mode === 'lobby' ? this.lobbyCam : this.camera);
+  }
+
+  // ------------------------------------------------------------ lobby line-up
+
+  /** Rebuilds the avatar row when the seats or the outfits changed; flags alone do not. */
+  private rebuildLobby(): void {
+    this.lobbyDirty = false;
+    const sig = this.lobbyData.map(p => `${p.id}|${p.colony}|${p.acc}`).join(';');
+    if (sig === this.lobbySig) {
+      this.lobbyAvatars.forEach((fig, i) => {
+        if (this.lobbyData[i]) fig.data = this.lobbyData[i];
+      });
+      return;
+    }
+    this.lobbySig = sig;
+    this.disposeLobbyAvatars();
+    if (this.lobbyData.length > 0) this.ensureLobbyLights();
+    for (const p of this.lobbyData) this.buildLobbyFigure(p);
+    this.layoutLobby();
+  }
+
+  /**
+   * The lit pad an avatar stands on, shared by the lobby line-up and the customize stage: a dark
+   * disc whose TOP face is y = 0 (the avatar's feet), a lit rim in the accent colour, a pool of
+   * simulated light spilling over the feet and a real point light washing the body. The menu
+   * backdrop is near-black and the player bodies are near-black too — the pad is what makes a
+   * survivor legible instead of a silhouette.
+   */
+  private buildPad(color: number, radius = 0.66): THREE.Group {
+    const pad = new THREE.Group();
+    const disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius * 1.15, 0.09, 28),
+      new THREE.MeshLambertMaterial({ color: 0x2a2044, flatShading: true })
+    );
+    disc.position.y = -0.045;
+    const rimMat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    });
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.01, 0.028, 8, 44), rimMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.005;
+    const poolMat = new THREE.MeshBasicMaterial({
+      map: lightPoolTexture(), color, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(radius * 3.7, radius * 3.7), poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.y = 0.012;
+    const light = new THREE.PointLight(color, radius > 1 ? 9 : 6, radius * 4.2, 2);
+    light.position.set(0, 0.55, 0.25);
+    pad.add(disc, rim, pool, light);
+    return pad;
+  }
+
+  /**
+   * One seat = the REAL player model (the same builder the match uses) dressed with that player's
+   * own hat, backpack and pet — the customize screen's avatar, once per survivor — standing on a
+   * lit pad so the near-black body reads against the menu's dark backdrop.
+   */
+  private buildLobbyFigure(p: LobbyAvatarInfo): void {
+    const colony = p.colony >= 0 ? COLONIES[p.colony] : undefined;
+    const color = colony ? colony.color : 0x9a7bff;
+    const parts = buildPlayerModel(color);
+    parts.group.position.y = 0.02;
+    const sel = selectionFromWire(p.acc) ?? { ...EMPTY_SELECTION };
+    const acc = new AvatarAccessories(parts.headMount, parts.backMount, parts.pack, this.scene);
+    acc.set(sel, true);
+    // the avatar's own pad — the same lit stage the customize screen stands on
+    const pad = this.buildPad(color);
+    this.scene.add(pad);
+    // a flat ring ON the pad: it is what tells ready from waiting at a glance
+    const ringMat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.63, 40), ringMat);
+    ring.geometry.rotateX(-Math.PI / 2);
+    ring.position.y = 0.02;
+    parts.group.add(ring);
+    this.scene.add(parts.group);
+    this.lobbyAvatars.push({ data: p, parts, acc, ringMat, pad, anchor: new THREE.Vector3() });
+  }
+
+  /** A front fill and a brighter bounce for the lobby only — removed again with the line-up. */
+  private ensureLobbyLights(): void {
+    if (this.lobbyLights.length > 0) return;
+    const fill = new THREE.DirectionalLight(0xe4dcff, 1.35);
+    fill.position.set(0.4, 2.6, 7);
+    const bounce = new THREE.HemisphereLight(0xc9d4ff, 0x4a3568, 0.85);
+    this.scene.add(fill, bounce);
+    this.lobbyLights.push(fill, bounce);
+  }
+
+  /**
+   * Places the line-up and frames it. The ortho frustum is sized so that one world "slot" is
+   * exactly one seat card wide, then every figure is centred on the middle of its own slot — the
+   * same (i + 0.5)/n the seat row uses in CSS.
+   */
+  private layoutLobby(): void {
+    const n = this.lobbyAvatars.length;
+    const aspect = Math.max(0.3, this.width / Math.max(1, this.height));
+    const SLOT = 1.85;                                  // world width budget per player
+    const minH = 3.0;                                   // never crop a standing avatar
+    const visH = Math.max(minH, (SLOT * n) / aspect);
+    const visW = visH * aspect;
+    const cam = this.lobbyCam;
+    cam.left = -visW / 2;
+    cam.right = visW / 2;
+    cam.top = visH / 2;
+    cam.bottom = -visH / 2;
+    // Feet a fixed slice above the bottom edge whatever the line-up's size, and the camera sits a
+    // little HIGH and aims a little low: the pads under the avatars are what stop the near-black
+    // bodies dissolving into the backdrop, and a dead-level view would show them edge-on.
+    const groundY = -0.35;
+    const midY = groundY + visH / 2;
+    cam.position.set(0, midY + 1.5, 7.6);
+    cam.lookAt(0, midY - 0.08, 0);
+    cam.updateProjectionMatrix();
+    this.lobbyAvatars.forEach((fig, i) => {
+      const x = ((i + 0.5) / Math.max(1, n) - 0.5) * visW;
+      fig.parts.group.position.x = x;
+      fig.pad.position.x = x;
+    });
+  }
+
+  /**
+   * The lobby idle: a breathing stance with a slow sway, outfit and pet ticking exactly like they
+   * do on the customize screen (menu == game == lobby). Pets roam around their OWN owner, and are
+   * left free to cross into the neighbouring slot — that overlap is what makes the row read as
+   * one scene instead of a strip of clipped icons.
+   */
+  private tickLobby(dt: number): void {
+    const t = this.t;
+    // the turntable: drag sets the target, a flick coasts, and a pause lets the idle sway return
+    if (!this.dragging) {
+      this.lobbyYawTarget += this.lobbyYawVel * dt;
+      this.lobbyYawVel *= Math.max(0, 1 - 3.5 * dt);
+    }
+    this.lobbyYaw += (this.lobbyYawTarget - this.lobbyYaw) * Math.min(1, dt * 12);
+    const idle = this.dragging ? 0 : Math.min(1, Math.max(0, (t - this.lobbyLastDragAt - 1.2) / 1.6));
+    for (let i = 0; i < this.lobbyAvatars.length; i++) {
+      const fig = this.lobbyAvatars[i];
+      const ph = i * 1.37;
+      const parts = fig.parts;
+      const breathe = Math.sin(t * 1.2 + ph);
+      parts.group.position.y = 0.02 + breathe * 0.012;
+      parts.group.rotation.y = this.lobbyYaw - 0.22 + Math.sin(t * 0.31 + ph * 0.7) * 0.26 * idle;
+      parts.torso.rotation.x = breathe * 0.014;
+      parts.armL.rotation.x = Math.sin(t * 0.8 + ph) * 0.06 - breathe * 0.012;
+      parts.armR.rotation.x = -Math.sin(t * 0.86 + ph) * 0.06 - breathe * 0.012;
+      fig.acc.tick(t, dt, 0);
+      const pet = fig.acc.petCtl;
+      if (pet) {
+        fig.anchor.set(parts.group.position.x, 0, 0);
+        pet.setVisible(true);
+        pet.update(dt, fig.anchor, UP_AXIS, t, null);
+      }
+      const want = fig.data.me ? 0.6 : fig.data.ready ? 0.46 : 0.16;
+      fig.ringMat.opacity += (want + Math.sin(t * 1.5 + ph) * 0.05 - fig.ringMat.opacity) * Math.min(1, dt * 5);
+    }
+  }
+
+  private disposeLobbyAvatars(): void {
+    for (const fig of this.lobbyAvatars) {
+      fig.acc.dispose();
+      fig.parts.group.removeFromParent();
+      disposeObject(fig.parts.group);
+      fig.pad.removeFromParent();
+      disposeObject(fig.pad);
+    }
+    this.lobbyAvatars.length = 0;
+    this.lobbySig = '';
+    for (const light of this.lobbyLights) light.removeFromParent();
+    this.lobbyLights.length = 0;
+  }
+
+  dispose(): void {
+    this.stop();
+    if (this.avatarAcc) {
+      this.avatarAcc.dispose();
+      this.avatarAcc = null;
+      this.avatarParts = null;
+    }
+    if (this.avatarPad) {
+      this.avatarPad.removeFromParent();
+      disposeObject(this.avatarPad);
+      this.avatarPad = null;
+    }
+    this.buildScene();       // drops every child (lights survive, which is all we need to keep)
+    this.renderer?.dispose();
+    this.renderer = null;
+  }
+}

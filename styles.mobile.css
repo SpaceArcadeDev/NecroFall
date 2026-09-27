@@ -1,0 +1,638 @@
+/* ==========================================================================
+   NECROFALL — mobile controls (landscape phones/tablets).
+   Left thumb: movement stick. Right thumb: Jump then Dash on the top row of a
+   staircase, with the two big Skill / Ultimate buttons along the bottom edge —
+   aim by dragging those buttons (no second stick, no aim pad).
+   Loaded after styles.css / styles.ui.css so it wins.
+   ========================================================================== */
+
+:root {
+  --m-safe-l: env(safe-area-inset-left, 0px);
+  --m-safe-r: env(safe-area-inset-right, 0px);
+  --m-safe-b: env(safe-area-inset-bottom, 0px);
+  --m-btn: clamp(58px, 15vh, 74px);        /* fan buttons (jump / skill / ult) */
+  --m-btn-mini: clamp(44px, 11vh, 56px);   /* beacon */
+  /* The dash button is the mirror of the movement stick: same size, same inset from the corner. */
+  --m-joy: clamp(112px, 20vh, 150px);
+}
+
+body.nf-touch .mobile {
+  display: block;
+  z-index: 6;                      /* above the HUD (z 5) … */
+  /* … and `manipulation`, never `none`. WebKit intersects the touch-action of the touched element
+     with its ancestors bit by bit, and the opt-out only survives when the intersection still
+     contains `manipulation` or `none` — `manipulation ∩ none` is an EMPTY set, which re-enables
+     the double tap. One `none` anywhere above a button poisons every button under it; see the big
+     note in styles.css. */
+  touch-action: manipulation;
+}
+/* … but the Necromutation / Necrotech / respawn / Esc / results modals stay on top so a thumb can
+   never press a control through them. */
+body.nf-touch .modal { z-index: 20; }
+
+/* no pinch-zoom, no pull-to-refresh, no rubber-banding while playing.
+   Zoom cannot be suppressed from JS (Pointer Events §8), so `touch-action` is the fix — see the
+   control rules below and ui/TouchGuard.ts for the diagnostics + clean-up. */
+body.nf-touch {
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+/* ---- touch-action on the controls: the only lever against double-tap zoom.
+   `manipulation` is the value WebKit honours for the "no double-tap" opt-out, and a finger usually
+   lands on a child (.m-ico / svg / .m-tag), so the buttons *and* their children ask for it — the
+   WHOLE subtree must agree, because a single mismatched value inside it intersects to ∅. The stick
+   is the one surface that owns a whole drag gesture, so it takes `none` — nothing there may pan or
+   zoom the page, and no button ever sits under it. */
+body.nf-touch .mobile .mbtn,
+body.nf-touch .mobile .mbtn * {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;    /* no long-press popover on a control */
+}
+body.nf-touch .mobile .joy,
+body.nf-touch .mobile .joy * { touch-action: none; }
+
+/* The desktop ability rail is replaced by the touch cluster. */
+body.nf-touch .hud-right-stack { display: none; }
+/* Notifications sit on the left edge, vertically centred, clear of the thumb stick. */
+body.nf-touch .hud-left-stack {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  max-width: min(230px, 40vw);
+}
+body.nf-touch .hud-left-stack .toast .item,
+body.nf-touch .hud-left-stack .killfeed .kf { font-size: 10px; }
+/* Global notices on a phone: smaller, tighter type so a full sentence stays on one or two lines
+   instead of towering over the fight. The box is allowed to use almost the whole width. */
+body.nf-touch .banner {
+  top: 11%;
+  max-width: 94vw;
+  padding: 7px 11px;
+  font-size: clamp(12px, 3.5vw, 19px);
+  letter-spacing: 0.07em;
+  line-height: 1.2;
+}
+/* Tighter HUD so the world stays visible on small screens. */
+body.nf-touch .minimap { width: clamp(88px, 13vh, 118px); }
+body.nf-touch .hud-settings { width: clamp(34px, 5.4vh, 44px); height: clamp(34px, 5.4vh, 44px); }
+body.nf-touch .task-list { min-width: 168px; font-size: 9.5px; }
+body.nf-touch .tsym { width: 30px; height: 30px; }
+body.nf-touch .tsym.nexus { width: 34px; height: 34px; }
+body.nf-touch .tsym .glyph svg { width: 18px; height: 18px; }
+body.nf-touch .hud-bottom { bottom: calc(var(--m-safe-b) + 4px); }
+/* The reveal takes the pills row's spot, so on a touch HUD it keeps the SAME offset from the bottom
+   edge as `body.nf-touch .hud-bottom` above. */
+body.nf-touch .mutate-reveal {
+  bottom: calc(var(--m-safe-b) + 4px);
+  width: min(400px, 74vw);
+  padding: 7px 10px;
+}
+body.nf-touch .mutate-reveal .mr-head { font-size: 8px; letter-spacing: 0.28em; }
+body.nf-touch .mutate-reveal .mr-name { margin-top: 1px; font-size: clamp(15px, 3.4vw, 21px); }
+body.nf-touch .mutate-reveal .mr-tags { margin-top: 5px; gap: 4px; }
+body.nf-touch .mutate-reveal .mr-tag { padding: 1.5px 5px; font-size: 7.5px; }
+body.nf-touch .mutate-reveal .mr-desc { margin-top: 5px; font-size: 9.5px; line-height: 1.35; }
+
+/* ---- movement stick (left thumb): FLOATING.
+   The corner copy is only the resting hint — the live stick jumps UNDER the thumb wherever the
+   press lands in the lower-left half of the world (see the joyDown block in UI.buildMobile) and
+   eases back here on release. The home spot is nudged inwards off the bezel, so a thumb that rests
+   on the very corner of the phone (where the palm grips it) is not already outside the stick. */
+body.nf-touch .joy {
+  left: calc(var(--m-safe-l) + 48px);
+  bottom: calc(var(--m-safe-b) + 28px);
+  width: var(--m-joy);
+  height: var(--m-joy);
+  border-width: 3px;
+  background: radial-gradient(circle at 50% 50%, rgba(30, 18, 52, 0.5), rgba(14, 9, 24, 0.32));
+  transition: opacity 0.18s ease;
+}
+body.nf-touch .joy.idle { opacity: 0.45; }
+body.nf-touch .joy.floating {
+  bottom: auto;
+  right: auto;
+  opacity: 1;
+  background: radial-gradient(circle at 50% 50%, rgba(46, 28, 78, 0.55), rgba(14, 9, 24, 0.3));
+  box-shadow: 0 0 26px rgba(160, 100, 255, 0.35);
+}
+body.nf-touch .joy .knob {
+  width: 46%;
+  height: 46%;
+  margin: -23% 0 0 -23%;
+}
+body.nf-touch .joy.floating .knob {
+  background: radial-gradient(circle at 35% 30%, rgba(226, 202, 255, 0.95), rgba(130, 80, 210, 0.8));
+  box-shadow: 0 0 24px rgba(170, 110, 255, 0.6);
+}
+
+/* ==========================================================================
+   Right thumb: DASH is the big button, mirroring the stick. Jump / Skill /
+   Ultimate fan up its top-left quadrant from the bottom upwards, MOBA style:
+     jump 180°  •  skill 140°  •  ultimate 100°
+   with the fan radius R = dash/2 + btn/2 + 10px. The beacon button sits directly
+   to the left of jump, further out so the two never touch.
+   ========================================================================== */
+body.nf-touch .m-cluster {
+  --m-r: calc(var(--m-joy) / 2 + var(--m-btn) / 2 + 10px);
+  --m-r-beacon: calc(var(--m-r) + var(--m-btn) / 2 + var(--m-btn-mini) / 2 + 8px);
+  position: absolute;
+  right: calc(var(--m-safe-r) + 22px);
+  bottom: calc(var(--m-safe-b) + 26px);
+  width: var(--m-joy);
+  height: var(--m-joy);
+  pointer-events: none;
+  /* The container the buttons sit in: `manipulation` too, so no layer of the chain disagrees. */
+  touch-action: manipulation;
+}
+body.nf-touch .mbtn {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid rgba(180, 140, 255, 0.5);
+  background: radial-gradient(circle at 50% 34%, rgba(46, 32, 78, 0.9), rgba(10, 7, 18, 0.92));
+  box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.45);
+  color: #efe7ff;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-align: center;
+  pointer-events: auto;
+  touch-action: manipulation;    /* no double-tap-to-zoom on a control (see the block above) */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;   /* no long-press popover on a control */
+  /* Real <button> elements (focusable, AT-friendly) — the user-agent button look is stripped off;
+     the double-tap behaviour comes from the `manipulation` above, not from the element type. */
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+body.nf-touch .mbtn:active { filter: brightness(1.15); }
+/* Only the two ability buttons scale, because they are the drag-to-aim targets. */
+body.nf-touch .mbtn.skill:active,
+body.nf-touch .mbtn.ult:active { transform: scale(0.94); }
+
+/* the dash button itself: identical footprint to the movement stick */
+body.nf-touch .mbtn.dash {
+  left: 0;
+  bottom: 0;
+  width: var(--m-joy);
+  height: var(--m-joy);
+  font-size: clamp(11px, 1.7vh, 14px);
+  border-color: rgba(140, 255, 190, 0.7);
+  background: radial-gradient(circle at 50% 36%, rgba(34, 62, 52, 0.92), rgba(10, 7, 18, 0.94));
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.55), 0 5px 18px rgba(0, 0, 0, 0.5);
+}
+body.nf-touch .mbtn.dash .m-tag { position: static; font-size: clamp(13px, 2vh, 17px); }
+body.nf-touch .mbtn.dash .m-count { right: 16%; bottom: 12%; font-size: clamp(13px, 2.1vh, 17px); }
+
+/* the fan: jump (closest to the dash), beacon, skill, ultimate */
+body.nf-touch .mbtn.jump,
+body.nf-touch .mbtn.skill,
+body.nf-touch .mbtn.ult,
+body.nf-touch .mbtn.beacon {
+  width: var(--m-btn);
+  height: var(--m-btn);
+  font-size: clamp(8px, 1.15vh, 10px);
+}
+/* R = dash/2 + btn/2 + 10px, going upwards: jump lowest, then skill, then ultimate */
+body.nf-touch .mbtn.jump {   /* 180° */
+  left: calc(var(--m-joy) / 2 - var(--m-r) - var(--m-btn) / 2);
+  bottom: calc(var(--m-joy) / 2 - var(--m-btn) / 2);
+}
+body.nf-touch .mbtn.skill {  /* 135° */
+  left: calc(var(--m-joy) / 2 - 0.707 * var(--m-r) - var(--m-btn) / 2);
+  bottom: calc(var(--m-joy) / 2 + 0.707 * var(--m-r) - var(--m-btn) / 2);
+}
+body.nf-touch .mbtn.ult {    /* 96° */
+  left: calc(var(--m-joy) / 2 - 0.105 * var(--m-r) - var(--m-btn) / 2);
+  bottom: calc(var(--m-joy) / 2 + 0.995 * var(--m-r) - var(--m-btn) / 2);
+}
+body.nf-touch .mbtn.skill { border-color: rgba(127, 212, 255, 0.85); }
+body.nf-touch .mbtn.ult { border-color: rgba(255, 154, 92, 0.85); }
+body.nf-touch .mbtn.jump { border-color: rgba(200, 180, 255, 0.7); }
+
+/* beacon: only exists while a friendly shielded Beacon can be fired, and it sits
+   in the empty slot just left of jump */
+body.nf-touch .mbtn.beacon {
+  width: var(--m-btn-mini);
+  height: var(--m-btn-mini);
+  /* straight to the left of jump (180°), further out so the two never touch */
+  left: calc(var(--m-joy) / 2 - var(--m-r-beacon) - var(--m-btn-mini) / 2);
+  bottom: calc(var(--m-joy) / 2 - var(--m-btn-mini) / 2);
+  display: none;
+  border-color: rgba(120, 240, 200, 0.9);
+  color: #7ff0c8;
+  background: radial-gradient(circle at 50% 34%, rgba(28, 74, 66, 0.95), rgba(8, 16, 16, 0.95));
+  box-shadow: inset 0 0 16px rgba(80, 255, 200, 0.28), 0 0 18px rgba(80, 255, 200, 0.35);
+  animation: beaconPulse 1.5s ease-in-out infinite;
+}
+body.nf-touch .mbtn.beacon.available { display: flex; }
+@keyframes beaconPulse {
+  0%, 100% { box-shadow: inset 0 0 16px rgba(80, 255, 200, 0.28), 0 0 14px rgba(80, 255, 200, 0.3); }
+  50% { box-shadow: inset 0 0 20px rgba(80, 255, 200, 0.45), 0 0 26px rgba(80, 255, 200, 0.6); }
+}
+body.nf-touch .mbtn.cooling { opacity: 0.7; }
+body.nf-touch .mbtn.ready { filter: brightness(1.08); }
+
+/* labels: the tag sits at the top of the button and the ability name wraps at the
+   bottom, both inside the round frame so they can never collide with a neighbour */
+.m-tag {
+  position: absolute;
+  top: 9%;
+  font-size: clamp(10px, 2.4vh, 11.5px);
+  letter-spacing: 0.09em;
+  opacity: 0.95;
+  line-height: 1;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+}
+.m-tag:empty { display: none; }
+/* jump and dash have no ability name, so their single label is centred */
+body.nf-touch .mbtn.jump .m-tag,
+body.nf-touch .mbtn.dash .m-tag { position: static; }
+.m-name {
+  position: absolute;
+  left: 9%;
+  right: 9%;
+  bottom: 11%;
+  font-size: clamp(9.5px, 2.2vh, 10.5px);
+  letter-spacing: 0;
+  color: #e6dcff;
+  opacity: 0.95;
+  white-space: normal;
+  overflow: hidden;
+  line-height: 1.05;
+  text-shadow: 0 1px 4px #000, 0 0 6px rgba(0, 0, 0, 0.85);
+}
+.m-name:empty { display: none; }
+
+/* cooldown seconds + dash charges */
+.m-cd {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Consolas, monospace;
+  font-size: clamp(14px, 2.6vh, 20px);
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+}
+.m-cd:empty { display: none; }
+/* ability glyph: a small mark in the middle, leaving room for tag + name */
+.m-ico {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.95;
+}
+.m-ico svg {
+  width: 34%;
+  height: 34%;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
+}
+.mbtn.cooling .m-ico { opacity: 0.42; }
+.m-count {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  color: #8dffcb;
+  text-shadow: 0 1px 4px #000;
+}
+.m-count.empty { color: #ff7a8a; }
+
+/* ---- drag-to-aim: the ability button swells and glows while you steer with it */
+body.nf-touch .mbtn.aiming {
+  transform: scale(1.08);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 18px rgba(127, 212, 255, 0.35), 0 0 22px rgba(127, 212, 255, 0.45);
+}
+body.nf-touch .mbtn.aiming .m-ico { opacity: 1; }
+
+/* ==========================================================================
+   End screen on a phone: one column, scrollable, everything thumb-sized.
+   ========================================================================== */
+body.nf-touch .results-screen {
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: calc(var(--m-safe-b) + 10px) 10px calc(var(--m-safe-b) + 16px);
+  -webkit-overflow-scrolling: touch;
+}
+body.nf-touch .results-emblem { font-size: 30px; }
+body.nf-touch .results-title { font-size: clamp(20px, 5vh, 32px); letter-spacing: 0.16em; }
+body.nf-touch .results-colony { font-size: clamp(12px, 2.4vh, 17px); letter-spacing: 0.2em; }
+body.nf-touch .results-time { font-size: 9px; }
+body.nf-touch .results-hero {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(2, 1fr);
+  width: 100%;
+  gap: 7px;
+  margin: 12px 0 10px;
+}
+body.nf-touch .results-hero-cell { padding: 8px 6px 6px; }
+body.nf-touch .results-hero-cell .v { font-size: clamp(16px, 3.4vh, 22px); }
+body.nf-touch .results-hero-cell .k { font-size: 8px; letter-spacing: 0.1em; }
+body.nf-touch .results-grid {
+  grid-template-columns: 1fr;
+  width: 100%;
+  gap: 10px;
+}
+body.nf-touch .results-grid .panel { padding: 12px; }
+body.nf-touch .results-grid .panel-title { font-size: 12px; letter-spacing: 0.2em; margin-bottom: 8px; }
+body.nf-touch .tower-chips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+body.nf-touch .tower-chip { font-size: 11px; padding: 6px 8px; }
+body.nf-touch .standings-row { grid-template-columns: 62px 1fr 14px; font-size: 11px; }
+body.nf-touch .stats-grid { font-size: 11.5px; gap: 3px 10px; }
+body.nf-touch .results-screen .btn { width: 100%; padding: 13px; }
+
+/* ---- tower capture plates: a touch smaller, they share the screen with the joystick cluster */
+body.nf-touch .tw-plate { width: 112px; }
+body.nf-touch .tw-plate .tw-nm { font-size: 8.5px; letter-spacing: 0.12em; }
+body.nf-touch .tw-plate .tw-bar { height: 5px; }
+body.nf-touch .tw-plate .tw-row { font-size: 9px; }
+
+/* very short screens (small phones in landscape): shrink the fan a little more */
+@media (max-height: 420px) {
+  :root { --m-btn: 56px; --m-btn-mini: 44px; --m-joy: clamp(104px, 26vh, 128px); }
+  body.nf-touch .hud-left-stack { top: 46%; }
+}
+
+/* ==========================================================================
+   NECROFALL — touch pass (2026-09): the jump / dash glyphs, the menus, the
+   Esc panel and the arcade pickers, all sized for a thumb. Loaded last.
+   ========================================================================== */
+
+/* ---- JUMP / DASH carry the desktop rail's glyphs, dead CENTRE in the button, with the word as a
+   small caption under them. (The old rule nudged the icon 20% up to make room for the caption; on a
+   round button that reads as "off-centre", which is exactly what it was.) */
+body.nf-touch .mbtn.jump .m-ico,
+body.nf-touch .mbtn.dash .m-ico { transform: none; }
+/* Same ink as the desktop rail: jump reads light blue, dash light amber — the glyph takes the colour,
+   not the button, so the caption underneath stays the pad's normal white. */
+body.nf-touch .mbtn.jump .m-ico { color: #a9e0ff; }
+body.nf-touch .mbtn.dash .m-ico { color: #ffd79a; }
+body.nf-touch .mbtn.jump .m-tag,
+body.nf-touch .mbtn.dash .m-tag {
+  position: absolute;
+  top: auto;
+  bottom: 6%;
+  font-size: clamp(9px, 1.6vh, 11px);
+  letter-spacing: 0.08em;
+  opacity: 0.92;
+}
+body.nf-touch .mbtn.dash .m-tag { font-size: clamp(11px, 1.9vh, 15px); }
+/* the charge badge moves to the top-right: with the glyph dead centre and the word under it, the
+   bottom-right corner is the one place the badge landed on the caption */
+body.nf-touch .mbtn.jump .m-count,
+body.nf-touch .mbtn.dash .m-count {
+  top: 10%;
+  right: 10%;
+  bottom: auto;
+}
+
+/* ---- iOS zooms the whole page in on a focused field under 16px — the survivor name is the first
+   thing every player touches, so it is 16px here and never smaller. */
+body.nf-touch #ui input,
+body.nf-touch .menu-input { font-size: 16px; }
+body.nf-touch .menu-name { min-height: 48px; padding: 8px 12px; }
+/* the field itself fills its row, so a thumb that lands on the row's padding still focuses it */
+body.nf-touch .menu-input { align-self: stretch; height: 100%; padding: 6px 0; }
+
+/* ---- every menu control is a target */
+body.nf-touch .btn { min-height: 48px; }
+body.nf-touch .btn.small { min-height: 44px; padding: 11px 14px; font-size: 13px; }
+/* ONE scroll surface per screen: on touch the big panels stop scrolling inside themselves and the
+   screen scrolls them instead — two nested scrollers is how a swipe gets eaten mid-drag. */
+body.nf-touch .screen .panel { max-height: none; overflow: visible; }
+body.nf-touch .screen-back { width: 52px; height: 52px; }
+/* rows and chips are tap targets too on a phone */
+body.nf-touch .hud-settings { width: clamp(40px, 8.5vh, 48px); height: clamp(40px, 8.5vh, 48px); }
+/* the two HUD info pills (Necrotech class + mutation name) keep ONE look on a phone: same size,
+   both bold, label centred — the mutation chip just gets more padding to stay a long-press target */
+body.nf-touch .nt-row > .tag { font-size: 11px; min-height: 26px; }
+body.nf-touch .nt-row .tag.mut { padding: 7px 12px; }
+body.nf-touch .screen.has-back { padding-top: calc(60px + env(safe-area-inset-top)); }
+
+/* ---- main menu / play screen on a phone */
+body.nf-touch .menu-title { font-size: clamp(34px, 8.4vh, 58px); }
+body.nf-touch .menu-sub { margin-bottom: 16px; }
+/* the PLAY screen's plain column; the main menu's grid keeps its own (larger) width so a phone and
+   a desktop read the same, just scaled */
+body.nf-touch .menu-col:not(.menu-main) { width: min(560px, 92vw); gap: 10px; }
+body.nf-touch .graphics-opts .opt { padding: 10px 4px; font-size: 12px; min-height: 46px; }
+
+/* ---- Esc panel: full-width buttons stacked under the stats, keyboard list gone */
+body.nf-touch .pause-card {
+  width: min(420px, 76vw);
+  margin: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom))
+    calc(8px + env(safe-area-inset-left));
+  padding: 13px 14px 15px;
+}
+body.nf-touch .pause-buttons { grid-template-columns: 1fr; gap: 8px; margin-top: 4px; }
+body.nf-touch .pause-x { width: 46px; height: 46px; }
+body.nf-touch .pause-x svg { width: 20px; height: 20px; }
+/* Full-width rows on a phone: the icon + label pair needs the width, and the old flex-basis rule
+   that blew the buttons up to 132px tall no longer applies (the container is a grid). */
+body.nf-touch .pause-buttons .btn.pause-btn { flex: 0 0 auto; width: 100%; padding: 10px 12px; }
+body.nf-touch .pause-btn .pb-ico { width: 34px; height: 34px; }
+body.nf-touch .pause-btn .pb-lbl { font-size: 13px; }
+body.nf-touch .pause-controls { display: none; }
+body.nf-touch .room-code { font-size: 24px; }
+body.nf-touch .room-row .btn { flex: 0 0 auto; }
+
+/* ---- colony / necrotech selection on a phone: compact cards, smaller champion stage.
+   `:not(.acc-preview)` is load-bearing — the customize screen's avatar shares the `.sel-preview`
+   class but is sized by its OWN column; this rule (higher specificity) used to blow it up to 620px
+   inside a 395px column, so the avatar's base spilled across the catalog and swallowed its taps. */
+body.nf-touch .sel-head { margin-bottom: 8px; }
+body.nf-touch .sel-title { font-size: clamp(19px, 4.6vw, 28px); }
+body.nf-touch .sel-timer { font-size: 24px; }
+body.nf-touch .sel-preview:not(.acc-preview) {
+  height: clamp(118px, 30vh, 190px);
+  width: min(620px, 96vw);
+  margin-bottom: 8px;
+}
+body.nf-touch .acc-preview { width: 100%; }
+/* the customizer's catalog is the thing being browsed — give it every pixel the caption can spare */
+body.nf-touch .acc-caption { font-size: 9.5px; min-height: 12px; }
+body.nf-touch .acc-layout { gap: 10px; }
+body.nf-touch .acc-tabs { gap: 6px; margin-bottom: 6px; }
+body.nf-touch .cards { gap: 10px; }
+body.nf-touch .card { width: min(240px, 30vw); min-width: 176px; padding: 12px; }
+
+/* ---- COLONY select must FIT a phone: three cards, the champion stage and the timer share ONE
+   viewport — no scrolling down, ever. The floating cards become equal thirds (the old 176px min
+   width forced a wrap and a vertical scroll under a 30vh stage), the crest shrinks, and on very
+   short landscapes the flavour line steps aside too. */
+body.nf-touch .screen.colony-screen {
+  justify-content: flex-start;
+  overflow: hidden;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+body.nf-touch .colony-screen .sel-head { margin-bottom: 4px; }
+body.nf-touch .colony-screen .sel-timer { font-size: 22px; line-height: 1.1; }
+body.nf-touch .colony-screen .sel-sub { font-size: 10.5px; margin-top: 1px; }
+body.nf-touch .colony-screen .sel-preview:not(.acc-preview) {
+  /* GROWS into the leftover height (user: the champions had room to be bigger on a phone) — the
+     cards below hug their content, so the free space belongs to the stage. Capped so the cards can
+     never be pushed off a short screen. */
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 60px;
+  max-height: 34vh;
+  margin-bottom: 6px;
+}
+body.nf-touch .colony-screen .cards {
+  /* content-sized: the stage above owns the free height (see the preview rule) */
+  flex: 0 0 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 900px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  /* the cards HUG their content now that the seat count is a corner badge: stretching them to the
+     leftover height was padding the frame with empty card body (user request: shorter cards) */
+  align-items: flex-start;
+}
+body.nf-touch .colony-screen .card {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  padding: 9px 9px 8px;
+  display: flex;
+  flex-direction: column;
+}
+body.nf-touch .colony-screen .colony-crest { width: 44px; height: 44px; margin: 0 auto 5px; }
+body.nf-touch .colony-screen .colony-sym { font-size: 22px; }
+body.nf-touch .colony-screen .card h4 { font-size: 15px; letter-spacing: 0.14em; margin-bottom: 3px; }
+body.nf-touch .colony-screen .card .desc { font-size: 10.5px; line-height: 1.35; min-height: 0; }
+body.nf-touch .colony-screen .card .bonus { gap: 3px; margin-top: 6px; }
+body.nf-touch .colony-screen .card .bonus-row { padding: 3px 7px; font-size: 10.5px; border-radius: 6px; }
+body.nf-touch .colony-screen .card .count-badge { font-size: 11px; }
+@media (max-height: 500px) {
+  body.nf-touch .colony-screen .card .desc { display: none; }
+  body.nf-touch .colony-screen .colony-crest { width: 36px; height: 36px; margin-bottom: 3px; }
+  body.nf-touch .colony-screen .colony-sym { font-size: 18px; }
+  body.nf-touch .colony-screen .card .bonus-row { padding: 2px 6px; font-size: 10px; }
+  body.nf-touch .colony-screen .sel-sub { display: none; }
+  /* still the flexible stage, but a shorter ceiling on a 360-390px-tall landscape phone */
+  body.nf-touch .colony-screen .sel-preview:not(.acc-preview) { min-height: 44px; max-height: 26vh; }
+}
+/* The class list is a HORIZONTAL strip on touch: fixed-width cards, swiped sideways — the page
+   under it never scrolls down (see the fixed `.nt-screen` layout in styles.ui.css). */
+body.nf-touch .nt-grid {
+  width: 100%;
+  gap: 10px;
+  /* the same 8px of headroom as the base rule — a sticky tap state lifts the card, and the strip
+     must never slice its top edge (the tuck in styles.ui.css deepens to match) */
+  padding: 10px 2px 10px;
+}
+body.nf-touch .nt-card {
+  flex: 0 0 clamp(236px, 42vw, 360px);
+  min-width: 0;
+  padding: 9px 10px 10px 12px;
+}
+/* the weapon stage stays the FLEXIBLE one on a phone too: it takes the height the content-sized
+   card strip leaves, so the gun always has room and the details are never clipped */
+body.nf-touch .nt-screen .sel-head { margin-top: 0; }
+body.nf-touch .nt-screen .sel-preview:not(.acc-preview) {
+  height: auto;
+  min-height: clamp(84px, 18vh, 150px);
+  max-height: min(38vh, 240px);
+}
+/* CUSTOMIZE on a phone: the corner glyph and the tab icons take the touch sizes */
+body.nf-touch .acc-random { width: 52px; height: 52px; }
+body.nf-touch .acc-random svg { width: 28px; height: 28px; }
+body.nf-touch .acc-tab { gap: 6px; }
+body.nf-touch .acc-tab svg { width: 16px; height: 16px; }
+
+/* pickers: the cards are sized by their GRID track (3 across, never wrapped) — never by a width
+   of their own, or a 340px card would spill out of a 236px track and overlap its neighbour */
+body.nf-touch .perk { padding: 12px 11px 11px; }
+body.nf-touch .modal-card { padding: 16px; }
+body.nf-touch .big-timer { margin-top: 10px; font-size: 20px; }
+body.nf-touch .pickup-cols { gap: 10px; }
+body.nf-touch .pickup-actions .pick-btn { padding: 13px 8px; }
+/* landscape phones: this file loads AFTER styles.css, so the compact rules have to win here too */
+@media (max-height: 430px) {
+  body.nf-touch .pickup-actions .pick-btn { padding: 6px; }
+}
+body.nf-touch .pickup-row { padding: 8px 10px; }
+@media (max-height: 430px) {
+  body.nf-touch .pickup-row { padding: 2px 7px; }
+}
+body.nf-touch .howto-actions .btn { flex: 1; }
+
+/* ---- PLAY formats + LOBBY line-up on a phone --------------------------------------------------- */
+body.nf-touch .mode-card { min-height: clamp(150px, 38vh, 330px); }
+body.nf-touch .play-col { width: min(760px, 94vw); }
+/* the LOBBY wordmark IS the header: pulled up to the top edge on a phone too — the chevron lives
+   in the corner and the title is centred, so nothing collides. PLAY and CUSTOMIZE sit in the SAME
+   band: one header line across all three fixed screens. */
+body.nf-touch .screen.play-screen.has-back,
+body.nf-touch .screen.lobby-screen.has-back,
+body.nf-touch .screen.acc-screen.has-back { padding-top: calc(10px + env(safe-area-inset-top)); }
+/* the necrotech detail overlay: a long-press panel stays open until dismissed, so it takes the
+   pointer back — an over-long description can be scrolled inside the panel itself */
+body.nf-touch .nt-expand { pointer-events: auto; }
+@media (max-height: 560px) {
+  body.nf-touch .nt-expand { padding: 8px 10px 9px 12px; }
+  body.nf-touch .nt-expand .row p { font-size: 10.5px; line-height: 1.35; }
+  body.nf-touch .nt-expand .nt-rows { gap: 6px; margin-top: 7px; }
+  body.nf-touch .nt-expand .nt-stats { margin-top: 7px; }
+}
+body.nf-touch .lobby-icon { width: 42px; }
+body.nf-touch .lobby-icon svg { width: 19px; height: 19px; }
+/* the rail takes whatever height the seats and actions leave it (it grows on a tall phone): its
+   track carries a real horizontal scroll so nine seats keep a readable width instead of 40 px each */
+body.nf-touch .lobby-rail { height: auto; }
+body.nf-touch .lobby-track { -webkit-overflow-scrolling: touch; }
+body.nf-touch .seat-card { min-height: 88px; }
+/* the kick is a corner action on the card: keep it thumb-sized, not text-sized */
+body.nf-touch .seat-kick { top: 4px; right: 5px; padding: 6px 9px; font-size: 12px; }
+body.nf-touch .lobby-actions { gap: 8px; }
+body.nf-touch .lobby-actions .btn { flex: 1 1 0; }
+/* one squircle size smaller, so the name/description column keeps its room */
+body.nf-touch .acc-ico { width: 40px; height: 40px; }
+
+/* ---- very short landscape phones: the fixed screens hand their spare pixels back to their content.
+   LAST in the file on purpose — these override the touch rules above, which share their specificity */
+@media (max-height: 480px) {
+  body.nf-touch .play-head .menu-title { font-size: clamp(22px, 7vh, 34px); }
+  body.nf-touch .play-enter .btn { min-height: 38px; padding: 6px 14px; font-size: 12.5px; }
+  body.nf-touch .play-screen .menu-name { min-height: 38px; padding: 4px 10px; }
+  body.nf-touch .lobby-panel { padding: 8px 10px; gap: 5px; }
+  body.nf-touch .lobby-icon { width: 36px; }
+  body.nf-touch .lobby-actions .btn { min-height: 40px; }
+  body.nf-touch .lobby-rail { min-height: 44px; margin-bottom: 4px; }
+  body.nf-touch .seat-card { padding: 4px 4px 5px; min-height: 48px; }
+  body.nf-touch .seat-state { font-size: 8px; }
+  body.nf-touch .nt-screen .sel-timer { font-size: 20px; }
+  body.nf-touch .nt-screen .sel-sub { display: none; }
+  /* the weapon stage and the class cards share what is left: the stage shrinks first, then the
+     cards lose their last pixels of chrome — the DETAILS themselves are never clipped */
+  body.nf-touch .nt-screen .sel-preview:not(.acc-preview) { min-height: 56px; }
+  body.nf-touch .nt-grid { padding-bottom: 6px; }
+  body.nf-touch .nt-card { padding: 7px 9px 8px 11px; }
+  body.nf-touch .nt-rows { gap: 4px; margin-top: 5px; }
+  body.nf-touch .nt-stats { margin-top: 5px; }
+  body.nf-touch .nt-card .nt-icon { width: 28px; height: 28px; }
+  body.nf-touch .nt-card .nt-icon svg { width: 18px; height: 18px; }
+}

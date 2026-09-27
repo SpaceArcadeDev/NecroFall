@@ -1,0 +1,24 @@
+{
+  "name": "necrofall-spacetimedb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "NecroFall official game server + player backend (SpacetimeDB module)",
+  "scripts": {
+    "build": "spacetime build",
+    "publish:local": "spacetime publish necrofall --clear-database -y",
+    "publish:maincloud": "spacetime publish necrofall",
+    "publish:dev": "spacetime publish necrofall-dev",
+    "publish:staging": "spacetime publish necrofall-staging",
+    "generate": "spacetime generate --lang typescript --out-dir module_bindings --module-path .",
+    "logs": "spacetime logs necrofall",
+    "describe": "spacetime describe necrofall --json",
+    "sql": "spacetime sql necrofall"
+  },
+  "dependencies": {
+    "spacetimedb": "^2.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

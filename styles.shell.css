@@ -1,0 +1,1135 @@
+/* NECROFALL — account shell (plan §8/§36/§37). Scoped under `.nf-`; the game's
+   own styles are untouched. MOBA language: dark glass panels, bright accents,
+   gold for progression, colony colours from the shared palette. */
+
+:root {
+  --ui-bg: #0b0812;
+  --ui-panel: rgba(20, 14, 33, 0.78);
+  --ui-panel-strong: rgba(28, 19, 45, 0.92);
+  --ui-border: rgba(148, 120, 220, 0.28);
+  --ui-text: #efe9ff;
+  --ui-text-muted: #a99cc9;
+  --ui-accent: #9a6bff;
+  --ui-accent-2: #46e0c8;
+  --ui-gold: #ffd166;
+  --colony-a: #ffa63d;
+  --colony-b: #3fc6ff;
+  --colony-c: #b45cff;
+}
+
+.nf-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  color: var(--ui-text);
+  font-family: inherit;
+  /* LIVE BACKDROP: the planet shows ONLY at the top of the screen; everything
+     below sinks into near-black. ONE linear gradient with many gentle stops —
+     stacked radial layers and blurred orbs band visibly on dark panels. */
+  background: linear-gradient(
+    180deg,
+    rgba(9, 5, 17, 0) 0%,
+    rgba(9, 5, 17, 0.03) 12%,
+    rgba(9, 5, 17, 0.1) 24%,
+    rgba(9, 5, 17, 0.24) 36%,
+    rgba(9, 5, 17, 0.44) 48%,
+    rgba(9, 5, 17, 0.62) 58%,
+    rgba(8, 5, 14, 0.78) 68%,
+    rgba(8, 5, 14, 0.9) 78%,
+    rgba(8, 5, 14, 0.96) 88%,
+    rgba(8, 5, 14, 0.98) 100%
+  );
+  overflow: hidden;
+}
+
+.nf-shell .hidden,
+.nf-shell.hidden,
+.nf-modal.hidden,
+.nf-pill.hidden {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- chrome */
+.nf-chrome {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: linear-gradient(180deg, rgba(10, 6, 20, 0.85), rgba(10, 6, 20, 0));
+}
+
+.nf-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nf-top-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  padding: 6px 12px 6px 6px;
+  color: var(--ui-text);
+  cursor: pointer;
+}
+
+.nf-top-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  background: linear-gradient(145deg, var(--ui-accent), #4a2a8f);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+}
+
+.nf-top-who { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.nf-top-name { font-weight: 700; font-size: 14px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nf-top-level { font-size: 11px; color: var(--ui-text-muted); }
+
+.nf-top-currency { display: flex; gap: 8px; margin-left: auto; }
+.nf-currency {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  font-size: 13px;
+}
+.nf-coin.soft { color: var(--ui-accent-2); font-style: normal; }
+.nf-coin.premium { color: var(--ui-gold); font-style: normal; }
+
+.nf-top-settings {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text);
+  font-size: 18px;
+  cursor: pointer;
+}
+/* the "?" how-to entry beside the gear */
+.nf-top-howto { font-weight: 900; font-size: 17px; }
+
+.nf-settings-menu {
+  position: absolute;
+  top: 64px;
+  right: 14px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--ui-panel-strong);
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------------------------------------------------------------- main area */
+.nf-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 14px 108px;
+}
+
+.nf-page {
+  width: min(1080px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 20px;
+  animation: nf-page-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes nf-page-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.nf-page-title {
+  margin: 4px 0 0;
+  font-size: clamp(26px, 5vw, 44px);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.nf-page-sub { margin: 0; color: var(--ui-text-muted); }
+.nf-muted { color: var(--ui-text-muted); font-size: 13px; margin: 4px 0; }
+.nf-error { color: #ff8797; font-size: 14px; }
+
+/* ---------------------------------------------------------------- buttons */
+.nf-btn {
+  appearance: none;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  border-radius: 14px;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-height: 44px;
+  transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.nf-btn:hover { background: rgba(60, 40, 100, 0.6); }
+.nf-btn:active { transform: scale(0.97); }
+.nf-btn:disabled { opacity: 0.5; cursor: default; }
+.nf-btn.primary {
+  background: linear-gradient(160deg, #7d4dff, #43239c);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 12px 34px rgba(122, 77, 255, 0.35);
+}
+.nf-btn.big { font-size: 16px; min-height: 52px; padding: 14px 24px; }
+.nf-btn.small { min-height: 36px; padding: 8px 12px; font-size: 12px; }
+.nf-btn.ghost { background: transparent; }
+.nf-btn.on { border-color: var(--ui-accent-2); color: var(--ui-accent-2); }
+
+.nf-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: rgba(10, 6, 20, 0.6);
+  color: var(--ui-text);
+  font-size: 15px;
+}
+.nf-input.big { min-height: 54px; font-size: 16px; }
+
+/* ---------------------------------------------------------------- login */
+.login-page { justify-content: center; align-items: center; text-align: center; gap: 0; padding-top: 2vh; }
+.nf-login-title { margin-top: 4vh; animation: nf-title-glow 4.5s ease-in-out infinite; }
+.nf-login-card {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  width: min(400px, 92vw);
+  padding: 20px 20px 16px;
+  border-radius: 18px;
+  background: rgba(14, 9, 26, 0.55);
+  border: 1px solid var(--ui-border);
+  backdrop-filter: blur(7px);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.45);
+}
+.nf-login-welcome { margin: 0 0 4px; font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+.nf-wide-btn { width: 100%; justify-content: center; }
+
+/* ---------------------------------------------------------------- onboarding */
+.onboarding-page { align-items: center; text-align: center; justify-content: center; }
+.onboarding-page .menu-title { font-size: clamp(24px, 4.6vw, 40px); animation: nf-title-glow 4.5s ease-in-out infinite; }
+.onboarding-page .nf-colony-cards { margin-top: 6px; }
+.onboarding-page .btn { width: min(420px, 92vw); justify-content: center; }
+
+/* ---------------------------------------------------------------- home (live planet backdrop) */
+/* Wordmark on top, the player's OWN character staged centre (the same lobby
+   preview), a single colony caption below — nothing here repeats the top bar
+   or the navigation. */
+.home-page {
+  align-items: center;
+  justify-content: flex-start;
+  text-align: center;
+  gap: 0;
+  min-height: calc(100vh - 180px);
+  position: relative;
+  /* the decorative orbs bleed past the column on purpose — never a scrollbar */
+  overflow: hidden;
+}
+.nf-home-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: clamp(6px, 3.4vh, 34px);
+  z-index: 1;
+}
+.nf-home-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
+/* the stage soaks up everything between the wordmark and the caption */
+.nf-stage {
+  flex: 1 1 auto;
+  width: min(680px, 96vw);
+  min-height: 190px;
+  max-height: 52vh;
+  margin-top: 2px;
+  position: relative;
+  z-index: 1;
+}
+.nf-stage canvas { display: block; width: 100% !important; height: 100% !important; }
+.nf-home-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 2px 0 6px;
+  z-index: 1;
+}
+.nf-home-colony {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--nf-colony, var(--ui-accent));
+  text-shadow: 0 0 22px color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 55%, transparent);
+}
+/* the classic menu utilities, as quiet text links */
+.nf-home-links {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+  z-index: 1;
+}
+.nf-link {
+  appearance: none;
+  background: none;
+  border: none;
+  color: var(--ui-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.26em;
+  padding: 6px 2px;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+  transition: color 0.18s ease, border-color 0.18s ease, text-shadow 0.18s ease;
+}
+.nf-link:hover {
+  color: var(--ui-text);
+  border-bottom-color: var(--ui-accent);
+  text-shadow: 0 0 14px rgba(154, 107, 255, 0.6);
+}
+.nf-link-dot { color: rgba(170, 130, 255, 0.45); }
+
+@keyframes nf-title-glow {
+  0%, 100% { text-shadow: 0 0 36px rgba(160, 80, 255, 0.32); }
+  50% { text-shadow: 0 0 64px rgba(190, 120, 255, 0.62), 0 0 18px rgba(120, 200, 255, 0.25); }
+}
+@keyframes nf-play-pulse {
+  0%, 100% { box-shadow: 0 0 26px rgba(146, 70, 255, 0.38); }
+  50% { box-shadow: 0 0 46px rgba(180, 92, 255, 0.66); }
+}
+
+/* ---------------------------------------------------------------- play */
+/* Segmented server toggle, in the in-game graphics-row language. */
+.nf-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgba(170, 130, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(18, 12, 30, 0.62);
+  backdrop-filter: blur(6px);
+}
+.nf-toggle-opt {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-text);
+  cursor: pointer;
+  min-height: 50px;
+  font-family: inherit;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.nf-toggle-opt:hover { border-color: rgba(210, 170, 255, 0.5); }
+.nf-toggle-opt.on {
+  background: linear-gradient(180deg, rgba(146, 70, 255, 0.92), rgba(84, 34, 150, 0.92));
+  border-color: rgba(226, 200, 255, 0.75);
+  box-shadow: 0 0 18px rgba(180, 92, 255, 0.4);
+}
+.nf-toggle-opt.disabled { opacity: 0.45; cursor: default; }
+.nf-toggle-name { font-size: 16px; font-weight: 900; letter-spacing: 0.22em; }
+.nf-toggle-sub { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ui-text-muted); }
+.nf-toggle-opt.on .nf-toggle-sub { color: rgba(255, 255, 255, 0.78); }
+
+.nf-play-note { min-height: 16px; text-align: center; font-size: 12px; margin: 0; }
+.nf-play-enter {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(170, 130, 255, 0.18);
+  background: rgba(18, 12, 30, 0.58);
+  backdrop-filter: blur(6px);
+}
+.nf-play-enter .menu-name { margin-bottom: 0; }
+.nf-code { text-align: center; letter-spacing: 0.3em; text-transform: uppercase; }
+.nf-small { font-size: 12px; letter-spacing: 0.12em; padding: 10px 14px; }
+/* PLAY mirrors the in-game screen: FIXED height, title pinned top, the two cards
+   fill the frame — then SHRINK to a compact strip once CLASSIC is picked and the
+   setup drops in below. The page never changes height and never scrolls. */
+.play-page {
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.play-page .play-head { flex: 0 0 auto; margin-top: 0; }
+.play-page .play-head .menu-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
+.play-page .menu-col { width: min(720px, 100%); flex: 1 1 auto; min-height: 0; gap: 10px; }
+.play-page .play-modes {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+}
+/* The setup stays folded away until CLASSIC is picked — then it drops straight
+   in (fade + slide down, the same beat as the card shrink) and fills the
+   leftover height, its controls centred as one group. */
+.nf-play-entry { display: none; }
+.play-page.mode-picked .nf-play-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  justify-content: center;
+  animation: nf-drop 0.3s ease-out backwards;
+}
+/* picked: the cards collapse into a compact emblem strip. Their own padding /
+   gap transitions carry the shrink — min-height is deliberately NOT transitioned
+   so the strip can never sit under the setup and push the screen past the frame. */
+.play-page.mode-picked .play-modes { flex: 0 0 auto; gap: 8px; }
+.play-page.mode-picked .mode-card {
+  min-height: 0;
+  padding: 9px 12px;
+  flex-direction: row;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 12px;
+}
+.play-page.mode-picked .mode-ico { width: 30px; aspect-ratio: 1; border-radius: 32%; }
+.play-page.mode-picked .mode-ico svg { width: 18px; height: 18px; }
+.play-page.mode-picked .mode-card .mode-name { font-size: 13px; letter-spacing: 0.16em; }
+.play-page.mode-picked .mode-card .mode-desc,
+.play-page.mode-picked .mode-card .mode-tag { display: none; }
+.play-page.mode-picked .mode-card .mode-badge {
+  position: static;
+  width: auto;
+  margin: 0;
+  padding: 2px 7px;
+  font-size: 8.5px;
+}
+@keyframes nf-drop {
+  from { opacity: 0; transform: translateY(-14px); }
+  to { opacity: 1; transform: none; }
+}
+/* Very short screens: the picked setup trims its status line first. */
+@media (max-height: 640px) {
+  .play-page .nf-play-note { display: none; }
+}
+
+/* ------------------------------------------------ PARTY (the official lobby screen) */
+/* CREATE PARTY lands on a menu page of its own, dressed exactly like the in-game
+   P2P lobby: title + format chip, the [SHARE][COPY][CODE] chrome pinned top-right,
+   the lit stage carrying the 3D line-up, tinted seats and the FIND MATCH / LEAVE
+   action row. Nothing is embedded in the lobby entry. */
+.party-page {
+  position: relative; /* the code chrome pins to the page's top-right, like the lobby */
+  gap: 6px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.party-page .lobby-head { flex: 0 0 auto; }
+.party-page .lobby-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
+.party-page .party-codebar {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  z-index: 4;
+}
+.party-page .lobby-panel { flex: 1 1 auto; min-height: 0; }
+.party-page .lobby-lineup { flex: 1 1 auto; min-height: 0; }
+/* The rail keeps the IN-GAME lobby's own sizing (styles.ui.css): flex-grow up to
+   204px — the line-up is the hero of this screen, exactly like the lobby menu. */
+.party-page .seat-card { border-color: color-mix(in srgb, var(--seat-col, var(--ui-border)) 52%, transparent); }
+/* The CLASSIC flow screens (play, setup, party) wear the in-game menu dress: no
+   account chrome above them — the wordmark rises to the very top and the back
+   chevron floats over the corner. */
+.nf-shell.bare-mode .nf-chrome { height: 0; padding-top: 0; padding-bottom: 0; background: none; }
+.nf-shell.bare-mode .nf-back {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: calc(12px + env(safe-area-inset-left, 0px));
+  z-index: 30;
+}
+/* short screens: keep the whole party on one page — trim the luxuries first */
+@media (max-height: 820px) {
+  .party-page .lobby-title { font-size: clamp(30px, 6.4vh, 48px); }
+  .party-page .seat-state { display: none; }
+}
+/* compact panels so the whole flow fits a phone frame without vertical scrolling */
+.play-page .nf-play-enter { gap: 8px; padding: 10px; }
+@media (max-height: 880px) {
+  .play-page .menu-title { font-size: clamp(30px, 6.4vh, 48px); }
+  .play-page .menu-sub { margin-bottom: 8px; }
+}
+
+.nf-play-body { display: grid; gap: 14px; }
+.nf-lobby { display: flex; flex-direction: column; gap: 10px; }
+/* the account colony — ONE row; official matches always use it */
+.nf-colony-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: rgba(18, 12, 30, 0.58);
+}
+.nf-colony-row-label { font-size: 10px; letter-spacing: 0.22em; color: var(--ui-text-muted); }
+.nf-colony-row-name { font-weight: 900; letter-spacing: 0.08em; color: var(--nf-colony, var(--ui-accent)); }
+/* the standalone action row: FIND MATCH (official) / PLAY SOLO (P2P) — full width */
+.nf-play-actions { display: flex; gap: 10px; }
+.nf-play-actions .btn { flex: 1 1 0; justify-content: center; }
+/* the party / lobby row: [code input][JOIN][CREATE …] on ONE line */
+.nf-play-row { display: flex; gap: 10px; }
+
+.nf-rank {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 18px; border-radius: 16px;
+  background: var(--ui-panel); border: 1px solid var(--ui-border);
+}
+.nf-rank-medal { color: var(--ui-gold); font-size: 22px; }
+.nf-rank-label { font-weight: 800; letter-spacing: 0.08em; }
+.nf-rank-soon { font-size: 10px; letter-spacing: 0.14em; color: var(--ui-gold); border: 1px solid rgba(255, 209, 102, 0.5); padding: 2px 8px; border-radius: 999px; }
+
+/* ---------------------------------------------------------------- queue / confirm */
+.queue-page { align-items: center; text-align: center; }
+.nf-queue { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.nf-queue-title { letter-spacing: 0.24em; font-size: 12px; color: var(--ui-text-muted); }
+.nf-queue-clock { font-size: clamp(40px, 10vw, 64px); font-weight: 900; font-variant-numeric: tabular-nums; }
+.nf-queue-message { color: var(--ui-text-muted); }
+
+.nf-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 4100;
+  display: grid;
+  place-items: center;
+  background: rgba(4, 2, 10, 0.62);
+  backdrop-filter: blur(6px);
+}
+.nf-modal-card {
+  width: min(560px, 94vw);
+  border-radius: 22px;
+  padding: 20px;
+  background: var(--ui-panel-strong);
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.nf-modal-title { margin: 0; letter-spacing: 0.12em; }
+.nf-confirm { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
+.nf-confirm-title { font-size: 24px; font-weight: 900; letter-spacing: 0.1em; }
+.nf-confirm-sub { color: var(--ui-text-muted); font-size: 13px; }
+.nf-confirm-seats { display: flex; gap: 18px; justify-content: center; width: 100%; }
+.nf-confirm-colony {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--nf-colony) 55%, transparent);
+  background: color-mix(in srgb, var(--nf-colony) 12%, transparent);
+}
+.nf-confirm-colony-name { font-size: 11px; letter-spacing: 0.12em; color: var(--nf-colony); }
+.nf-confirm-seat {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  color: var(--ui-text-muted);
+  font-size: 14px;
+}
+.nf-confirm-seat.me { border-color: #ffffff; color: #ffffff; }
+.nf-confirm-seat.ok { border-color: var(--ui-accent-2); color: var(--ui-accent-2); }
+.nf-confirm-countdown { font-size: 44px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.nf-confirm-countdown.urgent { color: #ff5c7a; animation: nf-pulse 0.6s infinite alternate; }
+@keyframes nf-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
+.nf-confirm-btn {
+  width: 100%;
+  min-height: 60px;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: linear-gradient(160deg, #29e0b5, #159c86);
+  color: #04241d;
+  cursor: pointer;
+}
+.nf-confirm-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* ---------------------------------------------------------------- profile */
+.nf-profile-head { display: flex; flex-direction: column; gap: 10px; }
+.nf-profile-id { display: flex; align-items: center; gap: 14px; }
+.nf-profile-code-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.nf-profile-code-label { font-size: 10px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
+.nf-profile-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: rgba(10, 6, 20, 0.6);
+  border: 1px dashed rgba(170, 130, 255, 0.5);
+  color: var(--ui-accent-2);
+}
+.nf-code-btn { min-height: 34px; padding: 6px 10px; font-size: 11px; letter-spacing: 0.1em; }
+.nf-profile-avatar {
+  width: 74px; height: 74px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 28px; font-weight: 900;
+  background: linear-gradient(145deg, var(--ui-accent), #37207a);
+  border: 3px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.nf-profile-who { display: flex; flex-direction: column; }
+.nf-profile-name { margin: 0; font-size: clamp(22px, 4vw, 32px); }
+.nf-profile-handle { color: var(--ui-text-muted); font-size: 13px; }
+.nf-profile-level { font-size: 12px; color: var(--ui-text-muted); }
+.nf-profile-colony { font-weight: 800; color: var(--nf-colony, var(--ui-accent)); letter-spacing: 0.1em; }
+.nf-profile-actions { display: flex; gap: 10px; }
+.nf-profile-editor { display: flex; flex-direction: column; gap: 10px; }
+.nf-edit-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.nf-edit-label { width: 64px; font-size: 11px; letter-spacing: 0.16em; color: var(--ui-text-muted); }
+.nf-avatar-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+.nf-chip {
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+.nf-chip:hover { border-color: rgba(210, 170, 255, 0.55); }
+.nf-chip:active { transform: scale(0.95); }
+.nf-chip.on {
+  border-color: var(--ui-accent-2);
+  color: var(--ui-accent-2);
+  box-shadow: 0 0 14px rgba(70, 224, 200, 0.25);
+}
+/* colony chips carry their own colour (--nf-colony set inline) */
+.nf-chip-colony {
+  min-width: 0;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  color: var(--nf-colony, var(--ui-text));
+}
+.nf-chip-colony.on {
+  border-color: var(--nf-colony);
+  color: var(--nf-colony);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--nf-colony) 45%, transparent);
+}
+/* own-profile friends list */
+.nf-friends-grid { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+
+.nf-profile-section { display: flex; flex-direction: column; gap: 10px; }
+.nf-section-title { margin: 0; font-size: 13px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
+.nf-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.nf-stat {
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.nf-stat-k { font-size: 11px; color: var(--ui-text-muted); }
+.nf-stat-v { font-size: 18px; font-weight: 800; }
+
+.nf-social-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.nf-social-chip {
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  padding: 10px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.nf-social-v { font-size: 20px; font-weight: 800; }
+.nf-social-k { font-size: 11px; color: var(--ui-text-muted); }
+
+.nf-medals { display: flex; gap: 10px; flex-wrap: wrap; }
+.nf-medal {
+  width: 110px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.nf-medal-icon { font-size: 22px; color: var(--ui-text-muted); }
+.nf-medal-name { font-size: 11px; }
+.nf-medal-soon { font-size: 9px; letter-spacing: 0.14em; color: var(--ui-text-muted); }
+
+.nf-history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-left: 4px solid var(--ui-text-muted);
+}
+.nf-history-row.win { border-left-color: var(--ui-accent-2); }
+.nf-history-row.loss { border-left-color: #ff5c7a; }
+.nf-history-result { font-weight: 900; letter-spacing: 0.08em; width: 52px; }
+.nf-history-time { font-variant-numeric: tabular-nums; color: var(--ui-text-muted); }
+.nf-history-stats { flex: 1; font-size: 13px; }
+.nf-history-reward { color: var(--ui-gold); font-weight: 700; }
+
+.nf-collection-grid { display: flex; gap: 10px; flex-wrap: wrap; }
+.nf-item {
+  width: 96px;
+  padding: 10px;
+  border-radius: 14px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.nf-item.equipped { border-color: var(--ui-accent-2); }
+.nf-item-icon { font-size: 20px; color: var(--ui-gold); }
+.nf-item-name { font-size: 11px; }
+.nf-item-badge { font-size: 9px; color: var(--ui-accent-2); letter-spacing: 0.1em; }
+
+.nf-viewers { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------------------------------------------------------------- friends */
+/* The FIXED friends rail: a slim glass strip of avatars beside the content on
+   every width; on wide screens it widens into the full panel (names, status,
+   sections). It is the ONLY friends surface — nothing else duplicates it. */
+.nf-rail {
+  position: fixed;
+  top: 68px;
+  right: 10px;
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  width: 62px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: 20px;
+  background: rgba(14, 9, 26, 0.5);
+  border: 1px solid var(--ui-border);
+  backdrop-filter: blur(9px);
+  overflow: hidden;
+}
+/* compact: avatars only — names live in the tooltip-sized meta */
+.nf-rail .nf-card {
+  justify-content: center;
+  padding: 4px;
+  border-left-width: 0;
+  border-color: transparent;
+  background: transparent;
+}
+.nf-rail .nf-card:hover { background: rgba(90, 60, 150, 0.28); }
+.nf-rail .nf-card-col { display: none; }
+.nf-rail .nf-avatar { width: 42px; height: 42px; }
+/* the slim strip hides the head entirely; the find button lives in the footer */
+.nf-rail .nf-friends-head { display: none; }
+.nf-rail .nf-friend-section { display: none; }
+.nf-rail .nf-friends-panel { flex: 1; min-height: 0; }
+.nf-rail .nf-friend-list { max-height: none; flex: 1; }
+/* empty state: the strip stays, showing a single faint pulsing mote instead of a wall of text */
+.nf-rail:not(:has(.nf-card)) .nf-muted { font-size: 0; text-align: center; margin: 4px 0; }
+.nf-rail:not(:has(.nf-card)) .nf-muted::after {
+  content: '';
+  display: block;
+  width: 9px;
+  height: 9px;
+  margin: 10px auto;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  opacity: 0.55;
+  box-shadow: 0 0 14px rgba(154, 107, 255, 0.8);
+}
+.nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes nf-panel-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+
+.nf-friends-panel { display: flex; flex-direction: column; gap: 8px; }
+.nf-friends-head { display: flex; align-items: center; justify-content: space-between; }
+.nf-friends-title { font-size: 11px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
+.nf-friend-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow: auto; }
+.nf-friend-section { font-size: 10px; letter-spacing: 0.16em; color: var(--ui-text-muted); margin-top: 4px; }
+
+.nf-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  border-left: 3px solid var(--nf-card-accent, var(--ui-accent));
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  cursor: pointer;
+  text-align: left;
+}
+.nf-card:hover { background: rgba(60, 40, 100, 0.5); }
+.nf-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  position: relative;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.3));
+}
+.nf-dot {
+  position: absolute;
+  right: -1px; bottom: -1px;
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid #140c22;
+  background: #5a5a72;
+}
+.nf-dot.online { background: #37e0a2; }
+.nf-dot.in-match { background: #57a7ff; }
+.nf-card-col { display: flex; flex-direction: column; min-width: 0; }
+.nf-card-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nf-card-meta { font-size: 11px; color: var(--ui-text-muted); }
+
+/* the find-players button (rail footer): compact, always tappable */
+.nf-friends-foot {
+  display: flex;
+  justify-content: center;
+  padding-top: 6px;
+  margin-top: auto;
+}
+.nf-friends-foot .nf-friends-add { min-width: 46px; min-height: 40px; }
+.nf-friends-add {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--ui-accent-2);
+  border: 1px solid color-mix(in srgb, var(--ui-accent-2) 45%, transparent);
+  border-radius: 12px;
+}
+.nf-friends-add:hover { background: rgba(70, 224, 200, 0.14); }
+
+/* ------------------------------------------------ find survivors (player search) */
+.nf-search-card { align-items: stretch; gap: 10px; }
+.nf-search-head { display: flex; align-items: center; justify-content: space-between; }
+.nf-search-title { margin: 0; font-size: 14px; letter-spacing: 0.24em; }
+.nf-search-hint { margin: 0; }
+.nf-search-results { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow: auto; }
+.nf-search-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  cursor: pointer;
+  text-align: left;
+}
+.nf-search-row:hover { background: rgba(60, 40, 100, 0.5); }
+.nf-search-avatar {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: grid; place-items: center; font-weight: 800;
+  background: linear-gradient(145deg, var(--ui-accent), #4a2a8f);
+}
+.nf-search-col { display: flex; flex-direction: column; min-width: 0; }
+.nf-search-name { font-weight: 700; font-size: 14px; }
+.nf-search-meta { font-size: 11px; color: var(--ui-text-muted); letter-spacing: 0.06em; }
+
+/* ------------------------------------------------ controls sheet (remapping) */
+.nf-controls-card { align-items: stretch; gap: 10px; }
+.nf-controls-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow: auto; }
+.nf-control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+}
+.nf-control-name { flex: 1; font-size: 13px; }
+.nf-control-key {
+  min-width: 92px;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(10, 6, 20, 0.6);
+  border: 1px dashed rgba(170, 130, 255, 0.5);
+  color: var(--ui-accent-2);
+}
+.nf-control-key.listening {
+  border-style: solid;
+  border-color: var(--ui-gold);
+  color: var(--ui-gold);
+  animation: nf-play-pulse 1.6s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------- bottom nav */
+/* The FLOATING pill: hovers above the world instead of fencing the screen; the
+   PLAY hero pops OUT of the bar (negative margin) so the bar itself stays slim. */
+.nf-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+  /* never wider than 3/4 of the screen */
+  width: min(640px, 75vw);
+  padding: 7px 12px;
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(26, 17, 44, 0.82), rgba(10, 6, 19, 0.92));
+  border: 1px solid rgba(170, 130, 255, 0.3);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(12px);
+  animation: nf-nav-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes nf-nav-in {
+  from { opacity: 0; transform: translate(-50%, 16px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.nf-bottom-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 0 1 auto;
+  min-width: 58px;
+  min-height: 52px;
+  padding: 7px 6px 5px;
+  border-radius: 16px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.18s ease, background 0.18s ease, border-color 0.18s ease, transform 0.12s ease;
+}
+.nf-bottom-btn:hover { color: var(--ui-text); background: rgba(90, 60, 150, 0.24); }
+.nf-bottom-btn:active { transform: scale(0.94); }
+.nf-bottom-btn.on { color: var(--ui-text); background: var(--ui-panel); border-color: var(--ui-border); }
+.nf-bottom-icon { display: grid; place-items: center; width: 23px; height: 23px; }
+.nf-bottom-icon svg { width: 100%; height: 100%; display: block; transition: filter 0.2s ease; }
+.nf-bottom-btn.on .nf-bottom-icon svg { filter: drop-shadow(0 0 8px rgba(180, 120, 255, 0.75)); }
+.nf-bottom-label { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the hero button: raised, glowing, pulse-animated — pinned to the RIGHT end of the bar */
+.nf-bottom-play {
+  margin-left: auto;
+  flex: 0 0 152px;
+  width: 152px;
+  height: 84px;
+  min-height: 84px;
+  margin-top: -46px;
+  border-radius: 34px;
+  padding: 0;
+  gap: 2px;
+  border: 2px solid rgba(226, 206, 255, 0.8);
+  background: radial-gradient(circle at 34% 28%, #c39cff, #7b3ff2 52%, #401c8c 100%);
+  color: #fff;
+  box-shadow: 0 0 0 7px rgba(120, 70, 220, 0.16), 0 16px 40px rgba(140, 80, 255, 0.5);
+  animation: nf-play-pulse 2.6s ease-in-out infinite;
+}
+.nf-bottom-play:hover { background: radial-gradient(circle at 34% 28%, #d5b6ff, #8a4dff 52%, #4a2199 100%); }
+.nf-bottom-play.on {
+  background: radial-gradient(circle at 34% 28%, #d5b6ff, #8a4dff 52%, #4a2199 100%);
+  border-color: #fff;
+}
+.nf-bottom-play .nf-bottom-icon { width: 34px; height: 34px; margin-left: 2px; }
+.nf-bottom-play .nf-bottom-label { font-size: 12px; letter-spacing: 0.26em; color: rgba(255, 255, 255, 0.94); }
+
+/* the back chevron: how child screens (play, queue, profile) return home */
+.nf-back {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.18s ease, border-color 0.18s ease;
+}
+.nf-back:hover { background: rgba(90, 60, 150, 0.35); border-color: rgba(210, 170, 255, 0.5); }
+.nf-back:active { transform: scale(0.92); }
+.nf-back svg { width: 20px; height: 20px; display: block; }
+
+/* ---------------------------------------------------------------- loading */
+.loading-page { justify-content: center; align-items: center; text-align: center; gap: 14px; padding-top: 8vh; }
+.nf-loading-colonies { display: flex; gap: 14px; align-items: center; font-weight: 900; letter-spacing: 0.14em; }
+.nf-loading-colony:nth-child(1) { color: var(--colony-a); }
+.nf-loading-colony:nth-child(3) { color: var(--colony-b); }
+.nf-loading-colony:nth-child(5) { color: var(--colony-c); }
+.nf-loading-vs { color: var(--ui-text-muted); font-size: 12px; }
+.nf-loading-title { font-size: 20px; letter-spacing: 0.1em; }
+.nf-loading-players { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.nf-loading-player {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--nf-colony) 60%, transparent);
+  background: color-mix(in srgb, var(--nf-colony) 14%, transparent);
+  font-size: 13px;
+}
+.nf-loading-player.me { border-color: #fff; }
+
+/* ---------------------------------------------------------------- toasts + pill */
+.nf-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 132px;
+  transform: translateX(-50%);
+  z-index: 4600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.nf-toast {
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--ui-panel-strong);
+  border: 1px solid var(--ui-border);
+  font-size: 13px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+.nf-toast.out { opacity: 0; transform: translateY(8px); }
+
+.nf-pill {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 3950;
+  min-height: 44px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel-strong);
+  color: var(--ui-text);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------- desktop */
+@media (min-width: 960px) {
+  /* Center the page in the space LEFT of the friend rail. */
+  .nf-main { padding: 12px 232px 108px 24px; justify-content: center; }
+  .nf-rail {
+    top: 68px;
+    right: 14px;
+    bottom: 116px;
+    width: 200px;
+    padding: 12px;
+    border-radius: 18px;
+    gap: 8px;
+  }
+  /* the full panel: rows get their cards, names, sections and status metadata back */
+  .nf-rail .nf-card {
+    justify-content: flex-start;
+    padding: 8px 10px;
+    border-left-width: 3px;
+    border-color: var(--ui-border);
+    border-left-color: var(--nf-card-accent, var(--ui-accent));
+    background: var(--ui-panel);
+  }
+  .nf-rail .nf-card-col { display: flex; }
+  .nf-rail .nf-avatar { width: 34px; height: 34px; }
+  .nf-rail .nf-friends-head { display: flex; justify-content: space-between; }
+  .nf-rail .nf-friend-section { display: block; }
+  .nf-rail .nf-friend-list { max-height: 52vh; }
+  .nf-rail:not(:has(.nf-card)) .nf-muted { font-size: 13px; }
+  .nf-rail:not(:has(.nf-card)) .nf-muted::after { content: none; }
+  .nf-toasts { bottom: 132px; }
+}
+
+@media (max-width: 959px) {
+  /* content never slides under the fixed friends strip */
+  .nf-main { padding-right: 82px; }
+}
+
+/* ---------------------------------------------------------------- phone tightening */
+@media (max-width: 620px) {
+  .nf-page { gap: 10px; }
+  .nf-top-who { display: none; }
+  .nf-stat-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+  .nf-confirm-seats { gap: 8px; }
+  .nf-hero { padding: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-confirm-countdown.urgent { animation: none; }
+  .nf-page, .nf-rail, .nf-bottom { animation: none; }
+  .play-page .nf-play-entry { animation: none; }
+}
+
+/* Child screens own their full canvas — nothing to clear for the floating bar. */
+.nf-shell.no-nav .nf-main { padding-bottom: 56px; }
+
+/* the profile page reads to the very last section: the page box must GROW with its
+   content (a stretched flex item overflows its own box, so its padding-bottom would
+   never show below the last section — that was the "cut off" bottom). */
+.profile-page { align-self: flex-start; padding-bottom: 48px; }

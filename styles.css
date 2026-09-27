@@ -1,0 +1,2905 @@
+/* NECROFALL — UI stylesheet */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0b0812;
+  --panel: rgba(22, 14, 34, 0.92);
+  --panel2: rgba(32, 21, 48, 0.92);
+  --line: rgba(150, 110, 255, 0.28);
+  --txt: #e9e2f2;
+  --muted: #9a8fb0;
+  --accent: #b45cff;
+  --accent2: #4dffa6;
+  --warn: #ffb037;
+  --danger: #ff3d5a;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  /* No double-tap-to-zoom anywhere on the page; pan/pinch stay allowed (that is `manipulation`,
+     not `none`). See the note above #app for why mixing values is what used to break this. */
+  touch-action: manipulation;
+}
+
+/* ---- touch-action: one value for the whole chain, `none` ONLY on the drag surfaces.
+
+   WebKit combines the touch-action of the touched element with its ancestors by INTERSECTING the
+   values bit by bit (WKTouchActionGestureRecognizer, WebCore::TouchAction), and it disallows
+   double-tap-to-zoom only when the resulting set still contains `none` or `manipulation`:
+
+       touchActionAllowsDoubleTapToZoom(a) => !a.containsAny({ None, Manipulation })   [WebKit]
+
+   `None` is its own flag, so `Manipulation ∩ None` = EMPTY — neither flag survives, and WebKit
+   allows the double tap again. One `none` between the finger and the document therefore re-enables
+   double-tap zoom for EVERYTHING under it, however correct the values below it look.
+
+   That was the iOS in-game zoom: `#app { touch-action: none }` poisoned the canvas (the surface the
+   fingers land on beside the round buttons — the menus are fully covered by .screen, which is why
+   the menu never zoomed). The rule is now: the whole chain (html, body, #app, #ui, .mobile, .mbtn
+   and its children) asks for `manipulation`, and only a real drag surface asks for `none` — at the
+   very bottom of the chain, where no button lives under it. The canvas IS such a surface on touch:
+   the floating movement stick starts wherever a thumb lands on the world, and a pan gesture the
+   browser interpreted as "maybe scroll" would fire `pointercancel` and drop the stick mid-drag.
+   `none` on the canvas cannot re-enable double-tap zoom for anything else either — the canvas is a
+   SIBLING of #ui, never an ancestor of a button, so the intersection above it is untouched. */
+#app { position: fixed; inset: 0; touch-action: manipulation; }
+#app canvas { display: block; touch-action: none; }
+
+/* Every button opts out of the double tap explicitly, and asks for the other two niceties that make
+   a thumb tap behave: no text selection, no long-press callout. Not `none` — that is reserved for
+   the joystick, the one control that is a drag surface from edge to edge. */
+button {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* ==========================================================================
+   iOS "immersive" fullscreen fallback (ui/Fullscreen.ts toggles the class).
+   iPhone Safari has no Element Fullscreen API, and the only page-level way to make it collapse
+   its address / tool bars is to give the document something to scroll: exactly one extra pixel.
+   Everything the game draws is `position: fixed`, so nothing moves — only the browser chrome
+   goes away. `overscroll-behavior` keeps the rubber banding out of it.
+   ========================================================================== */
+html.nf-immersive {
+  height: auto;
+  min-height: calc(100% + 1px);
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+html.nf-immersive body {
+  height: auto;
+  min-height: 100%;
+}
+
+#ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+/* `manipulation` is the one touch-action WebKit reliably honours for "no double-tap to zoom". It is
+   the value of every layer the fingers cross — #ui, `.mobile` and the buttons — because WebKit
+   intersects that chain and a single `none` in it loses the opt-out (see styles.mobile.css). */
+#ui { touch-action: manipulation; }
+#ui > * { pointer-events: none; }
+/* the UI layer is click-through by default, so text fields must opt back in */
+#ui input,
+#ui textarea,
+.menu-name { pointer-events: auto; }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.accent { color: var(--accent); }
+.accent2 { color: var(--accent2); }
+.warn { color: var(--warn); }
+.danger { color: var(--danger); }
+.flex { display: flex; align-items: center; }
+.spacer { flex: 1; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+
+/* ============ SCREENS ============ */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  background: radial-gradient(ellipse at 50% 25%, rgba(74, 26, 112, 0.55), rgba(8, 5, 14, 0.95) 72%);
+  padding: calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right))
+    calc(14px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left));
+  overflow: hidden;
+}
+
+.screen.scroll { justify-content: flex-start; overflow-y: auto; }
+
+.menu-title {
+  font-size: clamp(40px, 9vw, 92px);
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #f3e9ff, #a45cff 65%, #5a2b8f);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 42px rgba(160, 80, 255, 0.35);
+  margin-bottom: 4px;
+}
+.menu-sub {
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  font-size: clamp(10px, 2vw, 13px);
+  color: var(--muted);
+  margin-bottom: 34px;
+}
+
+.menu-col { display: flex; flex-direction: column; gap: 12px; width: min(420px, 88vw); }
+
+/* ---------- graphics level (main menu) ---------- */
+.graphics-row {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 12px 10px;
+  border: 1px solid rgba(170, 130, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(18, 12, 30, 0.55);
+}
+.graphics-label {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.graphics-opts { display: flex; gap: 6px; }
+.graphics-opts .opt {
+  flex: 1 1 0;
+  pointer-events: auto;
+  padding: 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: inherit;
+  color: var(--txt);
+  background: rgba(28, 20, 44, 0.85);
+  border: 1px solid rgba(170, 130, 255, 0.22);
+  border-radius: 7px;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+.graphics-opts .opt:hover { border-color: rgba(210, 170, 255, 0.6); }
+.graphics-opts .opt.active {
+  color: #ffffff;
+  border-color: rgba(226, 200, 255, 0.8);
+  background: linear-gradient(180deg, rgba(146, 70, 255, 0.9), rgba(84, 34, 150, 0.9));
+  box-shadow: 0 0 16px rgba(180, 92, 255, 0.35);
+}
+.graphics-note { font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+
+/* Short viewports (a phone held in landscape): the menu has to keep fitting on one screen. */
+@media (max-height: 700px) {
+  .menu-title { font-size: clamp(30px, 6vw, 54px); margin-bottom: 2px; }
+  .menu-sub { margin-bottom: 14px; }
+  .menu-col .btn { padding: 11px 20px; }
+  .graphics-row { margin-top: 8px; padding: 8px 10px 7px; gap: 5px; }
+  .graphics-opts .opt { padding: 7px 4px; }
+  .graphics-note { display: none; }
+}
+
+.btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 20px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--txt);
+  background: linear-gradient(180deg, rgba(70, 40, 110, 0.85), rgba(40, 22, 66, 0.9));
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.07s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.btn:hover { border-color: var(--accent); box-shadow: 0 0 22px rgba(180, 92, 255, 0.28); }
+.btn:active { transform: translateY(1px) scale(0.99); }
+.btn.primary { background: linear-gradient(180deg, rgba(146, 70, 255, 0.95), rgba(84, 34, 150, 0.95)); border-color: rgba(220, 190, 255, 0.5); }
+.btn.ghost { background: rgba(20, 14, 32, 0.6); }
+.btn.small { padding: 8px 12px; font-size: 12px; letter-spacing: 0.1em; }
+.btn:disabled { opacity: 0.4; cursor: default; box-shadow: none; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 18px;
+  width: min(760px, 94vw);
+  max-height: 78vh;
+  overflow-y: auto;
+  pointer-events: auto;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.5);
+}
+.panel-title {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  color: #d9c7ff;
+}
+.panel h3 { font-size: 14px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin: 16px 0 6px; }
+.panel p, .panel li { font-size: 14px; line-height: 1.55; color: #cfc6dd; }
+.panel ul { margin-left: 18px; }
+.panel .kbd, .kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: rgba(50, 34, 74, 0.8);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #efe7ff;
+  margin: 0 2px;
+}
+
+/* ============ LOBBY ============ */
+.lobby-code {
+  font-family: Consolas, monospace;
+  font-size: clamp(26px, 6vw, 46px);
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  color: var(--accent2);
+  text-shadow: 0 0 26px rgba(77, 255, 166, 0.35);
+  margin: 6px 0 2px;
+}
+/* The player's own READY toggle, while it is on. */
+.btn.on { border-color: var(--accent2); color: var(--accent2); box-shadow: 0 0 16px rgba(77, 255, 166, 0.28); }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 10px currentColor; background: currentColor; }
+
+/* ============ SELECTION ============ */
+.sel-head { text-align: center; margin-bottom: 14px; }
+.sel-title { font-size: clamp(22px, 4vw, 34px); font-weight: 900; letter-spacing: 0.24em; text-transform: uppercase; }
+.sel-timer { font-family: Consolas, monospace; font-size: 30px; font-weight: 900; color: var(--warn); }
+.sel-sub { color: var(--muted); font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; margin-top: 4px; }
+
+/* Live 3D preview (ui/SelectionPreview.ts): the colony champions, or the hovered class's weapon.
+   It is deliberately NOT a panel: the models stand straight on the selection screen's own
+   backdrop — one shared background for the whole screen, never a box of its own behind the
+   avatars — so the canvas is transparent and the wrapper has no frame, fill or glow. */
+.sel-preview {
+  position: relative;
+  flex: 0 0 auto;              /* a scrolling screen must never squash the viewport away */
+  width: min(640px, 92vw);
+  height: clamp(124px, 21vh, 226px);
+  margin: 0 auto 12px auto;
+  background: none;
+  border: 0;
+  overflow: visible;
+}
+/* The champion / weapon stage is the whole point of these two screens, so it is never hidden — a
+   short viewport just gets a shorter stage and scrolls (the screens are scroll containers now).
+   The OLD rule here was `@media (max-height: 520px) { display: none }`, which blanked the preview
+   on EVERY landscape phone while the customize avatar — same class, but a later `display: block`
+   of its own — stayed visible, so only these two screens looked broken. */
+.sel-preview-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+
+.bar { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 4px; overflow: hidden; border: 1px solid rgba(150, 110, 255, 0.2); }
+.bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width 0.12s linear; }
+
+/* ---- colony cards: a lit crest, the colony's own colour, and what it actually does */
+.cards { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; align-items: stretch; }
+.card {
+  pointer-events: auto;
+  position: relative;
+  width: min(248px, 28vw);
+  min-width: 196px;
+  padding: 18px 16px 14px;
+  border: 1px solid rgba(150, 120, 220, 0.25);
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 70% at 50% -10%, var(--a15), transparent 72%),
+    linear-gradient(180deg, rgba(36, 22, 56, 0.82), rgba(16, 10, 28, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 26px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: center;
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+}
+.card::before {                 /* the colony's colour as a top rail */
+  content: '';
+  position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: linear-gradient(90deg, transparent, var(--col), transparent);
+  opacity: 0.8;
+}
+.card:hover {
+  transform: translateY(-4px);
+  border-color: var(--a55);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45), 0 0 22px var(--a35);
+}
+.card.sel {
+  border-color: var(--col);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5), 0 0 30px var(--a35);
+}
+.card.full { opacity: 0.42; cursor: not-allowed; filter: saturate(0.55); }
+.card.full:hover { transform: none; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35); }
+.colony-crest {
+  width: 76px; height: 76px; margin: 2px auto 10px auto;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--a55);
+  background: radial-gradient(62% 62% at 50% 46%, var(--a15), transparent 74%);
+  box-shadow: inset 0 0 20px var(--a15);
+}
+.colony-sym { font-size: 36px; line-height: 1; text-shadow: 0 0 20px currentColor; }
+.card h4 { font-size: 21px; letter-spacing: 0.2em; margin-bottom: 6px; text-shadow: 0 0 24px var(--a55); }
+.card .desc { font-size: 12px; color: var(--muted); line-height: 1.5; min-height: 36px; }
+.card .bonus { display: flex; flex-direction: column; gap: 5px; margin-top: 11px; }
+.card .bonus-row {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 9px; border-radius: 8px;
+  font-size: 11.5px; color: #d6cde8; text-align: left;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.card .bonus-row i { font-style: normal; font-size: 9px; }
+.card .bonus-row.pos i { color: #63e08b; }
+.card .bonus-row.neg i { color: #ff6b78; }
+/* The seat count rides the card's TOP-RIGHT corner. It used to sit under the bonus list, adding
+   ~24px to every card (user request: 0/3 up top, shorter cards) — and on a phone every one of
+   those pixels was a step towards a scrolling colony screen. */
+.card .count-badge {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  font-family: Consolas, monospace;
+  font-size: 13px; font-weight: 800; letter-spacing: 0.08em;
+}
+.card .count-badge span { color: var(--muted); font-weight: 600; }
+/* The SELECTED stamp hugs the BOTTOM-RIGHT corner — with the count in the top-right, the old
+   top-right ribbon sat right on top of it whenever the colony was picked. */
+.card .pick-tag {
+  position: absolute; bottom: 12px; right: -34px; transform: rotate(-38deg);
+  padding: 3px 36px;
+  background: var(--col); color: #100a18;
+  font-size: 9px; font-weight: 900; letter-spacing: 0.14em;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.card.sel .pick-tag { opacity: 1; }
+
+/* ---- necrotech cards: class icon, role, the numbers as chips, one block per ability.
+   The list is ONE HORIZONTAL STRIP: the cards grow to share a wide screen and the strip scrolls
+   SIDEWAYS when they no longer fit — picking a class is a row to sweep, never a page to scroll.
+   The strip is CONTENT-SIZED (flex: 0 0 auto): every card is at least as tall as its own details,
+   so nothing inside a card is ever clipped — the weapon stage above absorbs the leftover height. */
+.nt-grid {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 12px;
+  width: min(1080px, 96vw);
+  margin: 0 auto;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* the strip's top edge is a CLIP edge (overflow-x: auto forces a clip on the cross axis), and a
+     card lifts 3px on hover with a 20px glow — with 2px of padding the card's top border and the
+     glow above a picked card were sliced flat. The 8px of headroom is paired with an 8px deeper
+     tuck in styles.ui.css, so the cards sit in EXACTLY the same place. */
+  padding: 10px 4px 12px;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+.nt-card {
+  flex: 1 1 280px;
+  min-width: 240px;
+  pointer-events: auto;
+  position: relative;
+  border: 1px solid rgba(150, 120, 220, 0.25);
+  border-radius: 12px;
+  background:
+    radial-gradient(120% 60% at 18% -12%, var(--a15), transparent 70%),
+    linear-gradient(180deg, rgba(32, 19, 50, 0.92), rgba(15, 9, 26, 0.95));
+  padding: 12px 13px 13px 15px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.15s ease, transform 0.12s ease, box-shadow 0.2s ease;
+}
+.nt-card::before {                 /* the class colour as a left rail */
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, transparent, var(--col), transparent);
+  opacity: 0.85;
+}
+.nt-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--a55);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45), 0 0 20px var(--a35);
+}
+.nt-card.sel {
+  border-color: var(--col);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5), 0 0 26px var(--a35);
+}
+.nt-head { display: flex; align-items: center; gap: 10px; }
+.nt-icon {
+  width: 42px; height: 42px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: 11px;
+  border: 1px solid var(--a35);
+  background: radial-gradient(70% 70% at 50% 38%, var(--a15), transparent 76%);
+}
+.nt-icon svg { width: 26px; height: 26px; }
+.nt-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nt-name h4 { font-size: 15px; letter-spacing: 0.16em; }
+.nt-name .role { font-size: 8.5px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+.nt-pick {
+  margin-left: auto;
+  padding: 3px 7px; border-radius: 999px;
+  background: var(--col); color: #100a18;
+  font-size: 8.5px; font-weight: 900; letter-spacing: 0.14em;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.nt-card.sel .nt-pick { opacity: 1; }
+.nt-stats { display: flex; gap: 6px; margin-top: 10px; }
+.nt-stats span {
+  flex: 1; text-align: center; padding: 5px 4px 4px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: Consolas, monospace; font-size: 12px; font-weight: 800;
+}
+.nt-stats i {
+  display: block; margin-bottom: 1px;
+  font-style: normal; font-weight: 600;
+  font-size: 8px; letter-spacing: 0.14em; color: var(--muted);
+}
+.nt-rows { display: flex; flex-direction: column; gap: 9px; margin-top: 11px; }
+/* ONE row grammar for both homes of these rows: the CARDS (tag + name, no paragraph) and the
+   detail OVERLAY `.nt-expand` (the full text — see styles.ui.css). The overlay is NOT inside an
+   `.nt-card`, so every rule here has to name BOTH scopes or the expanded card renders as plain
+   unstyled text (no pills, no bold names) — which is exactly what it used to do. */
+.nt-card .row,
+.nt-expand .row { display: grid; grid-template-columns: auto 1fr; column-gap: 7px; row-gap: 3px; align-items: center; }
+.nt-card .row .tag,
+.nt-expand .row .tag {
+  grid-row: 1;
+  padding: 2px 6px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+  font-size: 8.5px; letter-spacing: 0.12em;
+}
+.nt-card .row b,
+.nt-expand .row b { font-size: 12px; letter-spacing: 0.05em; color: #fff; }
+/* the cards keep the paragraphs hidden — the overlay is the one place they show */
+.nt-card .row p { display: none; }
+.nt-card .row p,
+.nt-expand .row p { grid-column: 1 / -1; margin: 0; font-size: 11px; line-height: 1.45; color: #bdb2d2; }
+.nt-card .row.skill .tag,
+.nt-expand .row.skill .tag { color: #7fd4ff; border-color: rgba(127, 212, 255, 0.35); }
+.nt-card .row.ult .tag,
+.nt-expand .row.ult .tag { color: #ff9a5c; border-color: rgba(255, 154, 92, 0.35); }
+.nt-card .row.pass .tag,
+.nt-expand .row.pass .tag { color: #9dff9d; border-color: rgba(157, 255, 157, 0.3); }
+
+/* ============ HUD ============ */
+.hud { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.hud > * { position: absolute; }
+
+.timer {
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.timer .label { font-size: 10px; letter-spacing: 0.4em; color: var(--muted); }
+.timer .val { font-family: Consolas, monospace; font-size: clamp(24px, 3.6vw, 38px); font-weight: 900; letter-spacing: 0.06em; text-shadow: 0 2px 18px rgba(0, 0, 0, 0.8); }
+.timer .val.low { color: var(--danger); animation: pulse 0.9s infinite; }
+
+.score {
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
+  display: flex; flex-direction: column; gap: 4px;
+  background: rgba(12, 8, 20, 0.55);
+  border: 1px solid rgba(150, 110, 255, 0.18);
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 168px;
+}
+.score .row { display: flex; align-items: center; gap: 7px; }
+.score .row .bars { display: flex; gap: 3px; }
+.score .tick { width: 9px; height: 9px; border-radius: 2px; background: rgba(255,255,255,.12); }
+.score .tick.own { box-shadow: 0 0 8px currentColor; }
+.score .hint { font-size: 10px; color: var(--muted); letter-spacing: 0.08em; }
+
+.minimap-wrap {
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  border: 1px solid rgba(150, 110, 255, 0.25);
+  border-radius: 5px;
+  background: rgba(12, 8, 20, 0.6);
+  padding: 4px;
+}
+.minimap { display: block; width: clamp(120px, 17vw, 190px); height: auto; border-radius: 3px; }
+
+.hud-bottom {
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: min(620px, 92vw);
+}
+.bars-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+.hpbar-wrap { flex: 1; }
+.hpbar { height: 16px; border: 1px solid rgba(150, 110, 255, 0.3); border-radius: 3px; overflow: hidden; background: rgba(10, 6, 18, 0.8); position: relative; }
+.hpbar > i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #ff4d6d, #ff8ea1); transition: width 0.1s linear; }
+.hpbar .txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: Consolas, monospace; font-size: 11px; font-weight: 700; text-shadow: 0 1px 3px #000; }
+.xpbar { height: 7px; margin-top: 3px; border: 1px solid rgba(150, 110, 255, 0.22); border-radius: 3px; overflow: hidden; background: rgba(10, 6, 18, 0.8); }
+.xpbar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #6a5cff, #b45cff); transition: width 0.12s linear; }
+.lvl-badge { font-family: Consolas, monospace; font-weight: 900; font-size: 15px; color: var(--accent); min-width: 34px; text-align: center; }
+
+.abilities { display: flex; align-items: flex-end; gap: 8px; }
+.ability {
+  position: relative;
+  width: 62px; height: 62px;
+  border: 2px solid rgba(150, 110, 255, 0.4);
+  border-radius: 8px;
+  background: rgba(24, 14, 40, 0.85);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.ability .key { font-size: 9px; letter-spacing: 0.14em; color: var(--muted); }
+.ability .nm { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-align: center; padding: 0 3px; }
+.ability .cdmask { position: absolute; inset: auto 0 0 0; background: rgba(0, 0, 0, 0.68); height: 0%; transition: height 0.08s linear; }
+.ability .cdtxt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: Consolas, monospace; font-size: 17px; font-weight: 900; text-shadow: 0 1px 4px #000; }
+.ability.ready { border-color: var(--accent2); box-shadow: 0 0 14px rgba(77, 255, 166, 0.22) inset; }
+.dash-pips { display: flex; flex-direction: column; gap: 4px; margin-left: 4px; }
+.dash-pips .pip { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(150, 110, 255, 0.45); background: rgba(255,255,255,.06); }
+.dash-pips .pip.on { background: var(--accent2); box-shadow: 0 0 10px rgba(77, 255, 166, 0.6); }
+
+.toast {
+  bottom: calc(112px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 4px; align-items: center;
+}
+.toast .item {
+  background: rgba(14, 9, 24, 0.82);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  letter-spacing: 0.05em;
+  animation: fadein 0.2s ease;
+}
+.banner {
+  /* Moved down from 15% so a mutation reveal (which sits just under the countdown) can never
+     collide with it. Both are transient, but two stacked cards is exactly the clutter this is for. */
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  /* Global notices are full sentences now ("Beacon A taken over by Helios"), so they must FIT: the
+     box never runs past the viewport, the text wraps, and long words break instead of overflowing.
+     Everything about the notice's layout lives HERE — a second `.banner` block further down used to
+     re-set the font, spacing and padding, and the pair together is what let a long notice run off
+     the side of the screen. */
+  max-width: min(92vw, 880px);
+  padding: 10px 18px;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.22;
+  font-size: clamp(15px, 2.6vw, 28px);
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 0 30px rgba(180, 92, 255, 0.85), 0 2px 10px #000;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(24, 15, 40, 0.75), rgba(10, 6, 20, 0.6));
+  border: 1px solid rgba(180, 140, 255, 0.25);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  animation: fadepulse 0.35s ease;
+}
+.prompt {
+  top: 60%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(14, 9, 24, 0.85);
+  border: 1px solid var(--accent2);
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent2);
+  box-shadow: 0 0 22px rgba(77, 255, 166, 0.2);
+}
+.conn {
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  right: calc(10px + env(safe-area-inset-right));
+  font-size: 11px;
+  color: var(--muted);
+  font-family: Consolas, monospace;
+  text-align: right;
+  line-height: 1.5;
+}
+.killfeed {
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  margin-top: clamp(130px, 18vw, 200px);
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-end;
+  font-size: 11.5px;
+}
+.killfeed .kf { background: rgba(14, 9, 24, 0.7); border: 1px solid rgba(150,110,255,.16); border-radius: 3px; padding: 3px 8px; }
+
+/* ============ MODALS ============ */
+.modal {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: auto;
+  /* Every modal owns the screen: the HUD (z 5) and the floating plates (z 3) live below it, so a
+     health bar or nameplate can never poke through the Esc menu, Necromutation or respawn card. */
+  z-index: 20;
+  background: radial-gradient(ellipse at 50% 40%, rgba(60, 24, 100, 0.4), rgba(5, 3, 10, 0.72));
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 20px;
+  width: min(720px, 94vw);
+  box-shadow: 0 0 60px rgba(150, 80, 255, 0.25);
+  text-align: center;
+}
+.perks { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+.perk {
+  pointer-events: auto;
+  width: min(200px, 29vw);
+  min-width: 158px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 14px 12px;
+  background: linear-gradient(180deg, rgba(40, 24, 62, 0.95), rgba(20, 12, 34, 0.95));
+  cursor: pointer;
+  transition: transform 0.08s ease, border-color 0.12s ease;
+}
+.perk:hover { transform: translateY(-3px); border-color: var(--accent2); }
+.perk h5 { font-size: 14px; letter-spacing: 0.1em; margin-bottom: 7px; color: #efe7ff; }
+.perk p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.big-timer { font-family: Consolas, monospace; font-size: 22px; font-weight: 900; color: var(--warn); margin-top: 12px; }
+
+.pickup-cols { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin: 14px 0; }
+.pickup-col { flex: 1; min-width: 210px; text-align: left; border: 1px solid var(--line); border-radius: 6px; padding: 12px; background: rgba(24, 15, 40, 0.8); }
+.pickup-col h5 { font-size: 12px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+.pickup-col .nm { font-size: 17px; font-weight: 900; letter-spacing: 0.12em; margin-bottom: 6px; }
+.pickup-col .row { font-size: 11.5px; color: #c9bfda; line-height: 1.5; }
+.pickup-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* ============ RESULTS ============ */
+/* The end screen is the one screen that can be arbitrarily tall (hero tiles + two panels), so it
+   scrolls instead of clipping. The content sits in a single auto-margined column: centred while it
+   fits any viewport, top-aligned and scrollable when it does not — the verdict, every stat and the
+   RETURN button stay reachable on desktop, laptops and phones alike. */
+.results-screen {
+  gap: 0;
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.results-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin: auto;
+}
+/* soft coloured glow behind the whole verdict */
+.results-vignette { position: absolute; inset: 0; pointer-events: none; }
+.results-vignette.win { background: radial-gradient(circle at 50% 22%, rgba(77, 255, 166, 0.16), transparent 62%); }
+.results-vignette.lose { background: radial-gradient(circle at 50% 22%, rgba(255, 61, 90, 0.16), transparent 62%); }
+.results-head { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.results-emblem {
+  font-size: 44px; line-height: 1; margin-bottom: 2px;
+  animation: nf-drop 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+.results-emblem.win { color: var(--accent2); text-shadow: 0 0 32px rgba(77, 255, 166, 0.75); }
+.results-emblem.lose { color: var(--danger); text-shadow: 0 0 32px rgba(255, 61, 90, 0.75); }
+@keyframes nf-drop { from { opacity: 0; transform: translateY(-18px) scale(0.7); } to { opacity: 1; transform: none; } }
+.results-title { font-size: clamp(30px, 6vw, 62px); font-weight: 900; letter-spacing: 0.22em; text-transform: uppercase; text-align: center; }
+.results-title.win { color: var(--accent2); text-shadow: 0 0 40px rgba(77, 255, 166, 0.4); }
+.results-title.lose { color: var(--danger); text-shadow: 0 0 40px rgba(255, 61, 90, 0.4); }
+.results-colony { font-size: clamp(16px, 2.6vw, 24px); letter-spacing: 0.34em; margin: 4px 0 2px; font-weight: 800; text-transform: uppercase; text-align: center; }
+.results-time { font-size: 11px; letter-spacing: 0.3em; color: var(--muted); }
+
+.results-hero {
+  position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 10px; width: min(880px, 94vw); margin: 18px 0 14px;
+}
+.results-hero-cell {
+  background: linear-gradient(180deg, rgba(150, 110, 255, 0.14), rgba(20, 12, 38, 0.55));
+  border: 1px solid rgba(150, 110, 255, 0.3);
+  border-radius: 10px; padding: 12px 8px 9px; text-align: center;
+}
+.results-hero-cell .v { font-family: Consolas, monospace; font-size: clamp(20px, 3.4vw, 32px); font-weight: 800; line-height: 1; }
+.results-hero-cell .k { margin-top: 6px; font-size: 9.5px; letter-spacing: 0.16em; color: var(--muted); }
+
+.results-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; width: min(880px, 94vw); }
+/* The base .panel is 760px wide and scrolls on its own — inside the report grid that width
+   overflows the column (and was being clipped off the right edge). Full track width, no second
+   scroll area: the page itself scrolls. */
+.results-grid .panel { width: 100%; max-height: none; overflow: visible; }
+.tower-chips { display: flex; flex-direction: column; gap: 6px; }
+.tower-chip {
+  display: flex; align-items: center; gap: 9px; font-size: 13.5px;
+  background: rgba(28, 18, 48, 0.6); border: 1px solid rgba(150, 110, 255, 0.18);
+  border-radius: 8px; padding: 7px 10px;
+}
+.tower-chip.free { opacity: 0.62; }
+.tower-chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.tower-chip .nm { font-weight: 700; letter-spacing: 0.06em; }
+.tower-count { margin-top: 10px; font-size: 11px; letter-spacing: 0.2em; color: var(--muted); }
+.standings { margin-top: 14px; display: flex; flex-direction: column; gap: 7px; }
+.standings-row { display: grid; grid-template-columns: 76px 1fr 18px; align-items: center; gap: 8px; font-size: 12px; }
+.standings-row .nm { font-weight: 800; letter-spacing: 0.14em; }
+.standings-row .track { height: 7px; border-radius: 4px; background: rgba(150, 110, 255, 0.14); overflow: hidden; }
+.standings-row .fill { height: 100%; border-radius: 4px; transition: width 0.5s ease-out; }
+.standings-row .n { font-family: Consolas, monospace; font-weight: 700; text-align: right; }
+.stats-grid { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13.5px; }
+.stats-grid .k { color: var(--muted); }
+.stats-grid .v { font-family: Consolas, monospace; font-weight: 700; }
+
+/* short windows (laptops, split screens): tighten the rhythm so the whole report fits unaided */
+@media (max-height: 780px) {
+  .results-emblem { font-size: 30px; }
+  .results-title { font-size: clamp(24px, 4.6vw, 44px); }
+  .results-colony { margin: 2px 0 1px; }
+  .results-hero { margin: 10px 0 10px; }
+  .results-hero-cell { padding: 9px 8px 7px; }
+  .results-grid { gap: 12px; }
+  .results-inner .btn { margin-top: 12px !important; }
+}
+
+/* ============ DEBUG ============ */
+.debug {
+  left: calc(10px + env(safe-area-inset-left));
+  top: calc(120px + env(safe-area-inset-top));
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #9dff9d;
+  background: rgba(5, 8, 5, 0.66);
+  border: 1px solid rgba(120, 255, 120, 0.25);
+  border-radius: 4px;
+  padding: 8px 10px;
+  white-space: pre;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+/* ============ MOBILE CONTROLS ============ */
+/* Every layer the fingers cross asks for `manipulation` — see the touch-action note at the top of
+   this file. The .mobile container holds the buttons and must never disagree with them. */
+.mobile { position: absolute; inset: 0; pointer-events: none; touch-action: manipulation; }
+.mobile.hidden { display: none !important; }
+.joy {
+  position: absolute;
+  left: calc(18px + env(safe-area-inset-left));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  width: 132px; height: 132px;
+  border-radius: 50%;
+  border: 2px solid rgba(180, 140, 255, 0.35);
+  background: rgba(20, 12, 34, 0.4);
+  pointer-events: auto;
+  /* The stick owns a whole drag gesture, so nothing may pan or zoom from it. (The button cluster
+     asks for `manipulation` instead — that is the value WebKit cancels double-tap-to-zoom for.) */
+  touch-action: none;
+  /* a <button>, so the UA look has to be stripped; the zoom behaviour comes from touch-action */
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.joy .knob {
+  position: absolute; left: 50%; top: 50%;
+  width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%;
+  /* the knob is the part a thumb actually holds, so it repeats the stick's `none` (WebKit only
+     consults the touched element and its ancestors — a mismatched value inside the stick would
+     intersect the drag away) */
+  touch-action: none;
+  background: radial-gradient(circle at 35% 30%, rgba(210, 180, 255, 0.85), rgba(120, 70, 200, 0.7));
+  box-shadow: 0 0 18px rgba(160, 100, 255, 0.5);
+}
+.mbtns {
+  position: absolute;
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(20px + env(safe-area-inset-bottom));
+  width: 190px; height: 190px;
+  pointer-events: none;
+}
+.mbtn {
+  position: absolute;
+  width: 66px; height: 66px;
+  border-radius: 50%;
+  border: 2px solid rgba(180, 140, 255, 0.45);
+  background: rgba(24, 14, 40, 0.66);
+  color: #efe7ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: auto;
+  /* manipulation: WebKit honours it for the double-tap opt-out (see styles.mobile.css) */
+  touch-action: manipulation;
+}
+/* the whole subtree agrees — a finger usually lands on an icon/tag, not the button itself */
+.mbtn * { touch-action: manipulation; }
+.mbtn:active { background: rgba(120, 70, 200, 0.6); }
+.mbtn.jump { right: 62px; bottom: 0; }
+.mbtn.dash { right: 128px; bottom: 44px; }
+.mbtn.skill { right: 0; bottom: 78px; border-color: rgba(127, 212, 255, 0.6); }
+.mbtn.ult { right: 74px; bottom: 108px; border-color: rgba(255, 154, 92, 0.6); }
+
+/* ==========================================================================
+   NECROFALL — UI v2 (readability pass)
+   Later rules intentionally override the earlier ones: clearer hierarchy,
+   bigger touch targets, tabular numbers and calmer surfaces.
+   ========================================================================== */
+
+body {
+  font-variant-numeric: tabular-nums;
+  background:
+    radial-gradient(120% 90% at 50% -10%, #1d1136 0%, #0b0812 55%, #06040c 100%);
+}
+
+/* soft vignette over the 3D view for depth (pure CSS, no post-processing cost) */
+#app::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 45%, rgba(0, 0, 0, 0) 45%, rgba(3, 1, 8, 0.62) 100%);
+  z-index: 5;
+}
+
+.screen {
+  /* The menu sits over the live 3D planet, so the backdrop only takes the edge off it: enough
+     contrast for the panels, not so much that the world behind them disappears. */
+  background:
+    radial-gradient(90% 74% at 50% 16%, rgba(96, 44, 168, 0.2), rgba(6, 4, 12, 0.66) 74%),
+    linear-gradient(180deg, rgba(10, 6, 18, 0.34), rgba(6, 4, 12, 0.7));
+  backdrop-filter: blur(2px);
+}
+
+.menu-title {
+  letter-spacing: 0.22em;
+  margin-bottom: 8px;
+}
+.menu-sub { margin-bottom: 30px; }
+
+.btn {
+  padding: 14px 22px;
+  border-radius: 10px;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  background: linear-gradient(180deg, rgba(64, 40, 104, 0.9), rgba(30, 18, 52, 0.95));
+  border: 1px solid rgba(178, 140, 255, 0.28);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.btn:hover { border-color: rgba(210, 170, 255, 0.75); box-shadow: 0 0 26px rgba(180, 92, 255, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+.btn.primary {
+  background: linear-gradient(180deg, #9b5cff, #5b2aa8);
+  border-color: rgba(226, 200, 255, 0.55);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+.btn.small { padding: 9px 14px; border-radius: 8px; }
+.panel {
+  background: linear-gradient(180deg, rgba(20, 14, 34, 0.92), rgba(13, 9, 22, 0.94));
+  border: 1px solid rgba(170, 130, 255, 0.2);
+  border-radius: 14px;
+  padding: 20px 22px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+.panel-title { font-size: 15px; letter-spacing: 0.28em; color: #e2d2ff; margin-bottom: 14px; }
+.panel h3 { color: #c9a7ff; font-size: 12px; letter-spacing: 0.24em; margin-top: 18px; }
+.panel p, .panel li { font-size: 14.5px; line-height: 1.65; color: #d3cbe2; }
+.kbd {
+  border-radius: 6px;
+  padding: 2px 8px;
+  background: linear-gradient(180deg, #3b2a5c, #221636);
+  border-color: rgba(190, 150, 255, 0.35);
+}
+
+/* ---------- How to play: icon cards ---------- */
+.howto-lede { margin: 0 0 14px; color: #cbbfe0; }
+.howto-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.howto-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid rgba(170, 130, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(24, 16, 40, 0.55);
+}
+.howto-card.wide { grid-column: 1 / -1; }
+.howto-ico { flex: 0 0 26px; width: 26px; height: 26px; color: #c9a7ff; }
+.howto-ico svg { display: block; width: 100%; height: 100%; }
+.howto-txt { min-width: 0; }
+.howto-t { font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #e2d2ff; }
+.howto-d { font-size: 13px; line-height: 1.5; color: #cfc6dd; margin-top: 2px; }
+.howto-colonies { display: flex; flex-wrap: wrap; gap: 8px; }
+.howto-colony {
+  flex: 1 1 150px;
+  padding: 8px 10px;
+  border: 1px solid rgba(170, 130, 255, 0.16);
+  border-left: 3px solid currentColor;
+  border-radius: 10px;
+  background: rgba(20, 14, 32, 0.6);
+}
+.howto-colony .n { font-size: 12px; font-weight: 800; letter-spacing: 0.16em; }
+.howto-colony .d { font-size: 12px; line-height: 1.45; color: #bdb2cf; margin-top: 2px; }
+.howto-note { font-size: 12px; line-height: 1.6; color: #a292c4; margin-top: 14px; }
+.howto-actions { display: flex; gap: 10px; margin-top: 18px; }
+
+@media (max-width: 640px) {
+  .howto-grid { grid-template-columns: 1fr; }
+}
+
+/* ---------- HUD layout ---------- */
+.hud-top {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
+  right: calc(10px + env(safe-area-inset-right));
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.hud-panel {
+  background: linear-gradient(180deg, rgba(16, 11, 28, 0.82), rgba(10, 7, 18, 0.86));
+  border: 1px solid rgba(168, 128, 255, 0.2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+/* The countdown stays on the exact centre line: as a static item in the flex row it was pushed left
+   by the (wider) minimap column, so it is positioned absolutely against the full-width top bar. */
+.timer {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  min-width: 160px;
+}
+.timer .label { font-size: 9px; letter-spacing: 0.46em; color: #a292c4; }
+.timer .val { font-size: clamp(26px, 3.4vw, 40px); line-height: 1; margin-top: 3px; letter-spacing: 0.02em; }
+.timer .rail { height: 4px; margin-top: 7px; border-radius: 3px; background: rgba(255, 255, 255, 0.09); overflow: hidden; }
+.timer .rail > i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #b45cff, #63d2ff); }
+
+.colony-strip { display: none; }
+.tower-chips { display: flex; gap: 5px; }
+.chip {
+  width: 26px; height: 20px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  display: flex; align-items: center; justify-content: center;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  color: #b9aed2;
+  position: relative;
+  overflow: hidden;
+}
+.chip.owned { color: #0d0715; border-color: transparent; }
+.chip .fill { position: absolute; inset: 0; opacity: 0.9; }
+.chip span { position: relative; }
+.chip.vulnerable { animation: pulse 0.8s infinite; }
+.chip.locked::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.55) 0 4px, rgba(0, 0, 0, 0.2) 4px 8px);
+}
+.minimap-wrap {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: stretch;
+}
+.minimap-head { display: flex; justify-content: space-between; font-size: 9px; letter-spacing: 0.28em; color: #a292c4; }
+.minimap { width: clamp(120px, 14vw, 168px); height: auto; border-radius: 50%; background: transparent; }
+
+.hud-bottom {
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(700px, 94vw);
+}
+.nt-row { display: flex; align-items: center; gap: 8px; row-gap: 6px; flex-wrap: wrap; justify-content: center; }
+.tag {
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 128, 255, 0.28);
+  background: rgba(20, 13, 34, 0.8);
+  color: #cbb9ea;
+}
+.tag.mut { border-color: rgba(255, 77, 240, 0.5); color: #ff9df5; }
+.tag.super { border-color: rgba(255, 214, 102, 0.6); color: #ffd666; }
+.tag.boon { border-color: rgba(77, 255, 166, 0.45); color: #8dffcb; }
+/* ---- the HUD's bottom pills (the mutation NAME and the Necrotech combination) are ONE line of
+   information: the SAME font size and tracking, and the label is centred in the pill whatever
+   height it ends up (the mutation name may wrap to two lines). Plain weight BY DEFAULT — only the
+   MUTATION NAME pill (`.mut`) is bold: that unique name IS the loadout's identity, while the
+   Necrotech pill beside it is the raw combination of absorbed classes ("PYRE·RAVAGER") and stays
+   plain (user review). */
+.nt-row > .tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+  text-align: center;
+}
+.nt-row .tag.mut { font-weight: 800; }
+
+.vitals { display: flex; align-items: flex-end; gap: 10px; width: 100%; }
+.vitals-bars { flex: 1; }
+.hpbar { height: 20px; border-radius: 6px; border-color: rgba(190, 140, 255, 0.3); }
+.hpbar > i { background: linear-gradient(90deg, #ff3d5a, #ff7d6b 65%, #ffb37d); }
+.hpbar .txt { font-size: 12px; letter-spacing: 0.06em; }
+.xpbar { height: 8px; border-radius: 5px; margin-top: 5px; }
+.lvl-badge {
+  font-size: 17px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(168, 128, 255, 0.3);
+  background: rgba(20, 13, 34, 0.85);
+}
+
+.action-row { display: flex; align-items: flex-end; justify-content: center; gap: 12px; }
+.ability {
+  width: 84px; height: 72px;
+  border-radius: 12px;
+  border-width: 2px;
+  border-color: rgba(168, 128, 255, 0.32);
+  background: linear-gradient(180deg, rgba(30, 20, 48, 0.92), rgba(14, 9, 24, 0.95));
+  justify-content: space-between;
+  padding: 7px 6px 6px;
+}
+.ability .top { font-size: 8.5px; letter-spacing: 0.24em; color: #a292c4; }
+.ability .nm { font-size: 11.5px; line-height: 1.15; letter-spacing: 0.04em; font-weight: 800; }
+.ability .key {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: #0e0917;
+  background: rgba(220, 205, 255, 0.9);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-weight: 800;
+}
+.ability .cdtxt { font-size: 20px; }
+.ability.ready { border-color: rgba(77, 255, 166, 0.7); box-shadow: 0 0 18px rgba(77, 255, 166, 0.18); }
+.ability .accentbar { position: absolute; left: 0; right: 0; top: 0; height: 3px; }
+
+.dash-pips { flex-direction: row; margin: 0 0 8px 0; gap: 5px; }
+.dash-pips .pip { width: 14px; height: 14px; border-radius: 4px; }
+.dash-pips .pip.on { background: linear-gradient(180deg, #8dffcb, #21d68e); box-shadow: 0 0 12px rgba(77, 255, 166, 0.55); }
+.dash-pips .pip.partial { background: linear-gradient(0deg, rgba(77, 255, 166, 0.55) var(--p, 40%), rgba(255, 255, 255, 0.06) var(--p, 40%)); }
+
+.zone-bar {
+  bottom: calc(128px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(340px, 76vw);
+  text-align: center;
+}
+.zone-bar .lbl { font-size: 10px; letter-spacing: 0.24em; color: #cbb9ea; margin-bottom: 5px; }
+.zone-bar .bar { height: 9px; border-radius: 5px; }
+
+.prompt {
+  top: auto;
+  bottom: calc(224px + env(safe-area-inset-bottom));
+  border-radius: 999px;
+  border-color: rgba(77, 255, 166, 0.55);
+  background: rgba(10, 8, 18, 0.86);
+  padding: 8px 16px 8px 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: #b9ffdd;
+}
+.prompt .cap {
+  background: linear-gradient(180deg, #d7c4ff, #a97cf0);
+  color: #12091f;
+  font-weight: 900;
+  border-radius: 7px;
+  padding: 4px 9px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+/* `.banner` is defined once, up in the base HUD block — only skin here. */
+.banner {
+  border-radius: 12px;
+}
+.toast { bottom: calc(170px + env(safe-area-inset-bottom)); align-items: flex-start; left: 50%; }
+.toast .item {
+  border-radius: 999px;
+  border-left: 3px solid var(--accent);
+  padding: 7px 14px;
+  font-size: 12.5px;
+  backdrop-filter: blur(2px);
+}
+.killfeed { top: auto; margin-top: 0; }
+.killfeed .kf { border-radius: 999px; padding: 4px 10px; font-size: 11px; }
+.conn { font-size: 10.5px; color: #8b7fab; }
+.debug { border-radius: 10px; padding: 10px 12px; }
+
+/* ---------- selection / lobby ---------- */
+.lobby-code { letter-spacing: 0.3em; }
+.cards { gap: 16px; }
+.card h4 { letter-spacing: 0.2em; }
+.card .desc { min-height: 36px; }
+.nt-grid { gap: 12px; }
+
+/* ---------- modals ---------- */
+.modal { background: radial-gradient(70% 60% at 50% 45%, rgba(70, 30, 120, 0.45), rgba(4, 2, 10, 0.8)); }
+.modal-card { border-radius: 16px; padding: 24px; }
+.perk { border-radius: 12px; padding: 16px 14px; }
+.perk h5 { font-size: 15px; }
+.pickup-col { border-radius: 12px; }
+.big-timer { letter-spacing: 0.1em; }
+
+/* ---------- results ---------- */
+.results-title { letter-spacing: 0.24em; }
+.results-grid { gap: 16px; }
+.results-hero { gap: 8px; }
+.results-hero-cell .v { font-size: clamp(18px, 3vw, 28px); }
+.stats-grid { font-size: 14px; gap: 6px 14px; }
+
+/* ---------- mobile ---------- */
+.joy { border-radius: 50%; background: rgba(24, 14, 40, 0.35); backdrop-filter: blur(2px); }
+.mbtn { font-size: 11.5px; letter-spacing: 0.08em; }
+.mbtn.skill { border-color: rgba(127, 212, 255, 0.75); }
+.mbtn.ult { border-color: rgba(255, 154, 92, 0.75); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+@keyframes fadepulse { from { opacity: 0; transform: translateX(-50%) scale(1.18); } to { opacity: 1; transform: translateX(-50%) scale(1); } }
+
+/* ==========================================================================
+   NECROFALL — UI v3: repositioned HUD (minimap top-left, tower symbols top-right,
+   vitals + dash circles bottom-centre, Skill/Ultimate bottom-right), respawn overlay
+   and the Esc pause menu.
+   ========================================================================== */
+
+.hud-top { align-items: flex-start; }
+.hud-left { display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+
+/* ---- circular radar minimap: no panel, no background box */
+.minimap {
+  width: clamp(120px, 14vw, 168px);
+  height: auto;
+  border-radius: 50%;
+  background: transparent;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.55));
+}
+/* the Esc card is translucent and covers the radar — hide just the radar. `visibility` keeps its
+   box in the layout, so nothing else in the HUD (timer, tower tracker, plates) shifts. */
+.hud.menu-open .minimap { visibility: hidden; }
+
+/* ---- settings cog (top-left, under the radar) — opens the same panel Esc does */
+.hud-settings {
+  width: clamp(30px, 3vw, 36px);
+  height: clamp(30px, 3vw, 36px);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(150, 110, 255, 0.35);
+  background: rgba(18, 12, 30, 0.62);
+  color: #cbb9ea;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.15s, border-color 0.15s, transform 0.15s, background 0.15s;
+}
+.hud-settings svg {
+  width: 62%;
+  height: 62%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.hud-settings:hover {
+  color: #efe7ff;
+  border-color: rgba(180, 140, 255, 0.75);
+  background: rgba(38, 24, 62, 0.8);
+  transform: rotate(35deg);
+}
+.hud-settings:active { transform: rotate(35deg) scale(0.92); }
+
+/* ---- tower symbols (4 beacons + nexus): styles.ui.css owns every `.tsym` rule (disc tiles, the
+   outer ward/capture ring, the status dots). The duplicate block that used to live here was stale —
+   its `animation: pulse` kept firing on shields that were merely down, which read as a blink. */
+
+/* ---- floating head plates: simple 2D bars that track their owner above the head */
+.boss-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 3;
+}
+.hp-plate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 104px;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.hp-plate .hp-name {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-align: center;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  /* Up to TWO lines, then an ellipsis. A generated boss name ("Cinder Lurker Guardian") does not
+     fit one line and truncating it to "CINDER LUR…" told the player nothing about what they were
+     fighting. The plate grows upward from its bottom-anchored bar, so the extra line costs nothing. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.14;
+  white-space: normal;
+  overflow: hidden;
+  word-break: break-word;
+}
+.hp-plate .hp-bar {
+  position: relative;
+  height: 5px;
+  margin-top: 3px;
+  background: rgba(6, 4, 12, 0.78);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+.hp-plate .hp-bar i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transition: width 0.12s linear;
+}
+/* ---- tower ward plates: a Beacon / the sealed Nexus. Same family as the health bars, but the bar
+       is HATCHED red + dark grey (a ward is a lock, not a health pool) and the line underneath says
+       what opens it. The fill is never depleted, so it reads as structure, like the base slab. */
+.hp-plate.ward {
+  width: 148px;
+}
+.hp-plate.ward .hp-name {
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+}
+.hp-plate.ward .hp-bar {
+  height: 8px;
+  margin-top: 4px;
+  background: #16161c;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.34), 0 0 10px rgba(255, 45, 74, 0.4), inset 0 0 6px rgba(0, 0, 0, 0.9);
+}
+.hp-plate.ward .hp-cap {
+  margin-top: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-align: center;
+  color: rgba(255, 190, 200, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* ---- colony fortress plates: wider, grey and hatched — a base cannot be damaged or captured */
+.hp-plate.base {
+  width: 132px;
+}
+.hp-plate.base .hp-name {
+  color: #c6c6d2;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+.hp-plate.base .hp-bar {
+  height: 7px;
+  margin-top: 4px;
+  background: #16161c;
+  box-shadow: 0 0 0 1px rgba(200, 200, 214, 0.42), inset 0 0 6px rgba(0, 0, 0, 0.9);
+}
+.hp-plate.base::after {
+  content: 'IMPREGNABLE';
+  display: block;
+  margin-top: 2px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-align: center;
+  color: rgba(198, 198, 212, 0.68);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95);
+}
+/* ---- Necrotic Ward: a translucent light-blue slab over the health fill */.hp-plate .hp-shield {
+  position: relative;
+  height: 4px;
+  margin-top: -5px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.hp-plate .hp-shield i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, rgba(122, 214, 255, 0.95), rgba(178, 238, 255, 0.75));
+  box-shadow: 0 0 6px rgba(110, 210, 255, 0.85), inset 0 0 4px rgba(220, 248, 255, 0.7);
+  transition: width 0.12s linear;
+}
+/* ---- tower capture plates: the same plate family as the head bars, pinned above a tower */
+.tw-plate {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 132px;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.tw-plate .tw-nm {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-plate .tw-bar {
+  position: relative;
+  height: 6px;
+  margin-top: 3px;
+  background: rgba(6, 4, 12, 0.8);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.tw-plate .tw-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  transition: width 0.12s linear;
+}
+/* percentage on the left, countdown to the flip on the right */
+.tw-plate .tw-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 2px;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+}
+.tw-plate .tw-cd { color: #ffd98a; }
+
+/* named wardens + overseers */
+.hp-plate.boss { width: clamp(160px, 17vw, 236px); }
+.hp-plate.boss .hp-name { font-size: 10.5px; letter-spacing: 0.14em; }
+.hp-plate.boss .hp-bar { height: 6px; }
+.hp-plate.boss .hp-bar i { background: linear-gradient(90deg, #ff2d5e, #ff8a5c); }
+
+/* ---- BOSS STAGGER: a second bar under health. Stagger is the punish meter, not more health, so it
+   reads as a YELLOW bar that DRAINS (an empty bar is the damage window) rather than a health
+   gradient — the same yellow family the boss's body takes when it breaks. When it breaks the fill
+   goes pale-bright and the whole plate flares. */
+.hp-plate .hp-stagger {
+  position: relative;
+  margin-top: 2px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(10, 8, 18, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(255, 220, 150, 0.3);
+}
+.hp-plate .hp-stagger i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ffd166, #f0a52c);
+  transition: width 0.12s linear;
+}
+.hp-plate.boss.staggered .hp-stagger i { background: linear-gradient(90deg, #fff3c4, #ffd166); }
+.hp-plate.boss.staggered .hp-name { color: #ffd166 !important; }
+.hp-plate.boss.staggered { animation: hpStaggerPulse 0.55s ease-in-out infinite alternate; }
+@keyframes hpStaggerPulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.45); }
+}
+/* ENRAGED: red tag + a red name glow. The world tell is the boss's own red particles; this is the
+   plate agreeing with them. */
+.hp-plate.boss.enraged .hp-name { color: #ff5566 !important; text-shadow: 0 0 8px rgba(255, 45, 45, 0.9); }
+.hp-plate.boss.enraged .hp-bar i { background: linear-gradient(90deg, #ff1f2f, #ff6a2d); }
+.hp-plate .hp-rage {
+  margin-top: 2px;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-align: center;
+  color: #ff4d4d;
+  text-shadow: 0 0 8px rgba(255, 45, 45, 0.85);
+}
+
+/* BROKEN STAGGER: the call-out that matters most. It is the only state on the field that says
+   "hit this, right now", so it is the loudest tag — bigger, brighter and on its own line than the
+   ENRAGED tag, in the same yellow the boss's body and stagger bar turn. */
+.hp-plate .hp-broken {
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-align: center;
+  color: #241a02;
+  background: linear-gradient(90deg, #fff3c4, #ffd166);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.75);
+}
+
+/* ---- NEW MUTATION reveal. Significant enough to stop the eye, small enough to keep playing: it is
+   a card, not a modal, so a build notification never takes control away from the player. */
+.mutate-reveal {
+  /* The reveal takes the persistent Necrotech row's spot, so it keeps the SAME offset from the
+     bottom edge as `.hud-bottom` (12px + safe area): the pills and the card are one place, never a
+     stack, and the pills step aside while the card is up (see `.pills-away`). It deliberately
+     overlays the two TRANSIENT bottom-centre elements while it shows — the capture bar (96px) and
+     the "press F" prompt (132px) — because those are contextual and come back on their own,
+     whereas a build notification has to be caught the moment it happens. */
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  /* Wide enough for the longest TRIPLE name on ONE line — a triple permutation can run to ~19
+     characters (e.g. BASTIONQUAKEBARRAGE) at the .mr-name size, which the old 380px card wrapped. */
+  width: min(560px, 92vw);
+  padding: 10px 14px;
+  text-align: center;
+  /* the backdrop is OPAQUE-ISH instead of blurred: a live blur of the game canvas under the card
+     flickered on some GPUs (2026-09) — the reveal is far too loud a moment for that */
+  background: linear-gradient(180deg, rgba(26, 13, 41, 0.88), rgba(13, 9, 24, 0.82));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 0 26px rgba(201, 77, 255, 0.22);
+  pointer-events: none;
+}
+.mutate-reveal.show { animation: mutateIn 0.4s cubic-bezier(0.2, 1.3, 0.4, 1); }
+@keyframes mutateIn {
+  from { opacity: 0; transform: translateX(-50%) scale(0.86); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+.mutate-reveal .mr-head {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  color: #c8b6e8;
+}
+.mutate-reveal .mr-name {
+  margin-top: 2px;
+  font-size: clamp(20px, 4.4vw, 30px);
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-shadow: 0 0 18px currentColor;
+}
+/* `.mr-src` (the "FROST + NOVA + PYRE" line) is gone from the reveal: the mutation's own name IS
+   the reveal, and repeating the three inputs the player had just picked added a line, not news. */
+.mutate-reveal .mr-tags {
+  margin-top: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: center;
+}
+.mutate-reveal .mr-tag {
+  padding: 2px 7px;
+  border: 1px solid rgba(201, 77, 255, 0.5);
+  border-radius: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #e6d6ff;
+}
+.mutate-reveal .mr-desc {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #cfc4e4;
+}
+
+/* The persistent pills' two states around the reveal. `pills-away` keeps the row in the layout
+   (VISIBLE: hidden, never `display: none`) so the buff strip above it does not drop into its place
+   while the card shows; `pills-in` is the return — a rise from below, so the row reads as sliding
+   back up into its live readout instead of blinking on. */
+.hud-bottom .nt-row.pills-away { opacity: 0; visibility: hidden; }
+.hud-bottom .nt-row.pills-in { animation: pillsRise 0.45s cubic-bezier(0.2, 1, 0.4, 1); }
+@keyframes pillsRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The HUD's mutation chip: the UNIQUE mutation name, the loadout's identity — the one bold pill in
+   the row (weight set with the shared rules above), sitting beside the plain Necrotech combination
+   tag. Hovering it (or long-pressing on touch) opens the shared tooltip with the sources and the
+   full effect. It may wrap to a second line rather than run off the side of a narrow screen; only
+   the interactive dressing lives here. */
+.nt-row .tag.mut {
+  border-color: rgba(201, 77, 255, 0.6);
+  pointer-events: auto;
+  cursor: help;
+  max-width: 46vw;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  /* an opaque pill, not a blur of the moving terrain under it (2026-09 flicker fix) */
+  background: rgba(21, 13, 36, 0.86);
+}
+.nt-row .tag.mut.hidden { pointer-events: none; }
+/* apex minibosses / elites — a step down in weight */
+.hp-plate.mini { width: clamp(110px, 11vw, 150px); }
+.hp-plate.mini .hp-name { font-size: 9px; opacity: 0.9; }
+.hp-plate.mini .hp-bar i { background: linear-gradient(90deg, #ff7a4d, #ffc76b); }
+/* survivors: level badge + name, health, Necromutation */
+.hp-plate.player { width: 96px; }
+.hp-plate.player .hp-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+}
+.hp-plate.player .hp-lvl {
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 1.5px 3px;
+  border-radius: 3px;
+  background: rgba(10, 7, 18, 0.85);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.hp-plate.player .hp-name {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+}
+.hp-plate.player .hp-bar { height: 4px; margin-top: 2px; }
+.hp-plate.player .hp-xp {
+  height: 3px;
+  margin-top: 1.5px;
+  background: rgba(6, 4, 12, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+.hp-plate.player .hp-xp i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #a86bff, #6bd6ff);
+  transition: width 0.12s linear;
+}
+
+/* ---- capture bar sits above the necrotech tag */
+.zone-bar { bottom: calc(96px + env(safe-area-inset-bottom)); }
+
+/* ---- bottom centre: the Necrotech tag is the only persistent readout */
+.hud-bottom { width: min(520px, 92vw); }
+
+/* ---- left centre stack: game notifications (toasts + kill feed) */
+.hud-left-stack {
+  position: absolute;
+  left: calc(18px + env(safe-area-inset-left));
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.hud-left-stack .killfeed,
+.hud-left-stack .toast {
+  position: static;
+  right: auto;
+  left: auto;
+  bottom: auto;
+  top: auto;
+  margin: 0;
+  transform: none;
+  align-items: flex-start;
+  max-width: min(300px, 46vw);
+}
+.hud-left-stack .toast .item { text-align: left; }
+.hud-left-stack .killfeed .kf { text-align: left; }
+/* notifications stay small and unobtrusive */
+.hud-left-stack { gap: 5px; opacity: 0.88; }
+.hud-left-stack .toast .item {
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 3px 9px;
+  border-left-width: 2px;
+  background: rgba(12, 8, 20, 0.62);
+  border-radius: 4px;
+  color: #cfc4e4;
+  animation: none;
+}
+.hud-left-stack .killfeed .kf {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(12, 8, 20, 0.55);
+  color: #c6badf;
+}
+
+/* ---- objectives under the tower tracker */
+.task-list { display: grid; gap: 4px; margin-top: 8px; min-width: 210px; }
+.task {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: #cdc2e6;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+}
+.task .tk { color: #9b8dbd; font-size: 10px; }
+.task .tt { flex: 1; }
+.task .tp { font-family: Consolas, monospace; font-size: 10px; color: #8f83b0; }
+.task.done { color: #6ee7a8; }
+.task.done .tk { color: #6ee7a8; }
+.task.done .tt { text-decoration: line-through; opacity: 0.85; }
+.task.done .tp { color: #6ee7a8; }
+
+/* ---- Skill / Ultimate: round Genshin-style buttons, minimal but informative */
+.hud-right-stack {
+  position: absolute;
+  right: calc(18px + env(safe-area-inset-right));
+  bottom: calc(34px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: none;
+}
+.action-row { display: flex; align-items: flex-end; gap: 14px; pointer-events: none; }
+.ab {
+  position: relative;
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  pointer-events: auto;
+  background: radial-gradient(circle at 50% 34%, rgba(46, 32, 78, 0.92), rgba(9, 6, 16, 0.94) 72%);
+  box-shadow:
+    0 0 0 1px rgba(190, 165, 255, 0.28),
+    inset 0 0 14px rgba(0, 0, 0, 0.6),
+    0 6px 18px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, box-shadow 0.2s ease;
+}
+.ab.ult { width: 78px; height: 78px; }
+.ab-ring {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.ab.ult .ab-ring { border-width: 2.5px; opacity: 0.7; }
+.ab-icon { width: 54%; height: 54%; display: flex; align-items: center; justify-content: center; opacity: 0.95; transform: translateY(-12%); }
+.ab-icon svg { width: 100%; height: 100%; }
+/* cooldown: a dark wedge sweeping clockwise over the icon */
+.ab-sweep {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(rgba(6, 4, 12, 0.82) var(--cd, 0%), transparent 0);
+}
+.ab-cd {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: Consolas, monospace;
+  font-size: 20px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+}
+/* the ability's own name, wrapped across the bottom of the button */
+.ab-key {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 5px;
+  text-align: center;
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+  text-transform: uppercase;
+  color: #efe6ff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.98);
+  max-height: 18px;
+  overflow: hidden;
+  white-space: normal;
+  pointer-events: none;
+}
+.ab-alt {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  min-width: 15px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1.5px 3px;
+  border-radius: 5px;
+  background: rgba(10, 7, 18, 0.92);
+  box-shadow: 0 0 0 1px rgba(190, 165, 255, 0.45);
+  color: #d9c9ff;
+}
+.ab-label {
+  position: absolute;
+  top: -15px;
+  font-size: 8px;
+  letter-spacing: 0.24em;
+  color: #a292c4;
+}
+.ab-name {
+  position: absolute;
+  bottom: -16px;
+  width: 128%;
+  text-align: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #ded3f5;
+  text-shadow: 0 1px 5px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.ab.ready { box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.4), 0 0 22px rgba(160, 120, 255, 0.4), inset 0 0 14px rgba(0, 0, 0, 0.5); }
+.ab.ready .ab-sweep { background: none; }
+.ab:active { transform: scale(0.95); }
+
+/* ---- small rail actions: jump + dash, with their charge counts, left of the skill */
+.ab-sm {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  pointer-events: auto;
+  cursor: pointer;
+  color: #cfc2ee;
+  background: radial-gradient(circle at 50% 34%, rgba(38, 28, 62, 0.9), rgba(9, 6, 16, 0.92) 74%);
+  box-shadow: 0 0 0 1px rgba(170, 150, 230, 0.26), inset 0 0 10px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s ease, box-shadow 0.2s ease;
+}
+.ab-sm:hover { box-shadow: 0 0 0 1.5px rgba(210, 190, 255, 0.5), 0 0 16px rgba(150, 120, 255, 0.32); }
+.ab-sm:active { transform: scale(0.94); }
+.ab-sm svg { width: 52%; height: 52%; opacity: 0.92; }
+.ab-sm.jump { color: #a9e0ff; }
+.ab-sm.dash { color: #ffd79a; }
+/* the Beacon ability (COLONY OVERDRIVE): parked on the rail only while a friendly shielded Beacon
+   is in reach — the same condition the F key uses, so the button itself is the "usable now" tell */
+.ab-sm.beacon { display: none; color: #7ff0c8; }
+.ab-sm.beacon.available { display: flex; animation: abSmBeaconPulse 1.5s ease-in-out infinite; }
+.ab-sm.beacon .ab-sm-count { display: none; }
+@keyframes abSmBeaconPulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(120, 240, 200, 0.35), 0 0 12px rgba(80, 255, 200, 0.28); }
+  50% { box-shadow: 0 0 0 1.6px rgba(120, 240, 200, 0.7), 0 0 22px rgba(80, 255, 200, 0.55); }
+}
+.ab-sm-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  color: #12101a;
+  background: #cfc2ee;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.ab-sm-count.empty { background: rgba(120, 112, 145, 0.6); color: #1b1826; }
+.ab-sm-key {
+  position: absolute;
+  bottom: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  color: rgba(190, 180, 215, 0.7);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---- ability description overlay (desktop hover, touch long-press) */
+.ab-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9;
+  max-width: 268px;
+  padding: 9px 11px 10px;
+  pointer-events: none;
+  background: linear-gradient(160deg, rgba(24, 17, 40, 0.97), rgba(9, 6, 17, 0.97));
+  box-shadow: 0 0 0 1px rgba(180, 150, 255, 0.3), 0 12px 32px rgba(0, 0, 0, 0.62);
+  border-radius: 8px;
+  color: #e8e1f7;
+}
+.ab-tip.hidden { display: none; }
+.ab-tip .abt-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.ab-tip .abt-key {
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+  color: #0e0b16;
+  background: #d9c9ff;
+}
+.ab-tip .abt-head b { font-size: 12.5px; letter-spacing: 0.04em; }
+.ab-tip .abt-tag {
+  margin-left: auto;
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: #9d90bb;
+}
+.ab-tip p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #c9c0e0;
+}
+.ab-tip .abt-cd {
+  margin-top: 5px;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  color: #9fd8ff;
+}
+
+/* ---- respawn overlay */
+.respawn { background: radial-gradient(60% 55% at 50% 45%, rgba(120, 20, 40, 0.5), rgba(4, 2, 8, 0.86)); }
+.respawn-title {
+  font-size: clamp(28px, 5vw, 46px);
+  font-weight: 900;
+  letter-spacing: 0.28em;
+  color: #ff5c78;
+  text-shadow: 0 0 34px rgba(255, 60, 100, 0.55);
+}
+.respawn-killer { margin-top: 8px; font-size: 13px; letter-spacing: 0.12em; color: #d7c3d0; }
+
+/* ---- Esc menu: slim left panel with live stats, perks and abilities.
+       The world stays visible on the right and keeps running. */
+.modal.pause {
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(5, 3, 10, 0.42), rgba(5, 3, 10, 0.06) 46%, transparent);
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+.pause-card {
+  width: min(360px, 88vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  margin: 14px 0 14px 14px;
+  padding: 14px 16px 16px;
+  pointer-events: auto;
+  border-radius: 6px;
+  /* NO `backdrop-filter` (2026-09 flicker fix): blurring the LIVE game canvas under the card made
+     the panel flicker in and out on some GPUs — a blurred backdrop that repaints every frame is a
+     known Chromium flicker trigger. The card owns its own near-opaque background instead. */
+  background: linear-gradient(180deg, rgba(20, 13, 33, 0.95), rgba(11, 8, 20, 0.96));
+  box-shadow: 0 0 0 1px rgba(150, 110, 255, 0.22), 0 12px 40px rgba(0, 0, 0, 0.55);
+}
+.pause-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pause-note { font-size: 10px; letter-spacing: 0.06em; color: #ffb27a; margin-top: 2px; }
+/* room code — the match accepts late joiners, so the code stays visible in the Esc menu */
+.pause-room { margin: 10px 0 2px; }
+.pause-room .psec { margin: 0 0 4px; }
+.room-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.room-code {
+  font-family: Consolas, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.34em;
+  color: #7ef0b0;
+  text-shadow: 0 0 18px rgba(110, 231, 168, 0.35);
+}
+.room-code.offline { font-size: 13px; letter-spacing: 0.1em; font-weight: 400; color: #8b7fab; text-shadow: none; }
+.room-hint { margin-top: 4px; font-size: 10.5px; line-height: 1.4; color: #9b8dbd; }
+.room-hint.offline { color: #7d7099; }
+/* live run stats */
+.pause-stats { display: grid; gap: 4px; margin: 12px 0 10px; }
+.pstat { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; }
+.pstat .pk { color: #9b8dbd; font-size: 10px; letter-spacing: 0.16em; }
+.pstat .pv { color: #f2ecff; font-weight: 600; text-align: right; }
+.pstat .pk2 { color: #8f83b0; font-size: 10.5px; text-align: right; }
+.psec { font-size: 9.5px; letter-spacing: 0.26em; color: #8b7fab; margin: 10px 0 5px; }
+/* each ability = a header row (icon · name · cooldown) + what it does */
+.pause-abilities { display: grid; gap: 9px; }
+.pabi { display: grid; gap: 2px; }
+.pause-abilities .pab { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.pause-abilities .pab .pico { width: 20px; height: 20px; flex: 0 0 auto; color: #cbb9ea; }
+.pause-abilities .pab .pico svg { display: block; width: 100%; height: 100%; }
+.pause-abilities .pab .pk { color: #9b8dbd; font-size: 10px; letter-spacing: 0.16em; }
+.pause-abilities .pab .pv { color: #f2ecff; font-weight: 600; flex: 1; }
+.pause-abilities .pab .pc2 { color: #6ee7a8; font-size: 10.5px; font-family: Consolas, monospace; }
+.pdesc { font-size: 11px; line-height: 1.5; color: #b0a4cc; padding-left: 28px; }
+.pause-perks { display: grid; gap: 3px; }
+.pause-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 12px;
+  margin: 14px 0 12px;
+  text-align: left;
+  font-size: 11.5px;
+  color: #d3cbe2;
+  border-top: 1px solid rgba(150, 110, 255, 0.16);
+  padding-top: 10px;
+}
+.pause-controls .pc { display: flex; align-items: center; gap: 7px; }
+.pause-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+/* iOS: Safari has no fullscreen API, so the FULLSCREEN button scrolls the browser bars away
+   instead — this says so, and points at the home-screen app that has no browser UI at all. */
+.fs-hint {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(150, 110, 255, 0.16);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: #9b8dbd;
+}
+.fs-hint b { color: #d9c7ff; }
+/* Touch diagnostics at the bottom of the pause card: tiny, muted, monospace — the line that turns
+   "it still zooms" into a named cause (zoom scale, what the finger hit, its touch-action). */
+.diag {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(150, 110, 255, 0.16);
+  font-family: Consolas, monospace;
+  font-size: 9.5px;
+  line-height: 1.55;
+  color: #6f6488;
+  white-space: pre-wrap;
+}
+
+/* ---- necrotech class icons (the header block of a class card) */
+.nt-icon svg { width: 100%; height: 100%; }
+
+.prompt { bottom: calc(132px + env(safe-area-inset-bottom)); }
+
+@media (max-width: 900px) {
+  .tower-symbols { gap: 6px; }
+  .tsym { width: 30px; height: 30px; }
+  .tsym .glyph { font-size: 12px; }
+  .tsym.nexus { width: 34px; height: 34px; }
+  .tsym.nexus .glyph { font-size: 14px; }
+  .hud-bottom { width: min(420px, 92vw); }
+  .hud-right-stack { gap: 6px; }
+  .ab { width: 56px; height: 56px; }
+  .ab.ult { width: 66px; height: 66px; }
+  .ab-cd { font-size: 17px; }
+  .ab-name { display: none; }
+  .hp-plate.boss { width: 150px; }
+  .minimap { width: 104px; }
+}
+
+/* ==========================================================================
+   NECROFALL — MENU FIT, THUMB-SIZED UI & ARCADE PICKERS (2026-09 pass)
+   Loaded last on purpose: these rules intentionally override the earlier ones.
+   ========================================================================== */
+
+/* ---- SCREENS: centre while it fits, scroll from the first pixel when it does not.
+   `justify-content: center` on a SCROLLING flex container clips the TOP away — the overflow runs
+   off the start edge, where nothing can ever scroll to it. That is exactly the "main menu is cut
+   off at the top" on a landscape phone. The pair of zero-height pseudo items with an auto margin
+   centres the content while there is room to spare and collapses to 0 the moment there is not, so
+   the same markup centres on a desktop and stays fully scrollable on a phone. */
+.screen {
+  justify-content: flex-start;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.screen::before,
+.screen::after {
+  content: '';
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+}
+.screen::before { margin-top: auto; }
+.screen::after { margin-bottom: auto; }
+
+/* ---- the shared BACK affordance: one chevron, top-right, thumb-sized. */
+.screen-back {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  z-index: 7;
+  width: 46px;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  color: #efe7ff;
+  background: radial-gradient(circle at 50% 30%, rgba(58, 38, 96, 0.94), rgba(12, 8, 20, 0.96) 76%);
+  border: 1px solid rgba(190, 150, 255, 0.42);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+}
+.screen-back svg { width: 22px; height: 22px; display: block; }
+/* the customize screen's catalog owns the right edge, so its chevron mirrors to the left */
+.screen-back.at-left {
+  left: calc(10px + env(safe-area-inset-left));
+  right: auto;
+}
+.screen-back:hover {
+  border-color: rgba(226, 200, 255, 0.85);
+  color: #fff;
+  box-shadow: 0 0 24px rgba(180, 92, 255, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.screen-back:active { transform: scale(0.92); }
+/* Every screen that carries the chevron keeps a clear band for it, so no panel ever starts
+   underneath the button — at any size, not just on the small ones. */
+.screen.has-back { padding-top: calc(64px + env(safe-area-inset-top)); }
+
+/* ---- MAIN MENU: ONE arrangement on every device, only the scale changes.
+   The desktop menu IS the phone menu, scaled up by the clamp() sizes below (the user's request),
+   so there is a single layout to keep right instead of a compact one and a desktop one. */
+.menu-main {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(8px, 1.1vh, 14px);
+  width: min(760px, 92vw);
+}
+.menu-main .btn { padding: clamp(11px, 1.7vh, 17px) 12px; font-size: clamp(13px, 1.6vh, 16px); letter-spacing: 0.12em; }
+.menu-main .btn.primary { grid-column: 1 / -1; }
+.menu-main .graphics-row { grid-column: 1 / -1; }
+
+/* ---- MAIN MENU on a short viewport (a phone in landscape): tighter rhythm, footer strapline gone. */
+@media (max-height: 660px) {
+  .menu-title { font-size: clamp(28px, 6.4vh, 52px); margin-bottom: 2px; }
+  .menu-sub { margin-bottom: 12px; font-size: 10px; letter-spacing: 0.3em; }
+  .menu-main { gap: 8px; }
+  .menu-main .btn { padding: 11px 12px; font-size: 13px; letter-spacing: 0.1em; }
+  .menu-main .graphics-row { margin-top: 6px; padding: 8px 10px 7px; }
+  .menu-main .graphics-opts .opt { padding: 7px 3px; font-size: 10.5px; }
+  .menu-main .graphics-note { display: none; }
+}
+@media (max-height: 470px) {
+  .menu-foot { display: none; }
+}
+
+/* ---- PANELS: the same lit-card language the colony / necrotech cards already speak. */
+.panel {
+  border-radius: 16px;
+  border-color: rgba(170, 130, 255, 0.26);
+  background:
+    linear-gradient(180deg, rgba(190, 130, 255, 0.55), rgba(190, 130, 255, 0)) top left / 100% 3px no-repeat,
+    radial-gradient(120% 55% at 50% 0%, rgba(150, 90, 255, 0.14), transparent 70%),
+    linear-gradient(180deg, rgba(24, 16, 42, 0.94), rgba(12, 8, 22, 0.96));
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.62), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+/* ONE scroll surface per screen on EVERY device: the big panels stop scrolling inside themselves
+   and the screen scrolls them instead — two nested scrollers is how a swipe (or a wheel) gets
+   eaten mid-drag, and the phone layout is the layout everywhere now. */
+.screen .panel { max-height: none; overflow: visible; }
+.panel-title { letter-spacing: 0.3em; color: #e6d8ff; }
+
+/* ---- the buff strip (the COLONY OVERDRIVE countdown) rides ABOVE the mutation / Necrotech line */
+.buff-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+.buff-row:empty { display: none; }
+.buff-row .tag.boon {
+  border-color: rgba(120, 255, 190, 0.6);
+  color: #a8ffd4;
+  background: rgba(12, 34, 26, 0.55);
+  box-shadow: 0 0 16px rgba(77, 255, 166, 0.22);
+  animation: nf-boon-pulse 1.6s ease-in-out infinite;
+}
+@keyframes nf-boon-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(77, 255, 166, 0.18); }
+  50% { box-shadow: 0 0 22px rgba(77, 255, 166, 0.4); }
+}
+
+/* ---- ARCADE PICKERS: the Necromutation choice and the Necrotech pickup.
+   A rotating light-beam fan behind the card (the Megabonk read): a conic-gradient disc that is
+   masked into a soft vignette and spun on the COMPOSITOR. Two of them, counter-rotating at
+   different speeds, give the beams depth — no second texture, no canvas, one paint.
+   NO `mix-blend-mode` and NO `backdrop-filter` here (2026-09 flicker fix): blending a giant
+   animated + masked layer into the backdrop is a known Chromium flicker trigger — the beams
+   "blinked" in and out on some GPUs. On a near-black backdrop plain alpha compositing looks the
+   same, so the blended variants bought nothing but the flicker. The layer is also capped in size:
+   150vmax alone is a multi-hundred-megabyte texture on a 4K display at 2-3x DPR. */
+.modal.levelup,
+.modal.pickup {
+  overflow: hidden;
+  background: radial-gradient(80% 70% at 50% 42%, rgba(52, 20, 92, 0.55), rgba(4, 2, 10, 0.86) 74%);
+}
+.modal.levelup::before,
+.modal.levelup::after,
+.modal.pickup::before,
+.modal.pickup::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(150vmax, 2800px);
+  height: min(150vmax, 2800px);
+  margin: calc(min(150vmax, 2800px) / -2) 0 0 calc(min(150vmax, 2800px) / -2);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+.modal.levelup::before,
+.modal.pickup::before {
+  background: conic-gradient(
+    from 0deg,
+    rgba(201, 77, 255, 0) 0deg,
+    rgba(201, 77, 255, 0.6) 9deg,
+    rgba(120, 60, 255, 0) 24deg,
+    rgba(90, 200, 255, 0) 46deg,
+    rgba(120, 60, 255, 0.5) 60deg,
+    rgba(201, 77, 255, 0) 78deg,
+    rgba(201, 77, 255, 0) 150deg,
+    rgba(201, 77, 255, 0.45) 166deg,
+    rgba(120, 60, 255, 0) 184deg,
+    rgba(90, 200, 255, 0) 250deg,
+    rgba(120, 60, 255, 0.52) 266deg,
+    rgba(201, 77, 255, 0) 288deg
+  );
+  mask: radial-gradient(circle closest-side, rgba(0, 0, 0, 0.95) 4%, rgba(0, 0, 0, 0.62) 30%, rgba(0, 0, 0, 0.22) 56%, transparent 80%);
+  -webkit-mask: radial-gradient(circle closest-side, rgba(0, 0, 0, 0.95) 4%, rgba(0, 0, 0, 0.62) 30%, rgba(0, 0, 0, 0.22) 56%, transparent 80%);
+  opacity: 0.85;
+  animation: nf-beam 11s linear infinite;
+}
+.modal.levelup::after,
+.modal.pickup::after {
+  background: conic-gradient(
+    from 180deg,
+    rgba(255, 120, 220, 0) 0deg,
+    rgba(255, 120, 220, 0.32) 14deg,
+    rgba(255, 120, 220, 0) 34deg,
+    rgba(140, 255, 210, 0) 186deg,
+    rgba(140, 255, 210, 0.26) 206deg,
+    rgba(140, 255, 210, 0) 226deg
+  );
+  mask: radial-gradient(circle closest-side, rgba(0, 0, 0, 0.9) 3%, rgba(0, 0, 0, 0.5) 26%, rgba(0, 0, 0, 0.16) 50%, transparent 72%);
+  -webkit-mask: radial-gradient(circle closest-side, rgba(0, 0, 0, 0.9) 3%, rgba(0, 0, 0, 0.5) 26%, rgba(0, 0, 0, 0.16) 50%, transparent 72%);
+  opacity: 0.7;
+  animation: nf-beam 17s linear infinite reverse;
+}
+.modal.pickup::before { animation-duration: 13s; }
+.modal.pickup::after { animation-duration: 21s; }
+@keyframes nf-beam { to { transform: rotate(360deg); } }
+
+/* the card itself floats above the beams */
+.modal.levelup .modal-card,
+.modal.pickup .modal-card {
+  position: relative;
+  z-index: 1;
+  /* The pickers are the decision of the moment: they own the frame rather than sitting in a small
+     dialog. Sizes inside scale with vmin/vh so a big display gets a big card, while the
+     short-viewport block at the end of this file still compacts a landscape phone. */
+  width: min(1180px, 94vw);
+  padding: clamp(18px, 2.6vh, 32px) clamp(16px, 2.4vw, 34px);
+  border-radius: 18px;
+  border-color: rgba(201, 77, 255, 0.45);
+  background: linear-gradient(180deg, rgba(22, 13, 38, 0.9), rgba(10, 6, 20, 0.92));
+  box-shadow: 0 0 80px rgba(160, 60, 255, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.modal.levelup .panel-title {
+  font-size: clamp(20px, 3.4vw, 34px);
+  letter-spacing: 0.34em;
+  color: transparent;
+  background: linear-gradient(180deg, #ffffff, #cda6ff 62%, #7a4bd0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  filter: drop-shadow(0 0 20px rgba(180, 92, 255, 0.45));
+}
+.modal.levelup .modal-card > .muted,
+.modal.pickup .modal-card > .muted {
+  font-size: clamp(12px, 2vh, 16px);
+  line-height: 1.5;
+}
+.modal.levelup .big-timer,
+.modal.pickup .big-timer {
+  font-size: clamp(22px, 4.4vh, 44px);
+  color: #ffd166;
+  text-shadow: 0 0 26px rgba(255, 209, 102, 0.45);
+}
+
+/* ---- RAINBOW BORDER on the two arcade pickers (user request: a MegaBonk-style dopamine hit).
+   A masked conic rainbow hugs the card's own edge, and its ANGLE is animated through a registered
+   custom property so the colours sprint around the border while the rounded rectangle itself
+   stays put — rotating the element would rotate the shape, and a mask cannot be counter-rotated
+   against it. `@property` is what makes an angle interpolable: a browser without it paints the
+   same ring, statically. Redrawn per frame on one 3px band, so the cost stays trivial. */
+@property --nf-rb {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes nf-rainbow-spin {
+  to { --nf-rb: 360deg; }
+}
+.modal.levelup .modal-card::after,
+.modal.pickup .modal-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 3px;
+  background: conic-gradient(
+    from var(--nf-rb),
+    #ff3d5a, #ff9a3d, #ffe93d, #6bff6b, #3dd6ff, #b45cff, #ff5ad0, #ff3d5a
+  );
+  /* the xor of two full-coverage layers leaves only the 3px padding band = the ring */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: nf-rainbow-spin 1.5s linear infinite;
+}
+
+/* ---- perk cards: a LIST, never a WRAPPED list. Exactly three columns filling the card (a strict
+   horizontal row), or one column (a strict vertical list) on a narrow screen — nothing in between,
+   so there is never an orphan card on a second row. */
+.perks {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: clamp(10px, 2vh, 22px);
+  margin-top: clamp(14px, 2.4vh, 26px);
+  width: 100%;
+}
+@media (max-width: 620px) {
+  .perks { grid-template-columns: 1fr; }
+}
+.perk {
+  position: relative;
+  width: auto;
+  min-width: 0;
+  /* tall enough to read as a CHOICE, not a tooltip: the row of three carries the screen */
+  min-height: clamp(170px, 38vh, 370px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: clamp(16px, 3.4vh, 34px) clamp(14px, 1.7vw, 24px);
+  border-radius: 16px;
+  border: 1px solid var(--a35, rgba(150, 120, 220, 0.4));
+  background:
+    linear-gradient(180deg, var(--col, #b45cff), transparent) top left / 100% 3px no-repeat,
+    radial-gradient(130% 70% at 50% -12%, var(--a15, rgba(150, 120, 220, 0.14)), transparent 72%),
+    linear-gradient(180deg, rgba(40, 24, 62, 0.95), rgba(18, 10, 32, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 14px 34px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  text-align: center;
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.2s ease;
+  /* Pop OUT then settle back IN to normal size, all on ONE beat (the picker runs on a countdown
+     while the world keeps playing, so a staggered deal is pure lost reaction time). `backwards`
+     instead of `both`: once it lands, the final state must not keep overriding the hover lift. */
+  animation: nf-pop-in 0.5s ease-out backwards;
+}
+/* the numbers: one pill per stat, colour = meaning (see the pill rules below) */
+.perk-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(5px, 1.1vh, 10px);
+  margin: clamp(5px, 1.2vh, 11px) 0 clamp(8px, 1.6vh, 14px);
+}
+.pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: clamp(5px, 0.8vw, 9px);
+  padding: clamp(4px, 1vh, 8px) clamp(10px, 1.6vw, 18px);
+  border-radius: 999px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.pill b { font-family: Consolas, monospace; font-size: clamp(13px, 2.3vh, 20px); letter-spacing: 0.02em; }
+.pill i { font-style: normal; font-size: clamp(9px, 1.6vh, 12px); letter-spacing: 0.14em; opacity: 0.85; }
+.pill.up {
+  color: #06251a;
+  background: linear-gradient(180deg, #9dffd2, #34d98a);
+  box-shadow: 0 0 14px rgba(77, 255, 166, 0.35);
+}
+.pill.down {
+  color: #2a0a10;
+  background: linear-gradient(180deg, #ffb3bd, #ff5c78);
+  box-shadow: 0 0 14px rgba(255, 92, 120, 0.3);
+}
+.pill.alt {
+  color: #170a2b;
+  background: linear-gradient(180deg, #dcc6ff, #a97cf0);
+  box-shadow: 0 0 14px rgba(169, 124, 240, 0.35);
+}
+/* The chips wear the CARD's tier colour (UI sets `tier-<tier>` on every perk card), so a whole
+   card reads as one thing: green = plain gain, blue = upgraded kit, violet = best of the numeric
+   picks, gold = game-changing. Without this the hard-coded violet `alt` chip sat on a GOLD card
+   (user review: "its correctly tagged as golden but the pill not golden"). `down` stays RED — a
+   cost is the one thing that must never blend into the card. Palettes are written out instead of
+   color-mix(), which the older WebViews this game runs in may not know. */
+.perk.tier-common .pill.up,
+.perk.tier-common .pill.alt {
+  color: #06251a;
+  background: linear-gradient(180deg, #9dffd2, #34d98a);
+  box-shadow: 0 0 14px rgba(77, 255, 166, 0.35);
+}
+.perk.tier-rare .pill.up,
+.perk.tier-rare .pill.alt {
+  color: #04202e;
+  background: linear-gradient(180deg, #bfeaff, #3fb6ef);
+  box-shadow: 0 0 14px rgba(99, 210, 255, 0.35);
+}
+.perk.tier-mythic .pill.up,
+.perk.tier-mythic .pill.alt {
+  color: #170a2b;
+  background: linear-gradient(180deg, #dcc6ff, #a97cf0);
+  box-shadow: 0 0 14px rgba(169, 124, 240, 0.35);
+}
+.perk.tier-legendary .pill.up,
+.perk.tier-legendary .pill.alt {
+  color: #2b1d02;
+  background: linear-gradient(180deg, #ffe9a8, #f0b622);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.42);
+}
+
+/* ---- NECROTECH RECOVERED: the same arcade language as the perk picker, on the same beat.
+   Two loadout cards (CURRENT vs the RECOVERED drop), a strip for the odds, and three named actions
+   with MUTATE as the hero — it is the only one that can produce a PERMUTATION or a rare SUPER. */
+.pickup-sub { margin: calc(-1px - 0.4vh) 0 2px; }
+.pickup-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: clamp(12px, 2.4vh, 26px);
+  margin: clamp(12px, 2vh, 22px) 0 clamp(10px, 1.8vh, 18px);
+}
+@media (max-width: 620px) {
+  .pickup-cols { grid-template-columns: 1fr; }
+}
+.pickup-col {
+  --col: #b9a8d8;
+  position: relative;
+  flex: none;
+  min-width: 0;
+  /* The loadout cards carry the choice, so they are the tallest thing on the screen — but the
+     card must still FIT at any window height (the modal does not scroll), hence the modest vh
+     factor and the 190 px floor that the ≤ 430 px block below takes over from. */
+  min-height: clamp(190px, 34vh, 380px);
+  padding: clamp(13px, 3vh, 30px) clamp(14px, 1.8vw, 26px);
+  border-radius: 16px;
+  border: 1px solid rgba(150, 120, 220, 0.3);
+  background:
+    radial-gradient(130% 70% at 50% -12%, rgba(150, 120, 220, 0.14), transparent 72%),
+    linear-gradient(180deg, rgba(38, 24, 60, 0.9), rgba(16, 10, 28, 0.94));
+  text-align: center;
+  overflow: hidden;
+  animation: nf-pop-in 0.5s ease-out backwards;
+}
+.pickup-col.fresh {
+  border-color: rgba(201, 77, 255, 0.55);
+  box-shadow: 0 0 26px rgba(201, 77, 255, 0.22);
+}
+.pickup-col::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--col), transparent);
+  opacity: 0.85;
+}
+.pickup-tag {
+  display: inline-block;
+  padding: clamp(2px, 1vh, 7px) clamp(12px, 1.6vw, 20px);
+  border-radius: 999px;
+  font-size: clamp(9px, 1.8vh, 13px);
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: #d9c9ff;
+  background: rgba(12, 8, 20, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(150, 120, 220, 0.3);
+}
+.pickup-col.fresh .pickup-tag {
+  color: #1a0f2c;
+  background: linear-gradient(180deg, #dcc6ff, #a97cf0);
+  box-shadow: none;
+}
+.pickup-col .nm { margin-top: clamp(8px, 1.6vh, 16px); font-size: clamp(21px, 4vh, 34px); font-weight: 900; letter-spacing: 0.16em; }
+.pickup-col .role {
+  margin: 2px 0 clamp(10px, 2.2vh, 20px);
+  font-size: clamp(9px, 1.8vh, 13px);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #a99ac9;
+}
+.pickup-kit { display: grid; gap: clamp(5px, 1.7vh, 15px); }
+.pickup-row {
+  display: flex;
+  align-items: center;
+  gap: clamp(7px, 1.3vh, 14px);
+  padding: clamp(5px, 2vh, 16px) clamp(9px, 1.4vw, 16px);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  text-align: left;
+}
+.pickup-row .tag {
+  flex: 0 0 auto;
+  padding: clamp(2px, 0.7vh, 6px) clamp(6px, 1vw, 12px);
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: clamp(8px, 1.7vh, 12px);
+  letter-spacing: 0.12em;
+}
+.pickup-row .tag.skill { color: #7fd4ff; border-color: rgba(127, 212, 255, 0.35); }
+.pickup-row .tag.ultimate { color: #ff9a5c; border-color: rgba(255, 154, 92, 0.35); }
+.pickup-row .tag.passive { color: #9dff9d; border-color: rgba(157, 255, 157, 0.3); }
+.pickup-row .tag.combined { color: #e6a6ff; border-color: rgba(230, 166, 255, 0.4); }
+.pickup-row b { font-size: clamp(12.5px, 2.6vh, 19px); font-weight: 700; letter-spacing: 0.04em; color: #f6f1ff; }
+.pickup-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 clamp(12px, 2vh, 20px);
+  padding: clamp(6px, 1.6vh, 13px) clamp(12px, 1.6vw, 20px);
+  border-radius: 10px;
+  border-left: 3px solid rgba(201, 77, 255, 0.55);
+  background: rgba(201, 77, 255, 0.07);
+  font-size: clamp(11.5px, 2vh, 16px);
+  line-height: 1.45;
+  color: #d8c9f0;
+  text-align: left;
+}
+/* the note only exists when there is something to say (a rare drop) — never an empty bar */
+.pickup-note:empty { display: none; }
+.pickup-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(9px, 2vh, 18px); }
+.pickup-actions .pick-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(3px, 0.9vh, 8px);
+  padding: clamp(10px, 2.6vh, 24px) clamp(9px, 1.5vw, 18px);
+  border-radius: 13px;
+  text-align: center;
+  width: 100%;
+  /* No entrance here: the two loadout cards carry the pop, and the actions are the thing the thumb
+     is already heading for — animating them only delayed the press. */
+}
+.pickup-actions .pick-btn .pl { font-size: clamp(13.5px, 3vh, 23px); font-weight: 800; letter-spacing: 0.16em; }
+.pickup-actions .pick-btn .pc { font-size: clamp(9px, 1.9vh, 14px); font-weight: 600; letter-spacing: 0.04em; text-transform: none; color: var(--muted); }
+.pickup-actions .pick-btn.swap { border-color: rgba(120, 240, 200, 0.45); }
+/* MUTATE is still the hero, but a STEP up rather than a floodlight: the old fill was neon enough to
+   glare against the dark card and pull the eye off the two loadouts it is asking about. */
+.pickup-actions .pick-btn.mutate {
+  background: linear-gradient(180deg, rgba(150, 76, 235, 0.72), rgba(84, 34, 150, 0.85));
+  border-color: rgba(206, 172, 255, 0.5);
+  box-shadow: 0 0 16px rgba(150, 80, 235, 0.22);
+}
+.pickup-actions .pick-btn.mutate:hover {
+  border-color: rgba(226, 200, 255, 0.8);
+  box-shadow: 0 0 20px rgba(170, 100, 255, 0.35);
+}
+.pickup-actions .pick-btn.mutate .pc { color: #e6d6ff; }
+.pickup-actions .pick-btn:active { transform: translateY(1px) scale(0.99); }
+@keyframes nf-perk-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.94); }
+  to { opacity: 1; transform: none; }
+}
+/** The option entrance: appears small, bounces OUT past full size, then settles IN to normal. */
+@keyframes nf-pop-in {
+  0% { opacity: 0; transform: scale(0.62) translateY(12px); }
+  60% { opacity: 1; transform: scale(1.07) translateY(-4px); }
+  100% { opacity: 1; transform: none; }
+}
+.perk:hover {
+  transform: translateY(-5px) scale(1.02);
+  border-color: var(--a55, rgba(210, 170, 255, 0.7));
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.55), 0 0 30px var(--a35, rgba(180, 92, 255, 0.35));
+}
+.perk:active { transform: translateY(-1px) scale(0.99); }
+.perk .perk-glyph {
+  font-size: clamp(17px, 4vh, 40px);
+  line-height: 1;
+  margin-bottom: clamp(7px, 1.7vh, 16px);
+  color: var(--col, #b45cff);
+  text-shadow: 0 0 18px currentColor;
+}
+.perk h5 {
+  font-size: clamp(15px, 3vh, 26px);
+  letter-spacing: 0.14em;
+  color: #fff;
+  text-shadow: 0 0 16px var(--a55, transparent);
+}
+.perk p {
+  font-size: clamp(11.5px, 2.2vh, 18px);
+  line-height: 1.55;
+  color: #cbc2e0;
+}
+
+/* ---- the picker has to FIT a landscape phone: the row stays three across (the grid above never
+   wraps), so touch only tightens the padding. A wide phone puts ~250px of button under each thumb. */
+body.nf-touch .perks { gap: 10px; margin-top: 12px; }
+body.nf-touch .perk { padding: 12px 11px 11px; }
+body.nf-touch .perk-glyph { font-size: 15px; margin-bottom: 5px; }
+body.nf-touch .modal.levelup .modal-card,
+body.nf-touch .modal.pickup .modal-card { width: min(820px, 90vw); }
+
+/* Short-window fit (a landscape phone up to a small laptop window): the pickup card carries the most
+   chrome in the game — two loadout cards, the odds strip, three actions and the countdown — so it
+   trims its air earlier than the perk picker needs to. The modal cannot scroll (its light beams are
+   150vmax, so a scroll container here would be unusable), which is why fitting is on the CSS.
+   This block sits BEFORE the ≤ 430px one: phones get that one's even tighter rules on top. */
+@media (max-height: 560px) {
+  .pickup-sub { display: none; }
+  .pickup-cols { margin: 8px 0 8px; gap: 10px; }
+  .pickup-col { min-height: 0; padding: 9px 11px; }
+  .pickup-col .role { margin: 0 0 6px; }
+  .pickup-kit { gap: 4px; }
+  .pickup-row { padding: 3px 9px; }
+  .pickup-row b { font-size: clamp(11px, 2.4vh, 14px); }
+  .pickup-note { margin-bottom: 6px; padding: 5px 10px; font-size: clamp(10.5px, 2.2vh, 13px); }
+  .pickup-actions .pick-btn { padding: 8px 7px; }
+  .pickup-actions .pick-btn .pl { font-size: clamp(12px, 2.6vh, 15px); }
+  .pickup-actions .pick-btn .pc { font-size: 8.5px; }
+  .modal.pickup .modal-card { padding: 12px 14px; }
+}
+
+@media (max-height: 430px) {
+  .modal.levelup .panel-title,
+  .modal.pickup .panel-title { font-size: 15px; letter-spacing: 0.24em; margin-bottom: 8px; }
+  /* The explainer line is the first thing to go: the buttons already say what the choices are, and
+     on a 390px-tall screen that line is the difference between the timer being on screen or not. */
+  .modal.levelup .modal-card > .muted,
+  .modal.pickup .modal-card > .muted { display: none; }
+  .perks, body.nf-touch .modal .perks { margin-top: 10px; gap: 10px; }
+  .perk, body.nf-touch .modal .perk { padding: 10px 10px 9px; }
+  .perk-glyph { font-size: 13px; margin-bottom: 4px; }
+  .perk h5 { font-size: 13.5px; }
+  .perk p { font-size: 10.5px; line-height: 1.4; }
+  .modal.levelup .big-timer,
+  .modal.pickup .big-timer { font-size: 18px; margin-top: 8px; }
+  .modal.levelup .modal-card,
+  .modal.pickup .modal-card { padding: 12px 14px; }
+  /* NECROTECH RECOVERED on a 390px-tall screen: the two loadout cards, the odds strip, three
+     actions and the countdown all have to fit at once — every row loses its air, nothing is cut. */
+  .pickup-cols { margin: 8px 0 8px; }
+  .pickup-col { padding: 8px 9px; }
+  .pickup-tag { padding: 1px 8px; font-size: 8px; letter-spacing: 0.16em; }
+  .pickup-col .nm { margin-top: 4px; font-size: 15px; letter-spacing: 0.12em; }
+  .pickup-col .role { margin: 0 0 5px; font-size: 7.5px; }
+  .pickup-kit { gap: 3px; }
+  .pickup-row { padding: 2px 7px; }
+  .pickup-row b { font-size: 10.5px; }
+  .pickup-note { margin-bottom: 6px; padding: 4px 9px; font-size: 10px; }
+  .pickup-actions .pick-btn { padding: 6px 6px; }
+  body.nf-touch .pickup-actions .pick-btn { min-height: 44px; padding: 6px 6px; }
+  .pickup-actions .pick-btn .pl { font-size: 12px; }
+  .pickup-actions .pick-btn .pc { font-size: 8px; }
+}
+
+/* ---- the mutation reveal picks up a travelling sheen, so the card glints like the picker does.
+   NOTE: no `position` here — `.hud > *` already pins it with `position: absolute`, and a later
+   `position: relative` (same specificity, later rule) silently dropped it back into normal flow,
+   where `bottom` became a relative shift and parked the card at the top of the screen. */
+.mutate-reveal { overflow: hidden; }
+.mutate-reveal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -60%;
+  width: 55%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  animation: nf-sheen 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes nf-sheen { 0% { left: -60%; } 55%, 100% { left: 120%; } }
+
+/* ---- Esc menu: the same lit-card language as the rest of the menus, sectioned so the column
+   reads top-to-bottom instead of as one wall of rows. */
+.pause-card {
+  width: min(410px, 84vw);
+  border-radius: 18px;
+  border-color: rgba(170, 130, 255, 0.26);
+  padding: 16px 16px 18px;
+  margin: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom))
+    calc(12px + env(safe-area-inset-left));
+  /* the card itself never scrolls: the header is pinned and only `.pause-body` moves */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(190, 130, 255, 0.5), rgba(190, 130, 255, 0)) top left / 100% 3px no-repeat,
+    linear-gradient(180deg, rgba(20, 13, 34, 0.92), rgba(10, 7, 18, 0.94));
+}
+.pause-head {
+  display: block;
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(170, 130, 255, 0.16);
+}
+/* The title is centred in the CARD, not in whatever space the X leaves: an equal-side grid does
+   it — the X takes the left cell, the heading the middle one — with no positioning tricks, so the
+   heading stays on the panel's centre line at any button size. */
+.pause-head-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.pause-head .panel-title {
+  grid-column: 2;
+  /* row 1 explicitly: a bare `grid-column: 1` on the X AFTER the title would land on row 2 — the
+     sparse auto-placement cursor only moves forward, so an item that wants a column behind it
+     opens a new row */
+  grid-row: 1;
+  margin: 0;
+  text-align: center;
+  font-size: 19px;
+  letter-spacing: 0.32em;
+  color: transparent;
+  background: linear-gradient(180deg, #ffffff, #cda6ff 68%, #8a5ce0);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+/* the panel's own close button: always reachable, because the header never scrolls away */
+.pause-x {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 50%;
+  color: #efe7ff;
+  background: radial-gradient(circle at 50% 30%, rgba(58, 38, 96, 0.9), rgba(12, 8, 20, 0.94) 76%);
+  border: 1px solid rgba(190, 150, 255, 0.42);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: transform 0.12s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.pause-x svg { width: 18px; height: 18px; display: block; }
+.pause-x:hover { color: #fff; border-color: rgba(226, 200, 255, 0.85); }
+.pause-x:active { transform: scale(0.92); }
+/* the one scrolling area of the panel */
+.pause-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+/* section headings: a small lit dash, so "ABILITIES" / "PERKS" read as sections */
+.psec { display: flex; align-items: center; gap: 8px; margin: 13px 0 7px; letter-spacing: 0.26em; }
+.psec::before {
+  content: '';
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.75;
+}
+/* live stats as chip rows */
+.pause-stats { display: grid; gap: 5px; margin: 10px 0 4px; }
+.pstat {
+  padding: 5px 10px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+/* abilities as blocks with a colour rail */
+.pause-abilities { display: grid; gap: 8px; }
+.pabi {
+  padding: 7px 10px 8px;
+  border-radius: 10px;
+  border-left: 3px solid rgba(201, 77, 255, 0.45);
+  background: linear-gradient(180deg, rgba(40, 26, 64, 0.5), rgba(18, 11, 32, 0.5));
+}
+.pdesc { padding-left: 0; }
+.pause-perks .pstat { padding: 5px 10px; }
+/* room code: its own highlighted block — it is the one line a friend waiting to join needs */
+.pause-room {
+  margin: 12px 0 2px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(77, 255, 166, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(120, 255, 190, 0.16);
+}
+.room-code { font-size: 22px; }
+/* buttons: the two ways out of the run — each gets its own colour and symbol, because one only
+   changes the framing and the other ends the match. They must never read as the same button twice. */
+.pause-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.pause-buttons .btn.pause-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: 100%;
+  flex: none;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: clamp(11px, 1.5vh, 13px);
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-align: left;
+  transition: border-color 0.14s ease, box-shadow 0.18s ease, transform 0.1s ease;
+}
+.pause-btn .pb-ico {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pause-btn .pb-ico svg { width: 17px; height: 17px; display: block; }
+.pause-btn .pb-lbl { min-width: 0; }
+/* FULLSCREEN: cool and harmless — it only changes how the game is framed. */
+.pause-btn.pb-fs {
+  border-color: rgba(127, 212, 255, 0.4);
+  background: linear-gradient(180deg, rgba(22, 42, 62, 0.75), rgba(10, 18, 30, 0.9));
+  color: #d3ecff;
+}
+.pause-btn.pb-fs .pb-ico {
+  color: #7fd4ff;
+  background: rgba(127, 212, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(127, 212, 255, 0.35);
+}
+.pause-btn.pb-fs:hover { border-color: rgba(170, 230, 255, 0.8); box-shadow: 0 0 16px rgba(127, 212, 255, 0.22); }
+/* LEAVE MATCH: red — this is the one press that ends the run. */
+.pause-btn.pb-leave {
+  border-color: rgba(255, 107, 120, 0.45);
+  background: linear-gradient(180deg, rgba(56, 16, 26, 0.8), rgba(24, 9, 15, 0.9));
+  color: #ffd6dc;
+}
+.pause-btn.pb-leave .pb-ico {
+  color: #ff6b78;
+  background: rgba(255, 107, 120, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 107, 120, 0.4);
+}
+.pause-btn.pb-leave:hover { border-color: rgba(255, 150, 160, 0.85); box-shadow: 0 0 16px rgba(255, 80, 100, 0.26); }
+.pause-btn:active { transform: translateY(1px); }
+
+/* ---- SELECTION screens (colony / necrotech): readable when the viewport is short. */
+@media (max-height: 660px) {
+  .sel-head { margin-bottom: 6px; }
+  .sel-title { font-size: clamp(18px, 4.4vw, 26px); letter-spacing: 0.18em; }
+  .sel-timer { font-size: 22px; }
+  .sel-sub { font-size: 11px; }
+  .card { width: min(232px, 30vw); min-width: 184px; padding: 12px 12px 11px; }
+  .colony-crest { width: 58px; height: 58px; margin: 0 auto 6px; }
+  .card h4 { font-size: 17px; }
+  .card .desc { min-height: 0; font-size: 11px; }
+  .card .bonus { margin-top: 8px; gap: 4px; }
+  .card .bonus-row { padding: 4px 8px; font-size: 10.5px; }
+  .card .count-badge { font-size: 12px; }
+}
+@media (max-width: 760px) {
+  .nt-grid { width: 100%; }
+}
+
+/* ---- coarse pointers: every control is a target, and hover styling never sticks after a tap */
+@media (pointer: coarse) {
+  .btn { min-height: 46px; }
+  .btn.small { min-height: 42px; }
+  .graphics-opts .opt { min-height: 42px; }
+  .pickup-col { min-width: 0; }
+  .screen-back { width: 50px; height: 50px; }
+  .card:hover,
+  .nt-card:hover,
+  .acc-card:hover,
+  .perk:hover {
+    transform: none;
+  }
+}
+
+/* Motion-sensitive players still get the pickers — just without the spin / sheen / rainbow. */
+@media (prefers-reduced-motion: reduce) {
+  .modal.levelup::before,
+  .modal.levelup::after,
+  .modal.pickup::before,
+  .modal.pickup::after,
+  .modal.levelup .modal-card::after,
+  .modal.pickup .modal-card::after,
+  .perk,
+  .mutate-reveal::before,
+  .hud-bottom .nt-row.pills-in,
+  .buff-row .tag.boon { animation: none; }
+}
+
+
+

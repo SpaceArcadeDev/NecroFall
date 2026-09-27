@@ -26,6 +26,19 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, h
 };
 
 export class OrientationGate {
+  /**
+   * ONE gate for the whole app. The account shell hides the entire `#ui` layer (`display: none`)
+   * while it owns the screen, so a gate parented inside it vanished on the shell screens — the
+   * panel is parented to <body> instead, above the shell (z-index 5000 > `.nf-shell` 4000), and
+   * both the game and the shell share this single instance.
+   */
+  private static instance: OrientationGate | null = null;
+
+  static shared(): OrientationGate {
+    if (!OrientationGate.instance) OrientationGate.instance = new OrientationGate(document.body);
+    return OrientationGate.instance;
+  }
+
   private panel: HTMLElement;
   private dismissed = false;
   private locked = false;
@@ -112,6 +125,9 @@ export class OrientationGate {
    */
   armAutoLock(): void {
     if (this.autoHandler) return;
+    // Re-arming (the shell does it on every screen it shows) gets a FRESH window of taps, so an
+    // exhausted run of refusals can never leave the gate permanently deaf.
+    this.autoAttempts = 0;
     const attempt = (): void => {
       if (fullscreenMode() !== 'none') {
         this.disarmAutoLock();

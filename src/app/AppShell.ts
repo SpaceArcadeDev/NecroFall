@@ -25,11 +25,13 @@ import { ProviderGameEvent } from './multiplayer/MultiplayerProvider';
 import { OfficialMatchPayload } from './multiplayer/OfficialTypes';
 import { P2PMultiplayerProvider, LegacyLauncher } from './multiplayer/P2PMultiplayerProvider';
 import { MultiplayerSession } from './multiplayer/MultiplayerSession';
-import { COLONIES } from '../core/Config';
+import { COLONIES, IS_TOUCH } from '../core/Config';
 import { loadSelection, selectionToWire } from '../customization/CustomizationStore';
 import { Keybinds } from '../input/Keybinds';
 import { ControlsModal } from './settings/ControlsModal';
 import type { ScreenName } from '../ui/UI';
+import { OrientationGate } from '../ui/Orientation';
+import { fullscreenMode } from '../ui/Fullscreen';
 import { ShellContext, LegacyLaunchOptions, PartyAvatarInfo } from './ShellContext';
 import { navigate, onRouteChange, parseRoute, routeToHash } from './router';
 import { CurrencyBar } from './ui/CurrencyBar';
@@ -332,6 +334,12 @@ export class AppShell implements ShellContext {
   // ------------------------------------------------------------ boot
 
   async boot(): Promise<void> {
+    // 0) Mobile: NECROFALL is a landscape game. The shared orientation gate (ui/Orientation.ts)
+    //    guards the SHELL screens too, and the first gesture asks for fullscreen + a landscape
+    //    lock — the exact contract the legacy P2P screens always had.
+    OrientationGate.shared();
+    if (IS_TOUCH) OrientationGate.shared().armAutoLock();
+
     // 1) A provider redirect may be landing right now.
     if (APP_CONFIG.authConfigured && isAuthCallbackUrl()) {
       try {
@@ -482,6 +490,9 @@ export class AppShell implements ShellContext {
       this.page?.update?.();
       return;
     }
+    // Mobile: every shell screen re-arms the one-tap fullscreen ask (a redirect or a refusal may
+    // have consumed the previous window) — but never once fullscreen is actually on.
+    if (IS_TOUCH && fullscreenMode() === 'none') OrientationGate.shared().armAutoLock();
     // Whatever screen is next, the previous one lets go of the shared avatar preview.
     this.game?.ui.hideShellAvatar();
     this.avatarStageHost = null;

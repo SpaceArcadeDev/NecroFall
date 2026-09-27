@@ -696,7 +696,9 @@ export class UI {
     document.body.appendChild(this.root);
     const saved = localStorage.getItem('necrofall.name');
     if (saved) this.name = saved;
-    this.orientation = new OrientationGate(this.root);
+    // One shared gate (see OrientationGate.shared): it lives on <body> so the account shell's
+    // `#ui { display: none }` cannot take the rotate/fullscreen prompt away from phones.
+    this.orientation = OrientationGate.shared();
     this.buildMenu();
     this.buildHowTo();
     this.buildControls();

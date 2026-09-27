@@ -54,7 +54,9 @@ bootstrap and cost discipline.
    any value you must **redeploy** (Deployments → ⋯ → Redeploy).
 2. In the SpacetimeAuth dashboard (module dashboard → SpacetimeAuth) register
    the deployed URLs on the client: Redirect URI `https://<app>/auth/callback`
-   and Post Logout Redirect URI `https://<app>/`.
+   and Post Logout Redirect URI `https://<app>/`. If the provider answers
+   `redirect_uris must contain members`, the client has no redirect URIs saved
+   yet — add them in the client's edit dialog and save.
 3. `vercel.json` rewrites `/auth/callback` to `index.html`; without that the
    provider's redirect back lands on a Vercel 404 and sign-in can never finish.
 

@@ -491,6 +491,54 @@
   .play-page .menu-title { font-size: clamp(30px, 6.4vh, 48px); }
   .play-page .menu-sub { margin-bottom: 8px; }
 }
+/* Very short landscape phones in fullscreen (568x320 … 915x412): the fixed PLAY
+   and PARTY frames hand their spare pixels back to the content — the same
+   compaction the in-game P2P screens wear in landscape (styles.mobile.css) —
+   so the mode toggle, the code row and the action row always stay inside the
+   frame instead of being clipped by the page's overflow:hidden. */
+@media (max-height: 480px) {
+  .play-page .menu-title,
+  .party-page .lobby-title { font-size: clamp(20px, 6.6vh, 30px); }
+  .play-page .menu-col { gap: 6px; }
+  /* when the leftover space can no longer hold the whole setup, `safe center`
+     top-aligns it — so it can never spill back over the mode strip */
+  .play-page.mode-picked .nf-play-entry { gap: 6px; justify-content: safe center; }
+  .play-page.mode-picked .play-modes { gap: 6px; }
+  .play-page.mode-picked .mode-card { padding: 4px 10px; gap: 7px; }
+  .play-page.mode-picked .mode-ico { width: 24px; }
+  .play-page.mode-picked .mode-ico svg { width: 15px; height: 15px; }
+  .play-page.mode-picked .mode-card .mode-name { font-size: 12px; }
+  .nf-toggle { padding: 4px; gap: 4px; }
+  .nf-toggle-opt { min-height: 36px; padding: 3px 8px; gap: 1px; }
+  .nf-toggle-name { font-size: 12.5px; letter-spacing: 0.18em; }
+  .nf-toggle-sub { font-size: 8.5px; }
+  .nf-play-enter { gap: 6px; padding: 8px 10px; }
+  .nf-lobby { gap: 6px; }
+  .nf-colony-row { padding: 3px 10px; }
+  .nf-play-row,
+  .nf-play-actions { gap: 8px; }
+  .nf-play-row .btn,
+  .nf-play-actions .btn { min-height: 36px; padding: 6px 12px; font-size: 12.5px; }
+  .nf-play-row input { min-height: 36px; padding: 6px 10px; }
+  .nf-play-enter .muted { font-size: 11px; margin: 0; }
+  /* the party panel follows the in-game landscape lobby rules */
+  .party-page .lobby-panel { padding: 8px 10px; gap: 5px; }
+  .party-page .lobby-rail { min-height: 44px; margin-bottom: 4px; }
+  .party-page .seat-card { padding: 4px 4px 5px; min-height: 48px; }
+  .party-page .lobby-actions .btn { min-height: 40px; }
+}
+/* The tiniest landscape frames (a 568x320 phone): another notch off the
+   controls so the last action row still clears the bottom edge. */
+@media (max-height: 340px) {
+  .nf-toggle-opt { min-height: 32px; padding: 2px 8px; }
+  .nf-lobby { gap: 5px; }
+  .nf-colony-row { padding: 2px 10px; }
+  .nf-play-row,
+  .nf-play-actions { gap: 7px; }
+  .nf-play-row .btn,
+  .nf-play-actions .btn { min-height: 34px; }
+  .nf-play-row input { min-height: 34px; }
+}
 
 .nf-play-body { display: grid; gap: 14px; }
 .nf-lobby { display: flex; flex-direction: column; gap: 10px; }

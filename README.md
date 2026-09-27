@@ -47,6 +47,17 @@ as before: straight into the legacy P2P/offline game. See
 [`spacetimedb/README.md`](spacetimedb/README.md) for the module details, admin
 bootstrap and cost discipline.
 
+### Deploying to Vercel
+
+1. Add the same `VITE_*` values under **Project → Settings → Environment
+   Variables**. Vite bakes them into the bundle at build time, so after changing
+   any value you must **redeploy** (Deployments → ⋯ → Redeploy).
+2. In the SpacetimeAuth dashboard (module dashboard → SpacetimeAuth) register
+   the deployed URLs on the client: Redirect URI `https://<app>/auth/callback`
+   and Post Logout Redirect URI `https://<app>/`.
+3. `vercel.json` rewrites `/auth/callback` to `index.html`; without that the
+   provider's redirect back lands on a Vercel 404 and sign-in can never finish.
+
 ---
 
 ## The match

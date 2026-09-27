@@ -501,10 +501,13 @@ export class AppShell implements ShellContext {
     // The CLASSIC flow (play, setup, party) wears the in-game menu dress: the
     // account chrome steps away (no profile button, currencies, ? or settings)
     // so the wordmark is the header, with the back chevron floating over the
-    // top-left corner.
+    // top-left corner. The first signup/login screens drop the SAME chrome —
+    // no friends rail, profile, currencies, help or settings around the card.
     const bareScreen = screen === 'play' || screen === 'lobby' || screen === 'party';
-    this.topBar.element.classList.toggle('hidden', bareScreen);
-    this.root.classList.toggle('bare-mode', bareScreen);
+    const noChrome = bareScreen || screen === 'login' || screen === 'onboarding';
+    this.topBar.element.classList.toggle('hidden', noChrome);
+    this.rail.element.classList.toggle('hidden', noChrome);
+    this.root.classList.toggle('bare-mode', noChrome);
 
     switch (screen) {
       case 'login':

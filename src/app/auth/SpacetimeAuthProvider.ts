@@ -35,6 +35,38 @@ interface OidcEndpoints {
 
 const PKCE_TTL_MS = 15 * 60 * 1000;
 
+/**
+ * BOOT NEVER HANGS (user report 2026-09-28: "refresh stays blank for a long time, then
+ * the login wall, and SEND MAGIC LINK does nothing"). Every auth fetch is bounded: a
+ * dead network returns in seconds with a TIMEOUT error the caller can show, instead of
+ * leaving an unbounded promise (and a spinner) behind.
+ */
+class FetchTimeoutError extends Error {
+  constructor(url: string, ms: number) {
+    super(`Request timed out after ${Math.round(ms / 1000)}s (${url}).`);
+    this.name = 'TimeoutError';
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 10_000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } catch (err) {
+    // an abort HERE is always OUR timer (nothing else aborts these fetches)
+    if (err instanceof Error && err.name === 'AbortError') throw new FetchTimeoutError(url, timeoutMs);
+    throw err;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/** Was the failure ours (a timeout) rather than the server saying no? */
+function isTimeout(err: unknown): boolean {
+  return err instanceof FetchTimeoutError || (err instanceof Error && err.name === 'TimeoutError');
+}
+
 function base64Url(bytes: Uint8Array): string {
   let s = '';
   for (const b of bytes) s += String.fromCharCode(b);
@@ -89,6 +121,13 @@ export class SpacetimeAuthProvider implements AuthProvider {
       try {
         await this.refresh();
       } catch (err) {
+        // A NETWORK stall (timeout) must not sign the player out: keep the token we
+        // have — the socket's own auth handshake is the real gate — and let the
+        // connection layer retry. Only a REJECTED refresh ends the session.
+        if (isTimeout(err)) {
+          console.warn('[NECROFALL] token refresh timed out — continuing with the stored token');
+          return this.current?.accessToken ?? null;
+        }
         console.warn('[NECROFALL] token refresh failed', err);
         this.setSession(null);
         return null;
@@ -119,7 +158,7 @@ export class SpacetimeAuthProvider implements AuthProvider {
       return 'signed-in';
     }
     this.interactionId = step.id;
-    const res = await fetch(`/interactions/${this.interactionId}/magic-link`, {
+    const res = await fetchWithTimeout(`/interactions/${this.interactionId}/magic-link`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -133,8 +172,10 @@ export class SpacetimeAuthProvider implements AuthProvider {
   /** One poll tick on the emailed link: still waiting, clicked (used) or timed out. */
   async pollMagicLink(): Promise<'pending' | 'used' | 'expired'> {
     if (!this.interactionId || !this.pollingToken) return 'expired';
-    const res = await fetch(
-      `/interactions/${this.interactionId}/magic-link?token=${encodeURIComponent(this.pollingToken)}`
+    const res = await fetchWithTimeout(
+      `/interactions/${this.interactionId}/magic-link?token=${encodeURIComponent(this.pollingToken)}`,
+      {},
+      8000
     );
     if (res.status >= 400) {
       const data = (await res.json().catch(() => ({}))) as { message?: string };
@@ -201,7 +242,7 @@ export class SpacetimeAuthProvider implements AuthProvider {
     const params = this.authorizeParams(attempt, await sha256Base64Url(attempt.verifier));
     let res: Response;
     try {
-      res = await fetch(`/oidc/auth?${params.toString()}`, { redirect: 'follow' });
+      res = await fetchWithTimeout(`/oidc/auth?${params.toString()}`, { redirect: 'follow' }, 12_000);
     } catch {
       throw new Error('Could not reach the sign-in service. Retry below.');
     }
@@ -341,7 +382,7 @@ export class SpacetimeAuthProvider implements AuthProvider {
   }
 
   private async postToken(url: string, body: URLSearchParams): Promise<TokenResponse> {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString(),
@@ -360,7 +401,8 @@ export class SpacetimeAuthProvider implements AuthProvider {
       logout: `${APP_CONFIG.authAuthority}/logout`,
     };
     try {
-      const res = await fetch(`${APP_CONFIG.authAuthority}/.well-known/openid-configuration`);
+      // a SHORT leash: a dead authority must not hold the boot hostage
+      const res = await fetchWithTimeout(`${APP_CONFIG.authAuthority}/.well-known/openid-configuration`, {}, 5000);
       if (res.ok) {
         const doc = (await res.json()) as Record<string, string>;
         this.endpoints = {

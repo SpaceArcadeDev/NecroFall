@@ -960,6 +960,27 @@
 }
 .seat-card.ready { border-color: rgba(77, 255, 166, 0.5); box-shadow: 0 0 14px rgba(77, 255, 166, 0.14); }
 .seat-card.me.ready { border-color: rgba(120, 255, 190, 0.75); }
+/* OPEN SLOT (user ask 2026-09-28): the empty seats of a party / lobby line-up —
+   a LIT PLATFORM waiting for a survivor, never a blank box. */
+.seat-card.empty {
+  border-style: dashed;
+  border-color: rgba(150, 120, 220, 0.28);
+  background: linear-gradient(180deg, rgba(24, 16, 40, 0.5), rgba(12, 8, 22, 0.6));
+  justify-content: center;
+}
+.seat-card.empty:hover { transform: none; border-color: rgba(150, 120, 220, 0.45); box-shadow: none; }
+.seat-card.empty::before { opacity: 0.25; }
+.seat-card.empty .seat-pad {
+  width: 46px;
+  height: 11px;
+  border-radius: 999px;
+  margin-bottom: 5px;
+  background: radial-gradient(ellipse at center, rgba(154, 107, 255, 0.6), rgba(154, 107, 255, 0.08) 68%, transparent 72%);
+  box-shadow: 0 0 18px rgba(154, 107, 255, 0.45);
+  animation: seat-pad-pulse 2.4s ease-in-out infinite;
+}
+.seat-card.empty .seat-name { color: rgba(200, 188, 230, 0.55); letter-spacing: 0.18em; font-size: 11px; font-weight: 700; }
+@keyframes seat-pad-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
 .seat-name {
   max-width: 100%;
   font-size: 12.5px;

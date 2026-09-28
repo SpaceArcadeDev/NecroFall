@@ -427,7 +427,15 @@ html.nf-onb-colony .count-badge { display: none; }
      around it — see `soloBox` in ui/SelectionPreview.ts). The main pane above still cuts the
      screen; the spill never reaches past it, so no scrollbar can appear. */
   overflow: visible;
+  /* THE AVATAR TURNTABLE (user report 2026-09-28: \"I need to drag a lot for it to
+     rotate a bit\" on a phone — the same dressing as the lobby rail). The home page IS
+     the solo avatar's drag surface, and without `touch-action: none` the browser
+     claimed the touch as a scroll as soon as the finger moved, fired `pointercancel`
+     and killed the spin. No button lives inside this page, so `none` is safe here. */
+  touch-action: none;
+  cursor: grab;
 }
+.home-page:active { cursor: grabbing; }
 .nf-home-head {
   display: flex;
   flex-direction: column;
@@ -448,16 +456,15 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-home-title { font-size: clamp(30px, min(6.2vh, 11.5vw), 52px); animation: nf-title-glow 4.5s ease-in-out infinite; }
 .home-page .menu-sub { margin-bottom: 2px; font-size: clamp(10px, 1.7vh, 12.5px); }
 
-/* MAIN MENU HEADER (plan §38/§39): the wordmark lives IN the chrome header row,
-   in the SAME row as the profile button — absolutely centred on the VIEWPORT
-   (never "centred in the space left over after the profile"), with the profile
-   docked to the right edge. The size is a clamp so a narrow frame SHRINKS the
-   title instead of shifting it off-centre. */
+/* MAIN MENU HEADER (plan §38/§39, reworked 2026-09-28): the wordmark lives IN
+   the chrome header row, ABSOLUTELY centred on the viewport, with the
+   SUBTITLE directly under it and the chrome split around it — the profile
+   button LEFT (user ask), the currencies / ? / gear RIGHT. */
 .nf-shell.on-home .nf-chrome { position: relative; }
 /* the bottom nav must stay glued to the viewport — the chrome became positioned */
 .nf-shell.on-home .nf-bottom { position: fixed; }
-.nf-shell.on-home .nf-top-me { order: 9; margin-left: auto; }
-.nf-shell.on-home .nf-top-currency { margin-left: 0; }
+.nf-shell.on-home .nf-top-me { order: -1; margin-left: 0; }
+.nf-shell.on-home .nf-top-currency { margin-left: auto; }
 .nf-home-header-title {
   position: absolute;
   left: 50%;
@@ -465,33 +472,49 @@ html.nf-onb-colony .count-badge { display: none; }
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   white-space: nowrap;
+}
+.nf-home-word {
   font-size: clamp(18px, 3vw, 38px);
   letter-spacing: 0.24em;
+}
+/* the tagline sits DIRECTLY under the wordmark (user ask) */
+.nf-home-header-sub {
+  font-size: clamp(9px, 1.5vh, 12px);
+  letter-spacing: 0.3em;
+  margin: 0;
+  opacity: 0.85;
 }
 /* Phone portrait: every pixel is contested — the glyphs shrink, the profile
    drops its name, the currency chips tighten and the ?/gear join the profile
    side (the how-to stays available from every other shell screen). The title
    NEVER moves off-centre. */
 @media (max-width: 560px) {
-  .nf-shell.on-home .nf-home-header-title { font-size: 15px; letter-spacing: 0.16em; }
+  .nf-shell.on-home .nf-home-word { font-size: 15px; letter-spacing: 0.16em; }
+  .nf-shell.on-home .nf-home-header-sub { font-size: 9px; letter-spacing: 0.22em; }
   .nf-shell.on-home .nf-top-name { display: none; }
   .nf-shell.on-home .nf-top-level { display: none; }
   .nf-shell.on-home .nf-currency { padding: 5px 8px; font-size: 12px; gap: 4px; }
   .nf-shell.on-home .nf-top { gap: 6px; }
   .nf-shell.on-home .nf-top-howto { display: none; }
-  .nf-shell.on-home .nf-top-settings { order: 8; margin-left: auto; }
-  .nf-shell.on-home .nf-top-me { order: 9; margin-left: 0; }
+  .nf-shell.on-home .nf-top-settings { order: 8; margin-left: 0; }
+  .nf-shell.on-home .nf-top-me { order: -1; margin-left: 0; }
 }
 /* Landscape phones (the game's real home): the row is wide, the title can breathe. */
 @media (orientation: landscape) and (max-height: 560px) {
-  .nf-home-header-title { font-size: clamp(18px, 2.4vw, 28px); letter-spacing: 0.22em; top: 46%; }
+  .nf-home-header-title { top: 50%; }
+  .nf-home-word { font-size: clamp(18px, 2.4vw, 28px); letter-spacing: 0.22em; }
+  .nf-home-header-sub { font-size: 9.5px; }
 }
 /* Tiny portrait frames (320px): the gear joins the how-to on the bench so the
    centred title never has to squeeze — both stay one screen away. */
 @media (max-width: 360px) {
   .nf-shell.on-home .nf-top-settings:not(.nf-top-howto) { display: none; }
-  .nf-shell.on-home .nf-home-header-title { font-size: 13px; }
+  .nf-shell.on-home .nf-home-word { font-size: 13px; }
 }
 /* the stage soaks up whatever height is left BETWEEN the wordmark and the caption — never more
    than the viewport holds, so the avatar always scales to fit and is never cropped. It is also
@@ -1432,6 +1455,24 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 .nf-bottom-play .nf-bottom-icon { width: 34px; height: 34px; margin-left: 2px; }
 .nf-bottom-play .nf-bottom-label { font-size: 12px; letter-spacing: 0.26em; color: rgba(255, 255, 255, 0.94); }
+/* the hero button wears the RANK card's shine sweep (user ask: "play button should
+   have some effect to it like the rank button") — a slow light pass every few seconds */
+.nf-bottom-play { position: relative; overflow: hidden; }
+.nf-bottom-play::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.28) 50%, transparent 70%);
+  background-size: 260% 100%;
+  animation: nf-play-shine 3.8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.nf-bottom-play > * { position: relative; z-index: 1; }
+@keyframes nf-play-shine {
+  0% { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
+}
 
 /* the back chevron: how child screens (play, queue, profile) return home */
 .nf-back {

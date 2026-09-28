@@ -28,23 +28,25 @@ export function createCenterIcon(): string {
   );
 }
 
-/** FULLSCREEN (plan §29): four corner brackets opening OUTWARD. */
+/** EXPAND (reworked 2026-09-28): the familiar maximize arrows — two corner
+ *  brackets with diagonal shafts pointing outward to the corner they open. */
 export function createFullscreenIcon(): string {
   return svg(
-    `<path d="M4 9V5.6A1.6 1.6 0 0 1 5.6 4H9"/>` +
-      `<path d="M15 4h3.4A1.6 1.6 0 0 1 20 5.6V9"/>` +
-      `<path d="M20 15v3.4a1.6 1.6 0 0 1-1.6 1.6H15"/>` +
-      `<path d="M9 20H5.6A1.6 1.6 0 0 1 4 18.4V15"/>`
+    `<path d="M15 3h6v6"/>` +
+      `<path d="M9 21H3v-6"/>` +
+      `<path d="m21 3-7 7"/>` +
+      `<path d="m3 21 7-7"/>`
   );
 }
 
-/** FULLSCREEN EXIT (plan §29): the same brackets folded INWARD. */
+/** MINIMIZE (reworked 2026-09-28 — the old folded-bracket glyph read as noise):
+ *  the familiar minimize arrows — the shafts point IN, to the centre. */
 export function createFullscreenExitIcon(): string {
   return svg(
-    `<path d="M9.5 4v4.1A1.4 1.4 0 0 1 8.1 9.5H4"/>` +
-      `<path d="M14.5 4v4.1a1.4 1.4 0 0 0 1.4 1.4H20"/>` +
-      `<path d="M14.5 20v-4.1a1.4 1.4 0 0 0-1.4-1.4H9.5"/>` +
-      `<path d="M9.5 20v-4.1a1.4 1.4 0 0 1 1.4-1.4H4"/>`
+    `<path d="M4 14h6v6"/>` +
+      `<path d="M20 10h-6V4"/>` +
+      `<path d="m14 10 7-7"/>` +
+      `<path d="m3 21 7-7"/>`
   );
 }
 

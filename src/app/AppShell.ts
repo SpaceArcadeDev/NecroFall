@@ -33,7 +33,7 @@ import { GraphicsPage } from './settings/GraphicsPage';
 import type { ScreenName } from '../ui/UI';
 import { OrientationGate } from '../ui/Orientation';
 import { fullscreenMode } from '../ui/Fullscreen';
-import { ShellContext, LegacyLaunchOptions, PartyAvatarInfo } from './ShellContext';
+import { ShellContext, LegacyLaunchOptions, PartyAvatarInfo, PartyMode } from './ShellContext';
 import { navigate, onRouteChange, parseRoute, routeToHash } from './router';
 import { CurrencyBar } from './ui/CurrencyBar';
 import { FriendRail } from './ui/FriendRail';
@@ -48,7 +48,7 @@ import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
 import { showRankResultOverlay } from './rank/RankResultOverlay';
 import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../rankmap/procedural/SeedHash';
-import { LOCATION_PLANET, planetLocationKey } from '../rankmap/DiscoveryTypes';
+import { LOCATION_GALAXY, LOCATION_PLANET, LOCATION_SYSTEM, galaxyLocationKey, planetLocationKey, systemLocationKey } from '../rankmap/DiscoveryTypes';
 
 type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
@@ -66,6 +66,9 @@ export class AppShell implements ShellContext {
   private screenHost: HTMLElement;
   private chrome: HTMLElement;
   private topBar: CurrencyBar;
+  /** The screen the PARTY page returns to (set by goParty) and the party's FORMAT tag. */
+  private partyReturnScreen: ShellScreen = 'lobby';
+  private currentPartyMode: PartyMode = 'CLASSIC';
   private nav: MobileBottomNav;
   private rail: FriendRail;
   private toastEl: HTMLElement;
@@ -110,7 +113,7 @@ export class AppShell implements ShellContext {
    * late success still takes the screen over through `onData()`.
    */
   private bootWatchdog = 0;
-  private static readonly BOOT_WATCHDOG_MS = 12_000;
+  private static readonly BOOT_WATCHDOG_MS = 20_000;
   /** The main-menu wordmark — lives IN the chrome header row (plan §38). */
   private homeTitleEl: HTMLElement | null = null;
 
@@ -229,7 +232,37 @@ export class AppShell implements ShellContext {
 
   /** The OFFICIAL PARTY screen (CREATE PARTY's home) — its own menu page. */
   goParty(): void {
+    // Remember where we CAME FROM so the party screen's BACK returns there, not to a
+    // hardcoded lobby (user ask) — rank → rank, lobby → lobby, play → play.
+    if (this.screen !== 'party' && this.screen !== 'queue') this.partyReturnScreen = this.screen;
     this.navigateTo({ name: 'party' });
+  }
+
+  /** Leave the party page for the screen that opened it (its BACK / DISBAND answer). */
+  goBackFromParty(): void {
+    switch (this.partyReturnScreen) {
+      case 'rank':
+        this.goRank();
+        break;
+      case 'play':
+        this.goPlay();
+        break;
+      case 'lobby':
+        this.goLobby();
+        break;
+      default:
+        this.goHome();
+        break;
+    }
+  }
+
+  /** The FORMAT tag the party screen wears: set by whoever opens a party. */
+  setPartyMode(mode: PartyMode): void {
+    this.currentPartyMode = mode;
+  }
+
+  partyMode(): PartyMode {
+    return this.currentPartyMode;
   }
 
   /** The RANK page — the intergalactic map (plan §48). */
@@ -282,9 +315,9 @@ export class AppShell implements ShellContext {
     else this.goLobby();
   }
 
-  /** The chevron: PARTY returns to its setup, the setup returns to the format menu. */
+  /** The chevron: PARTY returns to whatever opened it, the setup returns to the format menu. */
   private onBack(): void {
-    if (this.screen === 'party') this.goLobby();
+    if (this.screen === 'party') this.goBackFromParty();
     else if (this.screen === 'lobby') this.goPlay();
     else this.goHome();
   }
@@ -633,20 +666,36 @@ export class AppShell implements ShellContext {
       const me = ClientCache.shared.playerByHex(this.myHex());
       const season = ClientCache.shared.rankedSeason();
       const universeSeed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
-      // Discovery is EARNED BY PLAYING and by explicit first contact (plan §5/§47):
-      // the history row proves this seat fought here, so the planet's first-contact
-      // record is requested NOW through the ONE discovery path — the server decides
-      // (duplicate slots / full lists / another ring all no-op there).
+      // Discovery is EARNED BY PLAYING (user ask 2026-09-28): the history row
+      // proves this seat fought here, so the match's PLANET, its SOLAR SYSTEM and
+      // its GALAXY all record the fighter through the ONE discovery path — the
+      // server decides (duplicate slots / full lists / another ring all no-op).
       const planetKey = m.planetKey || history.planetKey;
       const parsed = planetKey ? parsePlanetKey(planetKey) : null;
       if (parsed) {
         const { gx, gy } = decodeGalaxyId(parsed.galaxyId);
+        const galaxyKey = galaxyLocationKey(gx, gy);
+        const systemKey = systemLocationKey(gx, gy, parsed.systemId);
         discoverLocation({
           locationType: LOCATION_PLANET,
           locationKey: planetLocationKey(gx, gy, parsed.systemId, parsed.planetId),
           galaxyId: parsed.galaxyId,
           systemId: parsed.systemId,
           planetId: parsed.planetId,
+        });
+        discoverLocation({
+          locationType: LOCATION_SYSTEM,
+          locationKey: systemKey,
+          galaxyId: parsed.galaxyId,
+          systemId: parsed.systemId,
+          planetId: 0,
+        });
+        discoverLocation({
+          locationType: LOCATION_GALAXY,
+          locationKey: galaxyKey,
+          galaxyId: parsed.galaxyId,
+          systemId: 0,
+          planetId: 0,
         });
       }
       showRankResultOverlay({
@@ -710,11 +759,16 @@ export class AppShell implements ShellContext {
     // so the wordmark is the header, with the back chevron floating over the
     // top-left corner. The first signup/login screens drop the SAME chrome —
     // no friends rail, profile, currencies, help or settings around the card.
+    //
+    // The header chrome now belongs to the MAIN MENU ONLY (user ask 2026-09-28):
+    // every other screen — play, lobby, party, rank, queue, profile, graphics —
+    // runs chrome-less, wordmark or not.
     const bareScreen = screen === 'play' || screen === 'lobby' || screen === 'party';
     const noChrome = bareScreen || screen === 'login' || screen === 'onboarding';
-    this.topBar.element.classList.toggle('hidden', noChrome);
+    const noTopBar = screen !== 'home' && screen !== 'loading' && screen !== 'boot';
+    this.topBar.element.classList.toggle('hidden', noTopBar);
     this.rail.element.classList.toggle('hidden', noChrome);
-    this.root.classList.toggle('bare-mode', noChrome);
+    this.root.classList.toggle('bare-mode', noTopBar);
 
     switch (screen) {
       case 'login':
@@ -792,6 +846,13 @@ export class AppShell implements ShellContext {
       clear(slot);
       const form = el('div', 'nf-login-slot');
       if (error) form.appendChild(el('p', 'nf-error', error));
+      // A wall is never a dead end: say that the shell keeps retrying in the
+      // background (user report — "it stayed blank, then the login wall").
+      if (error) {
+        form.appendChild(
+          el('p', 'nf-login-note', 'The app keeps retrying in the background — signing in resumes the moment the server answers.')
+        );
+      }
       const email = el('input', 'nf-input big nf-login-email') as HTMLInputElement;
       email.type = 'email';
       email.placeholder = 'EMAIL ADDRESS';
@@ -994,16 +1055,14 @@ export class AppShell implements ShellContext {
     const wrap = el('div', 'nf-page home-page');
 
     // ---- the wordmark rides the CHROME header row (plan §38) so it is truly
-    // centred on the viewport, in the SAME row as the profile button; the page
-    // itself keeps only the subtitle under it.
-    const title = el('div', 'menu-title nf-home-title nf-home-header-title', 'NECROFALL');
+    // centred on the viewport, in the SAME row as the profile button. The
+    // SUBTITLE sits directly UNDER it (user ask), so both leave together on
+    // every screen change and end up as one column in the header.
+    const title = el('div', 'nf-home-header-title');
+    title.appendChild(el('div', 'menu-title nf-home-title nf-home-word', 'NECROFALL'));
+    title.appendChild(el('div', 'menu-sub nf-home-header-sub', 'Dive • Purge • Dominate'));
     this.homeTitleEl = title;
     this.chrome.appendChild(title);
-
-    // ---- the subtitle at the top of the content, floating over the gradient
-    const head = el('div', 'nf-home-head');
-    head.appendChild(el('div', 'menu-sub', 'Dive • Purge • Dominate'));
-    wrap.appendChild(head);
 
     // ---- the player's own character, staged exactly like the lobby line-up
     // (name / level / currency live in the top bar — nothing here repeats them).

@@ -40,10 +40,13 @@ export class OfficialLobby {
         this.ctx.toast('Enter a valid party code.');
         return;
       }
+      // parties opened from the LOBBY are CLASSIC parties (the rank menu tags RANK)
+      this.ctx.setPartyMode('CLASSIC');
       this.ctx.official.joinPartyByCode(code);
       this.ctx.goParty(); // …and the PARTY screen gathers the roster
     });
     this.primaryBtn = button('CREATE PARTY', 'btn primary nf-small', () => {
+      this.ctx.setPartyMode('CLASSIC');
       if (this.inParty) {
         this.ctx.goParty();
         return;

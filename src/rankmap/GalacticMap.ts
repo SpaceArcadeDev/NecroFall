@@ -11,7 +11,8 @@
 //
 // The map is VIEW-ONLY: nothing here decides availability or ownership — rows
 // come from the server subscription, everything else is regenerated from the
-// season seed (plan §0). Discovery is only ever REQUESTED here (plan §6/§47);
+// season seed (plan §0). Discovery is EARNED IN MATCHES (AppShell records it when a ranked
+// match ends); the map only READS it back off the scoped subscriptions (plan §6/§47).
 // the server decides, and the DOM panels render what came back.
 import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from './procedural/GalaxyTypes';
 import { planetsInSystem, ringHome } from './procedural/UniverseGenerator';
@@ -23,12 +24,6 @@ import { decodeGalaxyId, MAX_RING_RADIUS, ringCenterRadius, ringInnerRadius, rin
 import { getTerritoryVisual, planetOwnershipColor, NECROPHAGE_CONTROL_COLOR, type TerritoryVisual } from './Ownership';
 import { calculateDominance } from './LocationControlSummary';
 import {
-  galaxyLocationKey,
-  planetLocationKey,
-  systemLocationKey,
-  LOCATION_GALAXY,
-  LOCATION_PLANET,
-  LOCATION_SYSTEM,
   type DiscoveryEntry,
 } from './DiscoveryTypes';
 
@@ -47,15 +42,6 @@ export interface PlanetRowData {
   colony: number;
   controlExpiresAt: number;
   discovered: boolean;
-}
-
-/** A first-contact request the map hands to the page (plan §47). */
-export interface DiscoveryRequest {
-  locationType: number;
-  locationKey: string;
-  galaxyId: number;
-  systemId: number;
-  planetId: number;
 }
 
 /**
@@ -89,11 +75,11 @@ export interface MapData {
   discoveriesForGalaxy(galaxyId: number): DiscoveryEntry[];
   discoveriesForSystem(galaxyId: number, systemId: number): DiscoveryEntry[];
   discoveriesForPlanet(planetKey: string): DiscoveryEntry[];
+  /* (Discovery is written server-side when a ranked match ends — the map never asks.) */
   /** The signed-in player (plan §7) — used to mark "you" and gate requests. */
   currentPlayerId: string;
   currentPlayerName: string;
   /** Ask the SERVER to record first contact (plan §6/§47). Optional for tests. */
-  requestDiscovery?(req: DiscoveryRequest): void;
 }
 
 export type MapLevel = 'galactic' | 'galaxy' | 'system';
@@ -171,6 +157,9 @@ const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
  *  with thousands of galaxies stays cheap: no shaped faces until they are genuinely
  *  grown on screen. */
 const GALAXY_DOT_RADIUS = 18;
+/** Shared angular speed of every SPIRAL / BARRED_SPIRAL face (rad/s) — one rhythm for
+ *  the whole field (user: "the spiral ones should spin at the same animation speed"). */
+const GALAXY_SPIN = 0.06;
 
 interface Hover {
   kind: 'galaxy' | 'system' | 'planet' | null;
@@ -205,10 +194,7 @@ export class GalacticMap {
   private selected: LocationSelection | null = null;
   /** Planets the player explicitly deselected — auto soft-select skips them (plan §50/§51). */
   private suppressAutoSelect = new Set<string>();
-  /** Discovery requests are debounced + deduped (plan §5/§47). */
-  private discoveryTimer = 0;
-  private discoveryPending: DiscoveryRequest | null = null;
-  private discoveryAsked = new Set<string>();
+
   private hover: Hover = { kind: null, sx: 0, sy: 0 };
   private stars: { x: number; y: number; r: number; seed: number; layer: number }[] = [];
   private shooting: { x: number; y: number; vx: number; vy: number; life: number } | null = null;
@@ -271,7 +257,6 @@ export class GalacticMap {
   dispose(): void {
     this.disposed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
-    if (this.discoveryTimer) window.clearTimeout(this.discoveryTimer);
     this.resizeObserver?.disconnect();
     this.canvas.remove();
   }
@@ -340,8 +325,7 @@ export class GalacticMap {
 
   /**
    * SELECT a planet (plan §21/§47) — panel-driven jumps and deep-zoom soft lock.
-   * Selection NEVER moves the camera (plan §22); it only drives highlight + panel
-   * + the debounced discovery request.
+   * Selection NEVER moves the camera (plan §22); it only drives highlight + panel.
    */
   selectPlanet(p: PlanetDescriptor | null, galaxy?: GalaxyDescriptor, system?: SystemDescriptor): void {
     if (!p) {
@@ -356,7 +340,6 @@ export class GalacticMap {
     if (!g || !sys) return; // descriptors can only be resolved for real locations
     this.suppressAutoSelect.delete(p.key);
     this.selected = { type: 'planet', galaxy: g, system: sys, planet: p };
-    this.queueDiscovery(this.selected);
     this.emitSelection();
   }
 
@@ -703,25 +686,30 @@ export class GalacticMap {
     };
   }
 
-  /** Where a planet sits on screen right now (orbit animation + its system's plane). */
+  /** Where a planet sits on screen right now (orbit animation + its system's plane).
+   *  The elliptical orbit is FLATTENED FIRST and then rotated — the same order the
+   *  orbit path is drawn in (`rotate(rot); scale(1, inc); arc(...)`), so a planet
+   *  never drifts off its ring (the old formula skipped `inc` on one rotated term). */
   private planetScreenCircle(g: GalaxyDescriptor, sys: SystemDescriptor, p: PlanetDescriptor, t: number): { x: number; y: number; r: number } {
     const sw = this.systemWorldPos(g, sys);
     const centre = this.world2screen(sw.x, sw.y);
-    const speed = 0.05 / (0.4 + p.orbitRadius);
+    // A full orbit takes ~45–90 s depending on the ring (user could not tell the
+    // planets moved at all — the old 0.05 factor was near-still at map zoom).
+    const speed = 0.085 / (0.4 + p.orbitRadius);
     const angle = p.orbit + t * speed;
     const orbitR = p.orbitRadius * SYSTEM_SCALE * this.cam.zoom;
     const plane = this.systemPlane(sys);
     const cR = Math.cos(plane.rot);
     const sR = Math.sin(plane.rot);
     const ca = Math.cos(angle);
-    const sa = Math.sin(angle);
+    const sa = Math.sin(angle) * plane.inc;
     // STAGED SIZE (plan §11): tiny dots as the system opens (radius·6·sqrt(plAlpha)),
     // solid bodies through the solar-system stage, the classic full view (radius·17) at
     // the close-up. One continuous growth, no cut.
     const grow = 6 * Math.sqrt(this.lock.planetAlpha) + 11 * this.lock.closeAlpha;
     return {
       x: centre.x + (ca * cR - sa * sR) * orbitR,
-      y: centre.y + (ca * sR + sa * cR) * orbitR * plane.inc,
+      y: centre.y + (ca * sR + sa * cR) * orbitR,
       r: Math.max(2.2, p.radius * grow),
     };
   }
@@ -766,9 +754,6 @@ export class GalacticMap {
         this.selected = null;
       }
       if (next === 'system' && system && !this.pinnedSystem) this.pinnedSystem = system;
-      // DISCOVERY (plan §5): entering the galaxy tier / solar-system tier counts.
-      if (next === 'galaxy' && galaxy) this.queueDiscoveryForGalaxy(galaxy);
-      if (next === 'system' && galaxy && system) this.queueDiscoveryForSystem(galaxy, system);
       // a selected planet only survives while its OWN system is the focus
       if (this.selected?.planet && this.focusSystem && this.selected.planet.systemId !== this.focusSystem.systemId) {
         this.selected = null;
@@ -794,73 +779,6 @@ export class GalacticMap {
     if (planet && closeAlpha > 0.35 && this.selected?.planet?.key !== planet.key && !this.suppressAutoSelect.has(planet.key)) {
       this.selectPlanet(planet);
     }
-  }
-
-  // ------------------------------------------------------------ discovery requests (plan §5/§6/§47)
-
-  /** Only locations of YOUR rank band are discoverable (the server enforces this too). */
-  private discoveryAllowed(ring: number): boolean {
-    return ring === this.data.myRing && Boolean(this.data.requestDiscovery);
-  }
-
-  private queueDiscovery(sel: LocationSelection): void {
-    if (sel.type === 'planet' && sel.planet && sel.system) this.queueDiscoveryForPlanet(sel.galaxy, sel.system, sel.planet);
-    else if (sel.type === 'system' && sel.system) this.queueDiscoveryForSystem(sel.galaxy, sel.system);
-    else this.queueDiscoveryForGalaxy(sel.galaxy);
-  }
-
-  private queueDiscoveryForGalaxy(g: GalaxyDescriptor): void {
-    if (!this.discoveryAllowed(g.ring)) return;
-    this.scheduleDiscovery({
-      locationType: LOCATION_GALAXY,
-      locationKey: galaxyLocationKey(g.gx, g.gy),
-      galaxyId: g.galaxyId,
-      systemId: 0,
-      planetId: 0,
-    });
-  }
-
-  private queueDiscoveryForSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
-    if (!this.discoveryAllowed(sys.ring)) return;
-    this.scheduleDiscovery({
-      locationType: LOCATION_SYSTEM,
-      locationKey: systemLocationKey(g.gx, g.gy, sys.systemId),
-      galaxyId: sys.galaxyId,
-      systemId: sys.systemId,
-      planetId: 0,
-    });
-  }
-
-  private queueDiscoveryForPlanet(_g: GalaxyDescriptor, _sys: SystemDescriptor, p: PlanetDescriptor): void {
-    if (!this.discoveryAllowed(p.ring)) return;
-    const { gx, gy } = decodeGalaxyId(p.galaxyId);
-    this.scheduleDiscovery({
-      locationType: LOCATION_PLANET,
-      locationKey: planetLocationKey(gx, gy, p.systemId, p.planetId),
-      galaxyId: p.galaxyId,
-      systemId: p.systemId,
-      planetId: p.planetId,
-    });
-  }
-
-  /**
-   * Debounce (plan §5: ~500–1000 ms): the LAST location the player settles on
-   * inside the window is the one requested, so a quick fly-through only claims
-   * the place they actually stopped at. Each location is asked at most once per
-   * session; the server no-ops for duplicates and full lists (plan §6).
-   */
-  private scheduleDiscovery(req: DiscoveryRequest): void {
-    if (this.discoveryAsked.has(req.locationKey)) return;
-    this.discoveryPending = req;
-    if (this.discoveryTimer) window.clearTimeout(this.discoveryTimer);
-    this.discoveryTimer = window.setTimeout(() => {
-      this.discoveryTimer = 0;
-      const pending = this.discoveryPending;
-      this.discoveryPending = null;
-      if (this.disposed || !pending || this.discoveryAsked.has(pending.locationKey)) return;
-      this.discoveryAsked.add(pending.locationKey);
-      this.data.requestDiscovery?.(pending);
-    }, 700);
   }
 
   // ------------------------------------------------------------ sizing & camera
@@ -916,6 +834,11 @@ export class GalacticMap {
     return ringOfGalaxy(Math.round(f.x), Math.round(f.y));
   }
 
+  /** The band the player is BROWSING right now (rail highlight + canvas band label). */
+  get viewedRing(): number {
+    return this.focusedRing();
+  }
+
   private world2screen(x: number, y: number): { x: number; y: number } {
     return {
       x: (x - this.cam.x) * this.cam.zoom + this.width / 2,
@@ -934,7 +857,6 @@ export class GalacticMap {
     // Navigation implies focus: the galaxy you are entering IS the selection.
     if (this.selected?.type !== 'galaxy' || this.selected.galaxy.galaxyId !== g.galaxyId) {
       this.selected = { type: 'galaxy', galaxy: g };
-      this.queueDiscovery(this.selected);
     }
     const ranges = this.zoomRamps();
     // land INSIDE the galaxy tier (ramp 80%), so a click really opens the systems
@@ -947,7 +869,6 @@ export class GalacticMap {
     this.pinnedSystem = sys;
     if (this.selected?.type !== 'system' || this.selected.system?.systemId !== sys.systemId) {
       this.selected = { type: 'system', galaxy: g, system: sys };
-      this.queueDiscovery(this.selected);
     }
     const ranges = this.zoomRamps();
     const wx = g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD;
@@ -1137,7 +1058,9 @@ export class GalacticMap {
    *  camera enters a galaxy so the close-up isn't fighting a wall of circles. */
   private drawRings(deep: number): void {
     const ctx = this.ctx;
-    const cfg = ringConfig(this.data.myRing);
+    // the band the player is BROWSING (chosen rank in the rail) is the one that reads
+    // loud; the player's own band keeps a secondary lift so both are always legible
+    const viewed = this.focusedRing();
     const fade = 1 - deep * 0.85;
     for (let ring = 7; ring >= 0; ring--) {
       const vis = this.bandVisibility(ring);
@@ -1149,31 +1072,36 @@ export class GalacticMap {
       const rIn = inner * this.cam.zoom;
       const rOut = outer * this.cam.zoom;
       if (rOut < 30 || p0.x < -this.width || p0.x > this.width * 2) continue;
+      const hot = ring === viewed;
+      const mine = ring === this.data.myRing;
       ctx.save();
       ctx.beginPath();
       ctx.arc(p0.x, p0.y, rOut, 0, Math.PI * 2);
       ctx.arc(p0.x, p0.y, rIn, 0, Math.PI * 2, true);
-      ctx.globalAlpha = (ring === this.data.myRing ? 0.16 : 0.05 + ring * 0.004) * fade * vis;
+      ctx.globalAlpha = (hot ? 0.16 : mine ? 0.1 : 0.05 + ring * 0.004) * fade * vis;
       ctx.fillStyle = rc.accent;
       ctx.fill('evenodd');
       ctx.restore();
-      ctx.globalAlpha = (ring === this.data.myRing ? 0.35 : 0.12) * fade * vis;
+      ctx.globalAlpha = (hot ? 0.35 : mine ? 0.2 : 0.12) * fade * vis;
       ctx.strokeStyle = rc.accent;
-      ctx.lineWidth = ring === this.data.myRing ? 1.6 : 1;
+      ctx.lineWidth = hot ? 1.6 : 1;
       ctx.beginPath();
       ctx.arc(p0.x, p0.y, rOut, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    // label for the player's ring at the top of its band
+    // one label, for the BAND THE PLAYER IS BROWSING, at the top of that band
+    // (user: "just say like 'BRONZE BAND' no need to say 'YOUR RING'")
+    const cfg = ringConfig(viewed);
     const p0 = this.world2screen(0, 0);
-    const rMid = ringCenterRadius(this.data.myRing) * this.cam.zoom;
+    const rMid = ringCenterRadius(viewed) * this.cam.zoom;
     ctx.font = '700 11px Rajdhani, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = cfg.accent;
     ctx.globalAlpha = 0.85 * fade;
+    const lx = Math.min(this.width - 90, Math.max(90, p0.x));
     const ly = Math.max(24, p0.y - rMid);
-    ctx.fillText(`${cfg.name} BAND — YOUR RING`, p0.x, ly);
+    ctx.fillText(`${cfg.name} BAND`, lx, ly);
     ctx.globalAlpha = 1;
   }
 
@@ -1208,7 +1136,8 @@ export class GalacticMap {
         const isFocus = this.lock.galaxy?.galaxyId === g.galaxyId;
         const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
         const radius = this.galaxyScreenRadius(g);
-        const pulse = 1 + 0.06 * Math.sin(t * 2 + (g.seed % 100));
+        // (user) galaxies no longer expand/contract — the field stays metrically calm;
+        // spirals SPIN instead (see the face draw below).
         // Once you are INSIDE a galaxy (its systems layer is opening) the galaxy faces
         // withdraw — otherwise a handful of near neighbours smear the frame into one
         // opaque wall. What remains is the NMS view: a faint ghost of the cluster plus
@@ -1220,7 +1149,7 @@ export class GalacticMap {
         const terr = owned ? this.territoryForGalaxy(g.galaxyId) : null;
         // far LOD: a light mote (there can be thousands on screen — No Man's Sky look)
         if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
-          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
+          ctx.globalAlpha = 0.78 * field2 * (1 - inside * 0.5);
           ctx.fillStyle = terr?.color ?? g.starColor;
           ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
           ctx.globalAlpha = 1;
@@ -1232,9 +1161,21 @@ export class GalacticMap {
         // in DEPTH instead of confetti.
         const faceR = (radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - inside * 0.35);
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
-        const s = faceR * 3.1 * pulse;
-        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34) * pulse) * field2 * haze * (1 - inside * 0.85);
-        ctx.drawImage(this.galaxySprite(g), p.x - s / 2, p.y - s / 2, s, s);
+        const s = faceR * 3.1;
+        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34)) * field2 * haze * (1 - inside * 0.85);
+        const sprite = this.galaxySprite(g);
+        if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
+          // SPIN (user): the spiral faces rotate at ONE shared angular speed, so the whole
+          // field turns as a single system. Elliptical / irregular / ring faces stay put
+          // (nothing to turn — and no more size pulsing anywhere).
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(t * GALAXY_SPIN);
+          ctx.drawImage(sprite, -s / 2, -s / 2, s, s);
+          ctx.restore();
+        } else {
+          ctx.drawImage(sprite, p.x - s / 2, p.y - s / 2, s, s);
+        }
         ctx.globalAlpha = 1;
         // ownership EMISSION tint (plan §13/§14/§33): the shape stays procedural, the
         // glow speaks politics. One owner → one halo; contested → offset multi-colour
@@ -2041,13 +1982,11 @@ export class GalacticMap {
 
   private selectGalaxy(g: GalaxyDescriptor): void {
     this.selected = { type: 'galaxy', galaxy: g };
-    this.queueDiscovery(this.selected);
     this.emitSelection();
   }
 
   private selectSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
     this.selected = { type: 'system', galaxy: g, system: sys };
-    this.queueDiscovery(this.selected);
     this.emitSelection();
   }
 

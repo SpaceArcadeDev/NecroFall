@@ -9,8 +9,18 @@
 import { COLONIES } from '../../core/Config';
 import { ClientCache } from '../spacetimedb/cache';
 import { subscribePlayer } from '../spacetimedb/subscriptions';
-import { PartyAvatarInfo, ShellContext } from '../ShellContext';
+import { PartyAvatarInfo, partySeatCount, ShellContext } from '../ShellContext';
 import { button, el, clear } from '../ui/dom';
+
+/** One occupied seat of the party line-up (the empty ones are drawn as OPEN SLOT). */
+interface PartySeat {
+  hex: string;
+  leader: boolean;
+  acc: string;
+  name: string;
+  /** Leader-only: remove this member (the closure holds their real identity). */
+  kick: () => void;
+}
 
 /** LOBBY chrome: the share / copy glyphs, the same marks the in-game lobby uses (UI.ts). */
 const ICON_COPY =
@@ -27,9 +37,12 @@ const GATHER_GRACE_MS = 3500;
 
 export class PartyPage {
   readonly element: HTMLElement;
+  private modeChip: HTMLElement;
   private codebar: HTMLElement;
   private codeEl: HTMLElement;
   private codeCap: HTMLElement;
+  private track: HTMLElement;
+  private trackInner: HTMLElement;
   private railHost: HTMLElement;
   private seats: HTMLElement;
   private hint: HTMLElement;
@@ -45,11 +58,12 @@ export class PartyPage {
     this.element = el('div', 'nf-page party-page');
 
     // ---- header: the LOBBY title dress (wordmark gradient + format chip).
-    // The chip carries the match FORMAT like the in-game lobby ("CLASSIC"),
-    // never the server — every party today is a CLASSIC match.
+    // The chip carries the match FORMAT — RANK when the party was opened from the
+    // rank menu, CLASSIC from the lobby, P2P for a peer room (user ask).
     const head = el('div', 'lobby-head');
     head.appendChild(el('div', 'menu-title lobby-title', 'PARTY'));
-    head.appendChild(el('span', 'lobby-mode', 'CLASSIC'));
+    this.modeChip = el('span', 'lobby-mode', 'CLASSIC');
+    head.appendChild(this.modeChip);
     this.element.appendChild(head);
 
     // ---- invite chrome: [SHARE][COPY][CODE] + caption, pinned to the top-right
@@ -70,12 +84,15 @@ export class PartyPage {
     this.codebar.append(codeRow, this.codeCap);
     this.element.appendChild(this.codebar);
 
-    // ---- the line-up: the same stage the in-game lobby draws
+    // ---- the line-up: the same stage the in-game lobby draws — one seat per slot
+    // (empty slots included, so the party's full shape is always on screen)
     const panel = el('div', 'lobby-panel');
     const lineup = el('div', 'lobby-lineup');
     const track = el('div', 'lobby-track');
     const inner = el('div', 'lobby-track-inner');
     inner.style.width = '100%';
+    this.track = track;
+    this.trackInner = inner;
     this.railHost = el('div', 'sel-preview lobby-rail');
     this.seats = el('div', 'lobby-seats');
     inner.appendChild(this.railHost);
@@ -87,14 +104,16 @@ export class PartyPage {
     this.hint = el('div', 'muted lobby-hint', '');
     panel.appendChild(this.hint);
 
-    // ---- the action row: the leader runs the search; anyone can walk out
+    // ---- the action row: the leader runs the search; anyone can walk out.
+    // BACK returns to the screen that OPENED the party (rank → rank, lobby → lobby),
+    // never a hardcoded main menu (user ask).
     const actions = el('div', 'lobby-actions');
     this.findBtn = button('FIND MATCH', 'btn primary', () => this.ctx.official.findMatch());
     this.leaveBtn = button('LEAVE', 'btn ghost', () => {
       this.ctx.official.leaveParty();
-      this.ctx.goLobby(); // the party is gone the moment you walk out
+      this.ctx.goBackFromParty(); // the party is gone the moment you walk out
     });
-    this.backBtn = button('BACK TO LOBBY', 'btn primary', () => this.ctx.goLobby());
+    this.backBtn = button('BACK', 'btn primary', () => this.ctx.goBackFromParty());
     actions.append(this.leaveBtn, this.findBtn, this.backBtn);
     panel.appendChild(actions);
     this.element.appendChild(panel);
@@ -128,15 +147,18 @@ export class PartyPage {
     const cache = ClientCache.shared;
     const hex = this.ctx.myHex();
     const party = hex ? cache.myParty(hex) : null;
+    const mode = this.ctx.partyMode();
+    const slots = partySeatCount(mode);
+    this.modeChip.textContent = mode;
 
     if (!party) {
       // Arriving from CREATE PARTY / an invite link, the rows land a beat later —
       // gather first, only then admit there is nothing to stand on. The grace
       // expiry needs its own re-render: without rows, no data tick will come.
       this.code = '';
-      clear(this.seats);
       this.codebar.classList.add('hidden');
-      this.ctx.stagePartyAvatars(null, []);
+      // the line-up still stands: every seat of the format is a lit OPEN platform
+      this.renderLineup([], slots, false);
       const wait = GATHER_GRACE_MS - (performance.now() - this.mountedAt);
       if (wait > 0 && !this.graceTimer) {
         this.graceTimer = window.setTimeout(() => {
@@ -167,50 +189,21 @@ export class PartyPage {
     // ---- invite chrome: the same code-bar language as the in-game lobby
     this.code = party.joinCode;
     this.codeEl.textContent = party.joinCode || '-----';
-    this.codeCap.textContent = `UP TO 3 SURVIVORS · ${members.length} IN PARTY`;
+    this.codeCap.textContent = `UP TO ${slots} SURVIVORS · ${members.length} IN PARTY`;
     this.codebar.classList.remove('hidden');
 
     // ---- the line-up: every member's actual character on the lit lobby stage
-    clear(this.seats);
-    const avatars: PartyAvatarInfo[] = [];
-    for (const m of members) {
-      const memberHex = m.identity.toHexString();
-      subscribePlayer(memberHex); // seat cards read the member's account row (idempotent)
-      const p = cache.playerByHex(memberHex);
-      const isLeader = party.leader.toHexString() === memberHex;
-      const isMe = memberHex === hex;
-      const col = p && p.colony < 3 ? COLONIES[p.colony] : null;
-
-      const seat = el('div', 'seat');
-      const card = el('div', `seat-card${isMe ? ' me' : ''}${isLeader ? ' host' : ''}`);
-      if (col) card.style.setProperty('--seat-col', col.css);
-      const name = el('div', 'seat-name', p?.playerName || 'Recruit');
-      if (col) name.style.color = col.css;
-      card.appendChild(name);
-      const chips = el('div', 'seat-chips');
-      if (col) {
-        const chip = el('span', 'seat-chip colony', `${col.symbol} ${col.name}`);
-        chip.style.color = col.css;
-        chips.appendChild(chip);
-      } else {
-        chips.appendChild(el('span', 'seat-chip dim', 'NO COLONY'));
-      }
-      if (isLeader) chips.appendChild(el('span', 'seat-chip host', 'LEADER'));
-      if (isMe) chips.appendChild(el('span', 'seat-chip you', 'YOU'));
-      card.appendChild(chips);
-      card.appendChild(el('div', 'seat-state', 'IN PARTY'));
-      if (leader && !isMe) {
-        const kick = button('✕', 'seat-kick', () => this.ctx.official.kickFromParty(m.identity));
-        kick.title = `Remove ${p?.playerName ?? 'this player'} from the party`;
-        kick.setAttribute('aria-label', kick.title);
-        card.appendChild(kick);
-      }
-      seat.appendChild(card);
-      this.seats.appendChild(seat);
-
-      avatars.push({ id: memberHex, colony: col ? (p?.colony ?? 0) : 0, acc: m.acc ?? '', me: isMe, ready: true });
-    }
-    this.ctx.stagePartyAvatars(this.railHost, avatars);
+    this.renderLineup(
+      members.map((m) => ({
+        hex: m.identity.toHexString(),
+        leader: party.leader.toHexString() === m.identity.toHexString(),
+        acc: m.acc ?? '',
+        name: cache.playerByHex(m.identity.toHexString())?.playerName || 'Recruit',
+        kick: () => this.ctx.official.kickFromParty(m.identity),
+      })),
+      slots,
+      leader
+    );
 
     // ---- the run line: only the LEADER may search (the server enforces it too)
     this.findBtn.classList.remove('hidden');
@@ -226,12 +219,82 @@ export class PartyPage {
       this.findBtn.title = '';
     } else {
       this.findBtn.disabled = false;
-      this.findBtn.textContent = 'FIND MATCH';
+      this.findBtn.textContent = mode === 'RANK' ? 'FIND RANKED MATCH' : 'FIND MATCH';
       this.findBtn.title = 'Queues the whole party together.';
     }
     this.leaveBtn.textContent = leader ? 'DISBAND / LEAVE' : 'LEAVE';
     this.hint.textContent = leader
       ? 'You lead this party — FIND MATCH queues everyone together.'
       : 'Only the leader can search for a match.';
+  }
+
+  /**
+   * The seat row: ONE card per seat SLOT (user ask), filled seats first, every other
+   * seat an OPEN SLOT with a lit platform and no figure. At most FIVE seats stand fully
+   * on screen — a nine-seat P2P roster extends the track and scrolls sideways.
+   */
+  private renderLineup(seats: PartySeat[], slots: number, canKick: boolean): void {
+    const cache = ClientCache.shared;
+    const hex = this.ctx.myHex();
+    clear(this.seats);
+    const avatars: PartyAvatarInfo[] = [];
+    for (let i = 0; i < slots; i++) {
+      const seat = seats[i];
+      if (!seat) {
+        const open = el('div', 'seat empty');
+        const card = el('div', 'seat-card empty');
+        card.appendChild(el('div', 'seat-pad', ''));
+        card.appendChild(el('div', 'seat-name', 'OPEN SLOT'));
+        card.appendChild(el('div', 'seat-state', 'WAITING FOR SURVIVOR'));
+        open.appendChild(card);
+        this.seats.appendChild(open);
+        // the rail still reserves the slot: the platform is lit, nothing stands on it
+        avatars.push({ id: `open:${i}`, colony: -1, acc: '', me: false, ready: false, empty: true });
+        continue;
+      }
+      subscribePlayer(seat.hex); // seat cards read the member's account row (idempotent)
+      const p = cache.playerByHex(seat.hex);
+      const isMe = seat.hex === hex;
+      const col = p && p.colony < 3 ? COLONIES[p.colony] : null;
+
+      const cell = el('div', 'seat');
+      const card = el('div', `seat-card${isMe ? ' me' : ''}${seat.leader ? ' host' : ''}`);
+      if (col) card.style.setProperty('--seat-col', col.css);
+      const name = el('div', 'seat-name', p?.playerName || 'Recruit');
+      if (col) name.style.color = col.css;
+      card.appendChild(name);
+      const chips = el('div', 'seat-chips');
+      if (col) {
+        const chip = el('span', 'seat-chip colony', `${col.symbol} ${col.name}`);
+        chip.style.color = col.css;
+        chips.appendChild(chip);
+      } else {
+        chips.appendChild(el('span', 'seat-chip dim', 'NO COLONY'));
+      }
+      if (seat.leader) chips.appendChild(el('span', 'seat-chip host', 'LEADER'));
+      if (isMe) chips.appendChild(el('span', 'seat-chip you', 'YOU'));
+      card.appendChild(chips);
+      card.appendChild(el('div', 'seat-state', 'IN PARTY'));
+      if (canKick && !isMe) {
+        const kick = button('✕', 'seat-kick', seat.kick);
+        kick.title = `Remove ${seat.name} from the party`;
+        kick.setAttribute('aria-label', kick.title);
+        card.appendChild(kick);
+      }
+      cell.appendChild(card);
+      this.seats.appendChild(cell);
+
+      avatars.push({ id: seat.hex, colony: col ? (p?.colony ?? 0) : 0, acc: seat.acc, me: isMe, ready: true });
+    }
+    this.ctx.stagePartyAvatars(this.railHost, avatars);
+    this.sizeTrack(slots);
+  }
+
+  /** Slot geometry: at most FIVE seats on screen; more slots extend the track sideways. */
+  private sizeTrack(slots: number): void {
+    const w = this.track.clientWidth || 700;
+    const visible = Math.min(slots, 5);
+    const seatMin = Math.max(120, Math.floor(w / Math.max(1, visible)));
+    this.trackInner.style.width = `max(100%, ${slots * seatMin}px)`;
   }
 }

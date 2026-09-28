@@ -10,7 +10,7 @@
 // recorded by AppShell when a ranked match ends (user ask 2026-09-28).
 import { ClientCache } from '../spacetimedb/cache';
 import { hexOf } from '../spacetimedb/rows';
-import { colonyStats, ColonyStatsResult, discoverLocation, findRankedMatch } from '../spacetimedb/reducers';
+import { colonyStats, ColonyStatsResult, findRankedMatch } from '../spacetimedb/reducers';
 import {
   releaseLocationDiscovery,
   subscribeLocationDiscovery,
@@ -21,7 +21,7 @@ import {
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
 import { COLONIES } from '../../core/Config';
-import { GalacticMap, type DiscoveryRequest, type MapData, type MapSelection, type PlanetRowData, RANKED_PLANET_CONTROLLED } from '../../rankmap/GalacticMap';
+import { GalacticMap, type MapData, type MapSelection, type PlanetRowData, RANKED_PLANET_CONTROLLED } from '../../rankmap/GalacticMap';
 import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../../rankmap/procedural/SeedHash';
 import { nearestAvailablePlanet, ringHome } from '../../rankmap/procedural/UniverseGenerator';
 import { planetAt } from '../../rankmap/procedural/PlanetGenerator';
@@ -193,6 +193,7 @@ export class RankPage {
         this.ctx.toast('Enter a valid party code.');
         return;
       }
+      this.ctx.setPartyMode('RANK');
       this.ctx.official.joinPartyByCode(code);
       this.ctx.goParty();
     });
@@ -202,6 +203,8 @@ export class RankPage {
     this.quickCreate.addEventListener('click', () => {
       const hex = this.ctx.myHex();
       const party = hex ? ClientCache.shared.myParty(hex) : null;
+      // a party opened from the RANK menu is a RANK party (the party screen tags it so)
+      this.ctx.setPartyMode('RANK');
       if (party) {
         this.ctx.goParty();
         return;
@@ -241,7 +244,6 @@ export class RankPage {
       discoveriesForPlanet: (planetKey) => this.discoveriesForPlanet(planetKey),
       currentPlayerId: this.ctx.myHex(),
       currentPlayerName: this.me()?.playerName ?? 'SURVIVOR',
-      requestDiscovery: (req) => this.requestDiscovery(req),
     };
     this.mapData = data;
     this.map = new GalacticMap(
@@ -272,6 +274,7 @@ export class RankPage {
       if (!this.element.isConnected) return;
       this.renderSide(true);
       this.renderBreadcrumb();
+      this.renderRail(); // the viewed band changes as the camera pans (sig-guarded)
     }, 500);
   }
 
@@ -334,16 +337,8 @@ export class RankPage {
       .map(toDiscoveryEntry);
   }
 
-  /** The map's first-contact request (plan §6/§47): the client ASKS, the server decides. */
-  private requestDiscovery(req: DiscoveryRequest): void {
-    const me = this.ctx.myHex();
-    if (!me) return; // official backend only — P2P never writes ranked discovery (plan §67)
-    // Courtesy filter only (the server de-dupes anyway): skip when our subscribed
-    // list already contains this player.
-    const known = ClientCache.shared.locationDiscoveries(req.locationKey);
-    if (known.some((d) => hexOf(d.playerIdentity) === me)) return;
-    discoverLocation(req);
-  }
+  /** The map's first-contact request (plan §6/§47) is GONE — discovery is earned by
+   *  playing: AppShell records planet + system + galaxy when a ranked match ends. */
 
   /**
    * The ONE discovery scope on screen (plan §43): the SELECTED location, else the
@@ -471,45 +466,44 @@ export class RankPage {
     const last = history[0];
     const lastTxt = last ? `${last.delta > 0 ? '+' : ''}${last.delta} ★` : '—';
     const lastCls = last ? (last.delta > 0 ? 'up' : last.delta < 0 ? 'down' : 'flat') : 'flat';
-    // RP readout (plan §31): TOTAL stars / the boundary they are climbing to.
-    const rpText = info.toNext > 0 ? `${stars.toLocaleString()} / ${(stars + info.toNext).toLocaleString()} RP` : `${stars.toLocaleString()} ★ MAX`;
-    const pctText = info.toNext > 0 ? `${Math.round(info.progress * 100)}%` : '100%';
     const sig = `${stars}|${seasonId}|${streak}|${record}|${lastTxt}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
-    // The wordmark row (the party page's lobby dress) — the SEASON lives in the
-    // standing row below (plan §31: [ Rank ][ Progress ][ RP ][ Season ]).
-    this.headEl.innerHTML = `<div class="menu-title lobby-title rk-title">RANKED</div>`;
-    // The standing strip: rank identity · progress · RP readout · season · actions.
-    // Desktop reads as ONE row; ≤720px turns into the mobile card (see styles.rank.css).
+    // The header (user ask): the gradient wordmark reads RANK — like the PLAY title —
+    // with the live season as a tag pill right beside it.
+    this.headEl.innerHTML =
+      `<div class="rk-head-title-row">` +
+      `<div class="menu-title lobby-title rk-title">RANK</div>` +
+      `<span class="rk-season-pill"><b>SEASON</b><i>${seasonId}</i></span>` +
+      `</div>`;
+    // The standing strip (user ask): [ chevron ][ crest ][ name + STARS ] … [ colony pill ]
+    // [ leaderboard icon ]. No progress bar (the stars ARE the progress) and no season
+    // block (it lives in the header now).
     this.stripEl.style.setProperty('--rk-accent', cfg.accent);
     this.stripEl.innerHTML =
-      `<div class="rk-colony" data-colony>` +
-      `<span class="rk-colony-orb" data-colony-orb></span>` +
-      `<span class="rk-colony-txt"><b data-colony-name>—</b><span data-colony-stats>—</span></span>` +
-      `</div>` +
       `<div class="rk-strip-rank">` +
+      `<button class="rk-expand" data-act="record" title="Rank details" aria-label="Rank details">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 9 6.5 6.5L18.5 9"/></svg>` +
+      `</button>` +
       `<div class="rk-crest" data-tier="${info.tier}">` +
       `<svg viewBox="0 0 48 56" aria-hidden="true"><path class="rk-crest-shield" d="M24 2 44 10v18c0 12-8 20-20 26C12 48 4 40 4 28V10z"/><path class="rk-crest-inner" d="M24 8 38 14v14c0 8.5-5.5 14.5-14 19.4C15.5 42.5 10 36.5 10 28V14z"/></svg>` +
       `<span class="rk-crest-star">★</span></div>` +
       `<div class="rk-head-info">` +
-      `<div class="rk-rank-name">${name}</div>` +
-      `<div class="rk-stars-row">${this.starsHtml(info.stars, info.tier)}</div>` +
+      `<div class="rk-rank-line">` +
+      `<span class="rk-rank-name">${name}</span>` +
+      `<span class="rk-stars-row">${this.starsHtml(info.stars, info.tier)}</span>` +
+      `</div>` +
       `<div class="rk-next">${streak}</div>` +
       `</div>` +
-      `<button class="rk-expand" data-act="record" title="Rank details" aria-label="Rank details">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 9 6.5 6.5L18.5 9"/></svg>` +
-      `</button>` +
       `</div>` +
-      `<div class="rk-meter">` +
-      `<div class="rk-progress"><div class="rk-progress-fill" data-fill></div></div>` +
-      `<div class="rk-meter-row"><b class="rk-rp">${rpText}</b><span class="rk-meter-pct">${pctText}</span></div>` +
+      `<div class="rk-strip-side">` +
+      `<div class="rk-colony" data-colony>` +
+      `<span class="rk-colony-ico" data-colony-ico>◆</span>` +
+      `<b data-colony-name>—</b>` +
       `</div>` +
-      `<div class="rk-strip-season"><span>SEASON</span><b>${seasonId}</b></div>` +
-      `<div class="rk-strip-actions">` +
-      `<button class="rk-btn" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
+      `<button class="rk-btn rk-btn-ico" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11"/><path d="M12 20V4"/><path d="M19 20v-6"/></svg>` +
-      `<span class="rk-btn-label">LEADERBOARD</span></button>` +
+      `</button>` +
       `</div>`;
     // The expandable details: win/loss record, last match, stars to next rank.
     this.recordEl.innerHTML =
@@ -519,42 +513,31 @@ export class RankPage {
       `<div class="rk-record-cell"><span>TO NEXT RANK</span><b>${toNext}</b></div>` +
       `<div class="rk-record-cell"><span>BATTLES</span><b>${history.length}</b></div>` +
       `</div>`;
-    // The fill starts at 0 and WIDENS into its target on the next frame, so the
-    // 0.8s transition plays exactly once per real change (never mid-tick).
-    const fill = this.stripEl.querySelector<HTMLElement>('[data-fill]');
-    if (fill) {
-      fill.style.width = '0%';
-      requestAnimationFrame(() => {
-        if (fill.isConnected) fill.style.width = `${Math.round(info.progress * 100)}%`;
-      });
-    }
     this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
     this.stripEl.querySelector('[data-act="record"]')?.addEventListener('click', () => this.toggleRecord());
     this.colonySig = '';
     this.renderColony();
   }
 
-  /** The colony chip of the strip row (landscape: LEFT of the rank; portrait: hidden). */
+  /** The colony pill at the far right of the strip (user ask): the colony ICON + the
+   *  colony name — no dot (the icon already says it) and no stat line. */
   private renderColony(): void {
     const host = this.stripEl.querySelector<HTMLElement>('[data-colony]');
     if (!host) return;
     const me = this.me();
     const hasColony = Boolean(me && me.colony < 3);
     const col = hasColony ? COLONIES[me!.colony] : null;
-    const stats = hasColony ? this.stats?.colonies[me!.colony] : undefined;
-    const name = col ? `${col.symbol} ${col.name}` : 'NO COLONY';
-    const line = stats ? `${stats.planets} PLANETS · ${stats.systems} SYSTEMS` : 'UNCHARTED';
-    const sig = `${name}|${line}`;
+    const name = col ? col.name : 'NO COLONY';
+    const icon = col ? col.symbol : '◇';
+    const sig = `${icon}|${name}`;
     if (sig === this.colonySig) return;
     this.colonySig = sig;
     const accent = col?.css ?? '#8fd7ff';
     host.style.setProperty('--rk-colony', accent);
-    const orb = host.querySelector<HTMLElement>('[data-colony-orb]');
-    if (orb) orb.style.background = accent;
+    const ico = host.querySelector<HTMLElement>('[data-colony-ico]');
+    if (ico) ico.textContent = icon;
     const nameEl = host.querySelector<HTMLElement>('[data-colony-name]');
     if (nameEl) nameEl.textContent = name;
-    const statsEl = host.querySelector<HTMLElement>('[data-colony-stats]');
-    if (statsEl) statsEl.textContent = line;
   }
 
   private toggleRecord(): void {
@@ -638,7 +621,8 @@ export class RankPage {
 
   private renderRail(): void {
     const myRing = this.myRing();
-    const current = this.map.currentLevel === 'galactic' ? null : this.map.currentGalaxy?.ring ?? null;
+    // the band the CAMERA is browsing — the rail highlight + the canvas band label
+    const current = this.map.viewedRing;
     // Only rebuild when the highlighting would change — a rebuild restarted the
     // "your ring" pulse mid-beat on every data tick.
     const sig = `${myRing}|${current}`;
@@ -649,7 +633,10 @@ export class RankPage {
       const chip = el('button', `rk-ring${cfg.tier === myRing ? ' mine' : ''}${current === cfg.tier ? ' here' : ''}`);
       (chip as HTMLButtonElement).type = 'button';
       chip.style.setProperty('--rk-accent', cfg.accent);
-      chip.innerHTML = `<span class="rk-ring-name">${cfg.name}</span><span class="rk-ring-note">${cfg.tier === myRing ? 'YOUR RING' : cfg.abilityHint}</span>`;
+      // the band you are LOOKING AT says its own name ("BRONZE BAND"); the rest keep
+      // their ability hint — "YOUR RING" text is gone (user ask)
+      const note = current === cfg.tier ? `${cfg.name} BAND` : cfg.abilityHint;
+      chip.innerHTML = `<span class="rk-ring-name">${cfg.name}</span><span class="rk-ring-note">${note}</span>`;
       chip.addEventListener('click', () => this.map.flyToRing(cfg.tier));
       chip.title = cfg.tagline;
       this.railEl.appendChild(chip);
@@ -692,8 +679,8 @@ export class RankPage {
     if (!this.map) return; // the map announces its initial fly-home during construction
     this.selection = sel;
     // ONE discovery scope on screen (plan §43) — the selected location, else the
-    // camera focus. Discovery REQUESTS are fired by the map (debounced, plan §5);
-    // the panel only reads what the server sent back (plan §6).
+    // camera focus. Discovery is EARNED IN MATCHES (AppShell records it); the panel
+    // only reads what the server sent back (plan §6).
     this.focusDiscoveryScope(sel);
     this.renderRail();
     this.renderBreadcrumb();

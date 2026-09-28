@@ -1525,22 +1525,46 @@ export class UI {
   ): void {
     this.lobbyCode.textContent = code || '-----';
 
-    // ---- the avatar rail: one dressed figure per seat, in the same order as the seat cards
-    this.lobbyAvatars = players.map(p => ({ id: p.id, colony: p.colony, ready: p.ready, me: p.me, acc: p.acc ?? '' }));
+    // ---- OPEN SLOTS (user ask): a P2P room always shows its full roster shape —
+    // CONFIG.maxPlayers lit platforms — filled left to right as survivors arrive.
+    // At most FIVE seats stand fully on screen; the rest extend the track sideways.
+    const slots = Math.max(1, CONFIG.maxPlayers);
+    this.lobbyAvatars = [
+      ...players.map(p => ({ id: p.id, colony: p.colony, ready: p.ready, me: p.me, acc: p.acc ?? '' })),
+      ...Array.from({ length: Math.max(0, slots - players.length) }, (_, i) => ({
+        id: `open:${i}`,
+        colony: -1,
+        ready: false,
+        me: false,
+        acc: '',
+        empty: true,
+      })),
+    ];
     this.refreshLobbyAvatars();
-    this.lobbyLineup.classList.toggle('hidden', players.length === 0);
-    if (players.length > 0) {
-      // THREE seats always stand fully on screen (each at least a third of the track wide); any
-      // seats past that extend the track and are reached by scrolling it SIDEWAYS — a roster of
-      // nine keeps its roomy cards instead of crushing nine seats into the width.
+    this.lobbyLineup.classList.remove('hidden');
+    {
+      // THREE seats used to stand fully on screen; with the full 9-seat shape on
+      // display the visible budget is FIVE (user ask) and the track scrolls.
       const w = this.lobbyTrack.clientWidth || 700;
-      const seatMin = Math.max(146, Math.floor(w / 3));
-      this.lobbyTrackInner.style.width = `max(100%, ${players.length * seatMin}px)`;
+      const visible = Math.min(slots, 5);
+      const seatMin = Math.max(120, Math.floor(w / Math.max(1, visible)));
+      this.lobbyTrackInner.style.width = `max(100%, ${slots * seatMin}px)`;
     }
 
-    // ---- the seat cards under the avatars
+    // ---- the seat cards under the avatars: filled seats first, then OPEN SLOTS
     this.lobbySeats.innerHTML = '';
-    for (const p of players) {
+    for (let i = 0; i < slots; i++) {
+      const p = players[i];
+      if (!p) {
+        const openSeat = el('div', 'seat');
+        const openCard = el('div', 'seat-card empty');
+        openCard.appendChild(el('div', 'seat-pad', ''));
+        openCard.appendChild(el('div', 'seat-name', 'OPEN SLOT'));
+        openCard.appendChild(el('div', 'seat-state', 'WAITING'));
+        openSeat.appendChild(openCard);
+        this.lobbySeats.appendChild(openSeat);
+        continue;
+      }
       const seat = el('div', 'seat');
       const card = el('div', `seat-card${p.me ? ' me' : ''}${p.ready ? ' ready' : ''}${p.isHost ? ' host' : ''}`);
       const col = p.colony >= 0 ? COLONIES[p.colony] : null;

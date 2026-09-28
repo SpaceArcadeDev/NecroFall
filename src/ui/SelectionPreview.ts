@@ -31,6 +31,8 @@ export interface LobbyAvatarInfo {
   me: boolean;
   /** Accessory wire form ("hat,backpack,pet"); empty/unknown falls back to nothing worn. */
   acc: string;
+  /** An OPEN seat: only its lit platform is drawn — no figure, no outfit (user ask). */
+  empty?: boolean;
 }
 
 /** A lobby avatar: a real player model + its outfit rig, plus the pad it stands on. */
@@ -41,6 +43,8 @@ interface LobbyAvatarFig {
   ringMat: THREE.MeshBasicMaterial;
   /** The lit stage under the avatar (disc + rim + light pool + its own point light). */
   pad: THREE.Group;
+  /** Which seat SLOT of the row this figure occupies (empty seats keep their slot). */
+  slot: number;
   anchor: THREE.Vector3;
 }
 
@@ -434,6 +438,8 @@ export class SelectionPreview {
    */
   private lobbyCam = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 40);
   private lobbyAvatars: LobbyAvatarFig[] = [];
+  /** OPEN seats: a lit platform with nobody on it (party line-up, user ask). */
+  private lobbyEmptyPads: { slot: number; pad: THREE.Group }[] = [];
   private lobbyData: LobbyAvatarInfo[] = [];
   private lobbySig = '';
   private lobbyDirty = false;
@@ -911,17 +917,23 @@ export class SelectionPreview {
   /** Rebuilds the avatar row when the seats or the outfits changed; flags alone do not. */
   private rebuildLobby(): void {
     this.lobbyDirty = false;
-    const sig = this.lobbyData.map(p => `${p.id}|${p.colony}|${p.acc}`).join(';');
+    const sig = this.lobbyData.map(p => `${p.id}|${p.colony}|${p.acc}|${p.empty ? 'e' : ''}`).join(';');
     if (sig === this.lobbySig) {
-      this.lobbyAvatars.forEach((fig, i) => {
-        if (this.lobbyData[i]) fig.data = this.lobbyData[i];
+      this.lobbyAvatars.forEach((fig) => {
+        const next = this.lobbyData[fig.slot];
+        if (next) fig.data = next;
       });
       return;
     }
     this.lobbySig = sig;
     this.disposeLobbyAvatars();
     if (this.lobbyData.length > 0) this.ensureLobbyLights();
-    for (const p of this.lobbyData) this.buildLobbyFigure(p);
+    // one figure per OCCUPIED seat, one bare lit pad per OPEN seat — the row keeps its
+    // slot rhythm either way, so a partially filled party still shows its full shape
+    this.lobbyData.forEach((p, slot) => {
+      if (p.empty) this.buildEmptyPad(slot);
+      else this.buildLobbyFigure(p, slot);
+    });
     this.layoutLobby();
   }
 
@@ -932,7 +944,7 @@ export class SelectionPreview {
    * backdrop is near-black and the player bodies are near-black too — the pad is what makes a
    * survivor legible instead of a silhouette.
    */
-  private buildPad(color: number, radius = 0.66): THREE.Group {
+  private buildPad(color: number, radius = 0.66, alpha = 1): THREE.Group {
     const pad = new THREE.Group();
     const disc = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius * 1.15, 0.09, 28),
@@ -940,14 +952,14 @@ export class SelectionPreview {
     );
     disc.position.y = -0.045;
     const rimMat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending,
+      color, transparent: true, opacity: 0.75 * alpha, blending: THREE.AdditiveBlending,
       depthWrite: false, side: THREE.DoubleSide,
     });
     const rim = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.01, 0.028, 8, 44), rimMat);
     rim.rotation.x = Math.PI / 2;
     rim.position.y = 0.005;
     const poolMat = new THREE.MeshBasicMaterial({
-      map: lightPoolTexture(), color, transparent: true, opacity: 0.5,
+      map: lightPoolTexture(), color, transparent: true, opacity: 0.5 * alpha,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     });
     const pool = new THREE.Mesh(new THREE.PlaneGeometry(radius * 3.7, radius * 3.7), poolMat);
@@ -959,12 +971,19 @@ export class SelectionPreview {
     return pad;
   }
 
+  /** AN OPEN SEAT (user ask): the lit platform of the line-up with nobody standing on it. */
+  private buildEmptyPad(slot: number): void {
+    const pad = this.buildPad(0x8a79d8, 0.66, 0.34);
+    this.scene.add(pad);
+    this.lobbyEmptyPads.push({ slot, pad });
+  }
+
   /**
    * One seat = the REAL player model (the same builder the match uses) dressed with that player's
    * own hat, backpack and pet — the customize screen's avatar, once per survivor — standing on a
    * lit pad so the near-black body reads against the menu's dark backdrop.
    */
-  private buildLobbyFigure(p: LobbyAvatarInfo): void {
+  private buildLobbyFigure(p: LobbyAvatarInfo, slot: number): void {
     const colony = p.colony >= 0 ? COLONIES[p.colony] : undefined;
     const color = colony ? colony.color : 0x9a7bff;
     const parts = buildPlayerModel(color);
@@ -985,7 +1004,7 @@ export class SelectionPreview {
     ring.position.y = 0.02;
     parts.group.add(ring);
     this.scene.add(parts.group);
-    this.lobbyAvatars.push({ data: p, parts, acc, ringMat, pad, anchor: new THREE.Vector3() });
+    this.lobbyAvatars.push({ data: p, parts, acc, ringMat, pad, slot, anchor: new THREE.Vector3() });
   }
 
   /** A front fill and a brighter bounce for the lobby only — removed again with the line-up. */
@@ -1050,19 +1069,20 @@ export class SelectionPreview {
   private layoutLobby(): void {
     const n = this.lobbyAvatars.length;
     const aspect = Math.max(0.3, this.width / Math.max(1, this.height));
-    const solo = n === 1 && this.lobbySoloFill;
+    const solo = n === 1 && this.lobbySoloFill && this.lobbyData.length === 1;
     const cam = this.lobbyCam;
     if (solo) {
       // ONE champion, staged alone on the shell home. The frame is solved from what the avatar
       // actually IS — body, ground pad and hat air — plus the pet's menu ring (see the roam clamp
       // in `tickLobby`), never from the stage's own shallow strip. The `fill` term keeps the body
-      // as large as the board allows (0.72 of the canvas height) and the two fit terms stop it
-      // from ever growing past the pieces that must stay visible.
+      // as large as the board allows (0.8 of the canvas height — user ask: "the avatar can be
+      // bigger to fit the center space") and the two fit terms stop it from ever growing past the
+      // pieces that must stay visible.
       const AV = 2.0;          // the standing body the player reads
       const GROUND_PAD = 0.32; // floor left under the feet for the lit pad's front rim
-      const MIN_H = 2.72;      // ground + body + tall-hat air
-      const MIN_W = 2.6;       // the pet's menu ring, both bodies included, either side of the owner
-      const dens = Math.min((this.height * 0.72) / AV, this.width / MIN_W, this.height / MIN_H);
+      const MIN_H = 2.62;      // ground + body + tall-hat air (relaxed for the bigger stage)
+      const MIN_W = 2.52;      // the pet's menu ring, both bodies included, either side of the owner
+      const dens = Math.min((this.height * 0.8) / AV, this.width / MIN_W, this.height / MIN_H);
       const visW = this.width / Math.max(1, dens);
       const visH = this.height / Math.max(1, dens);
       cam.left = -visW / 2;
@@ -1080,9 +1100,11 @@ export class SelectionPreview {
       return;
     }
     const SLOT = 1.85;                                  // world width budget per player
-    // A line-up always gets the 3.0 guard that never crops a standing avatar (the solo home was
-    // branched out above).
-    const visH = Math.max(3.0, (SLOT * n) / aspect);
+    // The row is laid out over its SEAT COUNT (empty seats hold their slot), so a line-up
+    // always reads as the party's full shape. A 3.0 guard never crops a standing avatar
+    // (the solo home was branched out above).
+    const slots = Math.max(1, this.lobbyData.length);
+    const visH = Math.max(3.0, (SLOT * slots) / aspect);
     const visW = visH * aspect;
     cam.left = -visW / 2;
     cam.right = visW / 2;
@@ -1096,11 +1118,14 @@ export class SelectionPreview {
     cam.position.set(0, midY + 1.5, 7.6);
     cam.lookAt(0, midY - 0.08, 0);
     cam.updateProjectionMatrix();
-    this.lobbyAvatars.forEach((fig, i) => {
-      const x = ((i + 0.5) / Math.max(1, n) - 0.5) * visW;
+    this.lobbyAvatars.forEach((fig) => {
+      const x = ((fig.slot + 0.5) / slots - 0.5) * visW;
       fig.parts.group.position.x = x;
       fig.pad.position.x = x;
     });
+    for (const open of this.lobbyEmptyPads) {
+      open.pad.position.x = ((open.slot + 0.5) / slots - 0.5) * visW;
+    }
   }
 
   /**
@@ -1150,6 +1175,11 @@ export class SelectionPreview {
       disposeObject(fig.pad);
     }
     this.lobbyAvatars.length = 0;
+    for (const open of this.lobbyEmptyPads) {
+      open.pad.removeFromParent();
+      disposeObject(open.pad);
+    }
+    this.lobbyEmptyPads.length = 0;
     this.lobbySig = '';
     for (const light of this.lobbyLights) light.removeFromParent();
     this.lobbyLights.length = 0;

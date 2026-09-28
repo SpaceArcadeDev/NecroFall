@@ -19,6 +19,16 @@ export interface PartyAvatarInfo {
   acc: string;
   me: boolean;
   ready: boolean;
+  /** An OPEN seat: the rail draws just its lit platform and the card says OPEN SLOT. */
+  empty?: boolean;
+}
+
+/** The FORMAT a party belongs to — the tag its screen wears + how many seats it holds. */
+export type PartyMode = 'CLASSIC' | 'RANK' | 'P2P';
+
+/** Seat caps per party format (OFFICIAL parties hold 3; P2P rooms hold 9). */
+export function partySeatCount(mode: PartyMode): number {
+  return mode === 'P2P' ? 9 : 3;
 }
 
 export interface ShellContext {
@@ -48,6 +58,11 @@ export interface ShellContext {
   goLobby(): void;
   /** The OFFICIAL PARTY screen — CREATE PARTY's home, in the in-game lobby's dress. */
   goParty(): void;
+  /** The party screen's BACK: return to the screen that OPENED the party. */
+  goBackFromParty(): void;
+  /** Tag the party screen with its FORMAT (RANK when opened from the rank menu, else CLASSIC). */
+  setPartyMode(mode: PartyMode): void;
+  partyMode(): PartyMode;
   /** Where the player belongs after the queue ends: their party, or the CLASSIC setup. */
   returnFromQueue(): void;
   /** Boot the existing WebRTC game (P2P lobbies and offline play live there). */

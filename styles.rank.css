@@ -221,6 +221,29 @@
   left: calc(16px + env(safe-area-inset-left, 0px));
   right: auto;
 }
+/* INTERGALACTIC MAP title (user 2026-09-29): the RANK gradient at the breadcrumb's
+   type scale, top-centre — EXPANDED map only. */
+.rk-maptitle { display: none; }
+.rank-page.map-full .rk-maptitle {
+  display: block;
+  position: fixed;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  text-align: center;
+  line-height: 24px; /* rides the breadcrumb's text line (14 + 6 pad + 5.5) */
+  z-index: 81;
+  pointer-events: none;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #f3e9ff, #a45cff 65%, #5a2b8f);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 24px rgba(160, 80, 255, 0.4);
+}
 /* the rank selection pills ride the EXPANDED map too (user ask) — along the
    bottom, clear of the navigation cluster on the left */
 .rank-page.map-full .rk-rail {
@@ -559,7 +582,11 @@
 }
 .rk-discover.playing .rk-disc-inner { animation: rk-disc-in 0.6s cubic-bezier(0.2, 1.5, 0.35, 1) both; }
 .rk-disc-title { font-size: 12px; letter-spacing: 0.42em; color: #46e0c8; font-weight: 800; }
-.rk-disc-name { font-size: 30px; font-weight: 800; letter-spacing: 0.12em; color: #fff; margin: 6px 0; text-shadow: 0 0 24px rgba(70, 224, 200, 0.8); }
+/* SCOPED to the celebration (user 2026-09-29: "discovered by … the name font too
+   huge"): `.rk-disc-name` is ALSO the row class in DISCOVERED BY lists, and this
+   unstyled-global 30px was leaking into every row (side panel + expanded-map card).
+   The row keeps its own flex/ellipsis rules and inherits the row's type size. */
+.rk-discover .rk-disc-name { font-size: 30px; font-weight: 800; letter-spacing: 0.12em; color: #fff; margin: 6px 0; text-shadow: 0 0 24px rgba(70, 224, 200, 0.8); }
 .rk-disc-line { font-size: 12px; color: var(--ui-text-muted); letter-spacing: 0.14em; }
 
 /* ============================================================ ring rail */

@@ -165,6 +165,11 @@ export class RankPage {
     this.mapWrap.appendChild(this.discoverEl);
     this.mapWrap.appendChild(this.mapInfoEl);
     this.mapWrap.appendChild(mapExpand);
+    // FULLSCREEN map title (user 2026-09-29): "INTERGALACTIC MAP" top-centre in the RANK
+    // gradient, at the breadcrumb's type scale — the CSS shows it on the expanded map only.
+    const mapTitle = el('div', 'rk-maptitle', 'INTERGALACTIC MAP');
+    mapTitle.setAttribute('aria-hidden', 'true');
+    this.mapWrap.appendChild(mapTitle);
     main.appendChild(this.mapWrap);
 
     this.railEl = el('div', 'rk-rail');

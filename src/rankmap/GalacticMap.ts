@@ -275,18 +275,38 @@ export class GalacticMap {
    *  clears the selection and releases the focus (plan §52). */
   flyToRing(ring: number): void {
     const home = ringHome(this.data.universeSeed, ring);
+    this.flyToAnchor(home, this.ringViewZoom(ring));
+  }
+
+  /**
+   * BACK TO POSITION (the map's crosshair). Used to land on the whole-BAND view, where
+   * the home galaxy shrank to a faint ~10px dot — "the center position button zooms out
+   * too much" (user 2026-09-29). It now frames the galaxy tier's own opening scale: the
+   * home galaxy reads as a face with its solar systems and its neighbours around it.
+   * Still `min(current, target)` — the button may widen the view but never push deeper.
+   */
+  centerOnHome(): void {
+    const home = ringHome(this.data.universeSeed, this.data.myRing);
+    this.flyToAnchor(home, this.homeViewZoom());
+  }
+
+  /** The neighbourhood scale BACK TO POSITION lands on (zoomRamps().gal = the zoom the
+   *  galaxy tier opens at — the single source for "where a galaxy becomes a place"). */
+  private homeViewZoom(): number {
+    const ranges = this.zoomRamps();
+    return Math.max(4, Math.min(1700, ranges.gal * 1.15));
+  }
+
+  /** Shared flight start: release focus/selection, glide to an anchor coordinate. */
+  private flyToAnchor(home: { gx: number; gy: number }, zoom: number): void {
     this.level = 'galactic';
     this.focusGalaxy = null;
     this.focusSystem = null;
     this.pinnedSystem = null;
     this.selected = null;
     this.suppressAutoSelect.clear();
-    this.camTarget = { x: home.gx, y: home.gy, zoom: Math.min(this.cam.zoom, this.ringViewZoom(ring)) };
+    this.camTarget = { x: home.gx, y: home.gy, zoom: Math.min(this.cam.zoom, zoom) };
     this.emitSelection();
-  }
-
-  centerOnHome(): void {
-    this.flyToRing(this.data.myRing);
   }
 
   /** Open a galaxy by coordinates (breadcrumb / external links). */
@@ -1178,26 +1198,35 @@ export class GalacticMap {
         // ownership pre-filter (plan §33): far galaxies still show a coloured dot
         const owned = this.ownedIds.has(g.galaxyId);
         const terr = owned ? this.territoryForGalaxy(g.galaxyId) : null;
-        // far LOD: a light mote (there can be thousands on screen — No Man's Sky look)
-        if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
-          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
+        // SEAMLESS DOT TRANSITION (user 2026-09-29: "as I zoom out the galaxies should
+        // scale down and fade into dots instead of suddenly disappearing"): the face
+        // and its mote CROSS-FADE over a screen-radius band — below it the mote stands
+        // alone, above it the full face; in between the sprite shrinks toward the dot
+        // while the mote rises out of nothing. Focused / hovered galaxies keep their
+        // full face (they are what the player is looking at).
+        const transit = isFocus || isHover ? 1 : ramp01(radius, GALAXY_DOT_RADIUS * 0.45, GALAXY_DOT_RADIUS * 1.25);
+        if (transit < 1) {
+          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5) * (1 - transit);
           ctx.fillStyle = terr?.color ?? g.starColor;
           ctx.beginPath();
           ctx.arc(p.x, p.y, 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
           ctx.fill();
           ctx.globalAlpha = 1;
-          continue;
+          if (transit <= 0.001) continue;
         }
         // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
         // EVERY face now keeps growing with the zoom (user 2026-09-29: neighbours must grow
         // too, not just fade) — the fade ramp above is what retires them, and `haze` keeps
         // the very largest sprites from milking the frame. A 3000 px ceiling stops a
         // pathological sprite size at the deepest zooms.
-        const faceR = Math.min(radius, 3000 / 3.1);
+        const faceMix = transit;
+        // …and through the transition band the body extra-shortens (×0.22 at the dot
+        // end) so the sprite visibly SHRINKS into the mote instead of a size pop
+        const faceR = Math.min(radius * (0.22 + 0.78 * faceMix), 3000 / 3.1);
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
         const s = faceR * 3.1 * pulse;
         ctx.globalAlpha =
-          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * 0.88);
+          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * 0.88) * faceMix;
         const sprite = this.galaxySprite(g);
         if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
           // SPIN (user): the spiral faces rotate at ONE shared angular speed — OPPOSITE
@@ -1223,23 +1252,24 @@ export class GalacticMap {
               const ang = (ci / n) * Math.PI * 2 + g.rotation + t * 0.04;
               const ox = Math.cos(ang) * tintR * 0.45;
               const oy = Math.sin(ang) * tintR * 0.45;
-              ctx.globalAlpha = 0.11 * field2 * (0.5 + terr.share[ci] * 0.5) * (1 - withdraw);
+              ctx.globalAlpha = 0.11 * field2 * (0.5 + terr.share[ci] * 0.5) * (1 - withdraw) * faceMix;
               ctx.drawImage(this.glow(terr.colors[ci], 64), p.x + ox - tintR, p.y + oy - tintR, tintR * 2, tintR * 2);
             }
           } else if (terr.color) {
-            ctx.globalAlpha = 0.16 * field2 * (1 - withdraw);
+            ctx.globalAlpha = 0.16 * field2 * (1 - withdraw) * faceMix;
             ctx.drawImage(this.glow(terr.color, 64), p.x - tintR, p.y - tintR, tintR * 2, tintR * 2);
             // GALAXY CORE GLOW (plan §17): the dominant owner's colour pools at the
             // core — brighter for the Necrophages (their red reads as an infection,
             // not a paint job). The morphology stays visible; only the light changes.
             const coreR = faceR * 0.85;
-            ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - withdraw);
+            ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - withdraw) * faceMix;
             ctx.drawImage(this.glow(terr.color, 64), p.x - coreR, p.y - coreR, coreR * 2, coreR * 2);
           }
           ctx.globalAlpha = 1;
         }
-        // POI marker (plan §55)
-        if (g.poi !== 'NORMAL' && zoom > 16 && radius > 3.4) {
+        // POI marker (plan §55) — attached to the FACE, so it retires with it in the
+        // dot transition instead of floating over a mote
+        if (g.poi !== 'NORMAL' && zoom > 16 && radius > 3.4 && faceMix > 0.35) {
           ctx.globalAlpha = 0.8 * field;
           ctx.fillStyle = g.poi === 'SWARM' || g.poi === 'DEAD' ? '#ff5d73' : g.poi === 'STRONGHOLD' ? '#ffd166' : '#7be0c8';
           ctx.font = '9px Rajdhani, sans-serif';

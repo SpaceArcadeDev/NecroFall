@@ -548,8 +548,26 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     if (!m || m.status !== 2) return;
     this.matchEndEmitted = true;
     const winner = m.winnerColony ?? null;
+    // The server usage summary rides along (plan §28): the results screen prints it for debug.
+    const usage = cache.myMatchUsage();
     if (this.gameApi) {
-      this.gameApi.matchEnded({ winnerColony: winner, reason: 'OFFICIAL MATCH COMPLETE' });
+      this.gameApi.matchEnded({
+        winnerColony: winner,
+        reason: 'OFFICIAL MATCH COMPLETE',
+        usage: usage
+          ? {
+              matchId: usage.matchId,
+              serverTicks: Number(usage.serverTicks),
+              inputCommands: Number(usage.inputCommands),
+              stateUpdates: Number(usage.stateUpdates),
+              events: Number(usage.events),
+              egressBytes: Number(usage.estimatedEgressBytes),
+              storageBytes: Number(usage.storageBytes),
+              playerCount: usage.playerCount,
+              durationSeconds: usage.durationSeconds,
+            }
+          : undefined,
+      });
     }
     this.emit({ type: 'match-end', matchId: this.matchId, winnerColony: winner });
   }

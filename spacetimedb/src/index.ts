@@ -44,7 +44,7 @@ export { follow_player, unfollow_player } from './social/follow';
 export { record_profile_view } from './social/profileViews';
 
 // ---- views (plan §22/§23)
-export { my_queue_entry, my_candidate, my_candidate_players } from './views';
+export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage } from './views';
 
 /**
  * Arm the global 1 Hz matchmaking scanner exactly once, when the database is

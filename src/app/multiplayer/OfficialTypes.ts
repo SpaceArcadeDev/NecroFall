@@ -36,6 +36,18 @@ export interface OfficialStateMessage {
 export interface OfficialMatchResult {
   winnerColony: number | null;
   reason: string;
+  /** Server usage summary of this match (plan §28) — the results screen prints it for debug. */
+  usage?: {
+    matchId: number;
+    serverTicks: number;
+    inputCommands: number;
+    stateUpdates: number;
+    events: number;
+    egressBytes: number;
+    storageBytes: number;
+    playerCount: number;
+    durationSeconds: number;
+  };
 }
 
 export interface OfficialGameApi {

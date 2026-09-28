@@ -269,6 +269,8 @@ export class Game {
    * arrive through the same `st` message path P2P uses. See app/multiplayer.
    */
   private officialMatch: GameOptions['official'] | null = null;
+  /** Server usage summary of the last OFFICIAL match (plan §28) — printed on the results screen. */
+  private officialUsage: NonNullable<OfficialMatchResult['usage']> | null = null;
 
   players = new Map<string, Player>();
   localPlayer: Player | null = null;
@@ -1020,6 +1022,7 @@ export class Game {
     const official = this.officialMatch;
     if (!official) return;
     const { match, bridge } = official;
+    this.officialUsage = null;
 
     // A local authority with no peers: the P2P transport stays idle, the world
     // still simulates, and every pose report is routed to the bridge instead.
@@ -1103,6 +1106,7 @@ export class Game {
   /** The official server finished the match: show its authoritative result. */
   officialMatchEnded(result: OfficialMatchResult): void {
     if (this.phase === 'ended') return;
+    this.officialUsage = result.usage ?? null;
     this.endMatch(result.winnerColony, result.reason);
   }
 
@@ -2177,6 +2181,20 @@ export class Game {
     stats.push({ k: 'HELIOS towers', v: `${c[0]}` });
     stats.push({ k: 'AEGIS towers', v: `${c[1]}` });
     stats.push({ k: 'VANTA towers', v: `${c[2]}` });
+    // OFFICIAL matches add the SpacetimeDB usage summary (plan §28) — the debug numbers the
+    // server keeps per match: ticks, inputs, updates, events and the estimated wire/storage cost.
+    const usage = this.officialUsage;
+    if (usage) {
+      const bytes = (n: number): string =>
+        n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+      stats.push({ k: 'SPACETIMEDB match', v: `#${usage.matchId} · ${usage.playerCount} players` });
+      stats.push({ k: 'Server ticks', v: usage.serverTicks.toLocaleString() });
+      stats.push({ k: 'Input commands', v: usage.inputCommands.toLocaleString() });
+      stats.push({ k: 'State updates', v: usage.stateUpdates.toLocaleString() });
+      stats.push({ k: 'Server events', v: usage.events.toLocaleString() });
+      stats.push({ k: 'Egress (estimated)', v: bytes(usage.egressBytes) });
+      stats.push({ k: 'Storage', v: bytes(usage.storageBytes) });
+    }
     this.ui.showResults({ victory, winnerColony: winner, tiles, stats, reason, hero, standings, matchTime });
   }
 
@@ -2186,6 +2204,7 @@ export class Game {
     this.lateSelect = null;
     this.isHost = true;
     this.phase = 'menu';
+    this.officialUsage = null;
     this.roster.clear();
     for (const p of this.players.values()) p.dispose();
     this.players.clear();

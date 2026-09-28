@@ -43,6 +43,7 @@ export class MatchFoundModal {
 
   /** Fill window: 5 seconds of "searching", no confirmation yet. */
   updateFilling(deadlineSeconds: number): void {
+    this.title.classList.remove('hidden');
     this.title.textContent = 'MATCH FOUND';
     this.fillNote.classList.remove('hidden');
     this.fillClock.classList.remove('hidden');
@@ -51,9 +52,12 @@ export class MatchFoundModal {
     this.confirmation.element.classList.add('hidden');
   }
 
-  /** Confirmation window: 10 seconds, every player confirms (plan §14). */
+  /**
+   * Confirmation window: 10 seconds, every player confirms (plan §14). No heading and no explainer
+   * — the user asked for the minimal card: the colony line-up, the countdown, the bar, the button.
+   */
   updateConfirming(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean): void {
-    this.title.textContent = 'CONFIRM YOUR MATCH';
+    this.title.classList.add('hidden');
     this.fillNote.classList.add('hidden');
     this.fillClock.classList.add('hidden');
     this.confirmation.element.classList.remove('hidden');

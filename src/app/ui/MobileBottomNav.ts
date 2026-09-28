@@ -10,8 +10,9 @@ export type BottomNavKey = 'events' | 'customize' | 'play';
 const ICONS: Record<BottomNavKey, string> = {
   events:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.8" y="5" width="16.4" height="15" rx="2.4"/><path d="M3.8 9.6h16.4"/><path d="M8.2 3.4v3"/><path d="M15.8 3.4v3"/><path d="M12 12.4l.9 1.8 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z"/></svg>',
+  // the MAGIC WAND: a tilted shaft with a collar, a four-point star at the tip and two sparks
   customize:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5c1.8-.5 3.1-1 4.2-2.1 1.4-1.4 1.6-3.3 3-4.7l7-7-2.4-2.4-7 7c-1.4 1.4-3.3 1.6-4.7 3-1.1 1.1-1.6 2.4-2.1 4.2z"/><path d="M14.5 7.5l2 2"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 20.4L14 10"/><path d="M12.4 8.4l3.2 3.2"/><path d="M17.8 2.6l.75 2.05 2.05.75-2.05.75-.75 2.05-.75-2.05-2.05-.75 2.05-.75z"/><path d="M7.4 3.4l.5 1.35 1.35.5-1.35.5-.5 1.35-.5-1.35-1.35-.5 1.35-.5z"/><path d="M19.6 13.4l.45 1.2 1.2.45-1.2.45-.45 1.2-.45-1.2-1.2-.45 1.2-.45z"/></svg>',
   play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 6.4v11.2c0 .8.9 1.3 1.6.9l8.3-5.6c.6-.4.6-1.4 0-1.8l-8.3-5.6c-.7-.4-1.6.1-1.6.9z"/></svg>',
 };
 

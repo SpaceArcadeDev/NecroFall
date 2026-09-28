@@ -425,15 +425,19 @@ html.nf-onb-colony .count-badge { display: none; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: clamp(0px, 1.2vh, 10px);
+  margin-top: 0;
   z-index: 1;
 }
-.nf-home-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
-/* the stage soaks up everything between the wordmark and the caption */
+/* The wordmark is the HEADER here, not the hero — kept small at the top centre so the avatar
+   gets the space and the character can never be pushed below the fold on short screens. */
+.nf-home-title { font-size: clamp(30px, 6.2vh, 52px); animation: nf-title-glow 4.5s ease-in-out infinite; }
+.home-page .menu-sub { margin-bottom: 2px; font-size: clamp(10px, 1.7vh, 12.5px); }
+/* the stage soaks up whatever height is left BETWEEN the wordmark and the caption — never more
+   than the viewport holds, so the avatar always scales to fit and is never cropped */
 .nf-stage {
   flex: 1 1 auto;
   width: min(640px, 96vw);
-  min-height: 260px;
+  min-height: clamp(140px, 36vh, 420px);
   max-height: none;
   margin-top: 2px;
   position: relative;
@@ -798,16 +802,15 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-muted { color: var(--ui-text-muted); }
 /* the fill window: a big clock over a draining bar */
 .nf-queue-clock { font-size: clamp(44px, 11vw, 68px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 34px rgba(180, 120, 255, 0.4); }
-.nf-fill-track,
-.nf-confirm-track {
+.nf-queue-clock.urgent { color: #ff5c7a; text-shadow: 0 0 34px rgba(255, 92, 122, 0.5); animation: nf-pulse 0.6s infinite alternate; }
+.nf-fill-track {
   width: min(360px, 84%);
   height: 6px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
-.nf-fill-bar,
-.nf-confirm-bar {
+.nf-fill-bar {
   height: 100%;
   width: 100%;
   border-radius: 999px;
@@ -815,9 +818,10 @@ html.nf-onb-colony .count-badge { display: none; }
   transition: width 0.28s linear;
 }
 .nf-confirm { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
-.nf-confirm-title { font-size: 24px; font-weight: 900; letter-spacing: 0.14em; }
-.nf-confirm-sub { color: var(--ui-text-muted); font-size: 13px; margin: 0; }
 .nf-confirm-seats { display: flex; gap: 16px; justify-content: center; width: 100%; }
+/* NO entrance animation here ON PURPOSE: the seats are patched in place but an animation would
+   still replay on any rebuild — that replay IS what read as flicker. The modal card already has
+   one entrance of its own. */
 .nf-confirm-colony {
   flex: 1;
   display: flex;
@@ -828,26 +832,27 @@ html.nf-onb-colony .count-badge { display: none; }
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--nf-colony) 50%, transparent);
   background: linear-gradient(180deg, color-mix(in srgb, var(--nf-colony) 16%, transparent), color-mix(in srgb, var(--nf-colony) 6%, transparent));
-  animation: nf-modal-in 0.4s cubic-bezier(0.22, 1.25, 0.36, 1) backwards;
-  animation-delay: 0.05s;
 }
 .nf-confirm-colony-name { font-size: 11px; font-weight: 900; letter-spacing: 0.18em; color: var(--nf-colony); }
-.nf-confirm-seat {
-  width: 36px;
-  height: 36px;
+/* three slots per colony: '?' while waiting, '✓' once that player confirms */
+.nf-confirm-slots { display: flex; gap: 6px; }
+.nf-confirm-slot {
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, 0.35);
-  border: 2px solid rgba(255, 255, 255, 0.18);
+  border: 2px solid rgba(255, 255, 255, 0.14);
   color: var(--ui-text-muted);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 800;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
 }
-.nf-confirm-seat.me { border-color: #ffffff; color: #ffffff; box-shadow: 0 0 16px rgba(255, 255, 255, 0.35); }
-.nf-confirm-seat.ok { border-color: var(--ui-accent-2); color: var(--ui-accent-2); box-shadow: 0 0 18px color-mix(in srgb, var(--ui-accent-2) 55%, transparent); }
-.nf-confirm-countdown { font-size: 46px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 30px rgba(180, 120, 255, 0.35); }
-.nf-confirm-countdown.urgent { color: #ff5c7a; animation: nf-pulse 0.6s infinite alternate; }
+.nf-confirm-slot.dim { opacity: 0.35; }
+.nf-confirm-slot.live { border-color: rgba(255, 255, 255, 0.4); color: var(--ui-text); }
+.nf-confirm-slot.me { border-color: #ffffff; color: #ffffff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.3); }
+.nf-confirm-slot.on { border-color: var(--ui-accent-2); color: var(--ui-accent-2); box-shadow: 0 0 16px color-mix(in srgb, var(--ui-accent-2) 55%, transparent); }
 @keyframes nf-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
 .nf-confirm-btn {
   width: 100%;
@@ -1209,10 +1214,12 @@ html.nf-onb-colony .count-badge { display: none; }
   width: min(640px, 75vw);
   padding: 7px 12px;
   border-radius: 26px;
-  background: linear-gradient(180deg, rgba(26, 17, 44, 0.82), rgba(10, 6, 19, 0.92));
-  border: 1px solid rgba(170, 130, 255, 0.3);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(12px);
+  /* glass, like the friends rail: the world shows through */
+  background: linear-gradient(180deg, rgba(24, 15, 42, 0.55), rgba(10, 6, 19, 0.62));
+  border: 1px solid rgba(170, 130, 255, 0.24);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
   animation: nf-nav-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes nf-nav-in {
@@ -1393,7 +1400,7 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .nf-confirm-countdown.urgent { animation: none; }
+  .nf-queue-clock.urgent { animation: none; }
   .nf-page, .nf-rail, .nf-bottom { animation: none; }
   .play-page .nf-play-entry { animation: none; }
 }

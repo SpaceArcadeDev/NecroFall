@@ -203,6 +203,9 @@ export type MyCandidate = __Infer<typeof MyCandidate>;
 export const MyCandidatePlayers = __t.object("MyCandidatePlayers", {});
 export type MyCandidatePlayers = __Infer<typeof MyCandidatePlayers>;
 
+export const MyMatchUsage = __t.object("MyMatchUsage", {});
+export type MyMatchUsage = __Infer<typeof MyMatchUsage>;
+
 export const MyQueueEntry = __t.object("MyQueueEntry", {});
 export type MyQueueEntry = __Infer<typeof MyQueueEntry>;
 

@@ -76,6 +76,7 @@ import MatchObjectiveRow from "./match_objective_table";
 import MatchPlayerRow from "./match_player_table";
 import MyCandidateRow from "./my_candidate_table";
 import MyCandidatePlayersRow from "./my_candidate_players_table";
+import MyMatchUsageRow from "./my_match_usage_table";
 import MyQueueEntryRow from "./my_queue_entry_table";
 import PartyRow from "./party_table";
 import PartyMemberRow from "./party_member_table";
@@ -340,6 +341,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyCandidatePlayersRow),
+  myMatchUsage: __table({
+    name: 'my_match_usage',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyMatchUsageRow),
   myQueueEntry: __table({
     name: 'my_queue_entry',
     indexes: [
@@ -418,6 +426,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "my_candidate": Omit<typeof tablesSchema.schemaType.tables["myCandidate"], "accessorName"> & { readonly accessorName: "my_candidate" };
     /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
     readonly "my_candidate_players": Omit<typeof tablesSchema.schemaType.tables["myCandidatePlayers"], "accessorName"> & { readonly accessorName: "my_candidate_players" };
+    /** @deprecated Use `myMatchUsage` instead. This alias will be removed in the next major version. */
+    readonly "my_match_usage": Omit<typeof tablesSchema.schemaType.tables["myMatchUsage"], "accessorName"> & { readonly accessorName: "my_match_usage" };
     /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
     readonly "my_queue_entry": Omit<typeof tablesSchema.schemaType.tables["myQueueEntry"], "accessorName"> & { readonly accessorName: "my_queue_entry" };
   };
@@ -453,6 +463,7 @@ const tableAccessorAliases = {
   "profile_view": "profileView",
   "my_candidate": "myCandidate",
   "my_candidate_players": "myCandidatePlayers",
+  "my_match_usage": "myMatchUsage",
   "my_queue_entry": "myQueueEntry",
 } as const;
 
@@ -504,6 +515,8 @@ export type DbView = __DbViewBase & {
   readonly "my_candidate": __DbViewBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
   readonly "my_candidate_players": __DbViewBase["myCandidatePlayers"];
+  /** @deprecated Use `myMatchUsage` instead. This alias will be removed in the next major version. */
+  readonly "my_match_usage": __DbViewBase["myMatchUsage"];
   /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
   readonly "my_queue_entry": __DbViewBase["myQueueEntry"];
 };
@@ -540,6 +553,8 @@ export type Tables = __TablesBase & {
   readonly "my_candidate": __TablesBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
   readonly "my_candidate_players": __TablesBase["myCandidatePlayers"];
+  /** @deprecated Use `myMatchUsage` instead. This alias will be removed in the next major version. */
+  readonly "my_match_usage": __TablesBase["myMatchUsage"];
   /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
   readonly "my_queue_entry": __TablesBase["myQueueEntry"];
 };

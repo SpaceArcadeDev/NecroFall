@@ -6,6 +6,7 @@
 import { t } from 'spacetimedb/server';
 import { spacetimedb } from './schema';
 import { candidate_match, match_candidate_player, queue_entry } from './schema/matchmaking';
+import { match_player, match_server_usage } from './schema/match';
 
 /** The caller's own queue entry (or none). */
 export const my_queue_entry = spacetimedb.view(
@@ -37,5 +38,24 @@ export const my_candidate_players = spacetimedb.view(
     const seat = ctx.db.match_candidate_player.identity.find(ctx.sender);
     if (!seat) return [];
     return [...ctx.db.match_candidate_player.match_id.filter(seat.match_id)];
+  }
+);
+
+/**
+ * The server usage summary for the caller's MOST RECENT match (plan §28). The table itself stays
+ * private; this view exposes only the summary of a match the caller actually played — the debug
+ * numbers the end screen prints (ticks, inputs, updates, events, estimated egress, storage).
+ */
+export const my_match_usage = spacetimedb.view(
+  { name: 'my_match_usage', public: true },
+  t.array(match_server_usage.rowType),
+  (ctx) => {
+    let latest = 0;
+    for (const seat of ctx.db.match_player.identity.filter(ctx.sender)) {
+      if (seat.match_id > latest) latest = seat.match_id;
+    }
+    if (!latest) return [];
+    const row = ctx.db.match_server_usage.match_id.find(latest);
+    return row ? [row] : [];
   }
 );

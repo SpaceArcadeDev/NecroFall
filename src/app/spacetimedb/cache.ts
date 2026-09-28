@@ -12,6 +12,7 @@ import {
   MatchHistoryRow,
   MatchPlayerRow,
   MatchRow,
+  MatchServerUsageRow,
   PartyMemberRow,
   PartyRow,
   PlayerInventoryRow,
@@ -44,7 +45,7 @@ const TABLES = [
   'matchHistory',
 ] as const;
 
-const VIEWS = ['myQueueEntry', 'myCandidate', 'myCandidatePlayers'] as const;
+const VIEWS = ['myQueueEntry', 'myCandidate', 'myCandidatePlayers', 'myMatchUsage'] as const;
 
 export class ClientCache {
   static readonly shared = new ClientCache();
@@ -116,6 +117,11 @@ export class ClientCache {
 
   private list<T>(name: string): T[] {
     return (this.rows.get(name) ?? []) as T[];
+  }
+
+  /** The caller's latest match usage summary (debug end-screen stats), or null. */
+  myMatchUsage(): MatchServerUsageRow | null {
+    return this.list<MatchServerUsageRow>('myMatchUsage')[0] ?? null;
   }
 
   // ------------------------------------------------------------ typed accessors

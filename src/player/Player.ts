@@ -2356,12 +2356,20 @@ export class Player {
       }
     }
     this.colony = n.col;
-    this.level = n.lvl;
-    this.necrotechName = n.ntn;
-    this.necrotechColor = n.ntc;
-    this.mutated = n.mut;
-    if (typeof n.xp === 'number') this.xp = n.xp;
-    if (typeof n.xpn === 'number' && n.xpn > 0) this.xpNeed = n.xpn;
+    // The LOCAL player's growth is owned LOCALLY. A snapshot computed a moment earlier must never
+    // roll it back: a rollback re-crosses the XP threshold and fires ANOTHER level-up, which
+    // reopened the (Necro)mutation picker and toggled the mutation headline in a loop — the
+    // "mutation UI flickers appear/disappear" report. Remote copies take the host's values
+    // verbatim; our own only ever move forward (gainXp / absorbNecrotech), and resets go through
+    // the explicit spawn/reset paths instead of the wire.
+    if (!this.isLocal) {
+      this.level = n.lvl;
+      this.necrotechName = n.ntn;
+      this.necrotechColor = n.ntc;
+      this.mutated = n.mut;
+      if (typeof n.xp === 'number') this.xp = n.xp;
+      if (typeof n.xpn === 'number' && n.xpn > 0) this.xpNeed = n.xpn;
+    }
     // Only remote players take their frozen state from the network: the local player owns theirs
     // (and reports it upward) so a menu can never be cancelled by a stale snapshot.
     if (!this.isLocal) this.frozen = n.frz === 1;

@@ -244,6 +244,21 @@ export interface MatchHistoryRow {
   xpEarned: number;
 }
 
+/** One row of the `my_match_usage` view — the caller's latest match's server usage summary. */
+export interface MatchServerUsageRow {
+  matchId: number;
+  startedAt?: Timestamp | null;
+  endedAt?: Timestamp | null;
+  durationSeconds: number;
+  playerCount: number;
+  serverTicks: bigint;
+  inputCommands: bigint;
+  stateUpdates: bigint;
+  events: bigint;
+  estimatedEgressBytes: bigint;
+  storageBytes: bigint;
+}
+
 /** Row field for `player.identity` used as a map key. */
 export function hexOf(identity: Identity | undefined | null): string {
   return identity ? identity.toHexString() : '';

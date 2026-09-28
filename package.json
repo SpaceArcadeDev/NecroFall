@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:universe": "node scripts/ring-parity.mjs"
   },
   "dependencies": {
     "peerjs": "^1.5.4",

@@ -9,15 +9,40 @@ import { planet_control_history, planet_discovery, ranked_planet, ranked_planet_
 import { player } from '../schema/player';
 import { MAX_PLANET_DISCOVERERS, PLANET_CONTROL_US, PLANET_MATCH_RESERVATION_US, SEASON_ONE_UNIVERSE_SEED } from '../constants';
 import { getRankRing } from './rank';
-import { parsePlanetKey, planetKey, planetSeed } from './seed';
+import { decodeGalaxyId, parsePlanetKey, planetKey, planetSeed, ringOfGalaxy, UNIVERSE_GENERATION_VERSION } from './seed';
 import { requireOnboarded } from '../auth/authorization';
 
 export const COLONY_NONE = 255;
 
+/**
+ * UNIVERSE MIGRATION (plan §46/§47). Changing the band geometry changes which ring a
+ * galaxy resolves to, so planet rows written under an older generation would silently
+ * point at worlds that no longer exist under that ring. A stale season's rows are
+ * re-validated against the current `ringOfGalaxy`; rows that no longer match are
+ * dropped along with their discoveries, reservations and control history, and the
+ * season records the new version. Dev-safe "migrate immediately": nothing is silently
+ * re-pointed, and the map only ever shows planets that exist under the live geometry.
+ */
+export function migrateSeasonIfStale(ctx: any, season: any): any {
+  const version = Number(season.universe_generation_version ?? 0);
+  if (version >= UNIVERSE_GENERATION_VERSION) return season;
+  for (const row of [...ctx.db.ranked_planet.iter()]) {
+    const { gx, gy } = decodeGalaxyId(row.galaxy_id);
+    if (ringOfGalaxy(gx, gy) === row.ring) continue;
+    for (const d of [...ctx.db.planet_discovery.planet_key.filter(row.planet_key)]) ctx.db.planet_discovery.id.delete(d.id);
+    if (ctx.db.ranked_planet_reservation.planet_key.find(row.planet_key)) {
+      ctx.db.ranked_planet_reservation.planet_key.delete(row.planet_key);
+    }
+    for (const h of [...ctx.db.planet_control_history.planet_key.filter(row.planet_key)]) ctx.db.planet_control_history.id.delete(h.id);
+    ctx.db.ranked_planet.planet_key.delete(row.planet_key);
+  }
+  return ctx.db.ranked_season.season_id.update({ ...season, universe_generation_version: UNIVERSE_GENERATION_VERSION });
+}
+
 /** The one active season, created on first use (plan §56). */
 export function ensureActiveSeason(ctx: any): any {
   for (const s of ctx.db.ranked_season.iter()) {
-    if (s.active) return s;
+    if (s.active) return migrateSeasonIfStale(ctx, s);
   }
   return ctx.db.ranked_season.insert({
     season_id: 0,
@@ -25,6 +50,7 @@ export function ensureActiveSeason(ctx: any): any {
     started_at: ctx.timestamp,
     ends_at: undefined,
     active: true,
+    universe_generation_version: UNIVERSE_GENERATION_VERSION,
   });
 }
 

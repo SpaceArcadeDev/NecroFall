@@ -49,12 +49,62 @@ export function decodeGalaxyId(id: number): { gx: number; gy: number } {
   return { gx: Math.floor(v / GALAXY_GRID_SPAN) - GALAXY_GRID_ORIGIN, gy: (v % GALAXY_GRID_SPAN) - GALAXY_GRID_ORIGIN };
 }
 
-/** Rank ring of a galaxy grid coordinate — concentric bands (plan §1/§54). */
-export const RING_WIDTH_CELLS = 5;
+/**
+ * RANK-BAND GEOMETRY (universe v2, plan §1): bands are CUMULATIVE widths, so higher
+ * ranks own physically larger territory (Bronze 5 → King of Gods 25). The old model
+ * used one fixed width for every ring; that is gone. A galaxy's ring is found by
+ * locating which cumulative boundary contains its centre distance — never
+ * `floor(distance / fixedWidth)`.
+ */
+export const RING_WIDTHS = [5, 7, 9, 11, 14, 17, 21, 25] as const;
+
+/** Cumulative outer boundary of each tier — [5, 12, 21, 32, 46, 63, 84, 109]. */
+export const RING_BOUNDS: number[] = (() => {
+  const out: number[] = [];
+  let acc = 0;
+  for (const w of RING_WIDTHS) {
+    acc += w;
+    out.push(acc);
+  }
+  return out;
+})();
+
+/** The whole ranked universe lives inside this radius (King of Gods' outer edge). */
+export const MAX_RING_RADIUS = RING_BOUNDS[RING_BOUNDS.length - 1];
+
+/** Inner boundary of a tier: 0 for Bronze, the previous tier's outer edge otherwise. */
+export function ringInnerRadius(tier: number): number {
+  const t = Math.max(0, Math.min(RING_WIDTHS.length - 1, Math.floor(tier)));
+  return t === 0 ? 0 : RING_BOUNDS[t - 1];
+}
+
+/** Outer boundary of a tier (cumulative). */
+export function ringOuterRadius(tier: number): number {
+  const t = Math.max(0, Math.min(RING_WIDTHS.length - 1, Math.floor(tier)));
+  return RING_BOUNDS[t];
+}
+
+/** Mid-radius of a tier — where its home anchor and band label sit. */
+export function ringCenterRadius(tier: number): number {
+  return (ringInnerRadius(tier) + ringOuterRadius(tier)) / 2;
+}
+
+/** Rank ring of a galaxy grid coordinate — cumulative band boundaries (plan §1). */
 export function ringOfGalaxy(gx: number, gy: number): number {
   const dist = Math.sqrt(gx * gx + gy * gy);
-  return Math.min(7, Math.floor(dist / RING_WIDTH_CELLS));
+  for (let r = 0; r < RING_BOUNDS.length; r++) {
+    if (dist < RING_BOUNDS[r]) return r;
+  }
+  return RING_BOUNDS.length - 1;
 }
+
+/**
+ * UNIVERSE GENERATION VERSION (plan §46/§47). Bump this whenever a change alters
+ * which galaxy/system/planet a coordinate resolves to. The season stores the
+ * version it was created with, and a stale season's rows are migrated instead of
+ * silently re-pointing at different worlds.
+ */
+export const UNIVERSE_GENERATION_VERSION = 2;
 
 export function planetKey(ring: number, galaxyId: number, systemId: number, planetId: number): string {
   return `${ring}:${galaxyId}:${systemId}:${planetId}`;

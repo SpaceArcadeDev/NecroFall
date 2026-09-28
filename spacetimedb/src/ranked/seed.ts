@@ -55,12 +55,56 @@ export function decodeGalaxyId(id: number): { gx: number; gy: number } {
   return { gx: Math.floor(v / GALAXY_GRID_SPAN) - GALAXY_GRID_ORIGIN, gy: (v % GALAXY_GRID_SPAN) - GALAXY_GRID_ORIGIN };
 }
 
-/** Rank ring of a galaxy grid coordinate — concentric bands, 0 = centre (plan §1/§54). */
-export const RING_WIDTH_CELLS = 5;
+/**
+ * RANK-BAND GEOMETRY (universe v2, plan §1): cumulative band widths so higher ranks
+ * own larger territory. KEEP IN SYNC with `src/rankmap/procedural/SeedHash.ts` —
+ * `scripts/ring-parity.mjs` asserts both files resolve identical rings.
+ */
+export const RING_WIDTHS = [5, 7, 9, 11, 14, 17, 21, 25] as const;
+
+/** Cumulative outer boundary of each tier — [5, 12, 21, 32, 46, 63, 84, 109]. */
+export const RING_BOUNDS: number[] = (() => {
+  const out: number[] = [];
+  let acc = 0;
+  for (const w of RING_WIDTHS) {
+    acc += w;
+    out.push(acc);
+  }
+  return out;
+})();
+
+/** The whole ranked universe lives inside this radius (King of Gods' outer edge). */
+export const MAX_RING_RADIUS = RING_BOUNDS[RING_BOUNDS.length - 1];
+
+export function ringInnerRadius(tier: number): number {
+  const t = Math.max(0, Math.min(RING_WIDTHS.length - 1, Math.floor(tier)));
+  return t === 0 ? 0 : RING_BOUNDS[t - 1];
+}
+
+export function ringOuterRadius(tier: number): number {
+  const t = Math.max(0, Math.min(RING_WIDTHS.length - 1, Math.floor(tier)));
+  return RING_BOUNDS[t];
+}
+
+export function ringCenterRadius(tier: number): number {
+  return (ringInnerRadius(tier) + ringOuterRadius(tier)) / 2;
+}
+
+/** Rank ring of a galaxy grid coordinate — cumulative band boundaries (plan §1). */
 export function ringOfGalaxy(gx: number, gy: number): number {
   const dist = Math.sqrt(gx * gx + gy * gy);
-  return Math.min(7, Math.floor(dist / RING_WIDTH_CELLS));
+  for (let r = 0; r < RING_BOUNDS.length; r++) {
+    if (dist < RING_BOUNDS[r]) return r;
+  }
+  return RING_BOUNDS.length - 1;
 }
+
+/**
+ * UNIVERSE GENERATION VERSION (plan §46/§47). Bump whenever a change alters which
+ * galaxy/system/planet a coordinate resolves to; the season stores it so a stale
+ * season's rows can be migrated instead of silently re-pointing at other worlds.
+ */
+export const UNIVERSE_GENERATION_VERSION = 2;
 
 /** The virtual planet KEY. Human-readable, sortable, and the DB primary key. */
 export function planetKey(ring: number, galaxyId: number, systemId: number, planetId: number): string {

@@ -24,7 +24,104 @@ export interface QaReport {
   failures: QaFailure[];
   /** Fraction of probes that returned a finite height, for the summary line. */
   terrainFiniteRatio: number;
+  /** Genome diversity over the whole sweep (plan §25/§41). */
+  diversity: DiversityReport;
   elapsedMs: number;
+}
+
+/**
+ * GENOME DIVERSITY (plan §25/§41): four independent signatures per genome. "Colour-only
+ * variation" fails here by construction — the signatures never read the palette.
+ */
+export interface GenomeSignatures {
+  body: string;
+  attack: string;
+  movement: string;
+  behaviour: string;
+}
+
+export interface DiversityReport {
+  genomes: number;
+  body: number;
+  attack: number;
+  movement: number;
+  behaviour: number;
+  targeting: number;
+  formations: number;
+  /** Same seed → byte-identical roster (checked by regenerating a sample). */
+  deterministic: boolean;
+}
+
+/** The four signatures the diversity test counts (plan §25). */
+export function genomeSignatures(g: import('../EnemyGenomes').EnemyGenome): GenomeSignatures {
+  const v = g.visual;
+  const q = (n: number | undefined): number => Math.round((n ?? 0) * 2); // bucketed so near-same parts collapse
+  const body = [
+    g.locomotion ?? '?', v.legPairs, q(v.legLength), q(v.legThickness), q(v.bodyLength), q(v.bodyWidth), q(v.bodyHeight),
+    v.plates, v.spikes, v.horns, v.mandibles, v.tubes ?? 0, v.wings ?? 0, v.fins ?? 0, v.sacs ?? 0, v.glowNodes ?? 0, v.segments, v.jelly > 0.5 ? 'jelly' : 'frame',
+  ].join('|');
+  const attack = (g.attacks ?? [])
+    .map((a) => `${a.ability}:${a.pattern}`)
+    .concat(g.abilities.map((a) => `+${a}`))
+    .sort()
+    .join(',');
+  const movement = [
+    g.locomotion ?? '?', g.gait?.style ?? '?', (g.gait?.pairOffset ?? 0) > 0.5 ? 'alt' : 'bound',
+    q(g.gait?.stride ?? 1), g.swarm?.formation ?? '-',
+  ].join('|');
+  const behaviour = [
+    [...g.traits].sort().join('+'), g.targetPreference ?? '?', g.role ?? '?', q(g.behavior.groupBias), q(g.behavior.territory),
+  ].join('|');
+  return { body, attack, movement, behaviour };
+}
+
+/** Diversity + determinism probe: `count` planet seeds across all rings (plan §41). */
+export function qaDiversity(count = 100, startSeed = 1, rings = 8): DiversityReport {
+  const body = new Set<string>();
+  const attack = new Set<string>();
+  const movement = new Set<string>();
+  const behaviour = new Set<string>();
+  const targeting = new Set<string>();
+  const formations = new Set<string>();
+  let genomes = 0;
+  let deterministic = true;
+  for (let i = 0; i < count; i++) {
+    const seed = (startSeed + i + 1) >>> 0;
+    const ring = i % rings;
+    const facts = factsFromSeed(seed, ring);
+    const bestiary = generateEcology(seed, facts);
+    const sigs: string[] = [];
+    for (const g of bestiary.genomes) {
+      genomes++;
+      const s = genomeSignatures(g);
+      body.add(s.body);
+      attack.add(s.attack);
+      movement.add(s.movement);
+      behaviour.add(s.behaviour);
+      targeting.add(g.targetPreference ?? '-');
+      if (g.swarm) formations.add(g.swarm.formation);
+      sigs.push(`${s.body}::${s.attack}::${s.movement}::${s.behaviour}`);
+    }
+    // determinism: every 10th roster is regenerated and must match exactly (plan §0/§23)
+    if (i % 10 === 0) {
+      const again = generateEcology(seed, facts);
+      const sigs2 = again.genomes.map((g) => {
+        const s = genomeSignatures(g);
+        return `${s.body}::${s.attack}::${s.movement}::${s.behaviour}`;
+      });
+      if (JSON.stringify(sigs) !== JSON.stringify(sigs2)) deterministic = false;
+    }
+  }
+  return {
+    genomes,
+    body: body.size,
+    attack: attack.size,
+    movement: movement.size,
+    behaviour: behaviour.size,
+    targeting: targeting.size,
+    formations: formations.size,
+    deterministic,
+  };
 }
 
 const DIR_SAMPLES = 96;
@@ -156,12 +253,29 @@ export function runSeedQa(planets: number, startSeed = 1, rings = 8): QaReport {
       /* no-op: deliberate yield point for future async chunking */
     }
   }
+  // ---- GENOME DIVERSITY + DETERMINISM (plan §25/§41): a real generator must produce
+  // meaningfully different bodies, attacks, movement, behaviour — and the same seed
+  // must reproduce the same roster byte-for-byte.
+  const diversity = qaDiversity(Math.min(100, planets), startSeed, rings);
+  const divFail = (name: string, got: number, want: number): void => {
+    if (got < want) failures.push({ kind: 'genome', seed: startSeed, detail: `diversity:${name}`, issues: [`only ${got} unique of ${diversity.genomes} genomes (need ≥ ${want})`] });
+  };
+  divFail('body', diversity.body, 60);
+  divFail('attack', diversity.attack, 80);
+  divFail('movement', diversity.movement, 25);
+  divFail('behaviour', diversity.behaviour, 40);
+  divFail('targeting', diversity.targeting, 4);
+  divFail('formations', diversity.formations, 5);
+  if (!diversity.deterministic) {
+    failures.push({ kind: 'genome', seed: startSeed, detail: 'determinism', issues: ['same seed produced a different roster on re-generation'] });
+  }
   return {
     planetsChecked: planets,
     genomesChecked,
     bossesChecked,
     failures,
     terrainFiniteRatio: probesTotal ? finiteTotal / probesTotal : 1,
+    diversity,
     elapsedMs: performance.now() - t0,
   };
 }

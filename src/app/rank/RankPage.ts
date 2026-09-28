@@ -180,6 +180,17 @@ export class RankPage {
       colonyNames: COLONIES.map((c) => c.name),
       colonyColors: COLONIES.map((c) => c.css),
       rowsForGalaxy: (galaxyId) => this.rowsForGalaxy(galaxyId),
+      allRows: () => ClientCache.shared.rankedPlanetsAll().map((r) => ({
+        planetKey: r.planetKey,
+        ring: r.ring,
+        galaxyId: r.galaxyId,
+        systemId: r.systemId,
+        planetId: r.planetId,
+        state: r.state,
+        colony: r.controllingColony,
+        controlExpiresAt: Number(r.controlExpiresAt),
+        discovered: r.discovered,
+      })),
       reservedKeys: () => ClientCache.shared.reservedPlanetKeys(),
       serverNowUs: () => this.serverNowUs(),
     };
@@ -260,6 +271,8 @@ export class RankPage {
       ring: this.myRing(), gx: home.gx, gy: home.gy, galaxyId: 0, seed: 0, name: 'FRONTIER',
       starType: 'YELLOW', starColor: '#ffe08a', systemCount: 6, nebula: 'NONE', nebulaColor: null,
       poi: 'NORMAL', poiLabel: 'OPEN CLUSTER', radius: 40,
+      morphology: 'SPIRAL', rotation: 0, armCount: 2, armTightness: 3,
+      bulgeStrength: 1, discThickness: 0.06, axisRatio: 1, brightness: 1,
     };
   }
 

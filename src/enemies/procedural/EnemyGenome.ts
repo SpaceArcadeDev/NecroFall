@@ -65,6 +65,28 @@ export interface TelegraphSpec {
 
 export type AttackMovement = 'none' | 'leap' | 'charge' | 'burrow' | 'blink' | 'hover';
 
+/**
+ * ATTACK PATTERN (plan §19): two creatures using the SAME projectile ability must still
+ * fight differently. The pattern is executed by the firing code — a FAN is three shots
+ * in a cone, a RING is a true ring around the aim axis, a SPIRAL advances that ring
+ * every burst, a CROSS fires four axial shots. Straight shots stay the baseline.
+ */
+export type AttackPattern =
+  | 'STRAIGHT'
+  | 'FAN'
+  | 'ARC'
+  | 'SPIRAL'
+  | 'BURST'
+  | 'CROSS'
+  | 'RING'
+  | 'HOMING'
+  | 'RANDOM_BURST'
+  | 'DELAYED'
+  | 'PREDICTIVE'
+  | 'ORBITAL'
+  | 'BOUNCE'
+  | 'CHAIN';
+
 /** One generated attack (plan §22): the sim executes `ability`; the rest dresses it. */
 export interface ProcAttack {
   id: string;
@@ -79,6 +101,46 @@ export interface ProcAttack {
   movement: AttackMovement;
   /** Sequence weight — higher-rolls come later in a boss rotation. */
   weight: number;
+  /** How the attack is FIRED (plan §19) — real geometry, not a label. */
+  pattern: AttackPattern;
+}
+
+// ------------------------------------------------------------ targeting (plan §21)
+
+/**
+ * WHO this creature prefers to fight. Not every Necrophage runs at the nearest
+ * player: some hunt the wounded, some the loneliest straggler, some the clustered
+ * pack at the colony's works, some the one who shot them last.
+ */
+export type TargetPreference =
+  | 'NEAREST'
+  | 'LOWEST_HP'
+  | 'HIGHEST_DAMAGE'
+  | 'ISOLATED'
+  | 'COLONY_TARGET'
+  | 'RANDOM'
+  | 'LAST_ATTACKER'
+  | 'OBJECTIVE_TARGET';
+
+// ------------------------------------------------------------ swarms (plan §22)
+
+export type SwarmFormation = 'BALL' | 'RING' | 'ARC' | 'WEDGE' | 'CLOUD' | 'SURROUND' | 'SPIRAL' | 'STREAM';
+
+/**
+ * The rules a swarm body follows (plan §22). These are EXECUTED, not decorative: the
+ * formation decides where around its prey the creature commits, `orbitRadius` how far
+ * out it circles, `aggression` how fast that orbit turns, `cohesion` how tightly it
+ * hugs its kin's ring.
+ */
+export interface SwarmProfile {
+  cohesion: number;
+  separation: number;
+  alignment: number;
+  orbitRadius: number;
+  aggression: number;
+  regroupDistance: number;
+  splitThreshold: number;
+  formation: SwarmFormation;
 }
 
 // ------------------------------------------------------------ ecology (plan §26/§27)

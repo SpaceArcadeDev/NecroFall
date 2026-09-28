@@ -244,6 +244,11 @@ export class ClientCache {
     return this.list<RankedPlanetRow>('rankedPlanet').filter(r => r.galaxyId === galaxyId);
   }
 
+  /** Every persistent planet row, all galaxies (the ownership overlay's source). */
+  rankedPlanetsAll(): RankedPlanetRow[] {
+    return this.list<RankedPlanetRow>('rankedPlanet');
+  }
+
   rankedPlanet(key: string): RankedPlanetRow | null {
     return this.list<RankedPlanetRow>('rankedPlanet').find(r => r.planetKey === key) ?? null;
   }

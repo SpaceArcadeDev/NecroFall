@@ -119,6 +119,10 @@ const _zoneDir = new THREE.Vector3();
 const CAMP_BAND = 10;
 /** Scratch position for pack spawns (`spawn` copies it immediately). */
 const _spawnV = new THREE.Vector3();
+/** Scratch for swarm formation slots + projectile pattern math (plan §19/§22) — never shared. */
+const _sw1 = new THREE.Vector3();
+const _sw2 = new THREE.Vector3();
+const _sw3 = new THREE.Vector3();
 /** Scratches for the visual surface lean (`Enemy.updateSkinUp`) — never shared with gameplay math. */
 const _skinN = new THREE.Vector3();
 const _skinT1 = new THREE.Vector3();
@@ -234,6 +238,8 @@ export class Enemy {
   isBoss = false;
   small = false;
   towerIdx = -1;
+  /** Who last dealt this creature damage — feeds LAST_ATTACKER targeting (plan §21). */
+  lastAttackerId: string | null = null;
   elite = false;
   xpValue = 0;
   targetId: string | null = null;
@@ -391,6 +397,7 @@ export class Enemy {
     this.bTarget = null;
     this.bFleeT = 0;
     this.threatT = 0;
+    this.lastAttackerId = null;
     this.thinkT = Math.random() * genome.behavior.thinkInterval;
     this.hunterState = 'stalk';
     this.hunterT = 0;
@@ -524,6 +531,7 @@ export class Enemy {
     if (!this.alive) return;
     // Remember who hurt it and where, so the decision pass can send a targetless creature to look.
     if (attackerId) {
+      this.lastAttackerId = attackerId;
       const atk = game.players.get(attackerId);
       if (atk) {
         this.lastThreat.copy(atk.position);
@@ -795,6 +803,9 @@ export class Enemy {
       } else {
         if (dist > g.attackRange * 0.9) {
           moveTarget = target.position;
+          // swarm bodies commit to a FORMATION slot around the prey instead of piling on
+          // the same point (plan §22)
+          if (this.genome.swarm) moveTarget = this.formationSlot(game, target);
           // Arrive taper: charging into the stop band at full speed and relying on the 4/s
           // velocity decay slid the body ~2.5 m past the player before it stopped, where it
           // churned around the far side — the melee flavour of the same "flickers back and forth".
@@ -1046,10 +1057,138 @@ export class Enemy {
         }
       }
     }
+    // ---- TARGET PREFERENCE (plan §21): when kin have not already committed the pack to a
+    // chase, the genome's own personality re-picks among the valid candidates.
+    if (!grouped) chosen = this.pickByPreference(game, aggro, chosen);
     this.bTarget = chosen;
     this.targetId = chosen.id;
     // A guardian with kin in sight holds its post rather than charging off; everything else attacks.
     this.bState = grouped ? 'group' : 'attack';
+  }
+
+  /**
+   * TARGET PREFERENCE (plan §21): the genome's own personality picks among every VALID
+   * candidate in range. Sheltered and frozen players are never candidates — the same
+   * filters the default nearest-player query applies — so a preference can never
+   * re-introduce a cheese target. Data available to the sim decides the rest:
+   * LOWEST_HP = most wounded, HIGHEST_DAMAGE = the player who has dealt the most damage,
+   * ISOLATED = the loneliest straggler, COLONY_TARGET = the clustered pack of players,
+   * OBJECTIVE_TARGET = whoever is closest to the nearest tower.
+   */
+  private pickByPreference(game: Game, aggro: number, fallback: Player): Player {
+    const pref = this.genome.targetPreference;
+    if (!pref || pref === 'NEAREST') return fallback;
+    if (pref === 'LAST_ATTACKER' && this.lastAttackerId) {
+      const atk = game.players.get(this.lastAttackerId);
+      if (atk && atk.alive && !atk.frozen && this.position.distanceTo(atk.position) <= aggro && !game.inSafeZone(atk.position, 0)) {
+        return atk;
+      }
+    }
+    const candidates: Player[] = [];
+    for (const p of game.players.values()) {
+      if (!p.alive || p.frozen) continue;
+      if (this.position.distanceTo(p.position) > aggro) continue;
+      if (game.inSafeZone(p.position, 0)) continue;
+      candidates.push(p);
+    }
+    if (candidates.length === 0) return fallback;
+    // nearest tower for the objective defence reading (plan §21: "some defend the objective")
+    let towerPos: THREE.Vector3 | null = null;
+    if (pref === 'OBJECTIVE_TARGET') {
+      let best = Infinity;
+      for (const tower of game.towers.towers) {
+        const d = this.position.distanceToSquared(tower.position);
+        if (d < best) {
+          best = d;
+          towerPos = tower.position;
+        }
+      }
+    }
+    let bestP: Player = candidates[0];
+    let bestScore = -Infinity;
+    for (const p of candidates) {
+      let score: number;
+      switch (pref) {
+        case 'LOWEST_HP':
+          score = 1 - p.hp / Math.max(1, p.maxHp);
+          break;
+        case 'HIGHEST_DAMAGE':
+          score = p.damageDealt;
+          break;
+        case 'ISOLATED': {
+          // stalking a straggler: score by distance to the FEAREST other player
+          let nearestKin = Infinity;
+          for (const q of game.players.values()) {
+            if (q === p || !q.alive) continue;
+            nearestKin = Math.min(nearestKin, p.position.distanceTo(q.position));
+          }
+          score = nearestKin === Infinity ? 100 : nearestKin;
+          break;
+        }
+        case 'COLONY_TARGET': {
+          // breaking up the pack: score by how many allies stand beside them
+          let mates = 0;
+          for (const q of game.players.values()) {
+            if (q === p || !q.alive) continue;
+            if (p.position.distanceTo(q.position) < 14) mates++;
+          }
+          score = mates;
+          break;
+        }
+        case 'OBJECTIVE_TARGET':
+          score = towerPos ? -p.position.distanceTo(towerPos) : -this.position.distanceTo(p.position);
+          break;
+        case 'RANDOM':
+        default:
+          // deterministic per-think randomness: stable for a frame, varies over time
+          score = ((Math.imul(this.id ^ 2654435761, 1) ^ Math.floor(game.clock * 7 + this.id * 13)) >>> 0) % 1000 / 1000;
+          break;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestP = p;
+      }
+    }
+    return bestP;
+  }
+
+  /**
+   * SWARM FORMATION SLOT (plan §22): where this body commits around its prey. The
+   * formation, orbit radius, cohesion and aggression from the genome's swarm profile
+   * are EXECUTED here — RING/SURROUND circle, BALL/CLOUD crowd in close, WEDGE/STREAM
+   * flank, ARC holds a side, SPIRAL winds inward.
+   */
+  private formationSlot(game: Game, target: Player): THREE.Vector3 {
+    const s = this.genome.swarm;
+    const out = _sw1;
+    if (!s) return out.copy(target.position);
+    const orbit = Math.max(0.9, this.genome.attackRange * 0.75 + s.orbitRadius * (1.25 - s.cohesion * 0.5));
+    const base = (this.id * 2.399963) % (Math.PI * 2);
+    let radius = orbit;
+    let angle = base + game.clock * (0.2 + s.aggression * 0.4);
+    switch (s.formation) {
+      case 'BALL':
+      case 'CLOUD':
+        radius = orbit * 0.6;
+        break;
+      case 'WEDGE':
+      case 'STREAM':
+        radius = orbit * 0.8;
+        angle = base * 0.3 + (this.id % 2 ? 0.45 : -0.45);
+        break;
+      case 'ARC':
+        angle = Math.sin(base) * 0.7 + game.clock * 0.15 * s.aggression;
+        break;
+      case 'SPIRAL':
+        radius = orbit * (0.55 + 0.45 * Math.abs(Math.sin(game.clock * 0.35 + base)));
+        break;
+      default:
+        break; // RING / SURROUND hold the full circle
+    }
+    // the slot lives in the target's tangent plane (planets are spheres)
+    tangentBasis(target.up, _sw2, _sw3);
+    out.copy(target.position).addScaledVector(_sw2, Math.cos(angle) * radius).addScaledVector(_sw3, Math.sin(angle) * radius);
+    return out;
   }
 
   // ------------------------------------------------------------ hunters
@@ -1863,18 +2002,46 @@ export class Enemy {
   private rangedAttack(game: Game, target: Player): void {
     const g = this.genome;
     const kind = g.projKind === 'none' ? 'spit' : g.projKind;
-    const shots = kind === 'volley' ? 3 : 1;
+    // ---- ATTACK PATTERN (plan §19): the pattern is EXECUTED, not labelled. Same ability,
+    // completely different geometry — a FAN is a cone, a RING is a true ring of shots
+    // around the aim, a SPIRAL advances that ring every burst, a CROSS fires four axial
+    // shots, a BURST is a tight cluster.
+    const pattern = g.projPattern ?? 'STRAIGHT';
+    let shots = 1;
+    let tilt = 0;
+    let ringPattern = false;
+    let spiral = false;
+    switch (pattern) {
+      case 'FAN': shots = 3; tilt = 0.17; break;
+      case 'BURST': shots = 4; tilt = 0.06; ringPattern = true; break;
+      case 'CROSS': shots = 4; tilt = 0.14; ringPattern = true; break;
+      case 'RING': shots = 5; tilt = 0.16; ringPattern = true; break;
+      case 'SPIRAL': shots = 3; tilt = 0.16; ringPattern = true; spiral = true; break;
+      default: shots = 1; break;
+    }
+    if (kind === 'web' && shots > 1) shots = Math.min(2, shots);
+    const dmgMul = shots > 1 ? 0.7 : 1;
     game.audio.sfx(this.isBoss ? 'bossRoar' : 'shoot', this.isBoss ? 0.35 : 0.3);
     for (let i = 0; i < shots; i++) {
       _v.copy(target.position).addScaledVector(target.up, 0.9)
         .sub(_v2.copy(this.position).addScaledVector(this.up, g.scale * 0.8))
         .normalize();
-      if (shots > 1) _v.applyAxisAngle(this.up, (i - 1) * 0.17);
+      if (shots > 1) {
+        if (ringPattern) {
+          // build a basis around the aim, then pick this shot's direction on the ring
+          tangentBasis(_v, _sw2, _sw3);
+          const phi = (i / shots) * Math.PI * 2 + (spiral ? game.clock * 1.6 : 0);
+          _v.addScaledVector(_sw2, Math.cos(phi) * tilt).addScaledVector(_sw3, Math.sin(phi) * tilt).normalize();
+        } else {
+          // a fan in the plane the old volley used (rotation about the body's up)
+          _v.applyAxisAngle(this.up, (i - (shots - 1) / 2) * tilt);
+        }
+      }
       game.combat.spawn({
         pos: _v3.copy(this.position).addScaledVector(this.up, g.scale * 0.8).addScaledVector(_v, this.radius + 0.4),
         dir: _v,
         speed: g.projSpeed,
-        damage: kind === 'web' ? g.damage * this.damageMul * 0.6 : g.damage * this.damageMul * (shots > 1 ? 0.7 : 1),
+        damage: kind === 'web' ? g.damage * this.damageMul * 0.6 : g.damage * this.damageMul * dmgMul,
         ownerId: null,
         colony: -1,
         color: kind === 'web' ? 0xbfe9ff : g.projColor,

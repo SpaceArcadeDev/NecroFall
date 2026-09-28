@@ -8,12 +8,15 @@ import { applyTraitVisual, type Bestiary, type EnemyGenome, type GenomeVisual, t
 import type { BiomeClass } from '../../world/PlanetArchetypes';
 import { deriveArchetype } from '../../world/PlanetArchetypes';
 import type { EcoRole, EcologyKind, LocomotionId, PlanetFacts, ProcRelationship } from './EnemyGenome';
+import { hash32 } from '../../rankmap/procedural/SeedHash';
 import { rollBodyPlan } from './BodyGrammar';
 import { rollLimbs } from './LimbGrammar';
 import { gaitFor, rollLocomotion } from './LocomotionGrammar';
 import { rollOrgans, organVisual } from './OrganGrammar';
 import { buildAttacks, huntFromAttack } from './AttackGrammar';
 import { behaviorFor } from './BehaviorGrammar';
+import { rollTargetPreference } from './TargetGrammar';
+import { rollSwarm } from './SwarmGrammar';
 
 // ------------------------------------------------------------ planet facts
 
@@ -168,19 +171,28 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
     const base = ROLE_STATS[role];
     const isBoss = role === 'BOSS' || role === 'OVERSEER' || role === 'APEX';
 
+    // ---- SEED STABILITY (plan §23): every dimension rolls from its OWN hash-derived
+    // stream, so changing the body grammar can never silently re-roll the attacks,
+    // the movement, the targeting or the colour of every enemy in the universe.
+    const enemySeed = hash32(seed, 'enemy', genomes.length, facts.ring, facts.ecology);
+    const sub = (salt: string): Rand => new Rand(hash32(enemySeed, salt));
+
     // ---- locomotion → body → limbs → organs → attacks → behaviour (plan §16 flow)
-    const motion = rollLocomotion(rng, facts.ring, isBoss, forced?.locomotion);
+    const motion = rollLocomotion(sub('motion'), facts.ring, isBoss, forced?.locomotion);
     const locomotion = motion.locomotion;
-    const body = rollBodyPlan(rng, role, locomotion, facts.ring);
-    const limbs = rollLimbs(rng, locomotion, body, facts.ring);
-    const organs = rollOrgans(rng, role, locomotion, facts.ring, facts.landmarkBiases);
+    const body = rollBodyPlan(sub('body'), role, locomotion, facts.ring);
+    const limbs = rollLimbs(sub('limbs'), locomotion, body, facts.ring);
+    const organs = rollOrgans(sub('organs'), role, locomotion, facts.ring, facts.landmarkBiases);
     const accent = forced?.color ?? 0xffffff;
-    const kit = buildAttacks(rng, organs.organs, locomotion, role, tier, facts.ring, facts.ecology, accent);
+    const kit = buildAttacks(sub('attack'), organs.organs, locomotion, role, tier, facts.ring, facts.ecology, accent);
     // Bosses always field a full kit (plan §29) — the padded organs also GROW their hardware.
     const allOrgans = [...organs.organs];
     for (const o of kit.paddedOrgans) if (!allOrgans.includes(o)) allOrgans.push(o);
     const ranged = kit.attacks.some((a) => a.ability === 'spit' || a.ability === 'web' || a.ability === 'volley');
-    const behavior = behaviorFor(rng, role, tier, facts.ecology, facts.ring, ranged);
+    const behavior = behaviorFor(sub('behaviour'), role, tier, facts.ecology, facts.ring, ranged);
+    // targeting + swarming (plan §21/§22) — their own streams, like every other dimension
+    const targetPreference = rollTargetPreference(sub('target'), role, facts.ecology, facts.ring);
+    const swarm = tier === 'small' ? rollSwarm(sub('swarm'), locomotion, facts.ring) : undefined;
 
     // ---- visual assembly (plan §18: the traits write into the BODY)
     const visual: GenomeVisual = {
@@ -196,17 +208,20 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
     if (visual.segments !== undefined && visual.segments > 1) visual.segments = clamp(Math.round(visual.segments), 4, 10);
 
     // ---- stats (mild ring pressure; complexity carries the difficulty — plan §29)
+    const statsRng = sub('stats');
+    const colourRng = sub('colour');
+    const nameRng = sub('name');
     const ringHp = 1 + facts.ring * 0.06;
     const ringDmg = 1 + facts.ring * 0.05;
     const corruptionBoost = 1 + clamp(facts.corruption - 0.5, 0, 0.5) * 0.3;
-    const jitter = (v: number, spread = 0.12): number => v * (1 + rng.range(-spread, spread));
-    const color = forced?.color ?? shiftColor(rng, facts.biome);
+    const jitter = (v: number, spread = 0.12): number => v * (1 + statsRng.range(-spread, spread));
+    const color = forced?.color ?? shiftColor(colourRng, facts.biome);
 
     const name = role === 'BOSS'
-      ? bossNameFor(facts, rng)
+      ? bossNameFor(facts, nameRng)
       : role === 'OVERSEER'
-        ? `${bossNameFor(facts, rng)} OVERSEER`
-        : enemyName(rng, facts, locomotion, role, used);
+        ? `${bossNameFor(facts, nameRng)} OVERSEER`
+        : enemyName(nameRng, facts, locomotion, role, used);
 
     const genome: EnemyGenome = {
       idx: genomes.length,
@@ -223,11 +238,12 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
       xp: Math.round(base.xp * (1 + facts.ring * 0.08)),
       scale: jitter(base.scale, 0.08),
       color,
-      accent: accentColor(rng, color),
+      accent: accentColor(colourRng, color),
       ranged,
-      projSpeed: 26 + rng.range(0, 12),
-      projColor: accentColor(rng, color),
+      projSpeed: 26 + statsRng.range(0, 12),
+      projColor: accentColor(colourRng, color),
       projKind: kit.attacks.some((a) => a.ability === 'web') ? 'web' : kit.attacks.some((a) => a.ability === 'volley') ? 'volley' : ranged ? 'spit' : 'none',
+      projPattern: kit.attacks.find((a) => a.ability === 'spit' || a.ability === 'volley' || a.ability === 'web')?.pattern ?? 'STRAIGHT',
       small: tier === 'small',
       visual,
       elite: false,
@@ -241,6 +257,8 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
       role,
       habitat: forced?.hunter ? 'HUNTER STALK' : role === 'BOSS' || role === 'OVERSEER' ? 'NEST HEART' : `${facts.biome} ${locomotion}`,
       armor: body.armor,
+      targetPreference,
+      swarm,
     } as EnemyGenome;
 
     // hunters: bake the leap cycle from their own generated leap attack (plan §28)

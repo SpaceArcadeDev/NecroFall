@@ -5,7 +5,7 @@ import { GalaxyDescriptor, PlanetDescriptor } from './GalaxyTypes';
 import { galaxyAt } from './GalaxyGenerator';
 import { systemPlanetCount } from './SolarSystemGenerator';
 import { planetAt } from './PlanetGenerator';
-import { hash32, rng } from './SeedHash';
+import { hash32, rng, ringCenterRadius } from './SeedHash';
 
 /** Every galaxy inside a grid window (nulls are empty space — swept away). */
 export function galaxiesInView(universeSeed: number, minGx: number, maxGx: number, minGy: number, maxGy: number, cap = 400): GalaxyDescriptor[] {
@@ -26,7 +26,7 @@ export function galaxiesInView(universeSeed: number, minGx: number, maxGx: numbe
  * finds an existing galaxy (there always is one; the walk is bounded).
  */
 export function ringHome(universeSeed: number, ring: number): { gx: number; gy: number } {
-  const radius = ring * 5 + 2.5;
+  const radius = ringCenterRadius(ring);
   const r = rng(hash32(universeSeed >>> 0, 'home', ring));
   const baseAngle = r() * Math.PI * 2;
   for (let step = 0; step < 512; step++) {

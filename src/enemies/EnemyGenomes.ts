@@ -4,7 +4,7 @@
 // Species are original designs inspired only by broad creature archetypes
 // (jelly blobs, burrowing worms, web spiders, fast crawlers, heavy brutes).
 import { Rand, clamp } from '../utils/Utils';
-import type { EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship } from './procedural/EnemyGenome';
+import type { AttackPattern, EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship, SwarmProfile, TargetPreference } from './procedural/EnemyGenome';
 
 export type SpeciesId = 'slime' | 'worm' | 'spider' | 'crawler' | 'brute' | 'hunter';
 export type Tier = 'small' | 'large' | 'apex' | 'boss' | 'nexus';
@@ -281,6 +281,12 @@ export interface EnemyGenome {
   relationships?: ProcRelationship[];
   /** Incoming-damage multiplier from the body plan (plan §18: shell = tanky). 1 = none. */
   armor?: number;
+  /** WHO it prefers to fight (plan §21) — read by `decide()`. */
+  targetPreference?: TargetPreference;
+  /** Swarm steering + formation (plan §22) — small tiers only. */
+  swarm?: SwarmProfile;
+  /** The pattern its signature projectile attack fires (plan §19) — mirrors its attack kit. */
+  projPattern?: AttackPattern;
 }
 
 /**

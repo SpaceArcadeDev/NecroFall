@@ -13,7 +13,8 @@ import { galaxyAt } from './procedural/GalaxyGenerator';
 import { systemAt, systemsInGalaxy } from './procedural/SolarSystemGenerator';
 import { systemPlanetCount } from './procedural/SolarSystemGenerator';
 import { ringConfig } from './procedural/RankRingConfig';
-import { RING_WIDTH_CELLS } from './procedural/SeedHash';
+import { MAX_RING_RADIUS, ringCenterRadius, ringInnerRadius, ringOfGalaxy, ringOuterRadius } from './procedural/SeedHash';
+import { getTerritoryVisual, planetOwnershipColor, type TerritoryVisual } from './Ownership';
 
 export const RANKED_PLANET_INFESTED = 0;
 export const RANKED_PLANET_CONTROLLED = 1;
@@ -38,6 +39,8 @@ export interface MapData {
   colonyNames: string[];
   colonyColors: string[];
   rowsForGalaxy(galaxyId: number): PlanetRowData[];
+  /** Every planet row (ownership overlays sweep this — plan §33). Optional for tests. */
+  allRows?(): PlanetRowData[];
   reservedKeys(): Set<string>;
   serverNowUs(): number;
 }
@@ -133,6 +136,12 @@ export class GalacticMap {
   private galaxyMemo = new Map<number, GalaxyDescriptor | null>();
   /** Per-galaxy seeded face sprites (spiral / elliptical / irregular), baked once. */
   private galaxySprites = new Map<number, HTMLCanvasElement>();
+  /** Ownership overlays (plan §33/§35): which galaxies have rows at all, refreshed lazily. */
+  private ownedIds = new Set<number>();
+  private ownedRefreshAt = -1e9;
+  private territoryCache = new Map<number, { at: number; vis: TerritoryVisual }>();
+  /** DEBUG (plan §39): ?rankDebug=1 draws bounds / points / arms / ownership / LOD. */
+  private debug = typeof location !== 'undefined' && /[?&]rankDebug=1/.test(location.search);
   private raf = 0;
   private disposed = false;
   private resizeObserver: ResizeObserver | null = null;
@@ -140,6 +149,9 @@ export class GalacticMap {
   private pointers = new Map<number, { x: number; y: number }>();
   private pinch: { dist: number; zoom: number } | null = null;
   private t0 = performance.now();
+  private lastStepAt = performance.now();
+  private bgGrad: CanvasGradient | null = null;
+  private bgGradH = 0;
 
   constructor(
     private host: HTMLElement,
@@ -250,12 +262,22 @@ export class GalacticMap {
 
   // ------------------------------------------------------------ galaxy field
 
-  /** Memoised lattice lookup — the far zoom-out sweeps tens of thousands of cells. */
+  /** Memoised lattice lookup — the far zoom-out sweeps tens of thousands of cells.
+   *  BOUNDED (plan §43): exploration is infinite, memory is not. */
   private galaxyAtCached(gx: number, gy: number): GalaxyDescriptor | null {
     const key = ((gx + 8192) << 14) | (gy + 8192);
     let hit = this.galaxyMemo.get(key);
     if (hit !== undefined) return hit;
     hit = galaxyAt(this.data.universeSeed, gx, gy);
+    if (this.galaxyMemo.size >= 4096) {
+      // evict the oldest half (Map preserves insertion order)
+      const drop = this.galaxyMemo.keys();
+      for (let i = 0; i < 2048; i++) {
+        const k = drop.next().value;
+        if (k === undefined) break;
+        this.galaxyMemo.delete(k);
+      }
+    }
     this.galaxyMemo.set(key, hit);
     return hit;
   }
@@ -263,6 +285,28 @@ export class GalacticMap {
   /** Screen radius of a galaxy's body — ONE formula for drawing AND hit-testing. */
   private galaxyScreenRadius(g: GalaxyDescriptor): number {
     return Math.max(3, g.radius * 0.012 * this.cam.zoom);
+  }
+
+  /**
+   * OWNERSHIP (plan §35): the territory visual of one galaxy, rebuilt at most once every
+   * 2 s (rows change on match ends, not per frame). `ownedIds` is the cheap pre-filter so
+   * a frame with thousands of galaxies never scans rows for galaxies nobody touched.
+   */
+  private refreshOwnedIds(now: number): void {
+    if (now - this.ownedRefreshAt < 3000 || !this.data.allRows) return;
+    this.ownedRefreshAt = now;
+    this.ownedIds.clear();
+    for (const r of this.data.allRows()) this.ownedIds.add(r.galaxyId);
+  }
+
+  private territoryForGalaxy(galaxyId: number): TerritoryVisual {
+    const now = performance.now();
+    const hit = this.territoryCache.get(galaxyId);
+    if (hit && now - hit.at < 2000) return hit.vis;
+    const vis = getTerritoryVisual(this.data.rowsForGalaxy(galaxyId), this.data.colonyColors);
+    if (this.territoryCache.size > 256) this.territoryCache.clear();
+    this.territoryCache.set(galaxyId, { at: now, vis });
+    return vis;
   }
 
   /**
@@ -288,9 +332,14 @@ export class GalacticMap {
         return a / 4294967296;
       };
       const haze = g.nebulaColor ?? g.starColor;
-      const kind = (g.seed >>> 3) % 6;
-      const rot = rnd() * Math.PI * 2;
-      const squash = 0.72 + rnd() * 0.24;
+      const morph = g.morphology;
+      const rot = g.rotation;
+      const squash = morph === 'ELLIPTICAL'
+        ? 1 / g.axisRatio
+        : morph === 'IRREGULAR'
+          ? 1 - g.discThickness * 0.6
+          : 0.72 + 0.24 * Math.max(0, 1 - g.discThickness * 3);
+      const bulge = 0.72 + g.bulgeStrength * 0.5;
       // halo — stacked soft discs (no rgba strings needed)
       for (let i = 10; i >= 1; i--) {
         ctx.globalAlpha = 0.026;
@@ -300,11 +349,11 @@ export class GalacticMap {
         ctx.fill();
       }
       ctx.globalAlpha = 1;
-      if (kind === 0 || kind === 1) {
-        // spiral / barred spiral — tapered motes along 2-4 arms
-        const arms = kind === 1 ? 2 : 2 + Math.floor(rnd() * 3);
-        const spin = 2.1 + rnd() * 1.1;
-        const barLen = kind === 1 ? 8 + rnd() * 9 : 0;
+      if (morph === 'SPIRAL' || morph === 'BARRED_SPIRAL') {
+        // spiral / barred spiral — tapered motes along the descriptor's OWN arms
+        const arms = Math.max(2, g.armCount);
+        const spin = g.armTightness;
+        const barLen = morph === 'BARRED_SPIRAL' ? 8 + rnd() * 9 : 0;
         if (barLen) {
           ctx.globalAlpha = 0.4;
           ctx.fillStyle = haze;
@@ -328,8 +377,8 @@ export class GalacticMap {
             ctx.fill();
           }
         }
-      } else if (kind === 2) {
-        // elliptical — a tilted, dustless disc
+      } else if (morph === 'ELLIPTICAL') {
+        // elliptical — a tilted, dustless disc (core size follows bulge strength)
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(rot);
@@ -347,7 +396,7 @@ export class GalacticMap {
         ctx.arc(0, 0, 9, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-      } else if (kind === 4) {
+      } else if (morph === 'RING') {
         // ring galaxy — a bright annulus around a small core, the odd spoke
         const rr = size * (0.28 + rnd() * 0.08);
         const n = 22 + Math.floor(rnd() * 10);
@@ -370,7 +419,7 @@ export class GalacticMap {
           ctx.lineTo(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr * squash);
           ctx.stroke();
         }
-      } else if (kind === 5) {
+      } else if (morph === 'FLOCCULENT') {
         // flocculent — patchy knots rather than clean arms
         const patchN = 14 + Math.floor(rnd() * 8);
         for (let i = 0; i < patchN; i++) {
@@ -400,18 +449,18 @@ export class GalacticMap {
           ctx.fill();
         }
       }
-      // core — every galaxy keeps its star's own colour
+      // core — every galaxy keeps its star's own colour; size reads `bulgeStrength`
       for (let i = 5; i >= 1; i--) {
         ctx.globalAlpha = 0.16;
         ctx.fillStyle = g.starColor;
         ctx.beginPath();
-        ctx.arc(cx, cy, 3 + i * 3.6, 0, Math.PI * 2);
+        ctx.arc(cx, cy, (3 + i * 3.6) * bulge, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(cx, cy, 3.1, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 3.1 * bulge, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -527,12 +576,14 @@ export class GalacticMap {
     const sR = Math.sin(plane.rot);
     const ca = Math.cos(angle);
     const sa = Math.sin(angle);
-    // STAGED SIZE: the solar-system stage frames modest, solid bodies (radius·6) and
-    // the close-up grows them to the classic full view (radius·17) as you approach.
+    // STAGED SIZE (plan §11): tiny dots as the system opens (radius·6·sqrt(plAlpha)),
+    // solid bodies through the solar-system stage, the classic full view (radius·17) at
+    // the close-up. One continuous growth, no cut.
+    const grow = 6 * Math.sqrt(this.lock.planetAlpha) + 11 * this.lock.closeAlpha;
     return {
       x: centre.x + (ca * cR - sa * sR) * orbitR,
       y: centre.y + (ca * sR + sa * cR) * orbitR * plane.inc,
-      r: Math.max(2.4, p.radius * (6 + 11 * this.lock.closeAlpha)),
+      r: Math.max(2.2, p.radius * grow),
     };
   }
 
@@ -616,8 +667,29 @@ export class GalacticMap {
    * the widest bands from hitting the 4× floor with the home anchor outside the frame.
    */
   private ringViewZoom(ring: number): number {
-    const span = Math.max(14, (ring + 1) * RING_WIDTH_CELLS * 2.5);
+    const span = Math.max(14, ringOuterRadius(ring) * 2.5);
     return Math.max(4, Math.min(42, this.fitZoom(span)));
+  }
+
+  /**
+   * HOW MUCH OF A RANK BAND IS VISIBLE (plan §2). The playable map physically expands
+   * with rank: your own band and its neighbours read fully, the next tier is faint, and
+   * anything further is hidden behind the cosmic starfield. The VIEWED band (where the
+   * camera is parked) always reads too, so browsing another rank's territory in the rail
+   * still lights that region up instead of showing an empty void.
+   */
+  private bandVisibility(ring: number): number {
+    const from = (base: number): number => {
+      const d = Math.abs(ring - base);
+      return d === 0 ? 1 : d === 1 ? 0.55 : d === 2 ? 0.16 : 0;
+    };
+    return Math.max(from(this.data.myRing), from(this.focusedRing()));
+  }
+
+  /** The band the camera is currently parked on (stable during flights: camTarget wins). */
+  private focusedRing(): number {
+    const f = this.camTarget ?? this.cam;
+    return ringOfGalaxy(Math.round(f.x), Math.round(f.y));
   }
 
   private world2screen(x: number, y: number): { x: number; y: number } {
@@ -654,8 +726,12 @@ export class GalacticMap {
 
   private step(now: number): void {
     const t = (now - this.t0) / 1000;
+    // frame-rate-independent damping (plan §8: camera and scale interpolate smoothly
+    // on exponential curves, so a 30fps phone glides identically to a 120Hz desktop)
+    const dt = Math.min(0.1, Math.max(1 / 240, (now - this.lastStepAt) / 1000));
+    this.lastStepAt = now;
     if (this.camTarget) {
-      const k = 1 - Math.pow(0.0016, 1 / 60);
+      const k = 1 - Math.pow(0.0016, dt);
       const target = this.camTarget;
       this.cam.x += (target.x - this.cam.x) * k;
       this.cam.y += (target.y - this.cam.y) * k;
@@ -669,6 +745,8 @@ export class GalacticMap {
         this.camTarget = null;
       }
     }
+    // ownership overlays refresh lazily (rows change on match ends, not per frame)
+    this.refreshOwnedIds(now);
     // Seamless soft zoom: tier ramps decide what is visible, and the DOM tier
     // follows them — pinch, wheel and the ± buttons all flow through here.
     this.updateSoftFocus();
@@ -678,12 +756,16 @@ export class GalacticMap {
   private draw(t: number): void {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    // deep-space backdrop
-    const bg = ctx.createLinearGradient(0, 0, 0, this.height);
-    bg.addColorStop(0, '#05030c');
-    bg.addColorStop(0.55, '#0a0617');
-    bg.addColorStop(1, '#120a24');
-    ctx.fillStyle = bg;
+    // deep-space backdrop (cached — plan §42: no per-frame gradient objects)
+    if (!this.bgGrad || this.bgGradH !== this.height) {
+      const bg = ctx.createLinearGradient(0, 0, 0, this.height);
+      bg.addColorStop(0, '#05030c');
+      bg.addColorStop(0.55, '#0a0617');
+      bg.addColorStop(1, '#120a24');
+      this.bgGrad = bg;
+      this.bgGradH = this.height;
+    }
+    ctx.fillStyle = this.bgGrad;
     ctx.fillRect(0, 0, this.width, this.height);
 
     this.drawStarfield(t);
@@ -698,6 +780,7 @@ export class GalacticMap {
     this.drawHomeMarker(t);
     this.drawLockReticle(t);
     this.drawShootingStar(t);
+    if (this.debug) this.drawDebug(t);
   }
 
   private buildStarfield(): void {
@@ -763,11 +846,39 @@ export class GalacticMap {
     ctx.stroke();
   }
 
+  /**
+   * Cached planet body sprite (plan §42): one baked radial body per colour instead of a
+   * per-planet, per-frame `createRadialGradient`. The lit-from-upper-left look is baked in.
+   */
+  private bodySprite(color: string): HTMLCanvasElement {
+    const key = `body:${color}`;
+    const hit = this.glowCache.get(key);
+    if (hit) return hit;
+    const size = 64;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const g = c.getContext('2d');
+    if (g) {
+      const grad = g.createRadialGradient(size * 0.32, size * 0.32, size * 0.06, size / 2, size / 2, size / 2);
+      grad.addColorStop(0, '#ffffff');
+      grad.addColorStop(0.25, color);
+      grad.addColorStop(1, '#0b0812');
+      g.fillStyle = grad;
+      g.beginPath();
+      g.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+      g.fill();
+    }
+    this.glowCache.set(key, c);
+    return c;
+  }
+
   /** Cached radial-glow sprite (per color) — one gradient per color, ever. */
   private glow(color: string, size = 64): HTMLCanvasElement {
     const key = `${color}:${size}`;
     const hit = this.glowCache.get(key);
     if (hit) return hit;
+    if (this.glowCache.size >= 512) this.glowCache.clear(); // bounded (plan §43)
     const c = document.createElement('canvas');
     c.width = size;
     c.height = size;
@@ -791,9 +902,11 @@ export class GalacticMap {
     const cfg = ringConfig(this.data.myRing);
     const fade = 1 - deep * 0.85;
     for (let ring = 7; ring >= 0; ring--) {
+      const vis = this.bandVisibility(ring);
+      if (vis <= 0) continue;
       const rc = ringConfig(ring);
-      const inner = ring * RING_WIDTH_CELLS;
-      const outer = (ring + 1) * RING_WIDTH_CELLS;
+      const inner = ringInnerRadius(ring);
+      const outer = ringOuterRadius(ring);
       const p0 = this.world2screen(0, 0);
       const rIn = inner * this.cam.zoom;
       const rOut = outer * this.cam.zoom;
@@ -802,11 +915,11 @@ export class GalacticMap {
       ctx.beginPath();
       ctx.arc(p0.x, p0.y, rOut, 0, Math.PI * 2);
       ctx.arc(p0.x, p0.y, rIn, 0, Math.PI * 2, true);
-      ctx.globalAlpha = (ring === this.data.myRing ? 0.16 : 0.05 + ring * 0.004) * fade;
+      ctx.globalAlpha = (ring === this.data.myRing ? 0.16 : 0.05 + ring * 0.004) * fade * vis;
       ctx.fillStyle = rc.accent;
       ctx.fill('evenodd');
       ctx.restore();
-      ctx.globalAlpha = (ring === this.data.myRing ? 0.35 : 0.12) * fade;
+      ctx.globalAlpha = (ring === this.data.myRing ? 0.35 : 0.12) * fade * vis;
       ctx.strokeStyle = rc.accent;
       ctx.lineWidth = ring === this.data.myRing ? 1.6 : 1;
       ctx.beginPath();
@@ -816,7 +929,7 @@ export class GalacticMap {
     }
     // label for the player's ring at the top of its band
     const p0 = this.world2screen(0, 0);
-    const rMid = (this.data.myRing * RING_WIDTH_CELLS + RING_WIDTH_CELLS / 2) * this.cam.zoom;
+    const rMid = ringCenterRadius(this.data.myRing) * this.cam.zoom;
     ctx.font = '700 11px Rajdhani, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = cfg.accent;
@@ -849,6 +962,9 @@ export class GalacticMap {
       for (let gx = gx0; gx <= gx1; gx++) {
         const g = this.galaxyAtCached(gx, gy);
         if (!g) continue;
+        // bands far outside the player's reach are not rendered at all (plan §2)
+        const bandVis = this.bandVisibility(g.ring);
+        if (bandVis <= 0) continue;
         const p = this.world2screen(g.gx, g.gy);
         if (p.x < -70 || p.x > this.width + 70 || p.y < -70 || p.y > this.height + 70) continue;
         const isFocus = this.lock.galaxy?.galaxyId === g.galaxyId;
@@ -860,10 +976,14 @@ export class GalacticMap {
         // opaque wall. What remains is the NMS view: a faint ghost of the cluster plus
         // its stars.
         const inside = this.lock.sysAlpha;
+        const field2 = field * bandVis * g.brightness;
+        // ownership pre-filter (plan §33): far galaxies still show a coloured dot
+        const owned = this.ownedIds.has(g.galaxyId);
+        const terr = owned ? this.territoryForGalaxy(g.galaxyId) : null;
         // far LOD: a light mote (there can be thousands on screen — No Man's Sky look)
         if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
-          ctx.globalAlpha = 0.78 * field * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
-          ctx.fillStyle = g.starColor;
+          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
+          ctx.fillStyle = terr?.color ?? g.starColor;
           ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
           ctx.globalAlpha = 1;
           continue;
@@ -875,9 +995,29 @@ export class GalacticMap {
         const faceR = (radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - inside * 0.35);
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
         const s = faceR * 3.1 * pulse;
-        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34) * pulse) * field * haze * (1 - inside * 0.85);
+        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34) * pulse) * field2 * haze * (1 - inside * 0.85);
         ctx.drawImage(this.galaxySprite(g), p.x - s / 2, p.y - s / 2, s, s);
         ctx.globalAlpha = 1;
+        // ownership EMISSION tint (plan §13/§14/§33): the shape stays procedural, the
+        // glow speaks politics. One owner → one halo; contested → offset multi-colour
+        // clouds at each party's weight (never one forced owner).
+        if (terr && terr.kind !== 'NONE' && faceR > 5) {
+          const tintR = faceR * 1.7;
+          if (terr.kind === 'CONTESTED') {
+            const n = Math.min(3, terr.colors.length);
+            for (let ci = 0; ci < n; ci++) {
+              const ang = (ci / n) * Math.PI * 2 + g.rotation + t * 0.04;
+              const ox = Math.cos(ang) * tintR * 0.45;
+              const oy = Math.sin(ang) * tintR * 0.45;
+              ctx.globalAlpha = 0.11 * field2 * (0.5 + terr.share[ci] * 0.5) * (1 - inside * 0.85);
+              ctx.drawImage(this.glow(terr.colors[ci], 64), p.x + ox - tintR, p.y + oy - tintR, tintR * 2, tintR * 2);
+            }
+          } else if (terr.color) {
+            ctx.globalAlpha = 0.16 * field2 * (1 - inside * 0.85);
+            ctx.drawImage(this.glow(terr.color, 64), p.x - tintR, p.y - tintR, tintR * 2, tintR * 2);
+          }
+          ctx.globalAlpha = 1;
+        }
         // POI marker (plan §55)
         if (g.poi !== 'NORMAL' && zoom > 16 && radius > 3.4) {
           ctx.globalAlpha = 0.8 * field;
@@ -910,11 +1050,13 @@ export class GalacticMap {
     // ---- band edges ride ON TOP of the field so the rings stay readable in a dense frame
     const edgeFade = 1 - deep * 0.85;
     for (let ring = 7; ring >= 0; ring--) {
+      const vis = this.bandVisibility(ring);
+      if (vis <= 0) continue;
       const rc = ringConfig(ring);
       const p0 = this.world2screen(0, 0);
-      const rOut = (ring + 1) * RING_WIDTH_CELLS * this.cam.zoom;
+      const rOut = ringOuterRadius(ring) * this.cam.zoom;
       if (rOut < 30) continue;
-      ctx.globalAlpha = (ring === this.data.myRing ? 0.3 : 0.1) * edgeFade;
+      ctx.globalAlpha = (ring === this.data.myRing ? 0.3 : 0.1) * edgeFade * vis;
       ctx.strokeStyle = rc.accent;
       ctx.lineWidth = ring === this.data.myRing ? 1.4 : 1;
       ctx.beginPath();
@@ -1003,6 +1145,7 @@ export class GalacticMap {
     let hit = this.systemsCache.get(g.galaxyId);
     if (!hit) {
       hit = systemsInGalaxy(this.data.universeSeed, g.ring, g.galaxyId, g.systemCount);
+      if (this.systemsCache.size >= 64) this.systemsCache.clear(); // bounded (plan §43)
       this.systemsCache.set(g.galaxyId, hit);
     }
     return hit;
@@ -1023,6 +1166,14 @@ export class GalacticMap {
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
     const rows = this.data.rowsForGalaxy(galaxy.galaxyId);
+    // per-system ownership (plan §13/§35): one pass over the (small) row list
+    const systemTerr = new Map<number, TerritoryVisual>();
+    if (rows.length) {
+      for (const sys of this.systemsFor(galaxy)) {
+        const vis = getTerritoryVisual(rows, this.data.colonyColors, sys.systemId);
+        if (vis.kind !== 'NONE') systemTerr.set(sys.systemId, vis);
+      }
+    }
     const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
     // the front system crossfades on the same sqrt curve as the planets layer
     const pa = Math.sqrt(planetAlpha);
@@ -1046,24 +1197,37 @@ export class GalacticMap {
       const front = Boolean(system && sys.systemId === system.systemId);
       const twinkle = 0.85 + 0.15 * Math.sin(t * 2.2 + (sys.seed % 50));
       const r = baseR * twinkle;
-      // when the solar system stage opens, the OTHER systems recede hard so the
-      // frame reads as one system, not a galaxy sprinkled with planets
-      const a = sysAlpha * (front ? 1 - pa : 1 - pa * 0.92);
+      // when the solar system stage opens the OTHER systems recede — but only to distant
+      // STARS, never to nothing (plan §6): the surrounding cluster stays readable while
+      // one system grows underneath the crosshair.
+      const a = sysAlpha * (front ? 1 - pa : 1 - pa * 0.55);
       if (a <= 0.02) continue;
       // LOD (user: "show all solar systems as light dots until I zoom in"): only the
       // system under the crosshair (or hovered/selected) carries detail — every other
       // system stays a light mote, which is also what keeps hundreds of them cheap.
+      // OWNED systems keep their owner's colour even as motes (plan §33).
+      const terr = systemTerr.get(sys.systemId);
       if (!front && !isHover && !isSel) {
         ctx.globalAlpha = 0.8 * a * twinkle;
-        ctx.fillStyle = '#dfe9ff';
+        ctx.fillStyle = terr?.color ?? '#dfe9ff';
         ctx.fillRect(p.x - 1.15, p.y - 1.15, 2.3, 2.3);
         ctx.globalAlpha = 1;
         continue;
       }
-      // star glow + core (the dot GROWS with zoom instead of a fixed 30px blob)
+      // star glow + core (the dot GROWS with zoom instead of a fixed 30px blob);
+      // the GLOW carries ownership, the core stays the star (plan §33)
       const ss = r * 6;
       ctx.globalAlpha = 0.6 * a;
-      ctx.drawImage(this.glow(galaxy.starColor, 32), p.x - ss / 2, p.y - ss / 2, ss, ss);
+      if (terr?.kind === 'CONTESTED') {
+        const n = Math.min(3, terr.colors.length);
+        for (let ci = 0; ci < n; ci++) {
+          const ang = (ci / n) * Math.PI * 2 + t * 0.3;
+          ctx.globalAlpha = 0.3 * a * (0.5 + terr.share[ci] * 0.5);
+          ctx.drawImage(this.glow(terr.colors[ci], 32), p.x + Math.cos(ang) * r * 1.4 - ss / 2, p.y + Math.sin(ang) * r * 1.4 - ss / 2, ss, ss);
+        }
+      } else {
+        ctx.drawImage(this.glow(terr?.color ?? galaxy.starColor, 32), p.x - ss / 2, p.y - ss / 2, ss, ss);
+      }
       ctx.globalAlpha = a;
       ctx.fillStyle = '#fff';
       ctx.beginPath();
@@ -1120,6 +1284,7 @@ export class GalacticMap {
     const cacheHit = this.planetsCache.get(key);
     if (cacheHit) return cacheHit;
     const list = planetsInSystem(this.data.universeSeed, sys.ring, sys.galaxyId, sys.systemId);
+    if (this.planetsCache.size >= 128) this.planetsCache.clear(); // bounded (plan §43)
     this.planetsCache.set(key, list);
     return list;
   }
@@ -1131,7 +1296,7 @@ export class GalacticMap {
    * continuous approach, exactly like flying into a No Man's Sky system.
    */
   private drawPlanetsLayer(t: number): void {
-    const { galaxy, system, planetAlpha } = this.lock;
+    const { galaxy, system, planetAlpha, closeAlpha } = this.lock;
     if (!galaxy || !system || planetAlpha <= 0.01) return;
     // sqrt ramp: bodies firm up early in the band instead of reading as dim marbles
     const pa = Math.sqrt(planetAlpha);
@@ -1185,20 +1350,18 @@ export class GalacticMap {
       ctx.globalAlpha = 1;
 
       const bob = 1 + 0.04 * Math.sin(t * 1.6 + p.orbit);
-      // atmosphere glow
-      const glowColor = controlled ? this.data.colonyColors[row.colony] : p.biomeColor;
+      // atmosphere glow + body — both drawn from CACHED sprites (plan §42: no
+      // per-frame gradient objects, the same lesson the glow cache already learned).
+      // Ownership: controllers carve their colour into the glow; discovered-but-infested
+      // planets glow NECROPHAGE RED (plan §13/§34).
+      const ownerColor = planetOwnershipColor(row, this.data.colonyColors);
+      const glowColor = ownerColor ?? p.biomeColor;
       ctx.globalAlpha = 0.6 * pa;
       ctx.drawImage(this.glow(glowColor, 48), px - pr * 3, py - pr * 3, pr * 6, pr * 6);
       // body
       ctx.globalAlpha = pa;
-      const grad = ctx.createRadialGradient(px - pr * 0.35, py - pr * 0.35, pr * 0.1, px, py, pr);
-      grad.addColorStop(0, '#ffffff');
-      grad.addColorStop(0.25, p.biomeColor);
-      grad.addColorStop(1, '#0b0812');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(px, py, pr * bob, 0, Math.PI * 2);
-      ctx.fill();
+      const body = pr * 1.9 * bob;
+      ctx.drawImage(this.bodySprite(p.biomeColor), px - body, py - body, body * 2, body * 2);
       ctx.globalAlpha = 1;
       if (row?.discovered && !controlled) {
         ctx.globalAlpha = pa;
@@ -1243,9 +1406,9 @@ export class GalacticMap {
         ctx.arc(px, py, pulse, 0, Math.PI * 2);
         ctx.stroke();
       }
-      // name — only once the body has grown, and sized WITH it (user: names too big;
-      // a selected/hovered planet always names itself so the lock is readable)
-      const nameA = isSel || isHover ? 1 : pa * ramp01(pr, 7, 13);
+      // name — only once the body has grown AND the close-up has opened (plan §11:
+      // names are the last reveal), sized WITH it; sel/hover always names itself
+      const nameA = isSel || isHover ? 1 : closeAlpha * ramp01(pr, 7, 13);
       if (nameA > 0.02) {
         ctx.globalAlpha = nameA * 0.95;
         ctx.font = `600 ${Math.min(12, Math.max(8.5, pr * 0.7))}px Rajdhani, sans-serif`;
@@ -1266,6 +1429,124 @@ export class GalacticMap {
       ctx.fillText(system.name.toUpperCase(), center.x, center.y - starR - 12);
       ctx.globalAlpha = 1;
     }
+  }
+
+  /**
+   * DEBUG OVERLAY (plan §39, opened with `?rankDebug=1`): ring bounds, galaxy bounds and
+   * rotation, morphology parameters, arm spines, raw system points, ownership, LOD state
+   * and seeds — everything needed to see a distribution problem at a glance. A healthy
+   * galaxy reads A (bright bulge + arms); a broken one reads B (uniform dust).
+   */
+  private drawDebug(t: number): void {
+    const ctx = this.ctx;
+    const zoom = this.cam.zoom;
+    const lock = this.lock;
+    ctx.save();
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    // ---- ring bounds (dashed mid-band circles, labelled)
+    for (let ring = 0; ring < 8; ring++) {
+      const p0 = this.world2screen(0, 0);
+      const rMid = ringCenterRadius(ring) * zoom;
+      if (rMid < 24 || rMid > this.width * 4) continue;
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = ringConfig(ring).accent;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.arc(p0.x, p0.y, rMid, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = ringConfig(ring).accent;
+      ctx.fillText(`R${ring} [${ringInnerRadius(ring)}..${ringOuterRadius(ring)}]`, p0.x, p0.y - rMid - 3);
+    }
+    ctx.globalAlpha = 1;
+    // ---- galaxies: true disc bounds, rotation tick, morphology, seeds, system points, arm spines
+    const pad = 90 / zoom;
+    const minW = this.screen2world(-pad, -pad);
+    const maxW = this.screen2world(this.width + pad, this.height + pad);
+    let systemBudget = 6;
+    const gx0 = Math.floor(minW.x);
+    const gx1 = Math.ceil(maxW.x);
+    const gy0 = Math.floor(minW.y);
+    const gy1 = Math.ceil(maxW.y);
+    for (let gy = gy0; gy <= gy1; gy++) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const g = this.galaxyAtCached(gx, gy);
+        if (!g || this.bandVisibility(g.ring) <= 0) continue;
+        const p = this.world2screen(g.gx, g.gy);
+        const discR = (GAL_DISC_WORLD / 2) * zoom;
+        if (p.x < -discR || p.x > this.width + discR || p.y < -discR || p.y > this.height + discR) continue;
+        // true disc bounds + rotation tick
+        ctx.globalAlpha = 0.3;
+        ctx.strokeStyle = '#55ddff';
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, discR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x + Math.cos(g.rotation) * discR, p.y + Math.sin(g.rotation) * discR);
+        ctx.stroke();
+        // morphology parameters + identity
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#9fe8ff';
+        ctx.fillText(`${g.morphology} arms:${g.armCount} tight:${g.armTightness.toFixed(1)} bulge:${g.bulgeStrength.toFixed(2)} ar:${g.axisRatio.toFixed(1)} br:${g.brightness.toFixed(2)}`, p.x, p.y - discR - 16);
+        ctx.fillStyle = '#ffbb77';
+        ctx.fillText(`${g.name} id:${g.galaxyId} seed:${g.seed.toString(16)} sys:${g.systemCount} R${g.ring}`, p.x, p.y - discR - 5);
+        if (this.ownedIds.has(g.galaxyId)) {
+          const terr = this.territoryForGalaxy(g.galaxyId);
+          ctx.fillStyle = terr.color ?? '#ffffff';
+          ctx.fillText(`own:${terr.kind}${terr.color ? ` ${terr.color}` : ''}`, p.x, p.y + discR + 12);
+        }
+        // raw system points + arm spines for the galaxies big enough to inspect
+        if (this.galaxyScreenRadius(g) > 26 && systemBudget > 0) {
+          systemBudget--;
+          const sys = this.systemsFor(g);
+          ctx.globalAlpha = 0.85;
+          ctx.fillStyle = '#ffffff';
+          for (const s of sys) {
+            const wp = this.systemWorldPos(g, s);
+            const sp = this.world2screen(wp.x, wp.y);
+            if (sp.x < 0 || sp.x > this.width || sp.y < 0 || sp.y > this.height) continue;
+            ctx.fillRect(sp.x - 0.8, sp.y - 0.8, 1.6, 1.6);
+          }
+          // arm spines (plan §39 "show galaxy arms"): the actual spiral the generator used
+          if (g.armCount > 0) {
+            ctx.globalAlpha = 0.55;
+            ctx.strokeStyle = '#ff9de0';
+            ctx.beginPath();
+            for (let arm = 0; arm < g.armCount; arm++) {
+              for (let k = 0; k <= 24; k++) {
+                const rr = (k / 24) * 0.46;
+                const ang = g.rotation + (arm / g.armCount) * Math.PI * 2 + rr * g.armTightness * Math.PI;
+                const wx = g.gx + Math.cos(ang) * rr * GAL_DISC_WORLD;
+                const wy = g.gy + Math.sin(ang) * rr * GAL_DISC_WORLD;
+                const sx = this.world2screen(wx, wy);
+                if (k === 0) ctx.moveTo(sx.x, sx.y);
+                else ctx.lineTo(sx.x, sx.y);
+              }
+            }
+            ctx.stroke();
+          }
+        }
+      }
+    }
+    ctx.globalAlpha = 1;
+    // ---- LOD / state HUD
+    const r = lock.ranges;
+    const focus = lock.galaxy;
+    const lines = [
+      `zoom ${zoom.toFixed(1)}  level ${this.level}  viewed R${this.focusedRing()}  my R${this.data.myRing}`, 
+      `alphas sys ${lock.sysAlpha.toFixed(2)} planet ${lock.planetAlpha.toFixed(2)} close ${lock.closeAlpha.toFixed(2)}`, 
+      `ramps gal ${r.gal.toFixed(0)} sys ${r.sysStart.toFixed(0)}..${r.sysEnd.toFixed(0)} pl ${r.plStart.toFixed(0)}..${r.plEnd.toFixed(0)} close ${r.closeStart.toFixed(0)}..${r.closeEnd.toFixed(0)}`, 
+      `LOD galaxy<${GALAXY_DOT_RADIUS}px  owned ${this.ownedIds.size}  sprites ${this.galaxySprites.size}  memo ${this.galaxyMemo.size}  systems ${this.systemsCache.size}`, 
+      focus ? `focus ${focus.name} ${focus.morphology} seed:${focus.seed.toString(16)} systems:${focus.systemCount}` : 'focus —', 
+    ];
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(6,4,14,0.78)';
+    ctx.fillRect(6, 6, 470, 12 * lines.length + 10);
+    ctx.fillStyle = '#bfffd0';
+    lines.forEach((line, i) => ctx.fillText(line, 12, 20 + i * 12));
+    ctx.restore();
   }
 
   // ------------------------------------------------------------ interaction
@@ -1294,7 +1575,15 @@ export class GalacticMap {
       if (this.pinch && this.pointers.size === 2) {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
+        // zoom TOWARD the pinch midpoint (plan §8): the world point under the midpoint
+        // stays pinned while the scale changes, exactly like the wheel path
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        const before = this.screen2world(mx, my);
         this.cam.zoom = Math.max(4, Math.min(1700, (this.pinch.zoom * d) / Math.max(1, this.pinch.dist)));
+        const after = this.screen2world(mx, my);
+        this.cam.x += before.x - after.x;
+        this.cam.y += before.y - after.y;
         return;
       }
       if (this.drag) {

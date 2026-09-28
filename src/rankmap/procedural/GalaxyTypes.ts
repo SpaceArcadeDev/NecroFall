@@ -38,6 +38,21 @@ export const NEBULA_COLORS: Record<Exclude<NebulaType, 'NONE'>, string> = {
 
 export type GalaxyPoi = 'NORMAL' | 'NEBULA' | 'DEAD' | 'CORRUPTED' | 'STRONGHOLD' | 'SWARM' | 'DISCOVERY';
 
+/**
+ * GALAXY MORPHOLOGY (plan §4). Each kind is a genuinely different structure — shape,
+ * star distribution and system placement all change with it, never just the colour.
+ */
+export type GalaxyMorphology = 'SPIRAL' | 'BARRED_SPIRAL' | 'ELLIPTICAL' | 'IRREGULAR' | 'RING' | 'FLOCCULENT';
+
+export const MORPHOLOGY_LABELS: Record<GalaxyMorphology, string> = {
+  SPIRAL: 'SPIRAL',
+  BARRED_SPIRAL: 'BARRED SPIRAL',
+  ELLIPTICAL: 'ELLIPTICAL',
+  IRREGULAR: 'IRREGULAR',
+  RING: 'RING GALAXY',
+  FLOCCULENT: 'FLOCCULENT',
+};
+
 export const POI_LABELS: Record<GalaxyPoi, string> = {
   NORMAL: 'OPEN CLUSTER',
   NEBULA: 'NEBULA FIELD',
@@ -64,6 +79,22 @@ export interface GalaxyDescriptor {
   poiLabel: string;
   /** Visual disc radius in world units (map space). */
   radius: number;
+  // ---- morphology (plan §4): shape, star distribution and system placement read these
+  morphology: GalaxyMorphology;
+  /** Disc rotation (radians) — arms and ellipse axes follow it. */
+  rotation: number;
+  /** Number of arms (spiral / barred / flocculent kinds). */
+  armCount: number;
+  /** Radians of arm sweep per unit of disc radius — higher wraps tighter. */
+  armTightness: number;
+  /** 0..2 — how concentrated the systems are toward the core (also the sprite's core glow). */
+  bulgeStrength: number;
+  /** 0..1 — vertical squash of the disc (visual flattening in the sprite). */
+  discThickness: number;
+  /** Axis ratio for non-circular morphologies (1 = round). */
+  axisRatio: number;
+  /** Overall emission scale 0.6..1.35 — how brightly this galaxy reads at distance. */
+  brightness: number;
 }
 
 export interface SystemDescriptor {

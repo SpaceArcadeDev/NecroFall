@@ -19,6 +19,12 @@ export const ranked_season = table(
     started_at: t.timestamp(),
     ends_at: t.option(t.timestamp()),
     active: t.bool(),
+    /**
+     * UNIVERSE GENERATION VERSION (plan §46/§47): the generation of the band geometry
+     * and seed derivation this season's rows were written under. Defaults to 0 so rows
+     * created before versioning are recognised as stale and migrated on first touch.
+     */
+    universe_generation_version: t.u32().default(0),
   }
 );
 

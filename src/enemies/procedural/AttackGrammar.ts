@@ -5,9 +5,40 @@
 // data the hunter cycle and the animator read.
 import type { Rand } from '../../utils/Utils';
 import { ABILITY_META, type AbilityId } from '../EnemyGenomes';
-import type { EcoRole, LocomotionId, ProcAttack, TelegraphSpec } from './EnemyGenome';
+import type { AttackPattern, EcoRole, LocomotionId, ProcAttack, TelegraphSpec } from './EnemyGenome';
 import { ORGAN_ABILITY, type AttackOrgan } from './OrganGrammar';
 import { telegraphFor } from './TelegraphGrammar';
+
+/**
+ * PATTERN TABLE (plan §19): two creatures firing the SAME projectile ability must still
+ * fight differently. These patterns are EXECUTED by the firing code (see Enemy.rangedAttack):
+ * FAN = a cone, CROSS = four axial shots, RING = a true ring around the aim axis,
+ * SPIRAL = that ring advancing every burst, BURST = a tight four-shot cluster.
+ */
+const PATTERNS: Partial<Record<AbilityId, [AttackPattern, number][]>> = {
+  spit: [['STRAIGHT', 50], ['CROSS', 12], ['SPIRAL', 14], ['RING', 10], ['FAN', 14]],
+  volley: [['FAN', 46], ['RING', 18], ['CROSS', 16], ['BURST', 12], ['SPIRAL', 8]],
+  web: [['STRAIGHT', 72], ['CROSS', 28]],
+};
+
+/** Rolls the firing pattern for one attack — deep rings unlock the exotic geometry. */
+export function patternFor(rng: Rand, ability: AbilityId, ring: number): AttackPattern {
+  const table = PATTERNS[ability];
+  if (!table) return 'STRAIGHT';
+  const boost = ring >= 4 ? 2 : ring >= 2 ? 1.4 : 1;
+  let total = 0;
+  const entries = table.map(([p, w], i) => {
+    const weight = i === 0 ? w : w * boost;
+    total += weight;
+    return [p, weight] as const;
+  });
+  let pick = rng.next() * total;
+  for (const [p, w] of entries) {
+    pick -= w;
+    if (pick <= 0) return p;
+  }
+  return table[0][0];
+}
 
 /** Attack abilities an organ can field, richest first. */
 const ATTACK_ORGAN_ORDER: AttackOrgan[] = [
@@ -78,6 +109,7 @@ export function buildAttacks(
       cd: Math.max(1.4, base.cd * (heavy ? 0.85 : 1) * rng.range(0.9, 1.15)),
       movement: MOVEMENT[ability] ?? (locomotion === 'LEAPER' && ability === 'slam' ? 'leap' : 'none'),
       weight: rng.range(0.5, 1),
+      pattern: patternFor(rng, ability, ring),
     };
   };
 

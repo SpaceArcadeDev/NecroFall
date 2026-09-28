@@ -1836,11 +1836,15 @@ export class UI {
 
   onNecrotechClick: (idx: number) => void = () => undefined;
 
-  updateNecrotechSelect(timer: number, myNt: number, selected: number, total: number, late = false): void {
+  updateNecrotechSelect(timer: number, myNt: number, selected: number, total: number, late = false, official = false): void {
     this.ntTimer.textContent = Math.max(0, Math.ceil(timer)).toString();
-    this.ntSub.textContent = late
-      ? 'DROPPING INTO A LIVE MATCH — PICK YOUR NECROTECH'
-      : `${selected} / ${total} PLAYERS LOCKED IN — MUTATIONS HAPPEN MID-MATCH`;
+    // OFFICIAL: the counter would lie (the other seats picked before this client saw them) — the
+    // line spells out what the screen IS instead of how many players are locked in.
+    this.ntSub.textContent = official
+      ? 'PICK YOUR STARTER NECROTECH — MUTATIONS HAPPEN MID-MATCH'
+      : late
+        ? 'DROPPING INTO A LIVE MATCH — PICK YOUR NECROTECH'
+        : `${selected} / ${total} PLAYERS LOCKED IN — MUTATIONS HAPPEN MID-MATCH`;
     this.ntCards.forEach((c, idx) => c.classList.toggle('sel', myNt === idx));
     if (myNt !== this.ntPick) {
       this.ntPick = myNt;

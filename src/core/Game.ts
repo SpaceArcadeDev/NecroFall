@@ -278,6 +278,13 @@ export class Game {
    * results screen with the finalized usage summary instead of dropping the numbers on the floor.
    */
   private lastEnd: { winner: number | null; tiles: { label: string; owner: number }[]; reason?: string } | null = null;
+  /**
+   * Starter-class pick bookkeeping for OFFICIAL matches: the selection phase runs while the match
+   * is already live server-side, so the world boots with the payload's seed and a clock read NOW
+   * (base + however long the loading screen and the pick actually took).
+   */
+  private officialElapsedBase = 0;
+  private officialBootAt = 0;
 
   players = new Map<string, Player>();
   localPlayer: Player | null = null;
@@ -1133,25 +1140,58 @@ export class Game {
         name: p.name,
         ready: true,
         colony: p.colony,
-        nt: p.necrotech,
+        // The LOCAL seat's class belongs to the starter picker below: start it UNPICKED (-1) so
+        // nothing is highlighted and the timeout fallback fills it in. Remote seats keep the
+        // class the server knows.
+        nt: p.id === match.meId ? -1 : p.necrotech,
         isHost: false,
         me: p.id === match.meId,
       });
     }
     this.hostOrder = [match.meId, ...match.players.map(p => p.id).filter(id => id !== match.meId)];
 
-    const assignments: Record<string, number> = {};
-    for (const p of match.players) {
-      assignments[`colony:${p.id}`] = p.colony;
-      assignments[`nt:${p.id}`] = p.necrotech;
-    }
-
     bridge.attachGame({
       applyRemote: (id, msg) => this.applyOfficialRemote(id, msg),
       matchEnded: result => this.officialMatchEnded(result),
     });
 
-    this.beginPlaying(assignments, match.seed, match.elapsed);
+    // STARTER NECROTECH SELECTION (user ask 2026-09-28): official matches used to drop every
+    // player straight into the fight on the default class with no pick at all. They now open the
+    // SAME SELECT NECROTECH screen the P2P flow uses — a LOCAL phase (the server match is already
+    // live), so when the countdown ends the world boots from the payload's seed and clock.
+    this.officialElapsedBase = match.elapsed;
+    this.officialBootAt = nowSec();
+    this.beginOfficialNecrotechPhase();
+  }
+
+  /** The official match's starter-class pick — the P2P SELECT NECROTECH screen, locally authoritative. */
+  private beginOfficialNecrotechPhase(): void {
+    this.phase = 'necrotech';
+    this.phaseTimer = CONFIG.necrotechSelectTime;
+    this.onPhaseChanged('necrotech');
+    this.ui.banner('NECROTECH SELECTION', 2200);
+  }
+
+  /**
+   * The starter pick is in (or its clock ran out): build the world and drop into the running
+   * match. An UNPICKED local seat rolls a random class (the lobby flow's own timeout rule —
+   * nobody is ever left class-less); remote seats keep what the server knows.
+   */
+  private finalizeOfficialNecrotechPhase(): void {
+    const official = this.officialMatch;
+    if (!official) return;
+    const chosen: Record<string, number> = {};
+    for (const r of this.roster.values()) {
+      const nt =
+        r.nt >= 0 ? r.nt : r.id === this.net.myId ? Math.floor(Math.random() * NECROTECHS.length) : 0;
+      r.nt = nt;
+      chosen[`nt:${r.id}`] = nt;
+      chosen[`colony:${r.id}`] = r.colony;
+    }
+    // The match is already running server-side: pick the clock up where it is NOW — the payload's
+    // elapsed was read before the loading screen and the selection wait, both real match time.
+    const elapsed = this.officialElapsedBase + (nowSec() - this.officialBootAt);
+    this.beginPlaying(chosen, official.match.seed, elapsed);
     this.ui.banner(COLONIES[this.localPlayer?.colony ?? 0]?.name + ' DEPLOYED', 2200);
   }
 
@@ -1211,7 +1251,10 @@ export class Game {
       }
       return;
     }
-    if (this.phase !== 'playing') return; // the player already moved on (menu) — nothing to project
+    // 'necrotech' is allowed too: a server finish that lands while the starter picker is open must
+    // still show the results — otherwise the countdown would boot a match that is already over
+    // (the provider's matchEndEmitted is spent by then, so the verdict would never come again).
+    if (this.phase !== 'playing' && this.phase !== 'necrotech') return;
     this.officialUsage = result.usage ?? null;
     this.endMatch(result.winnerColony, result.reason, true);
   }
@@ -1945,7 +1988,9 @@ export class Game {
     for (const r of this.roster.values()) if (r.nt >= 0) selected++;
     const me = this.roster.get(this.net.myId);
     const mine = this.lateSelect ? -1 : me ? me.nt : -1;
-    this.ui.updateNecrotechSelect(Math.max(0, this.phaseTimer), mine, selected, this.roster.size, !!this.lateSelect);
+    // The official variant swaps the "players locked in" line for the starter-pick wording — the
+    // picks of the other seats happened before this client ever saw them (user ask 2026-09-28).
+    this.ui.updateNecrotechSelect(Math.max(0, this.phaseTimer), mine, selected, this.roster.size, !!this.lateSelect, this.officialMatch !== null);
   }
 
   private selectColony(idx: number): void {
@@ -4090,7 +4135,12 @@ export class Game {
         if (this.phaseTimer <= 0) this.finalizeColonyPhase();
       } else if (this.phase === 'necrotech') {
         this.phaseTimer -= dt;
-        if (this.phaseTimer <= 0) this.finalizeNecrotechPhase();
+        if (this.phaseTimer <= 0) {
+          // Official matches wear the same screen but finalize LOCALLY: the seed and the clock
+          // are the server's (see finalizeOfficialNecrotechPhase), never the lobby's random ones.
+          if (this.officialMatch) this.finalizeOfficialNecrotechPhase();
+          else this.finalizeNecrotechPhase();
+        }
       }
     } else if (this.lateSelect) {
       // Drop-in selection is this client's own: nobody else runs a timer for it.

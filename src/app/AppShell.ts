@@ -996,10 +996,35 @@ export class AppShell implements ShellContext {
       body.appendChild(back);
     };
     draw();
+    const openedAt = performance.now();
+    let endedNoticeAt = 0;
     const timer = window.setInterval(() => {
       if (!wrap.isConnected) {
         window.clearInterval(timer);
         return;
+      }
+      const m = id > 0 ? ClientCache.shared.match(id) : null;
+      // A link to a match that does not exist must never strand the player on "Looking up the
+      // match…": after a short lookup window, walk back to the main menu (user ask 2026-09-28).
+      // (A LIVE seat of mine short-circuits this: `detectMatchStart` boots the match instead and
+      // this page is torn down.)
+      if (id > 0 && !m && performance.now() - openedAt > 6_000) {
+        window.clearInterval(timer);
+        this.toast(`Match #${id} was not found — returning to the main menu.`);
+        this.goHome();
+        return;
+      }
+      // An already-finished match keeps its "ALREADY ENDED" notice for a beat, then leaves too.
+      if (m && (m.status !== 1 || m.endedAt)) {
+        if (!endedNoticeAt) endedNoticeAt = performance.now();
+        else if (performance.now() - endedNoticeAt > 4_000) {
+          window.clearInterval(timer);
+          this.toast('That match has already ended — returning to the main menu.');
+          this.goHome();
+          return;
+        }
+      } else {
+        endedNoticeAt = 0;
       }
       draw();
     }, 700);

@@ -1063,25 +1063,36 @@ export class GalacticMap {
   }
 
   /** Ring bands — the map's permanent background structure. `deep` fades them as the
-   *  camera enters a galaxy so the close-up isn't fighting a wall of circles. */
+   *  camera enters a galaxy so the close-up isn't fighting a wall of circles.
+   *  VISIBILITY TEST (user 2026-09-29: "in the mini map it sometimes doesn't
+   *  highlight the band as I move"): the old cull dropped a band as soon as the map
+   *  ORIGIN left the canvas — in a small minimap that happens after a short pan even
+   *  though the band's arc still crosses the frame, so the highlight vanished. The
+   *  test is the proper annulus-vs-viewport one: does [rIn..rOut] around the origin
+   *  overlap the visible disc? */
   private drawRings(deep: number): void {
     const ctx = this.ctx;
-    // the band the player is BROWSING (chosen rank in the rail) is the one that reads
+    // the band the player is BROWSING (chosen rank pill) is the one that reads
     // loud; the player's own band keeps a secondary lift so both are always legible
     const viewed = this.focusedRing();
     const fade = 1 - deep * 0.85;
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+    const viewR = Math.hypot(cx, cy);
     for (let ring = 7; ring >= 0; ring--) {
       const vis = this.bandVisibility(ring);
       if (vis <= 0) continue;
-      const rc = ringConfig(ring);
-      const inner = ringInnerRadius(ring);
-      const outer = ringOuterRadius(ring);
-      const p0 = this.world2screen(0, 0);
-      const rIn = inner * this.cam.zoom;
-      const rOut = outer * this.cam.zoom;
-      if (rOut < 30 || p0.x < -this.width || p0.x > this.width * 2) continue;
       const hot = ring === viewed;
       const mine = ring === this.data.myRing;
+      const rIn = ringInnerRadius(ring) * this.cam.zoom;
+      const rOut = ringOuterRadius(ring) * this.cam.zoom;
+      // sub-pixel bands are skipped — except the viewed one (and your own), which
+      // keeps its highlight at any map size.
+      if (rOut < (hot || mine ? 2 : 30)) continue;
+      const p0 = this.world2screen(0, 0);
+      const d = Math.hypot(p0.x - cx, p0.y - cy);
+      if (d - viewR > rOut || d + viewR < rIn) continue; // annulus misses the viewport
+      const rc = ringConfig(ring);
       ctx.save();
       ctx.beginPath();
       ctx.arc(p0.x, p0.y, rOut, 0, Math.PI * 2);
@@ -1098,7 +1109,9 @@ export class GalacticMap {
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    // one label, for the BAND THE PLAYER IS BROWSING, at the top of that band
+    // one label, for the BAND THE PLAYER IS BROWSING — pinned ON that band along the
+    // direction from the core toward the viewport centre, so it stays visible however
+    // the map is panned (a small minimap pans the origin off-screen quickly)
     // (user: "just say like 'BRONZE BAND' no need to say 'YOUR RING'")
     const cfg = ringConfig(viewed);
     const p0 = this.world2screen(0, 0);
@@ -1107,9 +1120,16 @@ export class GalacticMap {
     ctx.textAlign = 'center';
     ctx.fillStyle = cfg.accent;
     ctx.globalAlpha = 0.85 * fade;
-    const lx = Math.min(this.width - 90, Math.max(90, p0.x));
-    const ly = Math.max(24, p0.y - rMid);
-    ctx.fillText(`${cfg.name} BAND`, lx, ly);
+    const dx = cx - p0.x;
+    const dy = cy - p0.y;
+    const dl = Math.hypot(dx, dy);
+    const ux = dl < 1 ? 0 : dx / dl;
+    const uy = dl < 1 ? -1 : dy / dl;
+    const text = `${cfg.name} BAND`;
+    const half = Math.min(ctx.measureText(text).width / 2 + 8, this.width / 2);
+    const lx = Math.min(this.width - half, Math.max(half, p0.x + ux * rMid));
+    const ly = Math.min(this.height - 8, Math.max(20, p0.y + uy * rMid));
+    ctx.fillText(text, lx, ly);
     ctx.globalAlpha = 1;
   }
 

@@ -57,7 +57,7 @@ export function decodeGalaxyId(id: number): { gx: number; gy: number } {
  */
 export const RING_WIDTHS = [4, 7, 11, 16, 22, 29, 37, 47] as const;
 
-/** Cumulative outer boundary of each tier — [5, 12, 21, 32, 46, 63, 84, 109]. */
+/** Cumulative outer boundary of each tier — [4, 11, 22, 38, 60, 89, 126, 173]. */
 export const RING_BOUNDS: number[] = (() => {
   const out: number[] = [];
   let acc = 0;

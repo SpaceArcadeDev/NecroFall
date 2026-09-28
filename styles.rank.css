@@ -438,7 +438,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr) 340px;
+  grid-template-columns: var(--rk-railw, 168px) minmax(0, 1fr) 340px;
   gap: 0;
 }
 /* Explicit placement: the DOM order is map → rail → side (it drives the phone
@@ -447,6 +447,13 @@
 .rk-rail { grid-column: 1; grid-row: 1; }
 .rk-map-wrap { grid-column: 2; grid-row: 1; }
 .rk-side { grid-column: 3; grid-row: 1; }
+/* RANK SELECTION pills live ONLY on the EXPANDED map (user 2026-09-29): in the rank
+   menu the rail row was eating frame space — the map's own band highlight + label
+   already say which band you are on. `--rk-railw` collapses the desktop column to
+   zero (the grid has no gap, so the map reclaims every pixel); the flex layouts
+   simply lose the row. */
+.rank-page:not(.map-full) { --rk-railw: 0px; }
+.rank-page:not(.map-full) .rk-rail { display: none; }
 
 .rk-map-wrap {
   position: relative;
@@ -1173,6 +1180,13 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-quick .rk-btn { flex: 0 0 auto; width: 100%; padding: 9px 6px; font-size: 11px; }
   .rk-join-row { flex-direction: column; }
   .rk-join-input { width: 100%; }
+
+  /* …and with the rail hidden (user 2026-09-29: pills only on the EXPANDED map)
+     the three columns ride in ROW 1 — no empty rail row above the squircle */
+  .rank-page:not(.map-full) .rk-main { grid-template-rows: minmax(0, 1fr); }
+  .rank-page:not(.map-full) .rk-map-wrap,
+  .rank-page:not(.map-full) .rk-side,
+  .rank-page:not(.map-full) .rk-quick { grid-row: 1; }
 
   /* compact details column */
   .rk-card { padding: 9px 10px; }

@@ -35,7 +35,12 @@ interface ProxyResponse {
 }
 
 export default async function handler(req: ProxyRequest, res: ProxyResponse): Promise<void> {
-  const rest = String(req.url ?? '/').replace(/^\/api\/auth-proxy\//, '');
+  // req.url comes in as the rewrite destination (/api/auth-proxy/oidc/…), but be tolerant of the
+  // original form (/oidc/…) and of absolute URLs — all three reduce to `oidc/…` or `interactions/…`.
+  let rest = String(req.url ?? '/');
+  rest = rest.replace(/^https?:\/\/[^/]+/i, '');
+  rest = rest.replace(/^\/api\/auth-proxy\//, '');
+  rest = rest.replace(/^\//, '');
   const target = `${PROVIDER_ORIGIN}/${rest}`;
 
   const headers: Record<string, string> = {};
@@ -71,6 +76,10 @@ export default async function handler(req: ProxyRequest, res: ProxyResponse): Pr
   }
   const setCookies = (upstream.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie?.();
   if (setCookies?.length) res.setHeader('set-cookie', setCookies);
+  else {
+    const single = upstream.headers.get('set-cookie');
+    if (single) res.setHeader('set-cookie', single);
+  }
 
   if (upstream.status >= 300 && upstream.status < 400) {
     res.end();

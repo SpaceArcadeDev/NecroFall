@@ -17,8 +17,9 @@ import { NecrotechDef } from '../necrotech/NecrotechData';
 import { buildWeaponModel } from '../necrotech/WeaponModels';
 import { buildPlayerModel, ModelParts } from '../player/Player';
 import { AvatarAccessories, disposeObject } from '../customization/AvatarAccessories';
-import { AccessoryCategory, AccessorySelection, EMPTY_SELECTION } from '../customization/AccessoryTypes';
+import { AccessoryCategory, AccessorySelection, EffectCategory, EMPTY_SELECTION } from '../customization/AccessoryTypes';
 import { selectionFromWire } from '../customization/CustomizationStore';
+import { CosmeticFxRunner } from '../customization/CosmeticFx';
 
 export type PreviewMode = 'colony' | 'necrotech' | 'customize' | 'lobby';
 
@@ -418,6 +419,11 @@ export class SelectionPreview {
   private avatarParts: ModelParts | null = null;
   private avatarAcc: AvatarAccessories | null = null;
   private avatarSel: AccessorySelection = { ...EMPTY_SELECTION };
+  /** CUSTOMIZE mode: the effect showcase — the equipped one-shot replayed on a loop on the pad. */
+  private fxRunner: CosmeticFxRunner | null = null;
+  private fxCat: EffectCategory | null = null;
+  private fxIdx = -1;
+  private fxTimer = 0;
   /** The customize stage's lit pad (the same build the lobby line-up stands on). */
   private avatarPad: THREE.Group | null = null;
   /** CUSTOMIZE mode turntable: the player drags the avatar itself to turn it. */
@@ -568,6 +574,18 @@ export class SelectionPreview {
     this.avatarAcc.set({ ...sel });
   }
 
+  /**
+   * CUSTOMIZE mode: showcase one of the TRIGGERED effect categories on the stage. The equipped
+   * effect is replayed in a loop while its tab is open, and every new pick restarts it so the
+   * choice has an immediate answer on the pad. `null` stops the showcase.
+   */
+  showEffect(cat: EffectCategory | null, idx: number): void {
+    if (this.fxCat === cat && this.fxIdx === idx) return;
+    this.fxCat = cat;
+    this.fxIdx = idx;
+    this.fxTimer = 0;
+  }
+
   private stop(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -598,6 +616,8 @@ export class SelectionPreview {
     // every model this scene has ever held is discarded on a mode switch: the two modes share
     // nothing, and a selection screen is not a place to grow a model cache across matches
     this.disposeLobbyAvatars();
+    this.fxRunner?.clear();
+    this.fxRunner = null;
     for (const child of [...this.scene.children]) {
       if (child instanceof THREE.Light) continue;
       this.scene.remove(child);
@@ -715,6 +735,8 @@ export class SelectionPreview {
         this.scene
       );
       this.avatarAcc.set(this.avatarSel, true);
+      // the effect showcase: its own small runner, looping whatever the open tab has equipped
+      this.fxRunner = new CosmeticFxRunner(this.scene, 3);
     }
   }
 
@@ -909,6 +931,18 @@ export class SelectionPreview {
         if (pet) {
           pet.setVisible(true);
           pet.update(dt, ORIGIN, UP_AXIS, t, null);
+        }
+      }
+      // the equipped effect loops on the pad while its tab is open (restarting on every pick)
+      const fxr = this.fxRunner;
+      if (fxr) {
+        fxr.update(dt);
+        if (this.fxCat && this.fxIdx >= 0) {
+          this.fxTimer -= dt;
+          if (this.fxTimer <= 0) {
+            fxr.play(this.fxCat, this.fxIdx, ORIGIN, UP_AXIS);
+            this.fxTimer = 3.2;
+          }
         }
       }
     }

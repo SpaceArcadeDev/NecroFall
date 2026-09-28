@@ -432,6 +432,16 @@
   min-height: 0;
 }
 .acc-tabs { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 0 0 8px; }
+/* one line of context per category — the three effect tabs must say WHEN they play */
+.acc-hint {
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+  margin: -3px 0 8px;
+  min-height: 12px;
+}
 /* each tab wears its slot's glyph: hat / backpack / paw, then the word */
 .acc-tab { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .acc-tab svg { width: 17px; height: 17px; flex: 0 0 auto; }

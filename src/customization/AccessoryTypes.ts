@@ -1,7 +1,22 @@
 // NECROFALL — accessory types shared by the catalog, the models and the fitting code.
 import * as THREE from 'three';
 
-export type AccessoryCategory = 'hat' | 'backpack' | 'pet';
+export type AccessoryCategory = 'hat' | 'backpack' | 'pet' | 'recall' | 'spawn' | 'eliminated';
+
+/**
+ * ONE-SHOT EFFECT categories (user ask): the customize menu offers a 4th/5th/6th shelf of
+ * cosmetics that are not WORN but TRIGGERED — while channeling a recall, the moment a body
+ * spawns (match start and every respawn), and the moment it is eliminated. Their models are
+ * authored exactly like accessories (origin on the ground, +Y up, face +Z) but they live for
+ * `duration` seconds and are disposed; the runner ticks them with elapsed time from 0.
+ */
+export type EffectCategory = 'recall' | 'spawn' | 'eliminated';
+
+export const EFFECT_CATEGORIES: EffectCategory[] = ['recall', 'spawn', 'eliminated'];
+
+export function isEffectCategory(cat: AccessoryCategory): cat is EffectCategory {
+  return cat === 'recall' || cat === 'spawn' || cat === 'eliminated';
+}
 
 /** A built accessory: its root group plus an optional per-frame animation. */
 export interface AccessoryBuild {
@@ -45,17 +60,35 @@ export interface AccessoryDef {
   motion?: PetMotion;
   /** Build-time scale of the whole model (big wings want more than a lantern). Default 1. */
   scale?: number;
+  /**
+   * EFFECT categories only: how long one playback lives (seconds). The runner ticks the build
+   * with elapsed time from 0 and disposes it at `duration`; the customize stage replays it.
+   * Accessories omit it — they live as long as they are worn.
+   */
+  duration?: number;
 }
 
-/** What the player is wearing. Indices into HATS / BACKPACKS / PETS, -1 = nothing. */
+/**
+ * What the player is wearing / has equipped. Indices into the HATS / BACKPACKS / PETS catalogs
+ * (plus the RECALL / SPAWN / ELIMINATED effect catalogs), -1 = nothing.
+ */
 export interface AccessorySelection {
   hat: number;
   backpack: number;
   pet: number;
+  /** Effect played while channeling a recall (and at both ends when it lands). */
+  recall: number;
+  /** Effect played at match start and on every respawn. */
+  spawn: number;
+  /** Effect played where this player is killed. */
+  eliminated: number;
 }
 
-export const EMPTY_SELECTION: AccessorySelection = { hat: -1, backpack: -1, pet: -1 };
+export const EMPTY_SELECTION: AccessorySelection = {
+  hat: -1, backpack: -1, pet: -1, recall: -1, spawn: -1, eliminated: -1,
+};
 
 export function sameSelection(a: AccessorySelection, b: AccessorySelection): boolean {
-  return a.hat === b.hat && a.backpack === b.backpack && a.pet === b.pet;
+  return a.hat === b.hat && a.backpack === b.backpack && a.pet === b.pet
+    && a.recall === b.recall && a.spawn === b.spawn && a.eliminated === b.eliminated;
 }

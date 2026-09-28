@@ -25,8 +25,10 @@ function pumpkin(): AccessoryBuild {
   const stem = cyl(0.028, 0.055, 0.16, stemMat, 0.02, 0.36, 0, 6);
   stem.rotation.z = -0.24;
   g.add(stem);
-  // ---- the carved face: a jagged grin and two lit eyes
-  const faceMat = glow(0xffcf4d, 0.95);
+  // ---- the carved face: a jagged grin and two eyes, cut BLACK (user ask: the lantern glow read
+  // as paint — the holes are unlit holes now; additive materials cannot render dark, so this is a
+  // plain matte black surface)
+  const faceMat = flat(0x000000);
   const mkEye = (x: number): THREE.Mesh => {
     const e = slab([[-0.075, -0.03], [0.075, -0.03], [0, 0.105]], 0.03, faceMat);
     e.position.set(x, 0.05, 0.31);
@@ -48,7 +50,6 @@ function pumpkin(): AccessoryBuild {
     group: g,
     tick: (t, dt) => {
       smoke.update(dt);
-      faceMat.opacity = 0.78 + Math.sin(t * 2.3) * 0.16;
       g.position.y = 0.012 * Math.sin(t * 1.1);
       g.rotation.y = Math.sin(t * 0.4) * 0.06;
     },

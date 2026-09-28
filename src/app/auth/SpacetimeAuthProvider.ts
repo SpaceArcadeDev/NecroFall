@@ -115,11 +115,13 @@ export class SpacetimeAuthProvider implements AuthProvider {
 
   async validToken(): Promise<string | null> {
     const s = this.current;
-    if (!s) return null;
-    // Refresh a minute before expiry so a reducer never rides a dead token.
-    if (Date.now() > s.expiresAt - 60_000) {
+    // A session well inside its lifetime needs no work at all.
+    if (s && Date.now() <= s.expiresAt - 60_000) return s.accessToken;
+    if (s) {
+      // Refresh a minute before expiry so a reducer never rides a dead token.
       try {
         await this.refresh();
+        return this.current?.accessToken ?? null;
       } catch (err) {
         // A NETWORK stall (timeout) must not sign the player out: keep the token we
         // have — the socket's own auth handshake is the real gate — and let the
@@ -128,12 +130,48 @@ export class SpacetimeAuthProvider implements AuthProvider {
           console.warn('[NECROFALL] token refresh timed out — continuing with the stored token');
           return this.current?.accessToken ?? null;
         }
-        console.warn('[NECROFALL] token refresh failed', err);
+        console.warn('[NECROFALL] token refresh failed — trying a cookie-only resume', err);
         this.setSession(null);
-        return null;
       }
     }
-    return this.current?.accessToken ?? null;
+    // No local session left (a browser restart wipes it): if the provider's OWN cookie is
+    // still alive the proxied authorize endpoint answers with a code in ONE hop, so the
+    // returning player is signed back in without any login screen (see `silentResume`).
+    return this.silentResume();
+  }
+
+  private silentResumePromise: Promise<string | null> | null = null;
+  private silentResumeAt = 0;
+  private static readonly SILENT_RESUME_COOLDOWN_MS = 20_000;
+
+  /**
+   * Cookie-only session resume, throttled and single-flight. Returns null when the provider
+   * needs an interaction (a real login) or the attempt failed — never throws.
+   */
+  private silentResume(): Promise<string | null> {
+    if (this.silentResumePromise) return this.silentResumePromise;
+    if (Date.now() - this.silentResumeAt < SpacetimeAuthProvider.SILENT_RESUME_COOLDOWN_MS) {
+      return Promise.resolve(null);
+    }
+    this.silentResumeAt = Date.now();
+    this.silentResumePromise = this.runSilentResume().finally(() => {
+      this.silentResumePromise = null;
+    });
+    return this.silentResumePromise;
+  }
+
+  private async runSilentResume(): Promise<string | null> {
+    try {
+      const attempt = this.newAttempt(window.location.pathname + window.location.hash);
+      const step = await this.beginAuthorization(attempt);
+      if (step.kind !== 'code') return null; // the provider wants a real sign-in
+      const session = await this.completeWithCode(step.code, step.state, attempt);
+      console.info('[NECROFALL] session resumed from the provider cookie');
+      return session.accessToken;
+    } catch (err) {
+      console.warn('[NECROFALL] silent session resume failed', err);
+      return null;
+    }
   }
 
   async login(returnTo = window.location.pathname + window.location.hash): Promise<void> {
@@ -196,14 +234,15 @@ export class SpacetimeAuthProvider implements AuthProvider {
   }
 
   /** SKIP — anonymous sign-in, direct: the interaction's own anonymous endpoint. */
-  async loginAnonymous(): Promise<void> {
+  async loginAnonymous(): Promise<'signed-in' | 'navigating'> {
     const attempt = this.newAttempt(window.location.pathname + window.location.hash);
     const step = await this.beginAuthorization(attempt);
     if (step.kind === 'code') {
       await this.completeWithCode(step.code, step.state, attempt);
-      return;
+      return 'signed-in';
     }
     window.location.assign(`/interactions/${step.id}/anonymous`);
+    return 'navigating';
   }
 
   /** One fresh PKCE attempt (verifier + state + return path), persisted for the callback. */
@@ -368,7 +407,18 @@ export class SpacetimeAuthProvider implements AuthProvider {
     };
   }
 
+  private refreshPromise: Promise<void> | null = null;
+
+  /** One refresh at a time: two concurrent rotations would invalidate each other. */
   private async refresh(): Promise<void> {
+    if (this.refreshPromise) return this.refreshPromise;
+    this.refreshPromise = this.doRefresh().finally(() => {
+      this.refreshPromise = null;
+    });
+    return this.refreshPromise;
+  }
+
+  private async doRefresh(): Promise<void> {
     const s = this.current;
     if (!s?.refreshToken) throw new Error('No refresh token.');
     const endpoints = await this.discover();

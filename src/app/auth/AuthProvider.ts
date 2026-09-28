@@ -31,10 +31,14 @@ export interface AuthProvider {
   onChanged(cb: (session: AuthSession | null) => void): () => void;
 }
 
-export function loadStoredSession(): AuthSession | null {
+// The session (and with it the REFRESH token) MUST survive a browser restart: the access
+// token expires after 15 minutes, so reopening the browser after a while can only sign the
+// player back in silently if the refresh token is still around (user report 2026-09-29:
+// "reopen after a while → login wall saying it could not reach the game server").
+// A legacy per-tab sessionStorage copy is still read once and migrated.
+function parseSession(raw: string | null): AuthSession | null {
+  if (!raw) return null;
   try {
-    const raw = sessionStorage.getItem(STORAGE.authSession);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthSession;
     if (!parsed.accessToken || typeof parsed.expiresAt !== 'number') return null;
     return parsed;
@@ -43,9 +47,40 @@ export function loadStoredSession(): AuthSession | null {
   }
 }
 
-export function storeSession(session: AuthSession | null): void {
+export function loadStoredSession(): AuthSession | null {
+  let fromLocal: string | null = null;
   try {
-    if (session) sessionStorage.setItem(STORAGE.authSession, JSON.stringify(session));
+    fromLocal = localStorage.getItem(STORAGE.authSession);
+  } catch {
+    /* storage-less browsing */
+  }
+  const local = parseSession(fromLocal);
+  if (local) return local;
+  let fromTab: string | null = null;
+  try {
+    fromTab = sessionStorage.getItem(STORAGE.authSession);
+  } catch {
+    /* ignore */
+  }
+  const legacy = parseSession(fromTab);
+  if (legacy) storeSession(legacy); // migrate the last per-tab session into the durable copy
+  return legacy;
+}
+
+export function storeSession(session: AuthSession | null): void {
+  let durable = false;
+  try {
+    if (session) {
+      localStorage.setItem(STORAGE.authSession, JSON.stringify(session));
+      durable = true;
+    } else {
+      localStorage.removeItem(STORAGE.authSession);
+    }
+  } catch {
+    /* restricted storage: fall back to the per-tab copy below */
+  }
+  try {
+    if (session && !durable) sessionStorage.setItem(STORAGE.authSession, JSON.stringify(session));
     else sessionStorage.removeItem(STORAGE.authSession);
   } catch {
     /* private mode without storage: the session simply does not persist */

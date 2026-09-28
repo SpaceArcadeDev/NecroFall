@@ -16,7 +16,7 @@ import { AuthProvider } from './auth/AuthProvider';
 import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthProvider';
 import { isAuthCallbackUrl } from './auth/authCallback';
 import { ClientCache } from './spacetimedb/cache';
-import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, type ConnectionState } from './spacetimedb/connection';
+import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, storedDbTokenExpired, type ConnectionState } from './spacetimedb/connection';
 import { reportMatchStats, chooseColony, setPlayerName, discoverLocation } from './spacetimedb/reducers';
 import { COLONY_NONE, hexOf } from './spacetimedb/rows';
 import { subscribeAccount, subscribeMatchmaking, subscribePlayer } from './spacetimedb/subscriptions';
@@ -125,6 +125,10 @@ export class AppShell implements ShellContext {
 
   constructor(private app: HTMLElement) {
     this.auth = APP_CONFIG.authConfigured ? new SpacetimeAuthProvider() : new NullAuthProvider();
+    // Every (re)connect may ask for the freshest credential: OIDC access tokens expire (15 min),
+    // and a long-idle tab or a browser restart must be able to refresh — or resume the session
+    // from the provider cookie — instead of retrying a dead token until the login wall appears.
+    SpacetimeConnection.shared.setTokenSource(() => this.auth.validToken());
     // Console/debug handle (the game exposes `window.necrofall` the same way).
     (window as unknown as Record<string, unknown>).nfShell = this;
 
@@ -542,7 +546,17 @@ export class AppShell implements ShellContext {
   }
 
   private async connectAccount(): Promise<void> {
+    // validToken also resumes a session from the provider cookie when the local session is
+    // gone (a browser restart), so a returning player walks straight into the account.
     const token = await this.auth.validToken();
+    // Nothing to present at all: no OIDC session (and no cookie resume) AND the stored device
+    // token is missing or an EXPIRED access token the server would certainly refuse. Say so —
+    // a failed connect here would read as "the server is down" (user report 2026-09-29).
+    const storedCredential = hasStoredDbToken() && !storedDbTokenExpired();
+    if (!token && APP_CONFIG.authConfigured && !storedCredential) {
+      this.showShell('login', undefined, 'Your session expired — sign in again.');
+      return;
+    }
     const ok = await SpacetimeConnection.shared.connect(token);
     if (!ok || SpacetimeConnection.shared.state === 'error') {
       const reason = !SpacetimeConnection.shared.available
@@ -928,17 +942,23 @@ export class AppShell implements ShellContext {
         void auth
           .sendMagicLink(address)
           .then((result) => {
-            // 'signed-in': a live provider session answered the flow in one hop — nothing to email.
+            // 'signed-in': a live provider session answered the flow in one hop — nothing to
+            // email, so walk straight into the account (this used to need a manual refresh).
             if (result === 'sent') showSent(address);
+            else void this.connectAccount();
           })
           .catch((err: unknown) => showForm(err instanceof Error ? err.message : 'Could not send the magic link.'));
       });
       skip.addEventListener('click', () => {
         skip.disabled = true;
         skip.textContent = 'Signing in…';
-        void auth.loginAnonymous().catch((err: unknown) =>
-          showForm(err instanceof Error ? err.message : 'Could not sign in anonymously.')
-        );
+        void auth
+          .loginAnonymous()
+          .then((result) => {
+            // Same one-hop short-circuit as the magic link: the session already landed.
+            if (result === 'signed-in') void this.connectAccount();
+          })
+          .catch((err: unknown) => showForm(err instanceof Error ? err.message : 'Could not sign in anonymously.'));
       });
       form.appendChild(email);
       form.appendChild(send);

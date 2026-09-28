@@ -26,6 +26,19 @@ export class SpacetimeConnection {
   private stateListeners = new Set<(s: ConnectionState) => void>();
   private connectListeners = new Set<(conn: SpacetimeConnectionLike) => void>();
   private activeSubscriptions = new Set<SpacetimeSubscriptionHandle>();
+  /**
+   * Asked for a fresh credential on every attempt. OIDC access tokens live 15 minutes, so a
+   * reconnect (or a retry after the server refused a token) must be able to mint a new one
+   * through the auth layer instead of hammering the token the connection was built with.
+   */
+  private tokenSource: (() => Promise<string | null>) | null = null;
+  /** We HAD a credential and the server refused it: never fall through to an anonymous connect. */
+  private credentialLost = false;
+
+  /** AppShell wires this to the auth provider (`validToken`, refresh/silent resume included). */
+  setTokenSource(source: () => Promise<string | null>): void {
+    this.tokenSource = source;
+  }
 
   get state(): ConnectionState {
     return this.stateValue;
@@ -67,7 +80,23 @@ export class SpacetimeConnection {
   async connect(token?: string | null): Promise<boolean> {
     this.disposed = false;
     this.wantConnected = true;
-    if (token !== undefined) this.token = token;
+    if (token !== undefined) {
+      this.token = token;
+      if (token) this.credentialLost = false;
+    } else if (this.tokenSource) {
+      // Retries and reconnects re-derive the credential: after a long-idle tab (or a browser
+      // restart) the last token may be an expired OIDC access token. If the auth layer is
+      // unavailable keep the previous token — its rejection path below asks again.
+      try {
+        const fresh = await this.tokenSource();
+        if (fresh) {
+          this.token = fresh;
+          this.credentialLost = false;
+        }
+      } catch {
+        /* keep the last token; the auth layer will be asked again on the next retry */
+      }
+    }
     // Guests have no OIDC token: reuse the SpacetimeDB private token from the
     // last connection so the SAME identity (and account) comes back.
     if (!this.token) this.token = readStoredDbToken();
@@ -76,6 +105,14 @@ export class SpacetimeConnection {
       return false;
     }
     if (this.conn && this.stateValue === 'connected') return true;
+    if (!this.token && this.credentialLost) {
+      // A fresh credential could not be derived right now. Connecting WITHOUT one would
+      // silently mint a brand-new anonymous identity — never do that to a returning player;
+      // keep retrying through the auth layer instead.
+      this.setState('error');
+      this.scheduleReconnect();
+      return false;
+    }
 
     const mod = await loadGeneratedBindings();
     const DbConnection = mod?.DbConnection;
@@ -101,6 +138,11 @@ export class SpacetimeConnection {
         })
         .onConnectError((_ctx, err) => {
           console.warn('[NECROFALL] SpacetimeDB connect error', err?.message ?? err);
+          // A rejected credential is not an unreachable server: the stored OIDC access token
+          // has a 15-minute life, so forget it — the next attempt mints a fresh one through
+          // the token source. (User report 2026-09-29: reopening the browser retried the dead
+          // token forever and walled the player at a "could not reach the game server" login.)
+          if (isAuthRejection(err)) this.rejectCredential();
           this.setState('error');
           this.scheduleReconnect();
         })
@@ -145,6 +187,7 @@ export class SpacetimeConnection {
   private handleConnected(conn: SpacetimeConnectionLike): void {
     this.conn = conn;
     this.reconnectAttempt = 0;
+    this.credentialLost = false;
     this.clearReconnectTimer();
     this.setState('connected');
     for (const cb of [...this.connectListeners]) {
@@ -202,6 +245,23 @@ export class SpacetimeConnection {
       }
     }
   }
+
+  /**
+   * The server refused the credential (e.g. an OIDC access token past its 15-minute life).
+   * Forget the stored copy so the next attempt asks the auth layer for a fresh one instead of
+   * retrying the same dead token forever.
+   */
+  private rejectCredential(): void {
+    this.credentialLost = true;
+    this.token = null;
+    clearStoredDbToken();
+  }
+}
+
+/** The server refused the credential (as opposed to being unreachable). */
+function isAuthRejection(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  return /Failed to verify token|Unauthorized|401/.test(message);
 }
 
 /** The private access token of the last connection (guest identity continuity). */
@@ -216,6 +276,25 @@ function readStoredDbToken(): string | null {
 /** True when this browser holds a guest identity from a previous visit. */
 export function hasStoredDbToken(): boolean {
   return Boolean(readStoredDbToken());
+}
+
+/**
+ * True when the stored token is a readable JWT whose `exp` is already in the past — the
+ * server would certainly refuse it, so it must never be presented as a credential.
+ * Opaque tokens (guest/local setups without expiry) are reported as NOT expired (try them).
+ */
+export function storedDbTokenExpired(): boolean {
+  const token = readStoredDbToken();
+  if (!token) return false;
+  try {
+    const part = token.split('.')[1];
+    if (!part) return false;
+    const padded = part.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (part.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
+    return typeof payload.exp === 'number' && payload.exp * 1000 <= Date.now();
+  } catch {
+    return false;
+  }
 }
 
 function writeStoredDbToken(token: string): void {

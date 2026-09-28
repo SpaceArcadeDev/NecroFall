@@ -113,7 +113,7 @@ export interface HudData {
   autoTargets: number;
   /** True while the local player is inside one of their own shielded Beacons. */
   beaconReady: boolean;
-  /** RECALL: the idle gate has passed and the channel can start (the button lights up). */
+  /** RECALL: the press is legal right now (the button lights up and breathes). */
   recallReady: boolean;
   /** A recall channel is running right now (the progress bar is up). */
   recallActive: boolean;
@@ -2575,7 +2575,7 @@ export class UI {
     // ---- Esc panel live stats (only while it is open)
     if (this.pauseOpen) this.renderPausePanel(d);
 
-    // ---- RECALL: dim until the idle gate passes, lit when ready, counting down while channeling.
+    // ---- RECALL: ready whenever the press would be legal, counting down while channeling.
     // The desktop rail button and the touch cluster's mini are driven together.
     setClass(this.recallBtn, 'ready', d.recallReady);
     setClass(this.recallBtn, 'channel', d.recallActive);

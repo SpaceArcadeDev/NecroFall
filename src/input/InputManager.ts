@@ -174,8 +174,7 @@ export class InputManager {
 
   setEnabled(v: boolean): void {
     this.enabled = v;
-    // Coming back from a menu (or dying) starts the idle clock fresh: a recall must be EARNED
-    // in-game, never banked by sitting in a paused menu.
+    // The activity/edge clocks restart with control: a menu session never banks an old edge.
     if (v) this.markActivity();
     if (!v) {
       this.moveX = 0;

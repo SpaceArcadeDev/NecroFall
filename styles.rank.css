@@ -428,12 +428,20 @@
   /* ONE corner radius for the whole screen — the map mini-view follows the buttons
      (user: the 26% squircle read as way too round next to the JOIN pill) */
   --rk-corner: 12px;
+  /* VERTICAL RHYTHM (user 2026-09-29): the generic shell `.nf-page` gap (14px) was
+     counted TWICE around the collapsed record drawer, so the map sat 28px below the
+     rank bar while the header above it only had 14. The page owns its spacing now:
+     no gap, one drop after the header and one after the rank bar, and the closed
+     drawer contributes nothing (its height is already 0). */
+  gap: 0;
   display: flex;
   flex-direction: column;
   height: 100%;
   padding: 0;
   max-width: none;
 }
+.rank-page .rk-head { margin-bottom: 14px; }
+.rank-page .rk-strip { margin-bottom: 14px; }
 .rk-main {
   flex: 1;
   min-height: 0;

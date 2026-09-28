@@ -1168,9 +1168,10 @@ export class GalacticMap {
         // every face and mote breathes in brightness (and a touch of size) at its own
         // phase, while spirals ALSO spin. The beat is SLOW (1.2 rad/s cycle).
         const pulse = 1 + 0.06 * Math.sin(t * 1.2 + (g.seed % 100));
-        // THE GALAXY YOU ARE ENTERING (user 2026-09-29): it GROWS with the zoom and thins
-        // to TRANSLUCENT as its solar systems open, then vanishes completely at full
-        // depth. Neighbours grow with it on the same ramp and keep a faint ghost.
+        // THE GALAXY YOU ARE ENTERING (user 2026-09-29): it GROWS with the zoom like
+        // its neighbours and thins to TRANSLUCENT as its solar systems open — the
+        // ACTIVE galaxy keeps the same ghost as the rest (user 2026-09-29 v2: "the
+        // active galaxy disappears when it should stay transparent").
         const inside = this.lock.sysAlpha;
         const withdraw = ramp01(inside, 0.2, 1.0);
         const field2 = field * bandVis * g.brightness;
@@ -1181,7 +1182,9 @@ export class GalacticMap {
         if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
           ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
           ctx.fillStyle = terr?.color ?? g.starColor;
-          ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
+          ctx.fill();
           ctx.globalAlpha = 1;
           continue;
         }
@@ -1194,7 +1197,7 @@ export class GalacticMap {
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
         const s = faceR * 3.1 * pulse;
         ctx.globalAlpha =
-          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * (isFocus ? 1 : 0.88));
+          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * 0.88);
         const sprite = this.galaxySprite(g);
         if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
           // SPIN (user): the spiral faces rotate at ONE shared angular speed — OPPOSITE
@@ -1435,7 +1438,9 @@ export class GalacticMap {
       if (!front && !isHover && !isSel) {
         ctx.globalAlpha = 0.9 * a * twinkle;
         ctx.fillStyle = terr?.color ?? '#dfe9ff';
-        ctx.fillRect(p.x - 1.3, p.y - 1.3, 2.6, 2.6);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.3, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
+        ctx.fill();
         ctx.globalAlpha = 1;
         continue;
       }

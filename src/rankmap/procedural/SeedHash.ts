@@ -50,13 +50,12 @@ export function decodeGalaxyId(id: number): { gx: number; gy: number } {
 }
 
 /**
- * RANK-BAND GEOMETRY (universe v2, plan §1): bands are CUMULATIVE widths, so higher
- * ranks own physically larger territory (Bronze 5 → King of Gods 25). The old model
- * used one fixed width for every ring; that is gone. A galaxy's ring is found by
- * locating which cumulative boundary contains its centre distance — never
- * `floor(distance / fixedWidth)`.
+ * RANK-BAND GEOMETRY (universe v3, 2026-09-29): bands are CUMULATIVE widths and now
+ * grow MUCH faster with rank (user: "the bands should be bigger as rank increases —
+ * currently the increase is too little"). Bronze is a small home disc; each tier
+ * roughly +50% wider than the last, so King of Gods owns a vast outer domain.
  */
-export const RING_WIDTHS = [5, 7, 9, 11, 14, 17, 21, 25] as const;
+export const RING_WIDTHS = [4, 7, 11, 16, 22, 29, 37, 47] as const;
 
 /** Cumulative outer boundary of each tier — [5, 12, 21, 32, 46, 63, 84, 109]. */
 export const RING_BOUNDS: number[] = (() => {
@@ -104,7 +103,7 @@ export function ringOfGalaxy(gx: number, gy: number): number {
  * version it was created with, and a stale season's rows are migrated instead of
  * silently re-pointing at different worlds.
  */
-export const UNIVERSE_GENERATION_VERSION = 2;
+export const UNIVERSE_GENERATION_VERSION = 3;
 
 export function planetKey(ring: number, galaxyId: number, systemId: number, planetId: number): string {
   return `${ring}:${galaxyId}:${systemId}:${planetId}`;

@@ -85,11 +85,11 @@ function colonyName(colony: number): string {
  * with every party's slice. Percentages are the shared largest-remainder
  * rounding, so they sum to exactly 100.
  */
-export function controlBlock(summary: LocationControlSummary, opts: { kicker?: string } = {}): HTMLElement {
+export function controlBlock(summary: LocationControlSummary, opts: { kicker?: string; compact?: boolean } = {}): HTMLElement {
   const box = el('div', 'rk-control');
   if (opts.kicker) box.appendChild(el('div', 'rk-control-kicker', opts.kicker));
   if (!summary.dominantOwner) {
-    box.appendChild(el('div', 'rk-control-none', 'UNCLAIMED — NO FACTION HOLDS GROUND HERE'));
+    box.appendChild(el('div', 'rk-control-none', 'UNCLAIMED'));
     return box;
   }
   const pct = sharePercentages(summary.ownerShares);
@@ -103,6 +103,9 @@ export function controlBlock(summary: LocationControlSummary, opts: { kicker?: s
       `<em>${pct[0]}%</em>`;
   }
   box.appendChild(head);
+  // COMPACT (the fullscreen map overlay, user 2026-09-29): the headline only —
+  // the influence bars stay a side-panel detail.
+  if (opts.compact) return box;
   const bars = el('div', 'rk-influence-bars');
   summary.ownerShares.forEach((share, i) => {
     const row = el('div', 'rk-ibar');
@@ -123,7 +126,7 @@ export function controlBlock(summary: LocationControlSummary, opts: { kicker?: s
  */
 export function discoveryBlock(
   entries: DiscoveryEntry[],
-  opts: { fallback?: 'historical' | 'none'; nowUs: number; highlights?: string[] }
+  opts: { fallback?: 'historical' | 'none'; nowUs: number; highlights?: string[]; max?: number }
 ): HTMLElement {
   const box = el('div', 'rk-discoverers');
   const head = el('div', 'rk-discoverers-head');
@@ -133,7 +136,9 @@ export function discoveryBlock(
     head.innerHTML = `<span>DISCOVERED BY</span><b>${opts.fallback === 'historical' ? 'HISTORICAL DATA UNAVAILABLE' : 'UNDISCOVERED'}</b>`;
   }
   box.appendChild(head);
-  for (const entry of entries) {
+  // `max` caps the ROWS only (the header still counts them all) — the fullscreen
+  // overlay stays minimal (user ask 2026-09-29).
+  for (const entry of (opts.max ? entries.slice(0, opts.max) : entries)) {
     const line = el('div', 'rk-discoverer');
     const mine = opts.highlights?.includes(entry.playerId) ?? false;
     line.innerHTML =

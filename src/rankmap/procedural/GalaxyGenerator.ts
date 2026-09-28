@@ -3,7 +3,7 @@
 // coordinates return null (the void between galaxies — density per ring).
 import { GalaxyDescriptor, GalaxyMorphology, GALAXY_PREFIXES, GALAXY_SUFFIXES, NEBULA_COLORS, NebulaType, POI_LABELS, STAR_COLORS, StarType } from './GalaxyTypes';
 import { ringConfig } from './RankRingConfig';
-import { encodeGalaxyId, hash32, ringOfGalaxy, rng } from './SeedHash';
+import { encodeGalaxyId, hash32, MAX_RING_RADIUS, ringOfGalaxy, rng } from './SeedHash';
 
 /** Weighted star table, biased by ring (rare stars only show up in deep rings). */
 function pickStarType(rand: number, ring: number, exoticRoll: number, exotic: number): StarType {
@@ -52,6 +52,10 @@ export function galaxyName(seed: number): string {
 
 /** Deterministic existence + descriptor. null = empty space at this coordinate. */
 export function galaxyAt(universeSeed: number, gx: number, gy: number): GalaxyDescriptor | null {
+  // THE RANKED UNIVERSE ENDS AT KING OF GODS' OUTER EDGE (user 2026-09-29): nothing is
+  // generated past the last band — no galaxies, no systems, no hits. The void beyond is
+  // simply empty (and the field sweep stops paying for it).
+  if (gx * gx + gy * gy > MAX_RING_RADIUS * MAX_RING_RADIUS) return null;
   const ring = ringOfGalaxy(gx, gy);
   const cfg = ringConfig(ring);
   const seed = hash32(universeSeed >>> 0, 'galaxy', ring, gx, gy);

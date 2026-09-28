@@ -464,6 +464,8 @@ export class RankPage {
     const planet = loc?.planet ?? sel.planet;
     const sys = loc?.system ?? sel.system;
     const galaxy = loc?.galaxy ?? sel.galaxy;
+    // MINIMAL (user 2026-09-29): control headline + at most THREE discoverers.
+    const MAX_ROWS = 3;
     let sig = 'none';
     if (planet) {
       const row = this.planetRow(planet.key);
@@ -501,11 +503,12 @@ export class RankPage {
           : [],
         { colonyColors: colours, colonyNames: names }
       );
-      card.appendChild(controlBlock(summary, { kicker: 'CONTROL' }));
+      card.appendChild(controlBlock(summary, { kicker: 'CONTROL', compact: true }));
       card.appendChild(
         discoveryBlock(this.discoveriesForPlanet(planet.key), {
           fallback: row?.discovered ? 'historical' : 'none',
           nowUs: this.serverNowUs(),
+          max: MAX_ROWS,
         })
       );
     } else if (sys) {
@@ -517,17 +520,23 @@ export class RankPage {
         colonyNames: names,
         systemId: sys.systemId,
       });
-      card.appendChild(controlBlock(summary, { kicker: 'CONTROL' }));
+      card.appendChild(controlBlock(summary, { kicker: 'CONTROL', compact: true }));
       card.appendChild(
-        discoveryBlock(this.discoveriesForSystem(sys.galaxyId, sys.systemId), { fallback: 'none', nowUs: this.serverNowUs() })
+        discoveryBlock(this.discoveriesForSystem(sys.galaxyId, sys.systemId), {
+          fallback: 'none',
+          nowUs: this.serverNowUs(),
+          max: MAX_ROWS,
+        })
       );
     } else if (galaxy) {
       const cfg = RING_CONFIGS[galaxy.ring] ?? RING_CONFIGS[0];
       card.appendChild(el('div', 'rk-mapinfo-kicker', `${galaxy.morphology.replace(/_/g, ' ')} · ${cfg.name} BAND`));
       card.appendChild(el('div', 'rk-mapinfo-title', galaxy.name.toUpperCase()));
       const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names });
-      card.appendChild(controlBlock(summary, { kicker: 'TERRITORY' }));
-      card.appendChild(discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs() }));
+      card.appendChild(controlBlock(summary, { kicker: 'TERRITORY', compact: true }));
+      card.appendChild(
+        discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs(), max: MAX_ROWS })
+      );
     }
     this.mapInfoEl.appendChild(card);
     this.mapInfoEl.classList.remove('hidden');

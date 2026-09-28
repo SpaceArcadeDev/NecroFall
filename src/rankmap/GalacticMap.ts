@@ -158,10 +158,9 @@ const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
  *  grown on screen. */
 const GALAXY_DOT_RADIUS = 18;
 /** Shared angular speed of every SPIRAL / BARRED_SPIRAL face (rad/s) — one rhythm for
- *  the whole field (user: "the spiral ones should spin at the same animation speed").
- *  2026-09-29: raised from 0.06 (a 105 s turn read as STATIC — "animations too slow")
- *  and the direction flipped (user: "the spin should be opposite direction"). */
-const GALAXY_SPIN = 0.24;
+ *  the whole field. History: 0.06 read as static, 0.24 read as too fast (user 2026-09-29:
+ *  "galaxy animations should be slower") — this is the calm middle. */
+const GALAXY_SPIN = 0.12;
 
 interface Hover {
   kind: 'galaxy' | 'system' | 'planet' | null;
@@ -269,8 +268,11 @@ export class GalacticMap {
     /* data is read live through the provider each frame */
   }
 
-  /** Fly the camera to a ring's anchor galaxy ("YOUR RING" / ring rail / BACK TO POSITION).
-   *  Also clears the selection and releases the focus (plan §52). */
+  /** Fly the camera to a ring's anchor galaxy (the ring rail / BACK TO POSITION).
+   *  Selecting a pill always ZOOMS OUT to the galactic view of that band (user
+   *  2026-09-29): the target zoom is never deeper than the camera already is, so a tap
+   *  can only ever widen the view — never push the player back into a galaxy. Also
+   *  clears the selection and releases the focus (plan §52). */
   flyToRing(ring: number): void {
     const home = ringHome(this.data.universeSeed, ring);
     this.level = 'galactic';
@@ -279,7 +281,7 @@ export class GalacticMap {
     this.pinnedSystem = null;
     this.selected = null;
     this.suppressAutoSelect.clear();
-    this.camTarget = { x: home.gx, y: home.gy, zoom: this.ringViewZoom(ring) };
+    this.camTarget = { x: home.gx, y: home.gy, zoom: Math.min(this.cam.zoom, this.ringViewZoom(ring)) };
     this.emitSelection();
   }
 
@@ -763,8 +765,12 @@ export class GalacticMap {
       // RECENTRE on the tier we just entered (user: "I'm not able to zoom into the
       // solar system"): the locked galaxy/system glides under the crosshair as the
       // ramps deepen, so its systems/planets come INTO VIEW instead of drifting off.
-      // Never while the user is actively panning — that gesture owns the centre.
-      if (next !== 'galactic' && galaxy && !this.drag) {
+      // Never while the user is actively panning — that gesture owns the centre — and
+      // never while a SCRIPTED FLIGHT is running: this assignment carries no zoom, so
+      // it used to cancel the zoom-out a ring-pill tap had just started (user 2026-09-29:
+      // "selecting rank pills should zoom out to the galactic view" — the camera panned
+      // to the band but stayed deep, leaving the player inside a galaxy).
+      if (next !== 'galactic' && galaxy && !this.drag && !this.camTarget) {
         const w = next === 'system' && system ? this.systemWorldPos(galaxy, system) : { x: galaxy.gx, y: galaxy.gy };
         const onScreen = this.world2screen(w.x, w.y);
         if (Math.abs(onScreen.x - this.width / 2) > 12 || Math.abs(onScreen.y - this.height / 2) > 12) {
@@ -1140,14 +1146,13 @@ export class GalacticMap {
         const radius = this.galaxyScreenRadius(g);
         // BREATHING (restored 2026-09-29 — the user missed the old life in the field):
         // every face and mote breathes in brightness (and a touch of size) at its own
-        // phase, while spirals ALSO spin.
-        const pulse = 1 + 0.06 * Math.sin(t * 2 + (g.seed % 100));
-        // THE GALAXY YOU ARE ENTERING (user 2026-09-29): it GROWS with the zoom and then
-        // FADES OUT as its solar systems open — ONE sprite, one continuous move. The
-        // ghostly second copy the systems layer used to draw ("a faded galaxy overlay") is
-        // gone; neighbours withdraw on the same ramp so the frame never smears.
+        // phase, while spirals ALSO spin. The beat is SLOW (1.2 rad/s cycle).
+        const pulse = 1 + 0.06 * Math.sin(t * 1.2 + (g.seed % 100));
+        // THE GALAXY YOU ARE ENTERING (user 2026-09-29): it GROWS with the zoom and thins
+        // to TRANSLUCENT as its solar systems open, then vanishes completely at full
+        // depth. Neighbours grow with it on the same ramp and keep a faint ghost.
         const inside = this.lock.sysAlpha;
-        const withdraw = ramp01(inside, 0.25, 0.85);
+        const withdraw = ramp01(inside, 0.2, 1.0);
         const field2 = field * bandVis * g.brightness;
         // ownership pre-filter (plan §33): far galaxies still show a coloured dot
         const owned = this.ownedIds.has(g.galaxyId);
@@ -1161,14 +1166,15 @@ export class GalacticMap {
           continue;
         }
         // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
-        // The galaxy being ENTERED keeps growing with the zoom (no size ceiling) and the
-        // fade below is what retires it; neighbours compress past the "face" range so a
-        // crowded field cannot smear the frame.
-        const faceR = (isFocus ? radius : radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - withdraw * (isFocus ? 0 : 0.35));
+        // EVERY face now keeps growing with the zoom (user 2026-09-29: neighbours must grow
+        // too, not just fade) — the fade ramp above is what retires them, and `haze` keeps
+        // the very largest sprites from milking the frame. A 3000 px ceiling stops a
+        // pathological sprite size at the deepest zooms.
+        const faceR = Math.min(radius, 3000 / 3.1);
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
         const s = faceR * 3.1 * pulse;
         ctx.globalAlpha =
-          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * (isFocus ? 1 : 0.92));
+          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * (isFocus ? 1 : 0.88));
         const sprite = this.galaxySprite(g);
         if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
           // SPIN (user): the spiral faces rotate at ONE shared angular speed — OPPOSITE
@@ -1378,7 +1384,10 @@ export class GalacticMap {
     // per-system ownership comes from the LAZY cache (plan §58): rows change on
     // match ends, never per frame, so this is at most one rebuild every ~2.5 s.
     const systemTerr = this.systemTerrFor(galaxy);
-    const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
+    // brighter / rounder motes: at galaxy-tier zoom the systems must read as a real
+    // cluster of stars, not faint dust (user 2026-09-29: "some galaxies have no solar
+    // systems" — the data was always there, the motes were simply too small to see)
+    const baseR = Math.max(1.6, 0.075 * SYSTEM_SCALE * zoom);
     // the front system crossfades on the same sqrt curve as the planets layer
     const pa = Math.sqrt(planetAlpha);
     // (the inflated second copy of the galaxy face that used to live here is GONE:
@@ -1404,9 +1413,9 @@ export class GalacticMap {
       // OWNED systems keep their owner's colour even as motes (plan §33).
       const terr = systemTerr.get(sys.systemId);
       if (!front && !isHover && !isSel) {
-        ctx.globalAlpha = 0.8 * a * twinkle;
+        ctx.globalAlpha = 0.9 * a * twinkle;
         ctx.fillStyle = terr?.color ?? '#dfe9ff';
-        ctx.fillRect(p.x - 1.15, p.y - 1.15, 2.3, 2.3);
+        ctx.fillRect(p.x - 1.3, p.y - 1.3, 2.6, 2.6);
         ctx.globalAlpha = 1;
         continue;
       }

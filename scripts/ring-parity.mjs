@@ -43,7 +43,7 @@ const fail = (msg) => {
 // ---- 1. identical band widths + cumulative boundaries
 const widths = JSON.stringify([...client.RING_WIDTHS]);
 if (widths !== JSON.stringify([...server.RING_WIDTHS])) fail(`RING_WIDTHS differ: ${widths} vs ${JSON.stringify([...server.RING_WIDTHS])}`);
-const boundsExpected = [5, 12, 21, 32, 46, 63, 84, 109];
+const boundsExpected = [4, 11, 22, 38, 60, 89, 126, 173];
 if (JSON.stringify([...client.RING_BOUNDS]) !== JSON.stringify(boundsExpected)) fail(`client RING_BOUNDS not cumulative: ${client.RING_BOUNDS}`);
 if (JSON.stringify([...server.RING_BOUNDS]) !== JSON.stringify(boundsExpected)) fail(`server RING_BOUNDS not cumulative: ${server.RING_BOUNDS}`);
 
@@ -59,9 +59,9 @@ for (let k = 0; k < 7; k++) {
 
 // ---- 3. boundary behaviour (cumulative lookup, not floor(dist/width))
 const cases = [
-  [0, 0, 0], [4.99, 0, 0], [5, 0, 1], [11.99, 0, 1], [12, 0, 2], [15, 8, 2],
-  [21, 0, 3], [32, 0, 4], [46, 0, 5], [63, 0, 6], [84, 0, 7], [109, 0, 7], [400, 300, 7],
-  [-11.5, 0, 1], [0, -33, 4], [30, 30, 5], // sqrt(1800) ≈ 42.4 → band 4
+  [0, 0, 0], [3.99, 0, 0], [4, 0, 1], [10.99, 0, 1], [11, 0, 2], [15, 8, 2],
+  [22, 0, 3], [38, 0, 4], [60, 0, 5], [89, 0, 6], [126, 0, 7], [173, 0, 7], [400, 300, 7],
+  [-11.5, 0, 2], [0, -33, 3], [30, 30, 5], // sqrt(1800) ≈ 42.4 → band 4
 ];
 for (const [gx, gy, want] of cases) {
   const c = client.ringOfGalaxy(gx, gy);

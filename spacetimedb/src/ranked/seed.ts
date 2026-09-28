@@ -60,7 +60,7 @@ export function decodeGalaxyId(id: number): { gx: number; gy: number } {
  * own larger territory. KEEP IN SYNC with `src/rankmap/procedural/SeedHash.ts` —
  * `scripts/ring-parity.mjs` asserts both files resolve identical rings.
  */
-export const RING_WIDTHS = [5, 7, 9, 11, 14, 17, 21, 25] as const;
+export const RING_WIDTHS = [4, 7, 11, 16, 22, 29, 37, 47] as const;
 
 /** Cumulative outer boundary of each tier — [5, 12, 21, 32, 46, 63, 84, 109]. */
 export const RING_BOUNDS: number[] = (() => {
@@ -104,7 +104,7 @@ export function ringOfGalaxy(gx: number, gy: number): number {
  * galaxy/system/planet a coordinate resolves to; the season stores it so a stale
  * season's rows can be migrated instead of silently re-pointing at other worlds.
  */
-export const UNIVERSE_GENERATION_VERSION = 2;
+export const UNIVERSE_GENERATION_VERSION = 3;
 
 /** The virtual planet KEY. Human-readable, sortable, and the DB primary key. */
 export function planetKey(ring: number, galaxyId: number, systemId: number, planetId: number): string {

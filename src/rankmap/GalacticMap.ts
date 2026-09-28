@@ -151,6 +151,12 @@ function softBound(v: number, centre: number, radius: number, half: number): num
 
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
+/** Face-sprite caches (user 2026-09-29: the dot transition stuttered): the FULL face
+ *  bakes at 160², the transition-band mip at 96² (≤128px draws). At the cap the caches
+ *  drop their oldest quarter instead of clearing — a clear re-bakes hundreds of sprites
+ *  in one frame, which is the hitch players felt while zooming through the transition. */
+const SPRITE_CACHE = 600;
+const SPRITE_MIP = 96;
 /** Below this body radius a galaxy is a plain LIGHT DOT — the intergalactic view is a
  *  starfield of motes (user: "show all galaxies as light dots until I zoom in a certain
  *  amount… make it look like No Man's Sky"), and it is also the reason a wide frame
@@ -205,6 +211,11 @@ export class GalacticMap {
   private galaxyMemo = new Map<number, GalaxyDescriptor | null>();
   /** Per-galaxy seeded face sprites (spiral / elliptical / irregular), baked once. */
   private galaxySprites = new Map<number, HTMLCanvasElement>();
+  /** 96px MIPS of the face sprites (user 2026-09-29: the dot transition stuttered).
+   *  Through the transition band HUNDREDS of small faces draw per frame; sampling a
+   *  96² mip instead of the 160² source is visually identical at ≤128px and much
+   *  cheaper. Built lazily with ONE downscaling drawImage per galaxy. */
+  private galaxyMips = new Map<number, HTMLCanvasElement>();
   /** Ownership overlays (plan §33/§35): which galaxies have rows at all, refreshed lazily. */
   private ownedIds = new Set<number>();
   private ownedRefreshAt = -1e9;
@@ -364,6 +375,8 @@ export class GalacticMap {
     if (!g || !sys) return; // descriptors can only be resolved for real locations
     this.suppressAutoSelect.delete(p.key);
     this.selected = { type: 'planet', galaxy: g, system: sys, planet: p };
+    // TARGET LOCK (user 2026-09-29): zooming in keeps this planet's system as focus.
+    this.pinnedSystem = sys;
     this.emitSelection();
   }
 
@@ -375,6 +388,8 @@ export class GalacticMap {
       this.suppressAutoSelect.add(this.selected.planet.key);
     }
     this.selected = null;
+    // Deselecting releases the system target lock too (empty-space tap).
+    this.pinnedSystem = null;
     this.emitSelection();
   }
 
@@ -610,9 +625,38 @@ export class GalacticMap {
       ctx.fill();
       ctx.globalAlpha = 1;
     }
-    if (this.galaxySprites.size > 320) this.galaxySprites.clear();
+    if (this.galaxySprites.size >= SPRITE_CACHE) this.evictOldest(this.galaxySprites);
     this.galaxySprites.set(g.galaxyId, c);
     return c;
+  }
+
+  /** Lazy small mip of a face (one downscaling drawImage), used for s <= 128px. */
+  private galaxySpriteSmall(g: GalaxyDescriptor): HTMLCanvasElement {
+    const hit = this.galaxyMips.get(g.galaxyId);
+    if (hit) return hit;
+    const c = document.createElement('canvas');
+    c.width = SPRITE_MIP;
+    c.height = SPRITE_MIP;
+    const ctx = c.getContext('2d');
+    if (ctx) ctx.drawImage(this.galaxySprite(g), 0, 0, SPRITE_MIP, SPRITE_MIP);
+    if (this.galaxyMips.size >= SPRITE_CACHE) this.evictOldest(this.galaxyMips);
+    this.galaxyMips.set(g.galaxyId, c);
+    return c;
+  }
+
+  /**
+   * AMORTISED EVICTION (user 2026-09-29: "the entire game lags n stutters" while
+   * zooming through the dot transition). The old cache CLEARED itself past 320
+   * entries, so the next frame re-baked hundreds of sprites in ONE frame — a visible
+   * hitch. Maps keep insertion order, so dropping the oldest slice spreads the cost.
+   */
+  private evictOldest(map: Map<number, HTMLCanvasElement>): void {
+    let n = 0;
+    const want = Math.max(16, SPRITE_CACHE >> 2);
+    for (const key of map.keys()) {
+      map.delete(key);
+      if (++n >= want) break;
+    }
   }
 
   // ------------------------------------------------------------ soft focus (continuous zoom)
@@ -748,14 +792,37 @@ export class GalacticMap {
   private updateSoftFocus(): void {
     const zoom = this.cam.zoom;
     const ranges = this.zoomRamps();
-    const galaxy = this.nearestGalaxyToViewCentre();
+    // TARGET STABILITY (user 2026-09-29: "while zooming in, don't change targets — I
+    // have a solar system targeted but zooming switches to a different one"): an
+    // explicit SELECTION outranks the nearest-to-centre scan. The selected galaxy is
+    // kept as the focus while it sits inside ~80% of the half-view; a pinned system
+    // (tap, panel jump, flight target or tier entry) then owns the system lock at ANY
+    // zoom level, so zooming can never slide the target onto a neighbour.
+    const nearestGalaxy = this.nearestGalaxyToViewCentre();
+    const picked = this.selected?.galaxy ?? null;
+    let galaxy = nearestGalaxy;
+    if (picked && picked.galaxyId !== nearestGalaxy?.galaxyId) {
+      const halfW = Math.max(1, this.width / (2 * this.cam.zoom));
+      const halfH = Math.max(1, this.height / (2 * this.cam.zoom));
+      if (Math.abs(picked.gx - this.cam.x) < halfW * 0.8 && Math.abs(picked.gy - this.cam.y) < halfH * 0.8) {
+        galaxy = picked;
+      }
+    }
     const sysAlpha = ramp01(zoom, ranges.sysStart, ranges.sysEnd);
-    // SYSTEM DRAG LOCK (plan §23/§26): while the system level is active the focus
-    // is PINNED to the system we entered — panning can never slide the lock onto
-    // a neighbouring system. Zooming out clears the pin (that IS the release).
+    // SYSTEM DRAG LOCK (plan §23/§26): the pinned system is the focus wherever the
+    // tiers are — but panning it far off-screen releases the pin, so the crosshair
+    // claims the target again (panning away is an explicit re-aim).
     const nearest = galaxy && sysAlpha > 0.04 ? this.nearestSystemToViewCentre(galaxy) : null;
+    if (this.pinnedSystem && galaxy && this.pinnedSystem.galaxyId === galaxy.galaxyId) {
+      const w = this.systemWorldPos(galaxy, this.pinnedSystem);
+      const halfW = Math.max(1, this.width / (2 * this.cam.zoom));
+      const halfH = Math.max(1, this.height / (2 * this.cam.zoom));
+      if (Math.abs(w.x - this.cam.x) > halfW * 1.25 || Math.abs(w.y - this.cam.y) > halfH * 1.25) {
+        this.pinnedSystem = null; // panned away — release
+      }
+    }
     const pinnedHere = this.pinnedSystem && galaxy && this.pinnedSystem.galaxyId === galaxy.galaxyId;
-    const system = this.level === 'system' && pinnedHere ? this.pinnedSystem : nearest;
+    const system = pinnedHere ? this.pinnedSystem : nearest;
     const planetAlpha = ramp01(zoom, ranges.plStart, ranges.plEnd);
     const closeAlpha = ramp01(zoom, ranges.closeStart, ranges.closeEnd);
     const planet = galaxy && system && planetAlpha > 0.08 ? this.nearestPlanetToViewCentre(galaxy, system) : null;
@@ -1206,13 +1273,17 @@ export class GalacticMap {
         // full face (they are what the player is looking at).
         const transit = isFocus || isHover ? 1 : ramp01(radius, GALAXY_DOT_RADIUS * 0.45, GALAXY_DOT_RADIUS * 1.25);
         if (transit < 1) {
-          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5) * (1 - transit);
-          ctx.fillStyle = terr?.color ?? g.starColor;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
-          ctx.fill();
-          ctx.globalAlpha = 1;
-          if (transit <= 0.001) continue;
+          // past ~0.97 the mote contributes <3% of its glow — skipping the path is
+          // invisible and saves hundreds of arcs per frame in the far field
+          if (transit < 0.97) {
+            ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5) * (1 - transit);
+            ctx.fillStyle = terr?.color ?? g.starColor;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
+            ctx.fill();
+            ctx.globalAlpha = 1;
+          }
+          if (transit <= 0.03) continue; // a ≤3% face adds nothing — start/end cleanly
         }
         // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
         // EVERY face now keeps growing with the zoom (user 2026-09-29: neighbours must grow
@@ -1227,7 +1298,9 @@ export class GalacticMap {
         const s = faceR * 3.1 * pulse;
         ctx.globalAlpha =
           (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * 0.88) * faceMix;
-        const sprite = this.galaxySprite(g);
+        // the transition band never exceeds ~74px, so the 96px mip is always drawn at
+        // ≤1:1 — no upscaling, no visible change (user: keep the seamless effect)
+        const sprite = s <= SPRITE_MIP ? this.galaxySpriteSmall(g) : this.galaxySprite(g);
         if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
           // SPIN (user): the spiral faces rotate at ONE shared angular speed — OPPOSITE
           // direction to the first pass — so the whole field turns as a single system.
@@ -2049,6 +2122,8 @@ export class GalacticMap {
 
   private selectSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
     this.selected = { type: 'system', galaxy: g, system: sys };
+    // TARGET LOCK (user 2026-09-29): the tapped system stays the focus while zooming.
+    this.pinnedSystem = sys;
     this.emitSelection();
   }
 

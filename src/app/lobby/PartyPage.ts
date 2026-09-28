@@ -94,7 +94,7 @@ export class PartyPage {
       this.ctx.goLobby(); // the party is gone the moment you walk out
     });
     this.backBtn = button('BACK TO LOBBY', 'btn primary', () => this.ctx.goLobby());
-    actions.append(this.findBtn, this.leaveBtn, this.backBtn);
+    actions.append(this.leaveBtn, this.findBtn, this.backBtn);
     panel.appendChild(actions);
     this.element.appendChild(panel);
   }

@@ -1,6 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
+    { "source": "/oidc/:path*", "destination": "/api/auth-proxy/oidc/:path*" },
+    { "source": "/interactions/:path*", "destination": "/api/auth-proxy/interactions/:path*" },
     { "source": "/auth/callback", "destination": "/index.html" }
   ]
 }

@@ -44,7 +44,7 @@ export type BossState = 'normal' | 'enrage_transition' | 'enraged' | 'dead';
 const F_ELITE = 1;
 const F_BOSS = 2;
 const F_ENRAGED = 4;
-const F_STAGGERED = 8;
+const F_STUNNED = 8;
 const F_ENRAGING = 16;
 
 // ---------------------------------------------------------------- boss heavies
@@ -149,8 +149,8 @@ export const BOSS_RED = 0xff2d2d;
 export const BOSS_RED_HOT = 0xff5555;
 /** The wide ground disk / crater pool: a scorch, not a flash. */
 export const BOSS_RED_DEEP = 0xc41f1f;
-/** The broken-stagger tint: the same yellow the plate's stagger bar lives in, so body and plate agree. */
-const _staggerCol = new THREE.Color(0xffd166);
+/** The STUNNED tint: the same yellow the plate's stun bar lives in, so body and plate agree. */
+const _stunCol = new THREE.Color(0xffd166);
 /** Scratch for a leaping/pouncing Necrophage. */
 const ENEMY_GRAVITY = 32;
 
@@ -177,6 +177,9 @@ export function enemyPowerScale(elapsed: number): { hp: number; dmg: number } {
   return { hp: 1 + (t / 600) * 1.95, dmg: 1 + (t / 600) * 0.55 };
 }
 
+/** Hunters never ride the curve below this many seconds — they START at their 5:00 stats. */
+const HUNTER_CURVE_FLOOR = 300;
+
 interface Dot {
   kind: StatusKind;
   dps: number;
@@ -194,8 +197,8 @@ export interface EnemySnapshot {
   flags: number;
   /** Mitosis generation (0 for a natural spawn) — clients scale descendants to match. */
   gen?: number;
-  /** Bosses only: stagger fraction 0..100, so every client draws the same stagger bar. */
-  stg?: number;
+  /** Bosses only: stun-bar fraction 0..100, so every client draws the same stun bar. */
+  stn?: number;
 }
 
 export class Enemy {
@@ -274,13 +277,13 @@ export class Enemy {
   private huntAt = new THREE.Vector3();
 
   // ------------------------------------------------------------ boss
-  /** Stagger pool: damage taken fills this down; an empty pool breaks the boss. */
-  stagger = 0;
-  staggerMax = 0;
-  /** Seconds of quiet before the stagger bar starts refilling. */
-  private staggerDelayT = 0;
-  /** Seconds left of the broken-stagger punish window. */
-  staggeredT = 0;
+  /** Stun pool: damage taken fills this down; an empty pool breaks the boss open (the STUN). */
+  stun = 0;
+  stunMax = 0;
+  /** Seconds of quiet before the stun bar starts refilling. */
+  private stunDelayT = 0;
+  /** Seconds left of the STUN — the punished boss cannot act at all. */
+  stunnedT = 0;
   /** The boss state machine. */
   bossState: BossState = 'normal';
   /** Seconds left of the damage-immune enrage transition. */
@@ -382,16 +385,16 @@ export class Enemy {
     this.hunterState = 'stalk';
     this.hunterT = 0;
     this.hunterCd = genome.hunt ? 1.6 : 0;
-    this.stagger = 0;
-    this.staggerMax = 0;
-    this.staggeredT = 0;
-    this.staggerDelayT = 0;
+    this.stun = 0;
+    this.stunMax = 0;
+    this.stunnedT = 0;
+    this.stunDelayT = 0;
     this.bossState = 'normal';
     this.enraged = false;
     this.enrageFired = false;
     this.immuneT = 0;
     // Heavies: a boss owns a small kit derived from its own genome; the enraged pair is appended
-    // when it rages. Staggered starts so the very first one is not immediate.
+    // when it rages. The cooldowns start spread out so the very first heavy is not immediate.
     this.bossMechanics = this.isBoss ? pickBossMechanics(genome) : [];
     this.mechCd = this.bossMechanics.map(() => 2.5 + Math.random() * 3.5);
     this.mechCast = -1;
@@ -619,7 +622,7 @@ export class Enemy {
     }
     if (this.bFleeT > 0) this.bFleeT = Math.max(0, this.bFleeT - dt);
 
-    // ---- bosses additionally run the stagger + enrage machine, which overrides everything else
+    // ---- bosses additionally run the STUN + enrage machine, which overrides everything else
     if (this.isBoss) {
       this.updateBoss(dt, game);
       if (this.bossState === 'enrage_transition') {
@@ -628,8 +631,8 @@ export class Enemy {
         this.rideTerrain(game, dt);
         return;
       }
-      if (this.staggeredT > 0) {
-        // STAGGERED: the punish window. It cannot act at all — the stun IS the reward (no extra
+      if (this.stunnedT > 0) {
+        // STUNNED: the punish window. It cannot act at all — the stun IS the reward (no extra
         // damage is dealt in it).
         this.velocity.multiplyScalar(Math.max(0, 1 - dt * 5));
         this.rideTerrain(game, dt);
@@ -1258,7 +1261,7 @@ export class Enemy {
 
   /**
    * Incoming damage: the guardian's flat armour, the enraged phase's raised defence, and nothing
-   * else. A broken stagger is a pure STUN — the boss cannot act for 2 s, but it takes no extra
+   * else. A broken boss is a pure STUN — it cannot act for 2 s, but it takes no extra
    * damage in that window.
    */
   damageTakenMul(): number {
@@ -1278,36 +1281,36 @@ export class Enemy {
   }
 
   /**
-   * Damage fills the stagger bar DOWN. An empty bar breaks the boss open: it is STUNNED for
-   * `staggerDuration` and the bar refills itself across that window. That is the entire stagger
-   * rule — the stun is the reward, damage taken is NOT raised while it is broken. The CALLER
+   * Damage fills the stun bar DOWN. An empty bar breaks the boss open: it is STUNNED for
+   * `stunDuration` and the bar refills itself across that window. That is the entire stun
+   * rule — the stun is the reward, damage taken is NOT raised while it is stunned. The CALLER
    * converts health damage into bar damage (see `Game.hostApplyEnemyDamage`, which applies
-   * `CONFIG.boss.staggerDamageMul` = 2, so the bar drains twice as fast as the health does).
+   * `CONFIG.boss.stunDamageMul` = 2, so the bar drains twice as fast as the health does).
    *
-   * While the boss is already broken, damage to the bar is REFUSED outright — the punish window is a
+   * While the boss is already stunned, damage to the bar is REFUSED outright — the punish window is a
    * fixed 2 seconds that no amount of incoming fire can push back or extend.
    */
-  addStagger(amount: number, game: Game): void {
-    if (!this.isBoss || this.staggerMax <= 0 || this.staggeredT > 0) return;
-    this.stagger -= amount;
-    this.staggerDelayT = CONFIG.boss.staggerDelay;
-    if (this.stagger > 0) return;
-    this.stagger = 0;
-    this.staggeredT = CONFIG.boss.staggerDuration;
+  addStun(amount: number, game: Game): void {
+    if (!this.isBoss || this.stunMax <= 0 || this.stunnedT > 0) return;
+    this.stun -= amount;
+    this.stunDelayT = CONFIG.boss.stunDelay;
+    if (this.stun > 0) return;
+    this.stun = 0;
+    this.stunnedT = CONFIG.boss.stunDuration;
     this.mechCast = -1;
     this.mechT = 0;
     game.effects.ring(this.position, this.up, this.radius * 2, 0xffe066, 0.7, 2.6, 1);
     game.effects.burst(this.position, 0xffe066, { count: 22, speed: 13, life: 0.6, size: 0.8, gravity: -3, up: this.up, spread: 1 });
     game.effects.shake(0.2);
     game.audio.sfx('shieldDown', 0.8);
-    game.ui.banner(`${this.genome.name} STAGGERED`, 1800);
-    this.netEvent(game, 'bossstagger');
+    game.ui.banner(`${this.genome.name} STUNNED`, 1800);
+    this.netEvent(game, 'bossstun');
   }
 
   /**
    * Boss state machine: NORMAL -> ENRAGE_TRANSITION -> ENRAGED -> DEAD.
    *
-   * Stagger recovery runs first, then the one-shot enrage at the health threshold, then the two
+   * Stun recovery runs first, then the one-shot enrage at the health threshold, then the two
    * enraged mechanics. Nothing here can fire twice.
    */
   private updateBoss(dt: number, game: Game): void {
@@ -1327,25 +1330,25 @@ export class Enemy {
       return;
     }
 
-    // ---- stagger: the STUN. The boss cannot act for `staggerDuration`, and the bar races back to
-    // full across it so the punish window has a visible clock. Damage is refused by `addStagger`
+    // ---- STUN: the punish window. The boss cannot act for `stunDuration`, and the bar races back
+    // to full across it so the punish window has a visible clock. Damage is refused by `addStun`
     // while this runs, so nothing the players do can extend or shorten it.
-    if (this.staggeredT > 0) {
-      this.staggeredT -= dt;
-      this.stagger = Math.min(this.staggerMax, this.stagger + this.staggerMax * CONFIG.boss.staggerStunRegen * dt);
-      if (this.staggeredT <= 0) {
-        this.staggeredT = 0;
+    if (this.stunnedT > 0) {
+      this.stunnedT -= dt;
+      this.stun = Math.min(this.stunMax, this.stun + this.stunMax * CONFIG.boss.stunBrokenRegen * dt);
+      if (this.stunnedT <= 0) {
+        this.stunnedT = 0;
         // the bar has already refilled across the whole stun, so the boss comes out of it with a
         // full bar rather than an empty one; the delay only governs the idle regen that follows
-        this.stagger = this.staggerMax;
-        this.staggerDelayT = CONFIG.boss.staggerDelay;
+        this.stun = this.stunMax;
+        this.stunDelayT = CONFIG.boss.stunDelay;
         this.netEvent(game, 'bossrecover');
       }
       return;
     }
-    if (this.staggerDelayT > 0) this.staggerDelayT -= dt;
-    else if (this.stagger < this.staggerMax) {
-      this.stagger = Math.min(this.staggerMax, this.stagger + this.staggerMax * CONFIG.boss.staggerRegen * dt);
+    if (this.stunDelayT > 0) this.stunDelayT -= dt;
+    else if (this.stun < this.stunMax) {
+      this.stun = Math.min(this.stunMax, this.stun + this.stunMax * CONFIG.boss.stunRegen * dt);
     }
 
     // ---- the enrage fires EXACTLY ONCE, at or below the health threshold
@@ -1369,8 +1372,8 @@ export class Enemy {
     this.enraged = false;
     this.enrageFired = true;
     this.immuneT = B.enrageImmunity;
-    this.stagger = this.staggerMax;
-    this.staggeredT = 0;
+    this.stun = this.stunMax;
+    this.stunnedT = 0;
     this.mechCast = -1;
     this.velocity.set(0, 0, 0);
 
@@ -2010,13 +2013,13 @@ export class Enemy {
     // the body or off-screen entirely, so the boss's own emissive glow carries the state too — and
     // because this is driven from `place()`, every peer sees it without a network message.
     //
-    // STAGGERED outranks it. A broken boss is a three-second window the player has to ACT on, so the
-    // body turns the same YELLOW as its plate for exactly as long as it cannot fight back — that is
+    // STUNNED outranks it. A stunned boss is a window the player has to ACT on, so the body turns
+    // the same YELLOW as its plate for exactly as long as it cannot fight back — that is
     // the whole point of the state, and it must beat the enraged red on a boss that is both.
     if (this.isBoss && this.rigBaseGlow && this.rigBaseAccent) {
-      const broken = this.staggeredT > 0;
+      const broken = this.stunnedT > 0;
       const k = broken ? 0.9 : this.enraged ? 0.85 : this.bossState === 'enrage_transition' ? 0.6 : 0;
-      const wash = broken ? _staggerCol : _rageCol;
+      const wash = broken ? _stunCol : _rageCol;
       const glow = rig.energy.uniforms.uGlow.value as THREE.Color;
       const accent = rig.carapace.uniforms.uAccent.value as THREE.Color;
       if (k > 0) {
@@ -2027,10 +2030,10 @@ export class Enemy {
         accent.copy(this.rigBaseAccent);
       }
     }
-    // A broken stagger droops the whole body: the punish window has to be legible in the world,
+    // A stunned boss droops the whole body: the punish window has to be legible in the world,
     // not only on the health plate. Enraged bosses burn hotter than anything else on the field.
-    const staggerSag = this.staggeredT > 0 ? 1 : 0;
-    rig.carapace.uniforms.uAggro.value = this.aggro + (this.guardT > 0 ? 1.2 : 0) + staggerSag * 0.6 + (this.enraged ? 1.6 : 0);
+    const stunSag = this.stunnedT > 0 ? 1 : 0;
+    rig.carapace.uniforms.uAggro.value = this.aggro + (this.guardT > 0 ? 1.2 : 0) + stunSag * 0.6 + (this.enraged ? 1.6 : 0);
     this.corePulse += 0.06;
     if (rig.core) {
       const pulse = 1 + Math.sin(this.corePulse) * 0.12 + this.aggro * 0.25 + (this.enraged ? 0.25 : 0);
@@ -2332,7 +2335,11 @@ export class EnemyManager {
     e.damageMul = shrink;
     // Time-based power applies by DEFAULT, so every path (spawner, packs, apexes, replication from a
     // snapshot, mitosis children) gets the same curve — a caller can still override it for bosses.
-    const power = enemyPowerScale(this.game.matchElapsed);
+    // HUNTERS ride the curve at its FIVE-MINUTE value from the very start: a fresh match hands them
+    // the stats they would have at 5:00 (they are the apex of the bestiary — never an early free
+    // kill), and past 5:00 they scale exactly like everything else.
+    const curveElapsed = genome.hunter ? Math.max(HUNTER_CURVE_FLOOR, this.game.matchElapsed) : this.game.matchElapsed;
+    const power = enemyPowerScale(curveElapsed);
     e.powerMul = opts.powerMul ?? power.dmg;
     const hpScale = opts.hpMul ?? power.hp;
     e.radius = genome.radius * shrink;
@@ -2397,9 +2404,9 @@ export class EnemyManager {
       powerMul: megaDmg * power.dmg,
     });
     e.group.scale.setScalar(1);
-    // Bosses get a second bar: the stagger pool, sized off their own (scaled) health.
-    e.staggerMax = e.maxHp * CONFIG.boss.staggerPool;
-    e.stagger = e.staggerMax;
+    // Bosses get a second bar: the STUN pool, sized off their own (scaled) health.
+    e.stunMax = e.maxHp * CONFIG.boss.stunPool;
+    e.stun = e.stunMax;
     this.game.audio.sfx('bossRoar');
     this.game.ui.toast(`${e.genome.name} guards the ${kind === 'nexus' ? 'Nexus' : `Beacon ${towerIdx + 1}`} — ${e.genome.abilities.length} abilities`, 4200);
     return e;
@@ -2700,7 +2707,7 @@ export class EnemyManager {
       const flags = (e.elite ? F_ELITE : 0)
         | (e.isBoss ? F_BOSS : 0)
         | (e.enraged ? F_ENRAGED : 0)
-        | (e.staggeredT > 0 ? F_STAGGERED : 0)
+        | (e.stunnedT > 0 ? F_STUNNED : 0)
         | (e.bossState === 'enrage_transition' ? F_ENRAGING : 0);
       out.push({
         id: e.id,
@@ -2711,9 +2718,9 @@ export class EnemyManager {
         hp: Math.round(e.hp),
         flags,
         gen: e.splitGen,
-        // Bosses only: the stagger bar is a fraction, so it means the same thing on every peer no
+        // Bosses only: the stun bar is a fraction, so it means the same thing on every peer no
         // matter how the two machines scaled that boss's health pool.
-        stg: e.isBoss && e.staggerMax > 0 ? Math.round((e.stagger / e.staggerMax) * 100) : undefined,
+        stn: e.isBoss && e.stunMax > 0 ? Math.round((e.stun / e.stunMax) * 100) : undefined,
       });
     }
     return out;
@@ -2736,14 +2743,14 @@ export class EnemyManager {
         e.group.scale.setScalar((e.elite ? 1.3 : 1) * Math.pow(0.72, gen));
       }
       e.hp = s.hp;
-      // Boss state rides the snapshot: a client replays the enraged / staggered / transition look
+      // Boss state rides the snapshot: a client replays the enraged / stunned / transition look
       // from these four bits, so nothing about the fight needs its own message stream.
       e.enraged = (s.flags & F_ENRAGED) !== 0;
       e.bossState = (s.flags & F_ENRAGING) !== 0 ? 'enrage_transition' : e.enraged ? 'enraged' : 'normal';
-      e.staggeredT = (s.flags & F_STAGGERED) !== 0 ? 0.4 : 0;
-      if (s.stg !== undefined) {
-        e.staggerMax = 100;
-        e.stagger = s.stg;
+      e.stunnedT = (s.flags & F_STUNNED) !== 0 ? 0.4 : 0;
+      if (s.stn !== undefined) {
+        e.stunMax = 100;
+        e.stun = s.stn;
       }
       if (!e.netTarget) e.netTarget = new THREE.Vector3();
       e.netTarget.set(s.x, s.y, s.z);

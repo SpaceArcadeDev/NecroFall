@@ -4,10 +4,13 @@ import { CandidateSeat, MatchConfirmation } from './MatchConfirmation';
 import { el } from '../ui/dom';
 
 export class MatchFoundModal {
+  /** The module's fill window (queue.ts) — the bar drains over these seconds. */
+  private static readonly FILL_SECONDS = 5;
   readonly element: HTMLElement;
   private confirmation: MatchConfirmation;
   private fillNote: HTMLElement;
   private fillClock: HTMLElement;
+  private fillBar: HTMLElement;
   private title: HTMLElement;
 
   constructor(onConfirm: () => void, onDecline: () => void) {
@@ -20,6 +23,10 @@ export class MatchFoundModal {
     card.appendChild(this.fillNote);
     this.fillClock = el('div', 'nf-queue-clock', '5');
     card.appendChild(this.fillClock);
+    const track = el('div', 'nf-fill-track');
+    this.fillBar = el('div', 'nf-fill-bar');
+    track.appendChild(this.fillBar);
+    card.appendChild(track);
 
     this.confirmation = new MatchConfirmation(onConfirm, onDecline);
     card.appendChild(this.confirmation.element);
@@ -40,6 +47,7 @@ export class MatchFoundModal {
     this.fillNote.classList.remove('hidden');
     this.fillClock.classList.remove('hidden');
     this.fillClock.textContent = `${Math.max(0, Math.ceil(deadlineSeconds))}`;
+    this.fillBar.style.width = `${Math.min(100, Math.max(0, (deadlineSeconds / MatchFoundModal.FILL_SECONDS) * 100))}%`;
     this.confirmation.element.classList.add('hidden');
   }
 

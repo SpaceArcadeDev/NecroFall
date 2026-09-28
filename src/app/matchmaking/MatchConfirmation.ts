@@ -12,8 +12,11 @@ export interface CandidateSeat {
 }
 
 export class MatchConfirmation {
+  /** The module's confirmation window (queue.ts) — the bar drains over these seconds. */
+  private static readonly CONFIRM_SECONDS = 10;
   readonly element: HTMLElement;
   private countdown: HTMLElement;
+  private bar: HTMLElement;
   private seatsEl: HTMLElement;
   private confirmBtn: HTMLButtonElement;
 
@@ -25,6 +28,10 @@ export class MatchConfirmation {
     this.element.appendChild(this.seatsEl);
     this.countdown = el('div', 'nf-confirm-countdown', '10');
     this.element.appendChild(this.countdown);
+    const track = el('div', 'nf-confirm-track');
+    this.bar = el('div', 'nf-confirm-bar');
+    track.appendChild(this.bar);
+    this.element.appendChild(track);
 
     this.confirmBtn = el('button', 'nf-confirm-btn', 'CONFIRM MATCH') as HTMLButtonElement;
     this.confirmBtn.type = 'button';
@@ -46,6 +53,7 @@ export class MatchConfirmation {
     const shown = Math.max(0, Math.ceil(deadlineSeconds));
     this.countdown.textContent = `${shown}`;
     this.countdown.classList.toggle('urgent', shown <= 3);
+    this.bar.style.width = `${Math.min(100, Math.max(0, (deadlineSeconds / MatchConfirmation.CONFIRM_SECONDS) * 100))}%`;
 
     if (myConfirmed) {
       this.confirmBtn.disabled = true;

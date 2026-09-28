@@ -2391,7 +2391,7 @@ export class Game {
         return;
       }
       case 'eev': {
-        // A one-off creature event mirrored from the host — a hunter's leap, a boss stagger, an
+        // A one-off creature event mirrored from the host — a hunter's leap, a boss stun, an
         // enrage, an enraged mechanic winding up. Only meaningful beats cross the wire; AI state
         // and per-frame decisions never do.
         const e = this.enemies.byId(Number(msg.eid));
@@ -2422,10 +2422,10 @@ export class Game {
             this.effects.burst(pos, accent, { count: 22, speed: 14, life: 0.55, size: 0.8, gravity: 14 });
             this.audio.sfx('explode', 0.5);
             break;
-          case 'bossstagger':
+          case 'bossstun':
             this.effects.ring(pos, up, radius * 2, 0xffe066, 0.7, 2.6, 1);
             this.audio.sfx('shieldDown', 0.7);
-            this.ui.banner(`${e ? e.genome.name : 'BOSS'} STAGGERED`, 1800);
+            this.ui.banner(`${e ? e.genome.name : 'BOSS'} STUNNED`, 1800);
             break;
           case 'bossrecover':
             this.effects.ring(pos, up, radius * 1.6, 0xffe066, 0.45, 2, 0.6);
@@ -3084,7 +3084,7 @@ export class Game {
   }
 
   /**
-   * Mirrors one meaningful creature event (a hunter's leap, a boss stagger, an enrage, a mechanic
+   * Mirrors one meaningful creature event (a hunter's leap, a boss stun, an enrage, a mechanic
    * landing) to the other peers. Only events cross the wire — never per-frame AI state — and the
    * receiving peer replays the matching VFX locally.
    */
@@ -3179,9 +3179,9 @@ export class Game {
     const owner = ownerId ? this.players.get(ownerId) : null;
     if (owner) owner.damageDealt += dealt;
     this.enemyHitBatch.push({ eid: e.id, amt: Math.round(dealt * 10) / 10, src: ownerId ?? '', aoe: aoe ? 1 : 0 });
-    // Damage fills the boss's stagger bar down at `staggerDamageMul` (2x) the health damage dealt,
-    // so the bar visibly races the health down; an empty bar is the punish window.
-    if (e.isBoss) e.addStagger(dealt * CONFIG.boss.staggerDamageMul, this);
+    // Damage fills the boss's stun bar down at `stunDamageMul` (2x) the health damage dealt,
+    // so the bar visibly races the health down; an empty bar is the STUN window.
+    if (e.isBoss) e.addStun(dealt * CONFIG.boss.stunDamageMul, this);
     if (e.hp > 0) {
       e.onDamaged(ownerId, dealt, this); // genome reactions: thorn, siphon
       return;
@@ -4703,11 +4703,11 @@ export class Game {
         maxHp: e.maxHp,
         color: css,
         // Bosses carry the second bar. Its value is authoritative on the host and arrives as a
-        // fraction on clients (see EnemySnapshot.stg), so both sides draw the same thing.
-        stagger: e.isBoss ? e.stagger : undefined,
-        staggerMax: e.isBoss ? e.staggerMax : undefined,
+        // fraction on clients (see EnemySnapshot.stn), so both sides draw the same thing.
+        stun: e.isBoss ? e.stun : undefined,
+        stunMax: e.isBoss ? e.stunMax : undefined,
         enraged: e.enraged,
-        staggered: e.staggeredT > 0,
+        stunned: e.stunnedT > 0,
         level: 0,
         xpFrac: 0,
         dashCharges: 0,

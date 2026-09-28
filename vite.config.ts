@@ -12,6 +12,30 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
 
+/** What the provider points its own redirects at; those must stay on OUR origin (see api/auth-proxy). */
+const PROVIDER_ORIGIN = 'https://auth.spacetimedb.com';
+const APP_ORIGIN = 'https://necrofall.vercel.app';
+
+/** Turns a Location header that names an absolute host into a same-origin path. */
+export function sameOriginLocation(loc: string): string {
+  if (loc.startsWith(`${PROVIDER_ORIGIN}/`)) return loc.slice(PROVIDER_ORIGIN.length);
+  if (loc.startsWith(`${APP_ORIGIN}/`)) return loc.slice(APP_ORIGIN.length);
+  return loc;
+}
+
+/**
+ * The sign-in chain hops through ABSOLUTE https://auth.spacetimedb.com/... redirects. Un-rewritten,
+ * the browser would leave the proxy, lose the re-homed first-party cookies and die with
+ * "authorization request has expired". Rewriting every Location keeps all hops on this origin, so
+ * the cookies (and the whole flow) stay first-party.
+ */
+function keepAuthChainSameOrigin(proxy: { on: (event: 'proxyRes', cb: (res: { headers: Record<string, unknown> }) => void) => void }): void {
+  proxy.on('proxyRes', (proxyRes) => {
+    const loc = proxyRes.headers['location'];
+    if (typeof loc === 'string') proxyRes.headers['location'] = sameOriginLocation(loc);
+  });
+}
+
 /** Drops hot-update events for files whose bytes are identical to the last accepted version. */
 function contentStableHotUpdate(): Plugin {
   const seen = new Map<string, string>();
@@ -41,6 +65,12 @@ export default defineConfig({
     strictPort: false,
     // Build output and editor metadata must never reload the live game.
     watch: { ignored: ['**/dist/**', '**/.vscode/**'] },
+    // The sign-in interaction lives on auth.spacetimedb.com. Proxying it SAME-ORIGIN keeps its
+    // cookies first-party, so the magic-link / anonymous endpoints work directly (no provider page).
+    proxy: {
+      '/oidc': { target: PROVIDER_ORIGIN, changeOrigin: true, configure: keepAuthChainSameOrigin },
+      '/interactions': { target: PROVIDER_ORIGIN, changeOrigin: true, configure: keepAuthChainSameOrigin },
+    },
   },
   build: {
     target: 'es2020',

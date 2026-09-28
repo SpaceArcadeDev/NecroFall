@@ -375,7 +375,7 @@ interface StarFX {
 /**
  * An expanding ground shockwave. The flat pulses are drawn with the ring pool (so they look exactly
  * like every other ground ring in the game) while this slot throws the debris front outward and
- * staggers the pulses behind it. Both STOP DEAD at `radius`: a wave may never be seen reaching
+ * offsets the pulses behind it. Both STOP DEAD at `radius`: a wave may never be seen reaching
  * further than the area the ability actually covers.
  */
 interface WaveFX {
@@ -1292,7 +1292,7 @@ export class Effects {
 
   /**
    * Fires an expanding ground shockwave out to exactly `radius` — never past it. `rings` flat pulses
-   * stagger out of the centre (pooled ground rings, so they match every other ground circle in the
+   * cascade out of the centre (pooled ground rings, so they match every other ground circle in the
    * game) while a front of debris is thrown off the edge of the wave as it passes, which is what
    * makes it read as a WAVE travelling across the ground rather than a circle fading in.
    */
@@ -1774,7 +1774,7 @@ export class Effects {
 
   /**
    * Slams a cage of BLACK CHAINS out of the ground around `centre`: `count` strands standing on a ring
-   * of `radius`, each leaning outward a little, rising with a stagger and sinking back into the
+   * of `radius`, each leaning outward a little, rising in sequence and sinking back into the
    * ground at the end of their life. Used by Judgement.
    */
   chains(
@@ -1848,7 +1848,7 @@ export class Effects {
       fx.mat.opacity = Math.min(1, outro * 1.6);
       fx.tipMat.opacity = Math.min(1, outro * 1.6);
       for (let i = 0; i < fx.count; i++) {
-        // staggered eruption: every strand bursts out a beat after the one before it
+        // cascading eruption: every strand bursts out a beat after the one before it
         const grow = clamp((fx.t - i * 0.04) / 0.24, 0, 1);
         const rise = grow * grow * (3 - 2 * grow);
         const strandH = fx.height * fx.spans[i];

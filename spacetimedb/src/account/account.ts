@@ -34,7 +34,7 @@ function normalizeName(raw: string): string {
 /** 3–16 chars, letters/digits/_- and single spaces (plan §64). */
 function validatePlayerName(raw: string): string {
   const name = raw.trim();
-  if (name.length < 3 || name.length > 16) throw new SenderError('Name must be 3–16 characters.');
+  if (name.length < 3 || name.length > 30) throw new SenderError('Name must be 3–30 characters.');
   if (!/^[A-Za-z0-9_\- ]+$/.test(name)) throw new SenderError('Name may only use letters, digits, "_", "-" and spaces.');
   if (/\s{2,}/.test(name)) throw new SenderError('Name may not contain double spaces.');
   return name;

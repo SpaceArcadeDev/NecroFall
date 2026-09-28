@@ -64,6 +64,9 @@ function decodeJwtPayload(jwt?: string): Record<string, unknown> {
   }
 }
 
+/** The authorize hop's outcome: an interaction to drive, or a code the provider minted straight away. */
+type AuthStep = { kind: 'interaction'; id: string } | { kind: 'code'; code: string; state: string };
+
 export class SpacetimeAuthProvider implements AuthProvider {
   readonly kind = 'spacetimeauth' as const;
   private events = new AuthEvents();
@@ -96,25 +99,149 @@ export class SpacetimeAuthProvider implements AuthProvider {
 
   async login(returnTo = window.location.pathname + window.location.hash): Promise<void> {
     const endpoints = await this.discover();
+    const attempt = this.newAttempt(returnTo);
+    const params = this.authorizeParams(attempt, await sha256Base64Url(attempt.verifier));
+    window.location.assign(`${endpoints.authorize}?${params.toString()}`);
+  }
+
+  /**
+   * MAGIC LINK, direct (no provider page): create the sign-in interaction, ask the provider to
+   * email the link, and return. The caller then polls `pollMagicLink()` until it is clicked.
+   * The interaction + its cookies live on OUR origin (see the /oidc + /interactions proxy).
+   * With a live provider session there is nothing to email — the code comes back in one hop and
+   * the caller is signed in on the spot ('signed-in').
+   */
+  async sendMagicLink(email: string): Promise<'sent' | 'signed-in'> {
+    const attempt = this.newAttempt(window.location.pathname + window.location.hash);
+    const step = await this.beginAuthorization(attempt);
+    if (step.kind === 'code') {
+      await this.completeWithCode(step.code, step.state, attempt);
+      return 'signed-in';
+    }
+    this.interactionId = step.id;
+    const res = await fetch(`/interactions/${this.interactionId}/magic-link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { pollingToken?: string; message?: string };
+    if (!res.ok || !data.pollingToken) throw new Error(data.message || 'Could not send the magic link.');
+    this.pollingToken = data.pollingToken;
+    return 'sent';
+  }
+
+  /** One poll tick on the emailed link: still waiting, clicked (used) or timed out. */
+  async pollMagicLink(): Promise<'pending' | 'used' | 'expired'> {
+    if (!this.interactionId || !this.pollingToken) return 'expired';
+    const res = await fetch(
+      `/interactions/${this.interactionId}/magic-link?token=${encodeURIComponent(this.pollingToken)}`
+    );
+    if (res.status >= 400) {
+      const data = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(data.message || 'The sign-in failed.');
+    }
+    const data = (await res.json().catch(() => ({}))) as { used?: boolean; expired?: boolean };
+    if (data.used) return 'used';
+    if (data.expired) return 'expired';
+    return 'pending';
+  }
+
+  /** The emailed link was clicked — finish THIS tab's sign-in through the provider's redirect hop. */
+  finishMagicLink(): void {
+    if (!this.interactionId || !this.pollingToken) return;
+    window.location.assign(
+      `/interactions/${this.interactionId}/magic-link/redirect?token=${encodeURIComponent(this.pollingToken)}`
+    );
+  }
+
+  /** SKIP — anonymous sign-in, direct: the interaction's own anonymous endpoint. */
+  async loginAnonymous(): Promise<void> {
+    const attempt = this.newAttempt(window.location.pathname + window.location.hash);
+    const step = await this.beginAuthorization(attempt);
+    if (step.kind === 'code') {
+      await this.completeWithCode(step.code, step.state, attempt);
+      return;
+    }
+    window.location.assign(`/interactions/${step.id}/anonymous`);
+  }
+
+  /** One fresh PKCE attempt (verifier + state + return path), persisted for the callback. */
+  private newAttempt(returnTo: string): PkceState {
     const verifier = randomString(64);
     const state = randomString(16);
-    const pkce: PkceState = { verifier, state, returnTo, createdAt: Date.now() };
+    const attempt: PkceState = { verifier, state, returnTo, createdAt: Date.now() };
     try {
-      sessionStorage.setItem(STORAGE.authPkce, JSON.stringify(pkce));
+      sessionStorage.setItem(STORAGE.authPkce, JSON.stringify(attempt));
     } catch {
       /* storage-less browsing: the callback will simply say the attempt expired */
     }
-    const params = new URLSearchParams({
+    return attempt;
+  }
+
+  private authorizeParams(attempt: PkceState, challenge: string): URLSearchParams {
+    return new URLSearchParams({
       client_id: APP_CONFIG.authClientId,
       redirect_uri: APP_CONFIG.redirectUri,
       response_type: 'code',
       scope: APP_CONFIG.scope,
-      state,
-      code_challenge: await sha256Base64Url(verifier),
+      state: attempt.state,
+      code_challenge: challenge,
       code_challenge_method: 'S256',
     });
-    window.location.assign(`${endpoints.authorize}?${params.toString()}`);
   }
+
+  /**
+   * The first hop of a direct sign-in: ask the authorize endpoint for an interaction through the
+   * same-origin proxy. Normally the provider 303s to /interactions/<id> and STOPS there — that
+   * page's own endpoints drive the rest (anonymous / magic link). When a live provider session
+   * already exists the provider skips every consent screen and answers with the callback URL —
+   * a minted code the caller can exchange on the spot.
+   */
+  private async beginAuthorization(attempt: PkceState): Promise<AuthStep> {
+    const params = this.authorizeParams(attempt, await sha256Base64Url(attempt.verifier));
+    let res: Response;
+    try {
+      res = await fetch(`/oidc/auth?${params.toString()}`, { redirect: 'follow' });
+    } catch {
+      throw new Error('Could not reach the sign-in service. Retry below.');
+    }
+    const id = /\/interactions\/([^/?#]+)/.exec(res.url)?.[1] ?? '';
+    if (id) return { kind: 'interaction', id };
+    try {
+      const url = new URL(res.url);
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      if (code && state) return { kind: 'code', code, state };
+    } catch {
+      /* not a readable URL — fall through to the error below */
+    }
+    throw new Error('The sign-in service did not answer — try again.');
+  }
+
+  /** Exchange a callback code for tokens with the PKCE attempt that minted it. */
+  private async completeWithCode(code: string, state: string, attempt: PkceState): Promise<AuthSession> {
+    if (attempt.state !== state) throw new Error('Login state mismatch — start the sign-in again.');
+    const endpoints = await this.discover();
+    const body = new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: APP_CONFIG.redirectUri,
+      client_id: APP_CONFIG.authClientId,
+      code_verifier: attempt.verifier,
+    });
+    const tokens = await this.postToken(endpoints.token, body);
+    const session = this.sessionFromTokens(tokens);
+    this.setSession(session);
+    try {
+      sessionStorage.removeItem(STORAGE.authPkce);
+    } catch {
+      /* ignore */
+    }
+    return session;
+  }
+
+  private interactionId = '';
+  private pollingToken = '';
 
   /**
    * Called on boot when the URL carries ?code/&state. Returns the session on
@@ -141,23 +268,7 @@ export class SpacetimeAuthProvider implements AuthProvider {
     if (!stored || stored.state !== state) throw new Error('Login state mismatch — start the sign-in again.');
     if (Date.now() - stored.createdAt > PKCE_TTL_MS) throw new Error('This sign-in attempt expired — try again.');
 
-    const endpoints = await this.discover();
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: APP_CONFIG.redirectUri,
-      client_id: APP_CONFIG.authClientId,
-      code_verifier: stored.verifier,
-    });
-    const tokens = await this.postToken(endpoints.token, body);
-    const session = this.sessionFromTokens(tokens);
-    this.setSession(session);
-    try {
-      sessionStorage.removeItem(STORAGE.authPkce);
-    } catch {
-      /* ignore */
-    }
-    return session;
+    return this.completeWithCode(code, state, stored);
   }
 
   async logout(): Promise<void> {
@@ -192,6 +303,7 @@ export class SpacetimeAuthProvider implements AuthProvider {
       const url = new URL(window.location.href);
       url.searchParams.delete('code');
       url.searchParams.delete('state');
+      url.searchParams.delete('iss');
       url.searchParams.delete('error');
       url.searchParams.delete('error_description');
       window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);

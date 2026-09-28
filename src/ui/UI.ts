@@ -203,13 +203,13 @@ export interface BossPlate {
   /** Players only: Necrotic Ward charge, drawn as a light-blue overlay on the health bar. */
   shield?: number;
   shieldMax?: number;
-  /** Bosses only: stagger left and its pool, so every client draws the same stagger bar. */
-  stagger?: number;
-  staggerMax?: number;
+  /** Bosses only: STUN left and its pool, so every client draws the same stun bar. */
+  stun?: number;
+  stunMax?: number;
   /** Bosses only: the enraged phase's world-readable state (red tag on the plate). */
   enraged?: boolean;
-  /** Bosses only: the stagger is BROKEN right now — the punish window. */
-  staggered?: boolean;
+  /** Bosses only: the boss is STUNNED right now — the punish window. */
+  stunned?: boolean;
   /** Players only: buffs / debuffs drawn as icons above the name row. */
   statuses?: {
     key: string;
@@ -509,11 +509,11 @@ export class UI {
     cap: HTMLElement | null;
     shieldWrap: HTMLElement | null;
     shieldFill: HTMLElement | null;
-    /** Boss plates only: the stagger bar (a second bar under health) and the ENRAGED / STAGGERED tags. */
-    staggerWrap: HTMLElement | null;
-    staggerFill: HTMLElement | null;
+    /** Boss plates only: the stun bar (a second bar under health) and the ENRAGED / STUNNED tags. */
+    stunWrap: HTMLElement | null;
+    stunFill: HTMLElement | null;
     rage: HTMLElement | null;
-    staggerTag: HTMLElement | null;
+    stunTag: HTMLElement | null;
     statusSig: string;
     /** Quantised health the cached gradient was built for (see the player plate). */
     hpQ: number;
@@ -1467,8 +1467,8 @@ export class UI {
     this.lobbyStart = button('START MATCH', 'btn primary', () => this.cbs.startMatch());
     const leave = button('LEAVE', 'btn ghost', () => this.cbs.leaveRoom());
     actions.appendChild(this.lobbyReady);
-    actions.appendChild(this.lobbyStart);
     actions.appendChild(leave);
+    actions.appendChild(this.lobbyStart);
     panel.appendChild(actions);
     s.appendChild(panel);
     this.addBack(s, 'Leave the lobby', () => this.cbs.leaveRoom());
@@ -2504,10 +2504,10 @@ export class UI {
         let lvl: HTMLElement | null = null;
         let statusRow: HTMLElement | null = null;
         let crown: HTMLElement | null = null;
-        let staggerWrap: HTMLElement | null = null;
-        let staggerFill: HTMLElement | null = null;
+        let stunWrap: HTMLElement | null = null;
+        let stunFill: HTMLElement | null = null;
         let rage: HTMLElement | null = null;
-        let staggerTag: HTMLElement | null = null;
+        let stunTag: HTMLElement | null = null;
         let cap: HTMLElement | null = null;
         const dashes: { el: HTMLElement; fill: HTMLElement }[] = [];
         if (b.kind === 'player') {
@@ -2548,28 +2548,28 @@ export class UI {
           cap = el('div', 'hp-cap', '');
           box.appendChild(cap);
         } else if (b.kind === 'boss') {
-          // A boss carries TWO bars: health, then stagger. Stagger is not a second health pool —
+          // A boss carries TWO bars: health, then STUN. The stun bar is not a second health pool —
           // it is the meter that opens the punish window, so it is drawn separately and answers
           // "how close am I to breaking it".
           box.appendChild(name);
           box.appendChild(bar);
-          staggerWrap = el('div', 'hp-stagger');
-          staggerFill = el('i');
-          staggerWrap.appendChild(staggerFill);
-          box.appendChild(staggerWrap);
+          stunWrap = el('div', 'hp-stun');
+          stunFill = el('i');
+          stunWrap.appendChild(stunFill);
+          box.appendChild(stunWrap);
           rage = el('div', 'hp-rage hidden', 'ENRAGED');
           box.appendChild(rage);
-          // The broken-stagger call-out: ONE word. The tag marks the state, and the state is already
+          // The STUNNED call-out: ONE word. The tag marks the state, and the state is already
           // obvious in the world (the bar is empty, the body droops, it is not fighting back), so any
           // sentence after it is noise on top of a moment the player is reading at a glance.
-          staggerTag = el('div', 'hp-broken hidden', 'STAGGERED');
-          box.appendChild(staggerTag);
+          stunTag = el('div', 'hp-broken hidden', 'STUNNED');
+          box.appendChild(stunTag);
         } else {
           box.appendChild(name);
           box.appendChild(bar);
         }
         this.bossLayer.appendChild(box);
-        plate = { el: box, name, fill, xpFill, lvl, dashes, statusRow, crown, cap, shieldWrap, shieldFill, staggerWrap, staggerFill, rage, staggerTag, statusSig: '', hpQ: -1, statusIcons: [] };
+        plate = { el: box, name, fill, xpFill, lvl, dashes, statusRow, crown, cap, shieldWrap, shieldFill, stunWrap, stunFill, rage, stunTag, statusSig: '', hpQ: -1, statusIcons: [] };
         this.bossPlates.set(b.key, plate);
       }
       const frac = clamp01(b.hp / Math.max(1, b.maxHp));
@@ -2624,15 +2624,15 @@ export class UI {
         const title = `${b.name} — ${b.caption ?? 'shielded'}`;
         if (plate.el.title !== title) plate.el.title = title;
       } else if (b.kind === 'boss') {
-        // STAGGER: drains as the boss is hit, and an empty bar is the damage window. Broken stagger
+        // STUN: drains as the boss is hit, and an empty bar is the damage window. A broken boss
         // flashes the whole plate so the punish window cannot be missed.
-        const sfrac = clamp01((b.stagger ?? 0) / Math.max(0.0001, b.staggerMax ?? 1));
-        if (plate.staggerFill) setStyle(plate.staggerFill, 'width', `${sfrac * 100}%`);
-        if (plate.staggerWrap) setClass(plate.staggerWrap, 'hidden', (b.staggerMax ?? 0) <= 0);
-        setClass(plate.el, 'staggered', !!b.staggered);
+        const sfrac = clamp01((b.stun ?? 0) / Math.max(0.0001, b.stunMax ?? 1));
+        if (plate.stunFill) setStyle(plate.stunFill, 'width', `${sfrac * 100}%`);
+        if (plate.stunWrap) setClass(plate.stunWrap, 'hidden', (b.stunMax ?? 0) <= 0);
+        setClass(plate.el, 'stunned', !!b.stunned);
         setClass(plate.el, 'enraged', !!b.enraged);
         if (plate.rage) setClass(plate.rage, 'hidden', !b.enraged);
-        if (plate.staggerTag) setClass(plate.staggerTag, 'hidden', !b.staggered);
+        if (plate.stunTag) setClass(plate.stunTag, 'hidden', !b.stunned);
         setStyle(plate.fill, 'background', '');
       } else {
         setStyle(plate.fill, 'background', '');
@@ -3657,7 +3657,7 @@ export class UI {
     perks.forEach((p, idx) => {
       const card = el('div', 'perk');
       // The card wears ITS PERK's tier colour — the colour describes the pick, the seat means
-      // nothing. All three fly in on the SAME beat (the picker runs on a countdown, so a staggered
+      // nothing. All three fly in on the SAME beat (the picker runs on a countdown, so a delayed
       // deal would only cost the player reaction time), and there is deliberately NO 1-2-3 badge.
       const tier = p.tier ?? 'common';
       const tint = UI.TIER_TINTS[tier];

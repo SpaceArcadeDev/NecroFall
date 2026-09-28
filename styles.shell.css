@@ -230,6 +230,31 @@
 }
 .nf-login-welcome { margin: 0 0 4px; font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
 .nf-wide-btn { width: 100%; justify-content: center; }
+/* the direct sign-in card: email → magic link, or SKIP into anonymous */
+.nf-login-slot { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+.nf-login-email { text-align: center; letter-spacing: 0.06em; }
+.nf-login-note {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
+}
+.nf-login-sent { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.nf-login-sent-title { margin: 0; font-size: 15px; font-weight: 900; letter-spacing: 0.22em; color: var(--ui-accent); }
+.nf-login-sent-mail { margin: 0; font-size: 14px; font-weight: 700; color: var(--ui-text); }
+.nf-login-spinner {
+  width: 26px;
+  height: 26px;
+  margin: 4px 0 2px;
+  border-radius: 50%;
+  border: 2px solid rgba(180, 140, 255, 0.22);
+  border-top-color: var(--ui-accent);
+  animation: nf-spin 0.9s linear infinite;
+}
+@keyframes nf-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ---------------------------------------------------------------- onboarding */
 .onboarding-page { align-items: center; text-align: center; justify-content: center; }
@@ -255,8 +280,7 @@
   width: 100%;
   text-align: center;
   font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 .nf-onb-hint { font-size: 10px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
 .nf-onb-hint.bad { color: #ff8f8f; }
@@ -325,6 +349,24 @@
 @media (max-height: 520px) {
   .nf-onb-stage { display: none; }
 }
+/* ---- colony onboarding takeover: the REAL in-game SELECT COLONY screen, plus a
+   floating CONFIRM bar. The countdown / seat-count chrome is hidden — choosing a
+   colony in onboarding is never timed. */
+html.nf-onb-colony .sel-timer,
+html.nf-onb-colony .sel-sub,
+html.nf-onb-colony .count-badge { display: none; }
+.nf-onb-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 4200;
+}
+.nf-onb-bar .btn {
+  min-width: min(340px, 82vw);
+  justify-content: center;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+}
 
 /* ---------------------------------------------------------------- home (live planet backdrop) */
 /* Wordmark on top, the player's OWN character staged centre (the same lobby
@@ -335,7 +377,7 @@
   justify-content: flex-start;
   text-align: center;
   gap: 0;
-  min-height: calc(100vh - 180px);
+  min-height: calc(100vh - 156px);
   position: relative;
   /* the decorative orbs bleed past the column on purpose — never a scrollbar */
   overflow: hidden;
@@ -344,16 +386,16 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: clamp(6px, 3.4vh, 34px);
+  margin-top: clamp(0px, 1.2vh, 10px);
   z-index: 1;
 }
 .nf-home-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
 /* the stage soaks up everything between the wordmark and the caption */
 .nf-stage {
   flex: 1 1 auto;
-  width: min(680px, 96vw);
-  min-height: 190px;
-  max-height: 52vh;
+  width: min(640px, 96vw);
+  min-height: 260px;
+  max-height: none;
   margin-top: 2px;
   position: relative;
   z-index: 1;
@@ -665,70 +707,124 @@
 .nf-queue-clock { font-size: clamp(40px, 10vw, 64px); font-weight: 900; font-variant-numeric: tabular-nums; }
 .nf-queue-message { color: var(--ui-text-muted); }
 
+/* ---------------------------------------------------------------- match found / confirm */
 .nf-modal {
   position: fixed;
   inset: 0;
   z-index: 4100;
   display: grid;
   place-items: center;
-  background: rgba(4, 2, 10, 0.62);
-  backdrop-filter: blur(6px);
+  background: radial-gradient(120% 100% at 50% 0%, rgba(90, 40, 160, 0.32), rgba(4, 2, 10, 0.8));
+  backdrop-filter: blur(8px);
 }
 .nf-modal-card {
-  width: min(560px, 94vw);
-  border-radius: 22px;
-  padding: 20px;
-  background: var(--ui-panel-strong);
-  border: 1px solid var(--ui-border);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  position: relative;
+  width: min(600px, 94vw);
+  border-radius: 26px;
+  padding: 26px 24px 22px;
+  background: linear-gradient(180deg, rgba(36, 21, 58, 0.97), rgba(13, 8, 24, 0.98));
+  border: 1px solid rgba(170, 130, 255, 0.32);
+  box-shadow: 0 40px 110px rgba(0, 0, 0, 0.7), inset 0 0 70px rgba(140, 80, 255, 0.1);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   text-align: center;
+  animation: nf-modal-in 0.32s cubic-bezier(0.22, 1.25, 0.36, 1) backwards;
 }
-.nf-modal-title { margin: 0; letter-spacing: 0.12em; }
+.nf-modal-card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 12%;
+  right: 12%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(196, 130, 255, 0.95), transparent);
+}
+@keyframes nf-modal-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.95); }
+  to { opacity: 1; transform: none; }
+}
+.nf-modal-title {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  background: linear-gradient(180deg, #ffffff, #c9a6ff 78%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.nf-muted { color: var(--ui-text-muted); }
+/* the fill window: a big clock over a draining bar */
+.nf-queue-clock { font-size: clamp(44px, 11vw, 68px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 34px rgba(180, 120, 255, 0.4); }
+.nf-fill-track,
+.nf-confirm-track {
+  width: min(360px, 84%);
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.nf-fill-bar,
+.nf-confirm-bar {
+  height: 100%;
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #9b5cff, #4cf490);
+  transition: width 0.28s linear;
+}
 .nf-confirm { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; }
-.nf-confirm-title { font-size: 24px; font-weight: 900; letter-spacing: 0.1em; }
-.nf-confirm-sub { color: var(--ui-text-muted); font-size: 13px; }
-.nf-confirm-seats { display: flex; gap: 18px; justify-content: center; width: 100%; }
+.nf-confirm-title { font-size: 24px; font-weight: 900; letter-spacing: 0.14em; }
+.nf-confirm-sub { color: var(--ui-text-muted); font-size: 13px; margin: 0; }
+.nf-confirm-seats { display: flex; gap: 16px; justify-content: center; width: 100%; }
 .nf-confirm-colony {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--nf-colony) 55%, transparent);
-  background: color-mix(in srgb, var(--nf-colony) 12%, transparent);
+  gap: 8px;
+  padding: 12px 10px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--nf-colony) 50%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--nf-colony) 16%, transparent), color-mix(in srgb, var(--nf-colony) 6%, transparent));
+  animation: nf-modal-in 0.4s cubic-bezier(0.22, 1.25, 0.36, 1) backwards;
+  animation-delay: 0.05s;
 }
-.nf-confirm-colony-name { font-size: 11px; letter-spacing: 0.12em; color: var(--nf-colony); }
+.nf-confirm-colony-name { font-size: 11px; font-weight: 900; letter-spacing: 0.18em; color: var(--nf-colony); }
 .nf-confirm-seat {
-  width: 34px; height: 34px; border-radius: 50%;
-  display: grid; place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   background: rgba(0, 0, 0, 0.35);
   border: 2px solid rgba(255, 255, 255, 0.18);
   color: var(--ui-text-muted);
   font-size: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
 }
-.nf-confirm-seat.me { border-color: #ffffff; color: #ffffff; }
-.nf-confirm-seat.ok { border-color: var(--ui-accent-2); color: var(--ui-accent-2); }
-.nf-confirm-countdown { font-size: 44px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.nf-confirm-seat.me { border-color: #ffffff; color: #ffffff; box-shadow: 0 0 16px rgba(255, 255, 255, 0.35); }
+.nf-confirm-seat.ok { border-color: var(--ui-accent-2); color: var(--ui-accent-2); box-shadow: 0 0 18px color-mix(in srgb, var(--ui-accent-2) 55%, transparent); }
+.nf-confirm-countdown { font-size: 46px; font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 30px rgba(180, 120, 255, 0.35); }
 .nf-confirm-countdown.urgent { color: #ff5c7a; animation: nf-pulse 0.6s infinite alternate; }
 @keyframes nf-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
 .nf-confirm-btn {
   width: 100%;
-  min-height: 60px;
+  min-height: 62px;
   font-size: 18px;
   font-weight: 900;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: linear-gradient(160deg, #29e0b5, #159c86);
-  color: #04241d;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(160deg, #35f0c2, #14a186 70%);
+  color: #03241d;
   cursor: pointer;
+  box-shadow: 0 14px 40px rgba(30, 220, 170, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition: transform 0.14s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
+.nf-confirm-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 20px 54px rgba(30, 220, 170, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5); }
 .nf-confirm-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* ---------------------------------------------------------------- profile */
@@ -1213,8 +1309,8 @@
 
 /* ---------------------------------------------------------------- desktop */
 @media (min-width: 960px) {
-  /* Center the page in the space LEFT of the friend rail. */
-  .nf-main { padding: 12px 232px 108px 24px; justify-content: center; }
+  /* The friends rail floats OVER the content — no page reserves space for it. */
+  .nf-main { padding: 12px 24px 108px; justify-content: center; }
   .nf-rail {
     top: 68px;
     right: 14px;
@@ -1244,8 +1340,8 @@
 }
 
 @media (max-width: 959px) {
-  /* content never slides under the fixed friends strip */
-  .nf-main { padding-right: 82px; }
+  /* The friends strip is an overlay: pages get NO right padding for it. */
+  .nf-subnav { justify-content: flex-start; }
 }
 
 /* ---------------------------------------------------------------- phone tightening */

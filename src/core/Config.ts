@@ -380,10 +380,10 @@ export const CONFIG = {
     megaDmgMul: 1.35,
   },
   /**
-   * BOSS COMBAT — stagger, the 50 %-HP enrage and its payoff.
+   * BOSS COMBAT — the STUN bar, the 50 %-HP enrage and its payoff.
    *
-   * A boss fights in three readable beats: its stagger bar builds down as it is hit (a broken
-   * stagger is the damage window), it enrages ONCE at half health behind a one-second window of
+   * A boss fights in three readable beats: its stun bar builds down as it is hit (a broken
+   * boss is STUNNED — the damage window), it enrages ONCE at half health behind a one-second window of
    * immunity, and the enraged phase adds two telegraphed mechanics on top of its normal kit. Every
    * number lives here so the fight can be balanced without hunting through the simulation.
    */
@@ -400,35 +400,35 @@ export const CONFIG = {
      */
     damageTaken: 0.68,
     /**
-     * Stagger pool, as a fraction of the boss's max health — the whole bar is worth this much
+     * Stun pool, as a fraction of the boss's max health — the whole bar is worth this much
      * damage. Kept SMALL (and cut from 0.55 to 0.32 alongside the health buff) so that filling the
      * bar is quick: the break is the reward, not a grind.
      */
-    staggerPool: 0.32,
+    stunPool: 0.32,
     /**
-     * How much stagger ONE point of damage to the health bar is worth. The bar reads the incoming
+     * How much STUN ONE point of damage to the health bar is worth. The bar reads the incoming
      * hit at 2x, so it visibly drains twice as fast as the boss's health does.
      */
-    staggerDamageMul: 2,
+    stunDamageMul: 2,
     /**
-     * Stagger regeneration, as a fraction of the pool per second, once the boss has been left alone
-     * for `staggerDelay`. This number decides whether a stagger break is ACHIEVABLE at all: the
+     * Stun regeneration, as a fraction of the pool per second, once the boss has been left alone
+     * for `stunDelay`. This number decides whether a stun break is ACHIEVABLE at all: the
      * players' sustained damage has to beat it, so it is deliberately slow. It used to be 0.12 —
      * 6.6 % of the boss's max health per second — and chip damage between engagements was undone
      * faster than most kits could ever fill the bar.
      */
-    staggerRegen: 0.05,
-    /** Seconds of quiet before the stagger bar starts refilling. */
-    staggerDelay: 1.2,
-    /** Seconds a broken stagger lasts — the STUN. The boss cannot move, attack or cast for this long. */
-    staggerDuration: 2,
+    stunRegen: 0.05,
+    /** Seconds of quiet before the stun bar starts refilling. */
+    stunDelay: 1.2,
+    /** Seconds a broken boss stays STUNNED. It cannot move, attack or cast for this long. */
+    stunDuration: 2,
     /**
      * Refill rate while STUNNED, as a fraction of the pool per second. The bar races back to full
      * across the stun no matter how hard the boss is being hit (damage cannot touch it while it is
-     * broken — see `Enemy.addStagger`), so the punish window carries its own visible clock and the
+     * stunned — see `Enemy.addStun`), so the punish window carries its own visible clock and the
      * fight resumes from a clean, full bar. 0.6 fills it in ~1.7 s, inside the 2 s window.
      */
-    staggerStunRegen: 0.6,
+    stunBrokenRegen: 0.6,
     /** Fraction of max health at or below which the boss enrages. Fires exactly once. */
     enrageAt: 0.5,
     /** Seconds of the enrage transition: damage-immune, wave-pushing, VFX-blasting. */

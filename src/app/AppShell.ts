@@ -81,6 +81,10 @@ export class AppShell implements ShellContext {
   private avatarStageHost: HTMLElement | null = null;
   private avatarStageArgs: { colony: number; acc: string } | null = null;
   private restageTimer = 0;
+  /** The colony-onboarding takeover: shell-hidden legacy screen + a floating CONFIRM bar. */
+  private onbBar: HTMLElement | null = null;
+  private onbConfirm: HTMLButtonElement | null = null;
+  private onbColonyPick = -1;
   private playerSearch: PlayerSearch | null = null;
   private controlsModal: ControlsModal | null = null;
   private backBtn: HTMLButtonElement;
@@ -490,6 +494,8 @@ export class AppShell implements ShellContext {
       this.page?.update?.();
       return;
     }
+    // The colony-onboarding takeover belongs to the onboarding screen only.
+    this.exitColonyOnboarding();
     // Mobile: every shell screen re-arms the one-tap fullscreen ask (a redirect or a refusal may
     // have consumed the previous window) — but never once fullscreen is actually on.
     if (IS_TOUCH && fullscreenMode() === 'none') OrientationGate.shared().armAutoLock();
@@ -568,31 +574,111 @@ export class AppShell implements ShellContext {
     wrap.appendChild(el('div', 'menu-sub', 'Dive · Liberate · Dominate'));
 
     const card = el('div', 'nf-login-card');
-    card.appendChild(el('h1', 'nf-login-welcome', 'Welcome back, Survivor'));
-    if (message) card.appendChild(el('p', 'nf-error', message));
-
-    card.appendChild(
-      button('CONTINUE — MAGIC LINK / GOOGLE', 'btn primary nf-wide-btn', () => {
-        void this.auth.login();
-      })
-    );
-    card.appendChild(el('p', 'muted', 'Sign-in is handled by SpacetimeAuth — no password to remember.'));
-    if (APP_CONFIG.p2pEnabled) {
-      card.appendChild(
-        button('PLAY WITHOUT AN ACCOUNT (P2P / OFFLINE)', 'btn nf-wide-btn', () => this.launchLegacy({}))
-      );
-    }
+    card.appendChild(el('h1', 'nf-login-welcome', 'ENTER THE FALL'));
+    const slot = el('div', 'nf-login-slot');
+    card.appendChild(slot);
     wrap.appendChild(card);
     this.screenHost.appendChild(wrap);
+
+    const auth = this.auth as SpacetimeAuthProvider;
+
+    // ---- the email form: one field, one button: the magic link goes out through the DIRECT API
+    const showForm = (error?: string): void => {
+      clear(slot);
+      const form = el('div', 'nf-login-slot');
+      if (error) form.appendChild(el('p', 'nf-error', error));
+      const email = el('input', 'nf-input big nf-login-email') as HTMLInputElement;
+      email.type = 'email';
+      email.placeholder = 'EMAIL ADDRESS';
+      email.autocomplete = 'email';
+      email.spellcheck = false;
+      const send = el('button', 'btn primary nf-wide-btn', 'SEND MAGIC LINK') as HTMLButtonElement;
+      send.type = 'button';
+      send.disabled = true;
+      const skip = el('button', 'btn nf-wide-btn', 'SKIP — PLAY ANONYMOUS') as HTMLButtonElement;
+      skip.type = 'button';
+      email.addEventListener('input', () => {
+        send.disabled = !email.checkValidity();
+      });
+      email.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' && !send.disabled) send.click();
+      });
+      send.addEventListener('click', () => {
+        const address = email.value.trim();
+        if (!address) return;
+        send.disabled = true;
+        send.textContent = 'SENDING…';
+        void auth
+          .sendMagicLink(address)
+          .then((result) => {
+            // 'signed-in': a live provider session answered the flow in one hop — nothing to email.
+            if (result === 'sent') showSent(address);
+          })
+          .catch((err: unknown) => showForm(err instanceof Error ? err.message : 'Could not send the magic link.'));
+      });
+      skip.addEventListener('click', () => {
+        skip.disabled = true;
+        skip.textContent = 'SIGNING IN…';
+        void auth.loginAnonymous().catch((err: unknown) =>
+          showForm(err instanceof Error ? err.message : 'Could not sign in anonymously.')
+        );
+      });
+      form.appendChild(email);
+      form.appendChild(send);
+      form.appendChild(skip);
+      form.appendChild(el('p', 'nf-login-note', 'A one-time link — no password to remember'));
+      slot.appendChild(form);
+      window.setTimeout(() => email.focus(), 80);
+    };
+
+    // ---- waiting for the click: the tab finishes the sign-in the moment the link is used
+    const showSent = (address: string): void => {
+      clear(slot);
+      const sent = el('div', 'nf-login-sent');
+      sent.appendChild(el('div', 'nf-login-spinner', ''));
+      sent.appendChild(el('h2', 'nf-login-sent-title', 'MAGIC LINK SENT'));
+      const line = el('p', 'nf-login-note', 'CLICK THE LINK WE JUST SENT TO');
+      sent.appendChild(line);
+      sent.appendChild(el('p', 'nf-login-sent-mail', address));
+      const back = el('button', 'btn nf-wide-btn', 'BACK') as HTMLButtonElement;
+      back.type = 'button';
+      back.addEventListener('click', () => showForm());
+      sent.appendChild(back);
+      slot.appendChild(sent);
+      const timer = window.setInterval(() => {
+        if (!sent.isConnected) {
+          window.clearInterval(timer);
+          return;
+        }
+        void auth.pollMagicLink().then(
+          (state) => {
+            if (state === 'used') {
+              window.clearInterval(timer);
+              auth.finishMagicLink();
+            } else if (state === 'expired') {
+              window.clearInterval(timer);
+              showForm('That magic link expired — send a new one.');
+            }
+          },
+          (err: unknown) => {
+            window.clearInterval(timer);
+            showForm(err instanceof Error ? err.message : 'The sign-in failed.');
+          }
+        );
+      }, 2500);
+    };
+
+    if (message) showForm(message);
+    else showForm();
   }
 
   private renderOnboarding(): void {
     const wrap = el('div', 'nf-page onboarding-page');
     this.screenHost.appendChild(wrap);
-    // Two steps: the name first, then the colony menu. A reload resumes mid-flow (a name that
-    // already landed jumps straight to the colony step).
+    // Two steps: the name first, then the colony. A reload resumes mid-flow (a name that already
+    // landed jumps straight to the colony step).
     const me = ClientCache.shared.playerByHex(this.myHex());
-    if (me?.playerName) this.renderColonyStep(wrap);
+    if (me?.playerName) this.enterColonyOnboarding();
     else this.renderNameStep(wrap);
   }
 
@@ -604,11 +690,11 @@ export class AppShell implements ShellContext {
 
     const card = el('div', 'nf-onb-card');
     const input = el('input', 'nf-input big nf-onb-name') as HTMLInputElement;
-    input.maxLength = 16;
+    input.maxLength = 30;
     input.placeholder = 'LIBERATOR NAME';
     input.autocomplete = 'off';
     input.spellcheck = false;
-    const hint = el('div', 'nf-onb-hint', '3–16 CHARACTERS');
+    const hint = el('div', 'nf-onb-hint', '3–30 CHARACTERS');
     card.appendChild(input);
     card.appendChild(hint);
 
@@ -620,7 +706,7 @@ export class AppShell implements ShellContext {
       const ok = value.length >= 3;
       next.disabled = !ok;
       hint.classList.toggle('bad', value.length > 0 && !ok);
-      hint.textContent = value.length > 0 && !ok ? 'AT LEAST 3 CHARACTERS' : '3–16 CHARACTERS';
+      hint.textContent = value.length > 0 && !ok ? 'AT LEAST 3 CHARACTERS' : '3–30 CHARACTERS';
     };
     input.addEventListener('input', repaint);
     input.addEventListener('keydown', (ev) => {
@@ -630,7 +716,7 @@ export class AppShell implements ShellContext {
       const value = input.value.trim();
       if (value.length < 3) return;
       setPlayerName(value);
-      this.renderColonyStep(wrap); // straight into the colony menu — the P2P select, as a confirm step
+      this.enterColonyOnboarding(); // straight into the legacy SELECT COLONY screen, as a confirm step
     });
 
     wrap.appendChild(card);
@@ -639,72 +725,64 @@ export class AppShell implements ShellContext {
     window.setTimeout(() => input.focus(), 80);
   }
 
-  /** Onboarding, step 2 — the in-game COLONY SELECT: champions on the stage, three lit cards, confirm. */
-  private renderColonyStep(wrap: HTMLElement): void {
-    clear(wrap);
-    wrap.appendChild(el('div', 'menu-title', 'SELECT COLONY'));
-    wrap.appendChild(el('p', 'menu-sub', 'Your colony is permanent for official play'));
+  /**
+   * Onboarding, step 2 — the colony. This hands the view to the REAL in-game SELECT COLONY screen
+   * (identical layout, scaling, champion avatars and animations as the legacy P2P flow); the
+   * shell floats only a CONFIRM bar over it and waits for `choose_colony` to land.
+   */
+  private enterColonyOnboarding(): void {
+    const game = this.game;
+    if (!game) {
+      window.setTimeout(() => {
+        if (this.screen === 'onboarding') this.enterColonyOnboarding();
+      }, 400);
+      return;
+    }
+    this.onbColonyPick = -1;
+    this.hideShell(false); // reveal the game canvas — `screen` stays 'onboarding' so completion lands
+    game.ui.onColonyClick = (idx) => this.pickOnbColony(idx);
+    game.ui.show('colony');
+    game.ui.updateColonySelect(0, [0, 0, 0], -1, 1, 1);
+    document.documentElement.classList.add('nf-onb-colony');
 
-    const stage = el('div', 'nf-onb-stage');
-    const cards = el('div', 'nf-colony-cards');
-    wrap.appendChild(stage);
-    wrap.appendChild(cards);
-
-    const confirm = el('button', 'btn primary nf-wide-btn', 'CONFIRM COLONY') as HTMLButtonElement;
+    const bar = el('div', 'nf-onb-bar');
+    const confirm = el('button', 'btn primary', 'CONFIRM COLONY') as HTMLButtonElement;
     confirm.type = 'button';
     confirm.disabled = true;
-    wrap.appendChild(confirm);
-
-    let picked = -1;
-    const cardEls: HTMLButtonElement[] = [];
-    const repaint = (): void => {
-      cardEls.forEach((c, i) => c.classList.toggle('selected', i === picked));
-      confirm.disabled = picked < 0;
-      confirm.textContent = picked < 0 ? 'CONFIRM COLONY' : `CONFIRM ${COLONIES[picked].name}`;
-    };
-
-    COLONIES.forEach((colony, index) => {
-      const card = el('button', 'nf-colony-card') as HTMLButtonElement;
-      card.type = 'button';
-      card.style.setProperty('--nf-colony', colony.css);
-      card.appendChild(el('span', 'nf-colony-emblem', colony.symbol));
-      card.appendChild(el('span', 'nf-colony-name', colony.name));
-      card.appendChild(el('span', 'nf-colony-blurb', colony.desc));
-      const bonus = el('span', 'nf-colony-bonus');
-      for (const line of colony.bonus) {
-        const neg = line.trim().startsWith('-');
-        const row = el('span', `nf-colony-bonus-row ${neg ? 'neg' : 'pos'}`);
-        row.appendChild(el('i', '', neg ? '\u25bc' : '\u25b2'));
-        row.appendChild(el('span', '', line.trim().replace(/^[+\-\s]+/, '')));
-        bonus.appendChild(row);
-      }
-      card.appendChild(bonus);
-      card.appendChild(el('span', 'nf-colony-pick', 'SELECTED'));
-      card.addEventListener('click', () => {
-        picked = index;
-        repaint();
-      });
-      cardEls.push(card);
-      cards.appendChild(card);
-    });
-
     confirm.addEventListener('click', () => {
-      if (picked < 0) return;
+      if (this.onbColonyPick < 0) return;
       confirm.disabled = true;
-      confirm.textContent = `JOINING ${COLONIES[picked].name}\u2026`;
-      chooseColony(picked);
+      confirm.textContent = `JOINING ${COLONIES[this.onbColonyPick].name}\u2026`;
+      chooseColony(this.onbColonyPick);
     });
+    bar.appendChild(confirm);
+    document.body.appendChild(bar);
+    this.onbBar = bar;
+    this.onbConfirm = confirm;
+  }
 
-    repaint();
-    // The champions, live — the same lobby line-up the in-game COLONY SELECT stages.
-    window.setTimeout(() => {
-      if (!stage.isConnected) return;
-      const acc = selectionToWire(loadSelection());
-      this.stagePartyAvatars(
-        stage,
-        COLONIES.map((colony, i) => ({ id: `colony-${colony.id}`, colony: i, acc, me: false, ready: true }))
-      );
-    }, 80);
+  /** The legacy colony screen reported a pick — mirror it into the confirm bar. */
+  private pickOnbColony(idx: number): void {
+    this.onbColonyPick = idx;
+    this.game?.ui.updateColonySelect(0, [0, 0, 0], idx, 1, 1);
+    if (this.onbConfirm) {
+      this.onbConfirm.disabled = false;
+      this.onbConfirm.textContent = `CONFIRM ${COLONIES[idx].name}`;
+    }
+  }
+
+  /** Tear the colony takeover down — showShell() calls this on every real screen change. */
+  private exitColonyOnboarding(): void {
+    if (!this.onbBar) return;
+    this.onbBar.remove();
+    this.onbBar = null;
+    this.onbConfirm = null;
+    this.onbColonyPick = -1;
+    document.documentElement.classList.remove('nf-onb-colony');
+    if (this.game) {
+      this.game.ui.onColonyClick = () => undefined;
+      if (this.game.ui.currentScreen === 'colony') this.game.ui.show('menu');
+    }
   }
 
   private renderHome(): void {

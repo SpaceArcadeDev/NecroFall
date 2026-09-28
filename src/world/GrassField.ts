@@ -90,7 +90,10 @@ export function buildGrassField(
   geo.setAttribute('aPhase', phase);
 
   const mesh = new THREE.InstancedMesh(geo, material, capacity);
-  mesh.frustumCulled = false;
+  // Frustum-culled with the bounds three derives from the live instances (the field is static, so
+  // they stay valid for the mesh's whole life) — looking away skips the whole ~10k-blade draw
+  // instead of vertex-shading every blade off screen.
+  mesh.frustumCulled = true;
   mesh.name = 'grass-field';
 
   const R = planet.radius;

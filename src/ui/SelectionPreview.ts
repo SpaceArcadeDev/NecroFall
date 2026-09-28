@@ -540,13 +540,22 @@ export class SelectionPreview {
     this.raf = 0;
   }
 
+  /**
+   * The stage renders at 30 fps (2026-09 thermal pass). It is a slow idle pose and a drag
+   * turntable, not gameplay — and on a 120 Hz phone this halves the second WebGL context's cost.
+   * Every frame that IS drawn is pixel-identical to before; only the number of frames changes.
+   */
+  private static readonly FRAME_MS = 1000 / 30;
+
   private start(): void {
     if (this.raf) return;
     this.last = performance.now();
     const loop = (now: number): void => {
       this.raf = requestAnimationFrame(loop);
-      const dt = Math.min(0.05, (now - this.last) / 1000);
+      const elapsed = now - this.last;
+      if (elapsed + 1.5 < SelectionPreview.FRAME_MS) return;
       this.last = now;
+      const dt = Math.min(0.05, elapsed / 1000);
       this.update(dt);
     };
     this.raf = requestAnimationFrame(loop);

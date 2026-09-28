@@ -54,6 +54,7 @@ import { loadSelection, saveSelection, selectionFromWire, selectionToWire } from
 import { NECROTECHS, NecrotechDef, defForDrop, ALL_NECROTECHS, ensureAim, aimDefault } from '../necrotech/NecrotechData';
 import { PERKS, Perk, rollPerks } from '../necromutation/Perks';
 import { Rand, clamp, dirFromAngles, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
+import { PerformanceMonitor } from '../performance/PerformanceMonitor';
 
 export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'playing' | 'ended';
 
@@ -420,6 +421,18 @@ export class Game {
   private dprBadT = 0;
   private dprGoodT = 0;
   private dprCooldown = 0;
+  /**
+   * Render pacing (2026-09 thermal pass). `rafGapMs` is an EMA of the RAW rAF cadence, which
+   * describes the display even while frames are being skipped; `lastInteractionAt` drives the
+   * idle-menu drop. See `frameTargetFps`.
+   */
+  private rafGapMs = 16.7;
+  private lastRawTick = 0;
+  private lastInteractionAt = performance.now();
+  /** Seconds of warm-up during which the DPR ladder ignores samples (boot / match-start jank). */
+  private dprWarmup = 0;
+  /** Last pacing target the ladder saw, so a target change (idle wake, menu→match) is noticed. */
+  private pacedTarget = -1;
   /** Performance watchdog: consecutive slow samples and how many rescue steps have been applied. */
   private slowSamples = 0;
   private goodSamples = 0;
@@ -837,18 +850,48 @@ export class Game {
    * Adaptive render scale — the ONLY thing in the game that moves the resolution. It shares the
    * watchdog's half-second FPS windows (there is exactly one performance monitor), and walks the
    * ladder one step at a time with hysteresis on both sides plus a cooldown, so quality can never
-   * oscillate: down after `PERF.downAfter` seconds under `badFps`, up after `PERF.upAfter` seconds
-   * over `goodFps`, never twice within `PERF.cooldown`. A phone that is already thermally
-   * throttling is caught in two windows, not after several seconds of jank.
+   * oscillate: down after `PERF.downAfter` seconds under the bad threshold, up after `PERF.upAfter`
+   * seconds over the good one, never twice within `PERF.cooldown`. A phone that is already
+   * thermally throttling is caught in two windows, not after several seconds of jank.
+   *
+   * Runs in every phase (2026-09 thermal pass): menus used to be exempt, which is exactly where a
+   * phone could bake. The thresholds are RELATIVE to the pacing target (the plan's own rule:
+   * trouble starts when a frame budget is missed by ~20 %) — a menu capped at 30 fps would
+   * otherwise read as "always slow" by construction, and a 60 fps cap that a busy machine merely
+   * approaches must not tank the resolution of a machine that is otherwise fine. Uncapped phases
+   * (desktop matches) keep the original absolute numbers.
    */
   private updateRenderScale(fps: number): void {
+    // A backgrounded tab throttles rAF to ~1 fps and a restored tab produces one enormous frame —
+    // neither says anything about how the machine performs (same guard as the watchdog).
+    if (document.hidden || this.frameMs > 400) return;
     const SAMPLE = 0.5; // length of an fps window (see `fpsT > 0.5` in update)
+    const target = this.frameTargetFps();
+    if (target !== this.pacedTarget) {
+      // The pacing target just moved (idle wake, menu → match): the next window measures a mix of
+      // the old and the new rate, so it gets the same clean slate as a boot.
+      this.pacedTarget = target;
+      this.dprWarmup = Math.max(this.dprWarmup, 1);
+      this.dprBadT = 0;
+      this.dprGoodT = 0;
+    }
+    if (this.dprWarmup > 0) {
+      // Boot / match start / target change: shader compilation, world building and rate ramps
+      // produce a few slow windows that say nothing about sustained performance. Keep the clocks
+      // clean while they pass.
+      this.dprWarmup -= SAMPLE;
+      this.dprBadT = 0;
+      this.dprGoodT = 0;
+      return;
+    }
     const last = PERF.dprLadder.length - 1;
+    const bad = target > 0 ? target * 0.8 : PERF.badFps;
+    const good = target > 0 ? target * 0.93 : PERF.goodFps;
     if (this.dprCooldown > 0) this.dprCooldown -= SAMPLE;
-    if (fps < PERF.badFps) {
+    if (fps < bad) {
       this.dprBadT += SAMPLE;
       this.dprGoodT = 0;
-    } else if (fps >= PERF.goodFps) {
+    } else if (fps >= good) {
       this.dprGoodT += SAMPLE;
       this.dprBadT = 0;
     } else {
@@ -866,6 +909,24 @@ export class Game {
       this.dprCooldown = PERF.cooldown;
       this.applyRenderScale();
     }
+  }
+
+  /**
+   * Render pacing target for the current phase (0 = uncapped):
+   *   • matches and the colony/necrotech selections keep the gameplay budget — on phones that is
+   *     `PERF.matchFps`, but only on 120 Hz-class panels (`rafGapMs`): a 60 fps target on a 90 Hz
+   *     panel lands on 45 fps, which is worse than leaving it native.
+   *   • menus/lobbies/end screens render at `PERF.menuFps`, dropping to `PERF.idleMenuFps` once the
+   *     player has not touched anything for `PERF.idleAfter` seconds (plan §38).
+   */
+  private frameTargetFps(): number {
+    if (this.phase === 'playing' || this.phase === 'colony' || this.phase === 'necrotech') {
+      return this.rafGapMs < 9.5 ? PERF.matchFps : 0;
+    }
+    if (this.phase === 'menu' && performance.now() - this.lastInteractionAt > PERF.idleAfter * 1000) {
+      return PERF.idleMenuFps;
+    }
+    return PERF.menuFps;
   }
 
   // ------------------------------------------------------------ graphics preset
@@ -930,6 +991,7 @@ export class Game {
     this.dprBadT = 0;
     this.dprGoodT = 0;
     this.dprCooldown = 0;
+    this.dprWarmup = 4;
     this.applyRenderScale();
     this.rescueLevel = 0;
     this.slowSamples = 0;
@@ -952,6 +1014,9 @@ export class Game {
   }
 
   start(): void {
+    // Boot takes a few seconds (shaders compile, the planet builds): have the DPR ladder ignore
+    // those frames so start-up jank can never lower the render scale.
+    this.dprWarmup = 4;
     // Mobile: ask for landscape on the first gesture (fullscreen + orientation lock).
     this.ui.orientation.armAutoLock();
     // A lost GPU context freezes the picture completely. Tell the player instead of leaving them
@@ -966,6 +1031,12 @@ export class Game {
       this.ctxLost = false;
       this.ui.banner('GRAPHICS RESTORED', 2600);
     });
+    PerformanceMonitor.init();
+    // Idle power saving (plan §38): any input at all restores the full menu frame rate.
+    const wake = (): void => { this.lastInteractionAt = performance.now(); };
+    for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
+      window.addEventListener(ev, wake, { passive: true });
+    }
     let last = performance.now();
     const loop = (t: number): void => {
       // Schedule the next frame FIRST: if anything below throws, the game must keep running instead
@@ -976,17 +1047,35 @@ export class Game {
       // visibilitychange handler assumes when it suspends the audio graph (see bindMetaEvents).
       if (document.hidden) {
         last = t;
+        this.lastRawTick = t;
         return;
       }
-      const dt = clamp((t - last) / 1000, 0, 0.05);
+      // Display-refresh estimate from the RAW rAF cadence — sampled before any pacing skips, and
+      // the only thing that decides whether a 60 fps match target is worthwhile (see
+      // `frameTargetFps`).
+      if (this.lastRawTick > 0) this.rafGapMs += (Math.min(64, t - this.lastRawTick) - this.rafGapMs) * 0.05;
+      this.lastRawTick = t;
+
+      // Render pacing (2026-09 thermal pass): matches keep the gameplay budget, menus/shells only
+      // the cheap one, and an untouched menu drops further. A skipped frame skips the WHOLE frame —
+      // no sim, no HUD work, no draw — so a 120 Hz phone no longer renders the menu 120×/s.
+      const target = this.frameTargetFps();
+      const minGap = target > 0 ? 1000 / target : 0;
+      const elapsed = t - last;
+      if (elapsed + 1.5 < minGap) return;   // not due yet
+      const dt = clamp(elapsed / 1000, 0, 0.05);
       last = t;
       try {
+        PerformanceMonitor.beginFrame(elapsed);
+        PerformanceMonitor.beginUpdate();
         this.update(dt);
         // Render cost, smoothed — the F1 overlay prints it next to the sim cost, so a hot phone can
         // be attributed to the GPU draw or the CPU simulation instead of guessed at.
+        PerformanceMonitor.beginRender();
         const r0 = performance.now();
         this.renderer.render(this.scene, this.cam.camera);
         this.renderMs += (performance.now() - r0 - this.renderMs) * 0.1;
+        PerformanceMonitor.endRender(this.renderer, this.phase, this.settings.name);
       } catch (err) {
         this.reportCrash(err);
       }
@@ -1744,6 +1833,7 @@ export class Game {
     this.dprBadT = 0;
     this.dprGoodT = 0;
     this.dprCooldown = 0;
+    this.dprWarmup = 4;
     this.applyRenderScale();
     this.slowSamples = 0;
     this.goodSamples = 0;
@@ -3869,10 +3959,8 @@ export class Game {
       this.goodSamples = 0;
     }
 
-    // Resolution is owned by the DPR ladder (one controller, its own hysteresis); the rescue
-    // levels below never touch the pixel ratio.
-    this.updateRenderScale(fps);
-
+    // Resolution is owned by the DPR ladder (one controller, its own hysteresis, called from
+    // `update` for EVERY phase); the rescue levels below never touch the pixel ratio.
     if (this.slowSamples >= 2 && this.rescueLevel < 3) {
       this.slowSamples = 0;
       this.rescueLevel++;
@@ -3922,6 +4010,9 @@ export class Game {
       this.fps = this.frames / this.fpsT;
       this.frames = 0;
       this.fpsT = 0;
+      // The DPR ladder runs in EVERY phase (menus used to be exempt — exactly where a phone could
+      // bake); the rescue steps below stay match-only.
+      this.updateRenderScale(this.fps);
       this.watchdog(this.fps);
     }
 
@@ -4928,7 +5019,7 @@ export class Game {
     const heap = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
     const lines = [
       `FPS ${this.fps.toFixed(0)}  frame ${(this.frameMs).toFixed(1)}ms  worst ${this.worstMs.toFixed(0)}ms  heap ${heap ? `${(heap.usedJSHeapSize / 1048576).toFixed(1)}MB` : '—'}`,
-      `sim ${this.simMs.toFixed(2)}ms  render ${this.renderMs.toFixed(2)}ms  quality ${this.settings.name}  rescue ${this.rescueLevel}/3  dpr ${this.renderer.getPixelRatio().toFixed(2)}`,
+      `sim ${this.simMs.toFixed(2)}ms  render ${this.renderMs.toFixed(2)}ms  quality ${this.settings.name}  rescue ${this.rescueLevel}/3  dpr ${this.renderer.getPixelRatio().toFixed(2)}  pace ${this.frameTargetFps() || 'max'}`,
       `canvas ${canvas.width}x${canvas.height}  draws ${info.render.calls}  tris ${Math.round(info.render.triangles / 1000)}k  geo ${info.memory.geometries}  tex ${info.memory.textures}`,
       `ctx ${this.ctxLost ? 'LOST' : 'ok'}  phase ${this.phase}  t ${formatTime(this.matchElapsed)}  paused ${this.paused ? 'YES' : 'no'}`,
       `net ${this.net.roleLabel()}  peers ${this.net.peerCount()}  ${this.net.msgsPerSec.toFixed(1)} msg/s  ${(this.net.bytesPerSec / 1024).toFixed(1)} KB/s  tick ${CONFIG.netTickSnapshot}Hz↓/${CONFIG.netTickPlayers}Hz↑`,

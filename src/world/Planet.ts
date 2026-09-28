@@ -365,8 +365,12 @@ export class Planet {
   readonly seed: number;
   /** Quality tier for the match, used to size the grass field and scenery. */
   private readonly quality: QualitySettings;
-  mesh: THREE.Mesh;
+  /** The terrain: one mesh per sector (see `buildTerrainChunks`) so the far side can be skipped. */
+  mesh: THREE.Group;
   private group = new THREE.Group();
+  private terrainChunks: THREE.Mesh[] = [];
+  private chunkCenters: THREE.Vector3[] = [];
+  private chunkRadii: number[] = [];
   private decorationsVisible = true;
   private sky: THREE.Mesh;
   private sunBase = new THREE.Vector3(1, 0.85, 0.6).normalize();
@@ -466,11 +470,114 @@ export class Planet {
       }),
     });
 
-    this.mesh = new THREE.Mesh(geo, this.terrainMat);
-    this.mesh.frustumCulled = false;
+    this.mesh = new THREE.Group();
+    this.mesh.name = 'terrain';
+    this.buildTerrainChunks(geo);
     scene.add(this.mesh);
     this.buildMeshLookup(geo);
     this.buildDecorations(scene, quality, seed);
+  }
+
+  /**
+   * Splits the terrain into 32 equal-direction sectors so the frustum — and the horizon test in
+   * `updateTerrainChunks` — can skip whatever no camera can see. Every chunk SHARES the parent's
+   * vertex buffers; the split only partitions the index, so the drawn surface is bit-identical to
+   * the old single mesh. Bounds are computed from the vertices each chunk actually references
+   * (three's own `computeBoundingSphere` would report the whole planet's sphere for every chunk).
+   */
+  private buildTerrainChunks(geo: THREE.BufferGeometry): void {
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const idx = geo.index as THREE.BufferAttribute;
+    const CHUNKS = 32;
+    // Fibonacci sphere: evenly spread seed directions for the sectors.
+    const seeds: THREE.Vector3[] = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < CHUNKS; i++) {
+      const y = 1 - (2 * i + 1) / CHUNKS;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const a = golden * i;
+      seeds.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r));
+    }
+    const lists: number[][] = seeds.map(() => []);
+    const a3 = new THREE.Vector3();
+    const b3 = new THREE.Vector3();
+    const c3 = new THREE.Vector3();
+    for (let f = 0; f < idx.count; f += 3) {
+      const ia = idx.getX(f);
+      const ib = idx.getX(f + 1);
+      const ic = idx.getX(f + 2);
+      a3.fromBufferAttribute(pos, ia);
+      b3.fromBufferAttribute(pos, ib);
+      c3.fromBufferAttribute(pos, ic);
+      const cx = a3.x + b3.x + c3.x;
+      const cy = a3.y + b3.y + c3.y;
+      const cz = a3.z + b3.z + c3.z;
+      const l = Math.hypot(cx, cy, cz) || 1;
+      const nx = cx / l, ny = cy / l, nz = cz / l;
+      let best = 0;
+      let bestDot = -2;
+      for (let s = 0; s < CHUNKS; s++) {
+        const d = seeds[s].x * nx + seeds[s].y * ny + seeds[s].z * nz;
+        if (d > bestDot) { bestDot = d; best = s; }
+      }
+      lists[best].push(ia, ib, ic);
+    }
+    const p = new THREE.Vector3();
+    for (let s = 0; s < CHUNKS; s++) {
+      const list = lists[s];
+      if (list.length === 0) continue;
+      const chunk = new THREE.BufferGeometry();
+      chunk.setAttribute('position', pos);
+      chunk.setAttribute('normal', geo.attributes.normal);
+      chunk.setAttribute('color', geo.attributes.color);
+      chunk.setIndex(list);
+      // Bounds from the vertices this chunk references, not the whole planet's cloud.
+      const seen = new Set<number>();
+      const box = new THREE.Box3();
+      for (const vi of list) {
+        if (seen.has(vi)) continue;
+        seen.add(vi);
+        box.expandByPoint(p.fromBufferAttribute(pos, vi));
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      let radius = 0;
+      for (const vi of seen) {
+        radius = Math.max(radius, p.fromBufferAttribute(pos, vi).distanceTo(center));
+      }
+      radius = Math.max(1, radius * 1.05);
+      chunk.boundingSphere = new THREE.Sphere(center, radius);
+      const mesh = new THREE.Mesh(chunk, this.terrainMat);
+      mesh.name = `terrain-chunk-${s}`;
+      mesh.frustumCulled = true;
+      this.terrainChunks.push(mesh);
+      this.chunkCenters.push(center);
+      this.chunkRadii.push(radius);
+      this.mesh.add(mesh);
+    }
+  }
+
+  /**
+   * Horizon culling (plan §19): from a camera `h` above the surface the planet's own curve hides
+   * everything beyond a small cap (at 9 m up: ~14°, plus the angle the peaks add — ~27° for the
+   * tallest ridge). A chunk is kept unless its whole bounding sphere sits below the horizon plane
+   * through the eye; the conservative test is `dot(C, P) + r·|P| <= R²`, with 3 % slack so tall
+   * summits that poke over the curve can never be skipped. Exactness was verified against a
+   * per-vertex occlusion check on the seeded planet.
+   */
+  private updateTerrainChunks(cameraPos: THREE.Vector3): void {
+    const n = this.terrainChunks.length;
+    if (n === 0) return;
+    const d = cameraPos.length();
+    if (d <= this.radius) {
+      for (let i = 0; i < n; i++) this.terrainChunks[i].visible = true;
+      return;
+    }
+    const horizon = this.radius * this.radius * 0.97;
+    for (let i = 0; i < n; i++) {
+      const c = this.chunkCenters[i];
+      this.terrainChunks[i].visible =
+        c.x * cameraPos.x + c.y * cameraPos.y + c.z * cameraPos.z + this.chunkRadii[i] * d > horizon;
+    }
   }
 
   /**
@@ -504,6 +611,10 @@ export class Planet {
 
     // Atmosphere: motes wrap around the camera, glints twinkle over the arena.
     this.ambience?.update(dt, cameraPos, time);
+
+    // The planet hides its own far side from a low camera: skip the terrain sectors the horizon
+    // cannot possibly show (see `updateTerrainChunks`).
+    this.updateTerrainChunks(cameraPos);
   }
 
   /** Scales the ambient point clouds (watchdog hook, same idea as Effects.setBudget). */
@@ -567,8 +678,13 @@ export class Planet {
   }
 
   /** Tears down every GPU resource so a freshly seeded planet can take its place. */
-  dispose(): void {    this.mesh.removeFromParent();
-    this.mesh.geometry.dispose();
+  dispose(): void {
+    this.mesh.removeFromParent();
+    for (const child of [...this.mesh.children]) (child as THREE.Mesh).geometry.dispose();
+    this.mesh.clear();
+    this.terrainChunks.length = 0;
+    this.chunkCenters.length = 0;
+    this.chunkRadii.length = 0;
     this.terrainMat.dispose();
     this.sky.removeFromParent();
     this.sky.geometry.dispose();
@@ -1010,13 +1126,16 @@ export class Planet {
       mesh.count = placed;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.frustumCulled = false;
+      // Static scatter: keep the default frustum culling. three derives the instance bounds from
+      // the placed matrices, so looking away skips the whole draw — and because the bounds cover
+      // every placed instance there can be no pop-in.
+      mesh.frustumCulled = true;
       this.group.add(mesh);
       if (second) {
         second.mesh.count = placed;
         second.mesh.instanceMatrix.needsUpdate = true;
         if (second.mesh.instanceColor) second.mesh.instanceColor.needsUpdate = true;
-        second.mesh.frustumCulled = false;
+        second.mesh.frustumCulled = true;
         this.group.add(second.mesh);
       }
     };

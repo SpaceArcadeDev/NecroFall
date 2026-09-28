@@ -535,6 +535,15 @@ export function qualitySettings(name: QualityName): QualitySettings {
 export const DPR_CAP = { mobile: 1.25, desktop: 2 };
 
 /**
+ * Phones and tablets. Used for the DPR cap, the audio voice budget and the mobile defaults. The
+ * user agent is the primary signal; a multi-touch screen with a phone-sized short edge catches
+ * tablets and UA-masking browsers (iPadOS pretends to be a Mac).
+ */
+export const IS_MOBILE =
+  /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || '') ||
+  (navigator.maxTouchPoints > 2 && Math.min(window.screen.width, window.screen.height) < 830);
+
+/**
  * Adaptive render scale (the "DPR ladder"). The watchdog walks DOWN when the frame rate stays
  * below `badFps` and back UP once it stays above `goodFps`; each step is a fraction of the capped
  * DPR, so the mobile ladder is [1.25, 1.00, 0.85, 0.75] and the desktop one [2, 1.6, 1.36, 1.2].
@@ -552,16 +561,19 @@ export const PERF = {
   upAfter: 8,
   /** Seconds after any change before the next one may happen. */
   cooldown: 2,
+  /**
+   * Render pacing (2026-09 thermal pass): the main loop renders at most this many frames per
+   * second, per phase. Matches keep the gameplay budget; menus/lobbies/shells get the cheap one;
+   * an untouched menu drops to `idleMenuFps` after `idleAfter` seconds. 0 = uncapped (desktop
+   * matches keep the display's refresh rate). Phones cap the match at 60 fps, but only on
+   * 120 Hz-class panels: `Game` checks the raw rAF cadence first, because a 60 fps target on a
+   * 90 Hz panel lands on 45 fps (every second frame), which is worse than leaving it alone.
+   */
+  matchFps: IS_MOBILE ? 60 : 0,
+  menuFps: IS_MOBILE ? 30 : 60,
+  idleMenuFps: IS_MOBILE ? 15 : 30,
+  idleAfter: 12,
 };
-
-/**
- * Phones and tablets. Used for the DPR cap, the audio voice budget and the mobile defaults. The
- * user agent is the primary signal; a multi-touch screen with a phone-sized short edge catches
- * tablets and UA-masking browsers (iPadOS pretends to be a Mac).
- */
-export const IS_MOBILE =
-  /Android|iPhone|iPad|iPod|Mobile|Silk/i.test(navigator.userAgent || '') ||
-  (navigator.maxTouchPoints > 2 && Math.min(window.screen.width, window.screen.height) < 830);
 
 export function detectQuality(): QualityName {
   const ua = navigator.userAgent || '';

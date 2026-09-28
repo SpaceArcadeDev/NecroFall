@@ -40,6 +40,14 @@ export const LOADOUT_SLOT = {
 export const EVENT_MATCH_STARTED = 9;
 export const EVENT_MATCH_ENDED = 10;
 
+// ------------------------------------------------------------ ranked location discovery (plan §1–§4)
+/** Location tiers of the discovery log. Mirrors `ranked/location.ts`. */
+export const LOCATION_GALAXY = 0;
+export const LOCATION_SYSTEM = 1;
+export const LOCATION_PLANET = 2;
+/** The first N UNIQUE players per galaxy/system/planet are kept (plan §3). */
+export const MAX_LOCATION_DISCOVERERS = 9;
+
 // ------------------------------------------------------------ sdk value types
 export interface Identity {
   toHexString(): string;
@@ -318,6 +326,32 @@ export interface PlanetDiscoveryRow {
   playerName: string;
   discoveredAt: bigint;
   discoveryOrder: number;
+}
+
+/**
+ * One first-discoverer of a GALAXY / SYSTEM / PLANET (plan §1–§4): the first 9
+ * unique players, `discoveryIndex` 1..9 in chronological order. `playerName`
+ * and `colony` are the values AT DISCOVERY TIME (server-derived).
+ */
+export interface RankedLocationDiscoveryRow {
+  id: number;
+  locationKey: string;
+  locationType: number;
+  ring: number;
+  galaxyId: number;
+  systemId: number;
+  planetId: number;
+  playerIdentity: Identity;
+  playerName: string;
+  colony: number;
+  discoveredAt: bigint;
+  discoveryIndex: number;
+}
+
+/** The singleton SERVER CLOCK row (plan §14) — the 1 Hz scan stamps it. */
+export interface ServerClockRow {
+  id: number;
+  nowUs: bigint;
 }
 
 /** A planet locked by a filling/playing ranked match (plan §36). */

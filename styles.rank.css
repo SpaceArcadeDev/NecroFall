@@ -51,6 +51,36 @@
 
 .rk-strip-rank { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
 
+/* THE STANDING ROW (plan §31): [ Rank · stars ][ Progress ][ 1 248 / 1 500 RP ]
+   [ Season ] [ actions ]. The meter carries the bar AND the RP readout so the
+   row answers "where am I and how far to the next boundary" at a glance. */
+.rk-meter {
+  flex: 1 1 220px;
+  min-width: 150px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  justify-content: center;
+}
+.rk-meter .rk-progress { margin-top: 0; width: 100%; }
+.rk-meter-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.rk-rp { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rk-meter-pct { font-size: 11px; font-weight: 700; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.rk-strip-season {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 11px;
+  border-radius: 10px;
+  background: rgba(255, 209, 102, 0.07);
+  border: 1px solid rgba(255, 209, 102, 0.32);
+}
+.rk-strip-season span { font-size: 8px; letter-spacing: 0.24em; color: var(--ui-text-muted); font-weight: 700; }
+.rk-strip-season b { font-size: 13px; font-weight: 800; color: #ffd166; }
+
 /* the expand chevron — opens the rank details drawer (record / last match / to next) */
 .rk-expand {
   flex: none;
@@ -120,12 +150,10 @@
   position: absolute;
   top: 12px;
   right: 14px;
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   display: grid;
   place-items: center;
-  font-size: 15px;
-  font-weight: 700;
   border-radius: var(--rk-corner, 12px);
   border: 1px solid rgba(148, 120, 220, 0.25);
   background: rgba(10, 7, 20, 0.72);
@@ -135,6 +163,7 @@
   transition: background 0.2s ease, transform 0.12s ease;
   z-index: 4;
 }
+.rk-map-expand svg { width: 19px; height: 19px; }
 .rk-map-expand:hover { background: rgba(40, 28, 70, 0.85); transform: scale(1.06); }
 .rk-map-expand:active { transform: scale(0.94); }
 .rank-page.map-full .rk-map-wrap {
@@ -148,6 +177,20 @@
   width: auto;
   height: auto;
   aspect-ratio: auto;
+}
+/* fullscreen CONTROLS must clear the notch / browser chrome (plan §56): the map
+   container now touches the screen edges, so the safe-area insets apply. */
+.rank-page.map-full .rk-map-expand {
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+}
+.rank-page.map-full .rk-zoom {
+  top: calc(62px + env(safe-area-inset-top, 0px));
+  right: calc(16px + env(safe-area-inset-right, 0px));
+}
+.rank-page.map-full .rk-breadcrumb {
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
 }
 
 .rk-crest {
@@ -314,7 +357,7 @@
 
 .rk-zoom {
   position: absolute;
-  top: 52px;   /* below the map's expand toggle (12 + 34 + 6) */
+  top: 58px;   /* below the map's expand toggle (12 + 38 + 8) */
   right: 14px;
   z-index: 3;
   display: flex;
@@ -322,18 +365,22 @@
   gap: 6px;
 }
 .rk-zoom-btn {
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border-radius: var(--rk-corner, 12px);
   border: 1px solid rgba(148, 120, 220, 0.25);
   background: rgba(10, 7, 20, 0.72);
   color: var(--ui-text);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   cursor: pointer;
   backdrop-filter: blur(8px);
   transition: background 0.2s ease, transform 0.12s ease;
 }
+.rk-zoom-btn svg { width: 19px; height: 19px; }
 .rk-zoom-btn:hover { background: rgba(40, 28, 70, 0.85); transform: scale(1.06); }
 .rk-zoom-btn:active { transform: scale(0.94); }
 
@@ -478,10 +525,22 @@
 .rk-influence-note { font-size: 11px; color: var(--ui-text-muted); }
 .rk-influence-bars { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .rk-ibar { display: grid; grid-template-columns: 56px 1fr 36px; align-items: center; gap: 8px; font-size: 10.5px; }
-.rk-ibar-name { letter-spacing: 0.1em; color: var(--ui-text-muted); font-weight: 700; }
+.rk-ibar-name { letter-spacing: 0.1em; color: var(--ui-text-muted); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rk-ibar-track { height: 8px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
 .rk-ibar-fill { display: block; height: 100%; border-radius: 5px; transition: width 0.9s cubic-bezier(0.2, 1, 0.2, 1); box-shadow: 0 0 10px -2px currentColor; }
 .rk-ibar-pct { text-align: right; font-weight: 700; }
+
+/* CONTROL SUMMARY (plan §44/§45): the same aggregation the canvas colours by —
+   HELD BY / CONTESTED + every party's slice, percentages summing to 100. */
+.rk-control { margin-top: 12px; }
+.rk-control-kicker { font-size: 9.5px; letter-spacing: 0.28em; color: var(--ui-text-muted); font-weight: 800; margin-bottom: 6px; }
+.rk-control-none { font-size: 11px; color: var(--ui-text-muted); letter-spacing: 0.08em; }
+.rk-control-head { display: flex; align-items: baseline; gap: 8px; font-size: 15px; }
+.rk-control-head .rk-control-by { font-size: 10px; letter-spacing: 0.24em; color: var(--ui-text-muted); font-weight: 700; }
+.rk-control-head b { letter-spacing: 0.1em; }
+.rk-control-head em { font-style: normal; margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+.rk-control-head b.contested { color: #ffd166; letter-spacing: 0.2em; }
+.rk-control .rk-influence-bars { margin-top: 8px; }
 
 /* planet rows */
 .rk-planetlist { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; max-height: 260px; overflow-y: auto; }
@@ -543,23 +602,27 @@
 }
 .rk-shield-label { font-size: 9.5px; letter-spacing: 0.26em; color: #46e0c8; font-weight: 800; }
 .rk-shield-clock { font-size: 23px; font-weight: 800; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; color: #d8fff6; text-shadow: 0 0 16px rgba(70, 224, 200, 0.55); }
+/* the shield has FALLEN (plan §14): never a negative countdown — the state flips */
+.rk-shield-clock.fallen { font-size: 15px; letter-spacing: 0.2em; color: #ff6b81; text-shadow: 0 0 16px rgba(255, 107, 129, 0.5); }
 
 .rk-eco { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .rk-eco-row { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; }
 .rk-eco-row span { color: var(--ui-text-muted); letter-spacing: 0.16em; }
 .rk-eco-row b { letter-spacing: 0.06em; text-align: right; }
 
+/* DISCOVERED BY (plan §41/§42): 01..09 · colony dot · display name · colony ·
+   relative time. Never player ids, never wall-clock timestamps, never on canvas. */
 .rk-discoverers { margin-top: 12px; }
-.rk-discoverers-head { font-size: 9.5px; letter-spacing: 0.26em; color: var(--ui-text-muted); font-weight: 800; margin-bottom: 6px; }
-.rk-discoverer { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; animation: rk-card-in 0.4s ease-out both; }
-.rk-discoverer b {
-  width: 18px; height: 18px; border-radius: 50%;
-  display: grid; place-items: center;
-  font-size: 10px;
-  background: rgba(70, 224, 200, 0.14);
-  color: #46e0c8;
-  border: 1px solid rgba(70, 224, 200, 0.35);
-}
+.rk-discoverers-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.rk-discoverers-head span { font-size: 9.5px; letter-spacing: 0.26em; color: var(--ui-text-muted); font-weight: 800; }
+.rk-discoverers-head b { font-size: 9px; letter-spacing: 0.16em; color: #46e0c8; font-weight: 800; text-align: right; }
+.rk-discoverer { display: flex; align-items: center; gap: 7px; font-size: 12px; padding: 3px 0; animation: rk-card-in 0.4s ease-out both; }
+.rk-disc-index { flex: none; width: 20px; font-size: 10px; font-variant-numeric: tabular-nums; color: #46e0c8; letter-spacing: 0.06em; }
+.rk-disc-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 8px -1px currentColor; }
+.rk-disc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; letter-spacing: 0.04em; }
+.rk-disc-name i { font-style: normal; font-size: 9px; color: #46e0c8; letter-spacing: 0.1em; }
+.rk-disc-colony { flex: none; font-size: 9px; font-weight: 800; letter-spacing: 0.14em; }
+.rk-disc-when { flex: none; font-size: 9px; color: var(--ui-text-muted); letter-spacing: 0.06em; }
 
 /* colony stats (plan §76) */
 .rk-colonies {
@@ -847,7 +910,9 @@
   .rk-side::-webkit-scrollbar { display: none; }
   /* quick actions ride under the panel in portrait */
   .rk-quick { order: 3; flex: 0 0 auto; }
-  .rk-map-expand { width: 40px; height: 40px; }
+  .rk-map-expand { width: 42px; height: 42px; }
+  /* TOUCH TARGETS (plan §55): the BUTTON is 44px, the glyph stays ~20px */
+  .rk-zoom-btn { width: 44px; height: 44px; }
   /* The planet card re-reads on phones: the ACTION leads. It used to sit under the
      orb, stats, ecology and discoverers, so FIND MATCH was below the fold on every
      pick (user report). Order: kicker → title → status → FIND MATCH → details. */
@@ -871,20 +936,28 @@
   /* must leave room for the season chip on a 390px frame — 34px × 0.16em fits */
   .rk-title { font-size: clamp(24px, 5.4vh, 34px); letter-spacing: 0.16em; }
   .rk-season-chip { font-size: 8.5px; padding: 2px 7px; letter-spacing: 0.12em; }
-  .rk-strip { padding: 7px 8px 9px; gap: 10px; }
-  .rk-crest { width: 36px; height: 41px; }
+  .rk-strip { padding: 7px 9px 9px; gap: 6px 10px; flex-wrap: wrap; }
+  /* THE MOBILE STANDING CARD (plan §31): rank line, then the RP meter with its
+     percentage, then season + actions — never a squeezed desktop row. */
+  .rk-strip-rank { flex: 1 1 100%; order: 1; }
+  .rk-meter { flex: 1 1 100%; order: 2; max-width: none; gap: 4px; }
+  .rk-strip-season { order: 3; flex-direction: row; gap: 6px; padding: 4px 9px; }
+  .rk-strip-actions { order: 4; margin-left: auto; }
+  .rk-crest { width: 36px; height: 42px; }
   .rk-crest-star { font-size: 15px; }
   .rk-rank-name { font-size: 17px; }
   .rk-stars-row { margin-top: 3px; min-height: 16px; flex-wrap: wrap; }
   .rk-star { font-size: 12.5px; }
   .rk-progress { margin-top: 5px; height: 6px; }
+  .rk-meter .rk-progress { margin-top: 0; }
+  .rk-rp { font-size: 11.5px; }
   .rk-next { display: none; }
   /* the strip actions become square icon buttons so the rank name never wraps */
   .rk-strip-actions { gap: 6px; }
   .rk-strip-actions .rk-btn { width: 42px; height: 42px; padding: 0; justify-content: center; border-radius: 12px; }
   .rk-strip-actions .rk-btn svg { width: 17px; height: 17px; }
   .rk-strip-actions .rk-btn-label { display: none; }
-  .rk-zoom-btn { width: 40px; height: 40px; }
+  .rk-zoom-btn { width: 44px; height: 44px; }
   .rk-side { max-height: 40%; padding: 8px 2px 6px; }
   .rk-card { padding: 12px; border-radius: 14px; }
   .rk-card-title { font-size: 17px; }
@@ -913,11 +986,11 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-head { display: none; }               /* the strip row IS the header here */
   .rk-strip { padding: 4px 8px 6px; gap: 8px; }
 
-  /* rank first (order 1), then the colony pill beside it */
+  /* rank first (order 1), then the colony pill, the meter, the season, actions */
   .rk-strip-rank { order: 1; flex: 0 1 auto; margin-left: 0; gap: 8px; }
   .rk-expand { order: 2; width: 26px; height: 26px; }
   .rk-colony {
-    order: 3;
+    order: 2;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -931,7 +1004,15 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-colony-txt { flex-direction: row; align-items: baseline; gap: 6px; }
   .rk-colony-txt b { font-size: 11.5px; }
   .rk-colony-txt span { display: none; }    /* pill = symbol + name only */
-  .rk-strip-actions { order: 4; gap: 5px; margin-left: auto; }
+  /* the meter keeps the [ Progress ][ RP ] half of the standing row in one line */
+  .rk-meter { order: 3; flex: 0 1 200px; min-width: 110px; max-width: 200px; gap: 3px; }
+  .rk-meter .rk-progress { width: 100%; height: 5px; margin-top: 0; }
+  .rk-rp { font-size: 10px; }
+  .rk-meter-pct { display: none; }
+  .rk-strip-season { order: 4; flex-direction: row; gap: 5px; padding: 3px 8px; }
+  .rk-strip-season span { font-size: 7.5px; letter-spacing: 0.18em; }
+  .rk-strip-season b { font-size: 11px; }
+  .rk-strip-actions { order: 5; gap: 5px; margin-left: auto; }
   .rk-strip-actions .rk-btn { width: 34px; height: 34px; }
 
   /* the rank, exactly as before: crest, name, stars, progress */
@@ -971,8 +1052,12 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   }
   .rk-breadcrumb { display: none; }         /* no room inside a squircle */
   .rk-zoom { gap: 4px; }
-  .rk-zoom-btn { width: 30px; height: 30px; font-size: 14px; }
-  .rk-map-expand { width: 30px; height: 30px; font-size: 13px; }
+  /* landscape is the tightest frame in the game — 34px is the largest target the
+     squircle map can host without covering the systems it is for */
+  .rk-zoom-btn { width: 34px; height: 34px; font-size: 14px; }
+  .rk-zoom-btn svg { width: 17px; height: 17px; }
+  .rk-map-expand { width: 34px; height: 34px; font-size: 13px; }
+  .rk-map-expand svg { width: 17px; height: 17px; }
   .rk-side { grid-column: 2; grid-row: 2; flex: none; max-height: none; padding: 0 0 0 2px; }
   .rk-quick {
     grid-column: 3;

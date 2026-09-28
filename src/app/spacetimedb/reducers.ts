@@ -69,6 +69,21 @@ export const findRankedMatch = (ring: number, galaxyId: number, systemId: number
 export const discoverPlanet = (ring: number, galaxyId: number, systemId: number, planetId: number): void =>
   callReducer('discoverPlanet', { ring, galaxyId, systemId, planetId });
 
+/**
+ * DISCOVER LOCATION (plan §4/§47) — the map's first-contact request for a
+ * galaxy / system / planet. The client sends ONLY the identity of the place;
+ * the server derives the discovery slot, the player name, the colony and the
+ * timestamp (plan §66), and silently no-ops when the slot cap is reached.
+ */
+export interface DiscoverLocationArgs {
+  locationType: number;
+  locationKey: string;
+  galaxyId: number;
+  systemId: number;
+  planetId: number;
+}
+export const discoverLocation = (args: DiscoverLocationArgs): void => callReducer('discoverLocation', { ...args });
+
 /** Season-wide colony power stats (procedure — computed on demand, plan §76). */
 export interface ColonyStatsRow {
   colony: number;

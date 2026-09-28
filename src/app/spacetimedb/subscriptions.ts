@@ -166,6 +166,9 @@ export function subscribeRank(): void {
     'SELECT * FROM ranked_season',
     'SELECT * FROM ranked_planet_reservation',
     'SELECT * FROM ranked_top',
+    // The server's own clock (one tiny row, stamped every second by the scan):
+    // shield countdowns render on SERVER time, not the device clock (plan §14).
+    'SELECT * FROM server_clock',
   ]);
 }
 
@@ -181,8 +184,25 @@ export function subscribeRankGalaxy(galaxyId: number): void {
 /** One planet's discovery + ownership history (the detail panel). */
 export function subscribePlanetDetail(planetKey: string): void {
   if (!planetKey || !/^[0-9:]+$/.test(planetKey)) return;
-  ensureScope(`rank-planet:${planetKey}`, [
-    `SELECT * FROM planet_discovery WHERE planet_key = '${planetKey}'`,
-    `SELECT * FROM planet_control_history WHERE planet_key = '${planetKey}'`,
+  ensureScope(`rank-planet:${planetKey}`, [`SELECT * FROM planet_control_history WHERE planet_key = '${planetKey}'`]);
+}
+
+// ------------------------------------------------------------ scoped discovery (plan §43)
+
+/**
+ * Discovery rows of ONE location — the galaxy / system / planet the expanded
+ * panel is showing. Never the whole universe: the map can hold thousands of
+ * galaxies, so only the location on screen is subscribed (plan §43).
+ */
+export function subscribeLocationDiscovery(locationKey: string): void {
+  if (!locationKey || !/^[G0-9:SP-]+$/.test(locationKey)) return;
+  ensureScope(`rank-disc:${locationKey}`, [
+    `SELECT * FROM ranked_location_discovery WHERE location_key = '${locationKey}'`,
   ]);
+}
+
+/** Release one discovery scope when the panel moves on (keeps LRU bounds). */
+export function releaseLocationDiscovery(locationKey: string): void {
+  if (!locationKey) return;
+  releaseScope(`rank-disc:${locationKey}`);
 }

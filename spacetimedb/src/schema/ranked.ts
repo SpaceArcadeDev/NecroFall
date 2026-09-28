@@ -126,6 +126,38 @@ export const rank_history = table(
   }
 );
 
+/**
+ * FIRST-DISCOVERER LOG FOR EVERY TIER (plan §1–§4): galaxies, systems AND
+ * planets. The first 9 UNIQUE players per location, in chronological order —
+ * slot 1 is the first footfall, slot 9 is the last one that counts. One row
+ * per (location_key, player_identity); the server assigns `discovery_index`
+ * atomically inside the reducer transaction. `player_name` / `colony` are the
+ * values AT DISCOVERY TIME (the server derives both from the caller's row —
+ * the client never supplies them, plan §66).
+ */
+export const ranked_location_discovery = table(
+  { name: 'ranked_location_discovery', public: true },
+  {
+    id: t.u32().primaryKey().autoInc(),
+    /** `G:gx:gy` / `G:gx:gy:S:systemId` / `G:gx:gy:S:systemId:P:planetId` (see `location.ts`). */
+    location_key: t.string().index('btree'),
+    /** LOCATION_GALAXY / LOCATION_SYSTEM / LOCATION_PLANET. */
+    location_type: t.u8(),
+    /** Server-derived from the key — the rank band of the galaxy. */
+    ring: t.u8(),
+    galaxy_id: t.u32().index('btree'),
+    system_id: t.u32(),
+    planet_id: t.u32(),
+    player_identity: t.identity(),
+    player_name: t.string(),
+    /** Colony at discovery time (COLONY_NONE when the player had none). */
+    colony: t.u8(),
+    discovered_at: t.u64(),
+    /** 1-based — who was first, … up to MAX_LOCATION_DISCOVERERS (9). */
+    discovery_index: t.u8(),
+  }
+);
+
 export const RANKED_PLANET_INFESTED = 0;
 export const RANKED_PLANET_CONTROLLED = 1;
 

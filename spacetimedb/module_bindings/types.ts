@@ -401,6 +401,22 @@ export const RankHistory = __t.object("RankHistory", {
 });
 export type RankHistory = __Infer<typeof RankHistory>;
 
+export const RankedLocationDiscovery = __t.object("RankedLocationDiscovery", {
+  id: __t.u32(),
+  locationKey: __t.string(),
+  locationType: __t.u8(),
+  ring: __t.u8(),
+  galaxyId: __t.u32(),
+  systemId: __t.u32(),
+  planetId: __t.u32(),
+  playerIdentity: __t.identity(),
+  playerName: __t.string(),
+  colony: __t.u8(),
+  discoveredAt: __t.u64(),
+  discoveryIndex: __t.u8(),
+});
+export type RankedLocationDiscovery = __Infer<typeof RankedLocationDiscovery>;
+
 export const RankedPlanet = __t.object("RankedPlanet", {
   planetKey: __t.string(),
   seasonId: __t.u32(),
@@ -440,4 +456,10 @@ export type RankedSeason = __Infer<typeof RankedSeason>;
 
 export const RankedTop = __t.object("RankedTop", {});
 export type RankedTop = __Infer<typeof RankedTop>;
+
+export const ServerClock = __t.object("ServerClock", {
+  id: __t.u8(),
+  nowUs: __t.u64(),
+});
+export type ServerClock = __Infer<typeof ServerClock>;
 

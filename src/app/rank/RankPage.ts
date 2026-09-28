@@ -10,13 +10,19 @@
 // recorded by AppShell when a ranked match ends (user ask 2026-09-28).
 import { ClientCache } from '../spacetimedb/cache';
 import { hexOf } from '../spacetimedb/rows';
-import { colonyStats, ColonyStatsResult, findRankedMatch } from '../spacetimedb/reducers';
-import { subscribePlanetDetail, subscribeRank, subscribeRankGalaxy } from '../spacetimedb/subscriptions';
+import { colonyStats, ColonyStatsResult, discoverLocation, findRankedMatch } from '../spacetimedb/reducers';
+import {
+  releaseLocationDiscovery,
+  subscribeLocationDiscovery,
+  subscribePlanetDetail,
+  subscribeRank,
+  subscribeRankGalaxy,
+} from '../spacetimedb/subscriptions';
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
 import { COLONIES } from '../../core/Config';
-import { GalacticMap, MapData, MapSelection, PlanetRowData, RANKED_PLANET_CONTROLLED } from '../../rankmap/GalacticMap';
-import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId } from '../../rankmap/procedural/SeedHash';
+import { GalacticMap, type DiscoveryRequest, type MapData, type MapSelection, type PlanetRowData, RANKED_PLANET_CONTROLLED } from '../../rankmap/GalacticMap';
+import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../../rankmap/procedural/SeedHash';
 import { nearestAvailablePlanet, ringHome } from '../../rankmap/procedural/UniverseGenerator';
 import { planetAt } from '../../rankmap/procedural/PlanetGenerator';
 import { systemAt } from '../../rankmap/procedural/SolarSystemGenerator';
@@ -25,6 +31,26 @@ import { galaxyAt } from '../../rankmap/procedural/GalaxyGenerator';
 import { RING_CONFIGS, ringConfig } from '../../rankmap/procedural/RankRingConfig';
 import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankDisplayName, getRankFromStars, rankLabel, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
+import {
+  galaxyLocationKey,
+  planetLocationKey,
+  systemLocationKey,
+  toDiscoveryEntry,
+  type DiscoveryEntry,
+} from '../../rankmap/DiscoveryTypes';
+import {
+  buildGalaxyPanel,
+  buildPlanetPanel,
+  buildRootPanel,
+  buildSystemPanel,
+  shieldCountdownText,
+  type LocationPanelHost,
+} from './LocationInfoPanel';
+import {
+  createCenterIcon,
+  createFullscreenExitIcon,
+  createFullscreenIcon,
+} from '../../rankmap/RankMapIcons';
 
 /** Live countdown ticks (display only — the server owns expiry). */
 const HOUR_US = 3_600_000_000;
@@ -42,7 +68,7 @@ export class RankPage {
   private discoverEl: HTMLElement;
   private statsEl: HTMLElement;
   private boardEl: HTMLElement | null = null;
-  private selection: MapSelection = { level: 'galactic', galaxy: null, system: null, planet: null };
+  private selection: MapSelection = { level: 'galactic', galaxy: null, system: null, planet: null, selected: null };
   private unsubscribe: () => void = () => undefined;
   private statsTimer = 0;
   private tickTimer = 0;
@@ -53,6 +79,10 @@ export class RankPage {
   private discoveryShown = new Set<string>();
   private stats: ColonyStatsResult | null = null;
   private subscribedGalaxies = new Set<number>();
+  /** The ONE discovery scope the panel currently reads (plan §43 — never the universe). */
+  private discoveryKey = '';
+  /** Last countdown text written to the DOM (plan §15 — one write per second). */
+  private countdownSig = '';
   private recordEl: HTMLElement;
   private quickEl: HTMLElement;
   private quickJoin!: HTMLButtonElement;
@@ -62,6 +92,10 @@ export class RankPage {
   private quickInput!: HTMLInputElement;
   private quickSig = '';
   private colonySig = '';
+  /** The map's data provider — the page implements discoveries + the server clock. */
+  private mapData!: MapData;
+  private mapExpandBtn!: HTMLButtonElement;
+  private panelHost: LocationPanelHost;
 
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page rank-page');
@@ -86,25 +120,34 @@ export class RankPage {
     this.discoverEl = el('div', 'rk-discover hidden');
     this.breadcrumb = el('div', 'rk-breadcrumb');
     const zoomCtl = el('div', 'rk-zoom');
-    const mkZoom = (label: string, fn: () => void): HTMLButtonElement => {
-      const b = el('button', 'rk-zoom-btn', label) as HTMLButtonElement;
+    const mkZoom = (html: string, label: string, fn: () => void): HTMLButtonElement => {
+      const b = el('button', 'rk-zoom-btn') as HTMLButtonElement;
       b.type = 'button';
+      b.innerHTML = html;
+      b.title = label;
+      b.setAttribute('aria-label', label);
       b.addEventListener('click', fn);
       return b;
     };
-    zoomCtl.appendChild(mkZoom('+', () => this.zoomBy(1.5)));
-    zoomCtl.appendChild(mkZoom('−', () => this.zoomBy(1 / 1.5)));
-    zoomCtl.appendChild(mkZoom('⌂', () => this.map.flyToRing(this.myRing())));
-    // ---- fullscreen map toggle (user ask: “small galactic map … with option to expand”)
-    const mapExpand = el('button', 'rk-map-expand', '⤢') as HTMLButtonElement;
+    zoomCtl.appendChild(mkZoom('+', 'Zoom in', () => this.zoomBy(1.5)));
+    zoomCtl.appendChild(mkZoom('−', 'Zoom out', () => this.zoomBy(1 / 1.5)));
+    // BACK TO POSITION (plan §29/§52): a navigation-target crosshair — clears the
+    // selection and flies home through the ONE existing camera pipeline.
+    zoomCtl.appendChild(mkZoom(createCenterIcon(), 'Back to your position', () => this.map.centerOnHome()));
+    // ---- FULLSCREEN map toggle (plan §53): expands the map container ONLY —
+    // camera, zoom, selection and discovery state are all preserved.
+    const mapExpand = el('button', 'rk-map-expand') as HTMLButtonElement;
     mapExpand.type = 'button';
-    mapExpand.title = 'Expand the map';
-    mapExpand.setAttribute('aria-label', 'Expand the map');
+    const setExpandIcon = (full: boolean): void => {
+      mapExpand.innerHTML = full ? createFullscreenExitIcon() : createFullscreenIcon();
+      mapExpand.title = full ? 'Exit fullscreen map' : 'Fullscreen map';
+      mapExpand.setAttribute('aria-label', mapExpand.title);
+    };
+    setExpandIcon(false);
+    this.mapExpandBtn = mapExpand;
     mapExpand.addEventListener('click', () => {
       const full = this.element.classList.toggle('map-full');
-      mapExpand.textContent = full ? '✕' : '⤢';
-      mapExpand.title = full ? 'Close the map' : 'Expand the map';
-      mapExpand.setAttribute('aria-label', mapExpand.title);
+      setExpandIcon(full);
     });
     this.mapWrap.appendChild(this.breadcrumb);
     this.mapWrap.appendChild(zoomCtl);
@@ -193,13 +236,21 @@ export class RankPage {
       })),
       reservedKeys: () => ClientCache.shared.reservedPlanetKeys(),
       serverNowUs: () => this.serverNowUs(),
+      discoveriesForGalaxy: (galaxyId) => this.discoveriesForGalaxy(galaxyId),
+      discoveriesForSystem: (galaxyId, systemId) => this.discoveriesForSystem(galaxyId, systemId),
+      discoveriesForPlanet: (planetKey) => this.discoveriesForPlanet(planetKey),
+      currentPlayerId: this.ctx.myHex(),
+      currentPlayerName: this.me()?.playerName ?? 'SURVIVOR',
+      requestDiscovery: (req) => this.requestDiscovery(req),
     };
+    this.mapData = data;
     this.map = new GalacticMap(
       this.mapWrap,
       data,
       (sel) => this.onSelection(sel),
       (hover) => this.showHover(hover)
     );
+    this.panelHost = this.buildPanelHost();
 
     // ---- subscriptions + render loops
     subscribeRank();
@@ -215,9 +266,11 @@ export class RankPage {
       if (!this.element.isConnected) return;
       void this.refreshStats();
     }, 45_000);
+    // ONE tick for every live countdown + breadcrumb (plan §15): `renderSide(true)`
+    // only WRITES when the formatted second actually changed.
     this.tickTimer = window.setInterval(() => {
       if (!this.element.isConnected) return;
-      if (this.selection.planet) this.renderSide(true);
+      this.renderSide(true);
       this.renderBreadcrumb();
     }, 500);
   }
@@ -228,6 +281,10 @@ export class RankPage {
     this.unsubscribe();
     if (this.statsTimer) window.clearInterval(this.statsTimer);
     if (this.tickTimer) window.clearInterval(this.tickTimer);
+    if (this.discoveryKey) {
+      releaseLocationDiscovery(this.discoveryKey);
+      this.discoveryKey = '';
+    }
     this.map.dispose();
     this.boardEl?.remove();
   }
@@ -247,10 +304,73 @@ export class RankPage {
     return DEFAULT_UNIVERSE_SEED;
   }
 
+  /**
+   * SERVER time (plan §14/§46): the 1 Hz `server_clock` row plus the client
+   * millis elapsed since it landed. Every countdown — the canvas arc AND the
+   * DOM text — reads THIS; `Date.now()` is never used for display.
+   */
   private serverNowUs(): number {
-    // Display-only approximation: the shield countdown is paced by the client
-    // clock, the AUTHORITATIVE expiry is the server's control_expires_at.
-    return Date.now() * 1000;
+    return ClientCache.shared.serverNowUs();
+  }
+
+  // ------------------------------------------------------------ discovery (plan §7/§43/§47)
+
+  private discoveriesForGalaxy(galaxyId: number): DiscoveryEntry[] {
+    const { gx, gy } = decodeGalaxyId(galaxyId);
+    return ClientCache.shared.locationDiscoveries(galaxyLocationKey(gx, gy)).map(toDiscoveryEntry);
+  }
+
+  private discoveriesForSystem(galaxyId: number, systemId: number): DiscoveryEntry[] {
+    const { gx, gy } = decodeGalaxyId(galaxyId);
+    return ClientCache.shared.locationDiscoveries(systemLocationKey(gx, gy, systemId)).map(toDiscoveryEntry);
+  }
+
+  private discoveriesForPlanet(planetKey: string): DiscoveryEntry[] {
+    const parsed = parsePlanetKey(planetKey);
+    if (!parsed) return [];
+    const { gx, gy } = decodeGalaxyId(parsed.galaxyId);
+    return ClientCache.shared
+      .locationDiscoveries(planetLocationKey(gx, gy, parsed.systemId, parsed.planetId))
+      .map(toDiscoveryEntry);
+  }
+
+  /** The map's first-contact request (plan §6/§47): the client ASKS, the server decides. */
+  private requestDiscovery(req: DiscoveryRequest): void {
+    const me = this.ctx.myHex();
+    if (!me) return; // official backend only — P2P never writes ranked discovery (plan §67)
+    // Courtesy filter only (the server de-dupes anyway): skip when our subscribed
+    // list already contains this player.
+    const known = ClientCache.shared.locationDiscoveries(req.locationKey);
+    if (known.some((d) => hexOf(d.playerIdentity) === me)) return;
+    discoverLocation(req);
+  }
+
+  /**
+   * The ONE discovery scope on screen (plan §43): the SELECTED location, else the
+   * camera focus. The previous scope is released so the client can never hold
+   * more than the location it is showing.
+   */
+  private focusDiscoveryScope(sel: MapSelection): void {
+    const loc = sel.selected;
+    let key = '';
+    if (loc?.type === 'planet' && loc.planet) {
+      const { gx, gy } = decodeGalaxyId(loc.planet.galaxyId);
+      key = planetLocationKey(gx, gy, loc.planet.systemId, loc.planet.planetId);
+    } else if (loc?.type === 'system' && loc.system) {
+      const { gx, gy } = decodeGalaxyId(loc.system.galaxyId);
+      key = systemLocationKey(gx, gy, loc.system.systemId);
+    } else if (loc?.type === 'galaxy') {
+      key = galaxyLocationKey(loc.galaxy.gx, loc.galaxy.gy);
+    } else if (sel.level === 'system' && sel.system) {
+      const { gx, gy } = decodeGalaxyId(sel.system.galaxyId);
+      key = systemLocationKey(gx, gy, sel.system.systemId);
+    } else if (sel.level === 'galaxy' && sel.galaxy) {
+      key = galaxyLocationKey(sel.galaxy.gx, sel.galaxy.gy);
+    }
+    if (key === this.discoveryKey) return;
+    if (this.discoveryKey) releaseLocationDiscovery(this.discoveryKey);
+    this.discoveryKey = key;
+    if (key) subscribeLocationDiscovery(key);
   }
 
   private me() {
@@ -302,17 +422,18 @@ export class RankPage {
   }
 
   private onData(): void {
-    // The discovery FLASH celebrates a world mapped by PLAYING (AppShell fires the
-    // write when a ranked match ends — user ask 2026-09-28): only a genuinely fresh
-    // find AND only the first discoverer celebrate, so reloads stay quiet.
-    const selPlanet = this.selection.planet;
+    // The discovery FLASH celebrates a FRESH first-contact on the viewed planet:
+    // the record arrives from the server (selection-driven requests + match-end),
+    // and only a find inside the last ~90 s celebrates — reloads stay quiet.
+    const selPlanet = this.selection.selected?.planet ?? this.selection.planet;
     if (selPlanet && !this.discoveryShown.has(selPlanet.key)) {
-      const mine = ClientCache.shared.planetDiscoveries(selPlanet.key).find((d) => hexOf(d.identity) === this.ctx.myHex());
-      const row = this.planetRow(selPlanet.key);
-      const fresh = row ? Date.now() * 1000 - Number(row.firstDiscoveredAt) < 90_000_000 : false;
+      const { gx, gy } = decodeGalaxyId(selPlanet.galaxyId);
+      const rows = ClientCache.shared.locationDiscoveries(planetLocationKey(gx, gy, selPlanet.systemId, selPlanet.planetId));
+      const mine = rows.find((d) => hexOf(d.playerIdentity) === this.ctx.myHex());
+      const fresh = mine ? this.serverNowUs() - Number(mine.discoveredAt) < 90_000_000 : false;
       if (mine && fresh) {
         this.discoveryShown.add(selPlanet.key);
-        this.flashDiscovery(selPlanet, mine.discoveryOrder);
+        this.flashDiscovery(selPlanet, mine.discoveryIndex);
       }
     }
     this.renderHead();
@@ -350,15 +471,17 @@ export class RankPage {
     const last = history[0];
     const lastTxt = last ? `${last.delta > 0 ? '+' : ''}${last.delta} ★` : '—';
     const lastCls = last ? (last.delta > 0 ? 'up' : last.delta < 0 ? 'down' : 'flat') : 'flat';
+    // RP readout (plan §31): TOTAL stars / the boundary they are climbing to.
+    const rpText = info.toNext > 0 ? `${stars.toLocaleString()} / ${(stars + info.toNext).toLocaleString()} RP` : `${stars.toLocaleString()} ★ MAX`;
+    const pctText = info.toNext > 0 ? `${Math.round(info.progress * 100)}%` : '100%';
     const sig = `${stars}|${seasonId}|${streak}|${record}|${lastTxt}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
-    // The wordmark row: gradient title + season chip (the party page's lobby-head).
-    this.headEl.innerHTML =
-      `<div class="menu-title lobby-title rk-title">RANKED</div>` +
-      `<span class="lobby-mode rk-season-chip">SEASON ${seasonId}</span>`;
-    // The standing strip: in landscape this is THE one row — colony left, rank right
-    // — so the crest/info dress lives in `.rk-strip-rank` next to the expander.
+    // The wordmark row (the party page's lobby dress) — the SEASON lives in the
+    // standing row below (plan §31: [ Rank ][ Progress ][ RP ][ Season ]).
+    this.headEl.innerHTML = `<div class="menu-title lobby-title rk-title">RANKED</div>`;
+    // The standing strip: rank identity · progress · RP readout · season · actions.
+    // Desktop reads as ONE row; ≤720px turns into the mobile card (see styles.rank.css).
     this.stripEl.style.setProperty('--rk-accent', cfg.accent);
     this.stripEl.innerHTML =
       `<div class="rk-colony" data-colony>` +
@@ -372,20 +495,21 @@ export class RankPage {
       `<div class="rk-head-info">` +
       `<div class="rk-rank-name">${name}</div>` +
       `<div class="rk-stars-row">${this.starsHtml(info.stars, info.tier)}</div>` +
-      `<div class="rk-progress"><div class="rk-progress-fill" data-fill></div></div>` +
       `<div class="rk-next">${streak}</div>` +
       `</div>` +
       `<button class="rk-expand" data-act="record" title="Rank details" aria-label="Rank details">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 9 6.5 6.5L18.5 9"/></svg>` +
       `</button>` +
       `</div>` +
+      `<div class="rk-meter">` +
+      `<div class="rk-progress"><div class="rk-progress-fill" data-fill></div></div>` +
+      `<div class="rk-meter-row"><b class="rk-rp">${rpText}</b><span class="rk-meter-pct">${pctText}</span></div>` +
+      `</div>` +
+      `<div class="rk-strip-season"><span>SEASON</span><b>${seasonId}</b></div>` +
       `<div class="rk-strip-actions">` +
       `<button class="rk-btn" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11"/><path d="M12 20V4"/><path d="M19 20v-6"/></svg>` +
       `<span class="rk-btn-label">LEADERBOARD</span></button>` +
-      `<button class="rk-btn primary" data-act="myring" title="Fly to your ring" aria-label="Fly to your ring">` +
-      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/><path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4"/></svg>` +
-      `<span class="rk-btn-label">YOUR RING</span></button>` +
       `</div>`;
     // The expandable details: win/loss record, last match, stars to next rank.
     this.recordEl.innerHTML =
@@ -404,7 +528,6 @@ export class RankPage {
         if (fill.isConnected) fill.style.width = `${Math.round(info.progress * 100)}%`;
       });
     }
-    this.stripEl.querySelector('[data-act="myring"]')?.addEventListener('click', () => this.map.flyToRing(this.myRing()));
     this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
     this.stripEl.querySelector('[data-act="record"]')?.addEventListener('click', () => this.toggleRecord());
     this.colonySig = '';
@@ -568,19 +691,23 @@ export class RankPage {
   private onSelection(sel: MapSelection): void {
     if (!this.map) return; // the map announces its initial fly-home during construction
     this.selection = sel;
+    // ONE discovery scope on screen (plan §43) — the selected location, else the
+    // camera focus. Discovery REQUESTS are fired by the map (debounced, plan §5);
+    // the panel only reads what the server sent back (plan §6).
+    this.focusDiscoveryScope(sel);
     this.renderRail();
     this.renderBreadcrumb();
     this.renderSide();
-    if (sel.planet) {
-      subscribePlanetDetail(sel.planet.key);
-      // A planet can be selected before its galaxy is (deep links, programmatic jumps) —
-      // its ownership rows must be subscribed or the panel would read UNDISCOVERED.
-      if (!this.subscribedGalaxies.has(sel.planet.galaxyId)) {
-        this.subscribedGalaxies.add(sel.planet.galaxyId);
-        subscribeRankGalaxy(sel.planet.galaxyId);
+    const loc = sel.selected;
+    const planet = loc?.planet ?? sel.planet;
+    if (planet) {
+      subscribePlanetDetail(planet.key);
+      // Ownership/history rows must be subscribed even when the planet was selected
+      // before its galaxy was (deep links, programmatic jumps).
+      if (!this.subscribedGalaxies.has(planet.galaxyId)) {
+        this.subscribedGalaxies.add(planet.galaxyId);
+        subscribeRankGalaxy(planet.galaxyId);
       }
-      // NO discovery here: worlds are only mapped by PLAYING on them (user ask
-      // 2026-09-28) — AppShell fires `discoverPlanet` when a ranked match ends.
     }
     // Subscribe the galaxy rows the moment one is focused (plan §61).
     if (sel.galaxy && !this.subscribedGalaxies.has(sel.galaxy.galaxyId)) {
@@ -609,28 +736,52 @@ export class RankPage {
       this.panelSig = sig;
       this.side.innerHTML = '';
       this.side.appendChild(this.buildPanel());
+      this.countdownSig = ''; // a rebuilt panel always writes its countdown once
       return;
     }
-    // tick-only pass: refresh the countdown text in place
-    const cd = this.side.querySelector('[data-countdown]');
-    if (cd && this.selection.planet) {
-      const row = this.planetRow(this.selection.planet.key);
-      if (row && row.state === RANKED_PLANET_CONTROLLED && Number(row.controlExpiresAt) > 0) {
-        cd.textContent = this.countdownText(Number(row.controlExpiresAt));
-      }
-    }
+    // Tick-only pass (plan §15): recompute the displayed second and only touch the
+    // DOM when the TEXT changes — the page never re-renders its tree for a clock.
+    const cd = this.side.querySelector<HTMLElement>('[data-countdown]');
+    if (!cd) return;
+    const target = this.panelPlanet();
+    if (!target) return;
+    const row = this.planetRow(target.key);
+    if (!row || row.state !== RANKED_PLANET_CONTROLLED || Number(row.controlExpiresAt) <= 0) return;
+    const text = shieldCountdownText(Number(row.controlExpiresAt), this.serverNowUs());
+    if (text === this.countdownSig) return;
+    this.countdownSig = text;
+    cd.textContent = text;
+    cd.classList.toggle('fallen', text === 'PLANETARY SHIELD FALLEN');
+  }
+
+  /** The planet the panel currently shows: explicit selection first, then focus. */
+  private panelPlanet(): PlanetDescriptor | null {
+    return this.selection.selected?.planet ?? this.selection.planet;
   }
 
   private panelSignature(): string {
     const sel = this.selection;
-    if (sel.planet) {
-      const row = this.planetRow(sel.planet.key);
-      const discoveries = ClientCache.shared.planetDiscoveries(sel.planet.key).length;
+    const loc = sel.selected;
+    const planet = loc?.planet ?? sel.planet;
+    if (planet) {
+      const row = this.planetRow(planet.key);
+      const discoveries = this.discoveriesForPlanet(planet.key).length;
       const queue = ClientCache.shared.myQueue();
-      return `p:${sel.planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${row?.discovered ? 1 : 0}:${discoveries}:${queue?.ranked ? queue.planetKey : ''}:${this.availableSig(sel.planet)}`;
+      const place = loc ? 'sel' : 'focus';
+      return `p:${place}:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${row?.discovered ? 1 : 0}:${discoveries}:${queue?.ranked ? queue.planetKey : ''}:${this.availableSig(planet)}`;
     }
-    if (sel.system) return `s:${sel.system.galaxyId}:${sel.system.systemId}:${this.rowsForGalaxy(sel.system.galaxyId).length}`;
-    if (sel.galaxy) return `g:${sel.galaxy.galaxyId}:${this.rowsForGalaxy(sel.galaxy.galaxyId).length}`;
+    const sys = loc?.system ?? sel.system;
+    if (sys) {
+      const place = loc ? 'sel' : 'focus';
+      const discoveries = this.discoveriesForSystem(sys.galaxyId, sys.systemId).length;
+      return `s:${place}:${sys.galaxyId}:${sys.systemId}:${this.rowsForGalaxy(sys.galaxyId).length}:${discoveries}`;
+    }
+    const galaxy = loc?.galaxy ?? sel.galaxy;
+    if (galaxy) {
+      const place = loc ? 'sel' : 'focus';
+      const discoveries = this.discoveriesForGalaxy(galaxy.galaxyId).length;
+      return `g:${place}:${galaxy.galaxyId}:${this.rowsForGalaxy(galaxy.galaxyId).length}:${discoveries}`;
+    }
     return `root:${this.myStars()}`;
   }
 
@@ -640,74 +791,53 @@ export class RankPage {
 
   private buildPanel(): HTMLElement {
     const sel = this.selection;
-    if (sel.planet) return this.buildPlanetPanel(sel.planet);
-    if (sel.system) return this.buildSystemPanel(sel.system);
-    if (sel.galaxy) return this.buildGalaxyPanel(sel.galaxy);
-    return this.buildRootPanel();
+    const loc = sel.selected;
+    // The SELECTION owns the panel (plan §71); the camera focus is only the
+    // fallback so a zoomed-in tier still explains itself while nothing is tapped.
+    const planet = loc?.planet ?? sel.planet;
+    if (planet) return buildPlanetPanel(planet, this.panelHost);
+    const sys = loc?.system ?? sel.system;
+    if (sys) return buildSystemPanel(sys, this.panelHost);
+    const galaxy = loc?.galaxy ?? sel.galaxy;
+    if (galaxy) return buildGalaxyPanel(galaxy, this.panelHost);
+    return buildRootPanel(this.panelHost, { galaxy: sel.galaxy, system: sel.system });
   }
 
-  private buildRootPanel(): HTMLElement {
-    const box = el('div', 'rk-card');
-    box.appendChild(el('div', 'rk-card-title', 'INTERGALACTIC MAP'));
-    box.appendChild(
-      el('p', 'rk-card-note', 'Ranks are RINGS: your ladder standing opens the band you can fight in. Select a galaxy, then a system, then a planet to start a ranked match.')
-    );
-    const myRing = this.myRing();
-    const cfg = ringConfig(myRing);
-    const home = ringHome(this.universeSeed(), myRing);
-    const g = galaxyAt(this.universeSeed(), home.gx, home.gy);
-    const headline = el('div', 'rk-highlight');
-    headline.innerHTML =
-      `<div class="rk-highlight-band" style="--rk-accent:${cfg.accent}">${cfg.name} BAND</div>` +
-      `<div class="rk-highlight-body">${cfg.tagline}<span class="rk-highlight-sub">${cfg.worldHint}</span></div>`;
-    box.appendChild(headline);
-    const go = el('button', 'rk-btn primary wide', `FLY TO ${g?.name.toUpperCase() ?? 'YOUR SECTOR'}`) as HTMLButtonElement;
-    go.type = 'button';
-    go.addEventListener('click', () => this.map.flyToRing(myRing));
-    box.appendChild(go);
-    return box;
-  }
-
-  private buildGalaxyPanel(g: GalaxyDescriptor): HTMLElement {
-    const box = el('div', 'rk-card');
-    box.appendChild(el('div', 'rk-card-kicker', g.poiLabel));
-    box.appendChild(el('div', 'rk-card-title', g.name.toUpperCase()));
-    const stats = el('div', 'rk-stat-grid');
-    stats.innerHTML =
-      `<div class="rk-stat"><span>STAR</span><b style="color:${g.starColor}">${g.starType.replace('_', ' ')}</b></div>` +
-      `<div class="rk-stat"><span>SYSTEMS</span><b>${g.systemCount}</b></div>` +
-      `<div class="rk-stat"><span>NEBULA</span><b style="color:${g.nebulaColor ?? '#8a8f9c'}">${g.nebula}</b></div>` +
-      `<div class="rk-stat"><span>RING</span><b>${RING_CONFIGS[g.ring].name}</b></div>`;
-    box.appendChild(stats);
-    box.appendChild(this.influenceBlock(g.galaxyId));
-    box.appendChild(el('p', 'rk-card-note', 'Click a system in the cluster to see its planets.'));
-    return box;
-  }
-
-  private buildSystemPanel(sys: SystemDescriptor): HTMLElement {
-    const g = this.map.currentGalaxy;
-    const box = el('div', 'rk-card');
-    box.appendChild(el('div', 'rk-card-kicker', g ? g.name.toUpperCase() : ''));
-    box.appendChild(el('div', 'rk-card-title', sys.name.toUpperCase()));
-    const planets = this.planetsOf(sys);
-    box.appendChild(this.influenceBlock(sys.galaxyId, sys.systemId));
-    const list = el('div', 'rk-planetlist');
-    for (const p of planets) {
-      const row = this.planetRow(p.key);
-      const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3;
-      const reserved = ClientCache.shared.reservedPlanetKeys().has(p.key);
-      const line = el('button', `rk-planetrow${controlled ? ' controlled' : ''}${reserved ? ' reserved' : ''}`) as HTMLButtonElement;
-      line.type = 'button';
-      if (controlled) line.style.setProperty('--rk-colony', COLONIES[row.controllingColony]?.css ?? '#999');
-      line.innerHTML =
-        `<span class="rk-planetrow-orb" style="background:${p.biomeColor}"></span>` +
-        `<span class="rk-planetrow-name">${p.name.toUpperCase()}</span>` +
-        `<span class="rk-planetrow-tag">${controlled ? `${COLONIES[row!.controllingColony]?.name ?? 'HELD'}` : reserved ? 'CONTESTED' : row?.discovered ? 'MAPPED' : 'UNDISCOVERED'}</span>`;
-      line.addEventListener('click', () => this.map.selectPlanet(p));
-      list.appendChild(line);
-    }
-    box.appendChild(list);
-    return box;
+  /**
+   * The panel's data + action surface (plan §71): the LocationInfoPanel module
+   * owns the markup, this page owns the server data and the navigation actions.
+   */
+  private buildPanelHost(): LocationPanelHost {
+    return {
+      universeSeed: () => this.universeSeed(),
+      myRing: () => this.myRing(),
+      myStars: () => this.myStars(),
+      serverNowUs: () => this.serverNowUs(),
+      rowsForGalaxy: (galaxyId) => this.rowsForGalaxy(galaxyId),
+      planetRow: (key) => this.planetRow(key),
+      reservedKeys: () => ClientCache.shared.reservedPlanetKeys(),
+      discoveriesForGalaxy: (galaxyId) => this.discoveriesForGalaxy(galaxyId),
+      discoveriesForSystem: (galaxyId, systemId) => this.discoveriesForSystem(galaxyId, systemId),
+      discoveriesForPlanet: (planetKey) => this.discoveriesForPlanet(planetKey),
+      planetAvailable: (p) => this.planetAvailable(p),
+      planetsOf: (sys) => this.planetsOf(sys),
+      currentGalaxyFor: (loc) => {
+        const { gx, gy } = decodeGalaxyId(loc.galaxyId);
+        return galaxyAt(this.universeSeed(), gx, gy);
+      },
+      systemFor: (p) => {
+        const { gx, gy } = decodeGalaxyId(p.galaxyId);
+        const g = galaxyAt(this.universeSeed(), gx, gy);
+        return g ? systemAt(this.universeSeed(), p.ring, p.galaxyId, p.systemId, g.systemCount) : null;
+      },
+      myQueue: () => ClientCache.shared.myQueue(),
+      selectPlanet: (p) => this.map.selectPlanet(p),
+      startRanked: (p) => this.startRanked(p),
+      jumpTo: (p) => this.jumpTo(p),
+      findAnother: (p) => this.findAnother(p),
+      goQueue: () => this.ctx.goQueue(),
+      flyToRing: (ring) => this.map.flyToRing(ring),
+    };
   }
 
   private planetsOf(sys: SystemDescriptor): PlanetDescriptor[] {
@@ -719,132 +849,6 @@ export class RankPage {
 
   private systemPlanetCount(sys: SystemDescriptor): number {
     return generatedPlanetCount(this.universeSeed(), sys.ring, sys.galaxyId, sys.systemId);
-  }
-
-  private influenceBlock(galaxyId: number, systemId?: number): HTMLElement {
-    const rows = this.rowsForGalaxy(galaxyId).filter((r) => (systemId === undefined ? true : r.systemId === systemId));
-    const per = [0, 0, 0];
-    let controlled = 0;
-    for (const r of rows) {
-      if (r.state === RANKED_PLANET_CONTROLLED && r.colony < 3) {
-        per[r.colony]++;
-        controlled++;
-      }
-    }
-    const box = el('div', 'rk-influence');
-    if (!controlled) {
-      box.appendChild(el('div', 'rk-influence-note', systemId === undefined ? 'No colony holds ground in this galaxy yet.' : 'Contested space — no colony holds 50% of this system.'));
-      return box;
-    }
-    let best = 0;
-    for (let c = 1; c < 3; c++) if (per[c] > per[best]) best = c;
-    const dominant = per[best] * 2 >= controlled;
-    box.appendChild(el('div', 'rk-influence-head', dominant ? `${COLONIES[best].name} DOMINATES` : 'CONTESTED GROUND'));
-    const bars = el('div', 'rk-influence-bars');
-    for (let c = 0; c < 3; c++) {
-      if (!per[c]) continue;
-      const pct = Math.round((per[c] / controlled) * 100);
-      const rowEl = el('div', 'rk-ibar');
-      rowEl.innerHTML = `<span class="rk-ibar-name">${COLONIES[c].name}</span><span class="rk-ibar-track"><span class="rk-ibar-fill" style="width:${pct}%;background:${COLONIES[c].css}"></span></span><span class="rk-ibar-pct">${pct}%</span>`;
-      bars.appendChild(rowEl);
-    }
-    box.appendChild(bars);
-    return box;
-  }
-
-  private buildPlanetPanel(p: PlanetDescriptor): HTMLElement {
-    const row = this.planetRow(p.key);
-    const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3;
-    const reserved = ClientCache.shared.reservedPlanetKeys().has(p.key);
-    const discovered = Boolean(row?.discovered);
-    const mine = p.ring === this.myRing();
-    const box = el('div', 'rk-card rk-planet-card');
-    box.style.setProperty('--rk-biome', p.biomeColor);
-    box.appendChild(el('div', 'rk-card-kicker', `${p.biomeLabel} ${p.ring === 0 ? 'WORLD' : 'PLANET'}`));
-    const title = el('div', 'rk-card-title big', p.name.toUpperCase());
-    box.appendChild(title);
-    const orb = el('div', 'rk-orb');
-    orb.style.setProperty('--rk-orb', p.biomeColor);
-    orb.style.setProperty('--rk-corruption', `${Math.round(p.corruption * 100)}%`);
-    box.appendChild(orb);
-
-    const stats = el('div', 'rk-stat-grid');
-    stats.innerHTML =
-      `<div class="rk-stat"><span>RANK RING</span><b>${RING_CONFIGS[p.ring].name}</b></div>` +
-      `<div class="rk-stat"><span>GRAVITY</span><b>${p.gravity.toFixed(2)} g</b></div>` +
-      `<div class="rk-stat"><span>CORRUPTION</span><b>${Math.round(p.corruption * 100)}%</b></div>` +
-      `<div class="rk-stat"><span>THREAT</span><b>${Math.round(p.difficulty * 100)}%</b></div>`;
-    box.appendChild(stats);
-
-    const status = el('div', 'rk-status');
-    if (controlled) {
-      status.innerHTML =
-        `<div class="rk-status-line" style="color:${COLONIES[row.controllingColony]?.css ?? '#fff'}">⬢ CONTROLLED BY ${COLONIES[row.controllingColony]?.name ?? 'A COLONY'}</div>` +
-        `<div class="rk-shield"><span class="rk-shield-label">PLANETARY SHIELD FALLS IN</span><span class="rk-shield-clock" data-countdown>${this.countdownText(Number(row.controlExpiresAt))}</span></div>`;
-    } else if (reserved) {
-      status.innerHTML = `<div class="rk-status-line amber">▲ CONTESTED — A MATCH IS FILLING FOR THIS WORLD</div>`;
-    } else if (discovered) {
-      status.innerHTML = `<div class="rk-status-line">◉ MAPPED — INFESTED, OPEN FOR LIBERATION</div>`;
-    } else {
-      status.innerHTML = `<div class="rk-status-line dim">? UNDISCOVERED — FIRST CONTACT WILL BE RECORDED</div>`;
-    }
-    box.appendChild(status);
-
-    const eco = el('div', 'rk-eco');
-    eco.innerHTML =
-      `<div class="rk-eco-row"><span>ECOLOGY</span><b>${p.ecologyLabel}</b></div>` +
-      `<div class="rk-eco-row"><span>APEX</span><b>${p.boss}</b></div>` +
-      `<div class="rk-eco-row"><span>SEED</span><b>${(p.seed >>> 0).toString(16).toUpperCase().padStart(8, '0')}</b></div>`;
-    box.appendChild(eco);
-
-    // ---- first discoverers (plan §35)
-    const discovers = ClientCache.shared.planetDiscoveries(p.key);
-    if (discovers.length) {
-      const d = el('div', 'rk-discoverers');
-      d.appendChild(el('div', 'rk-discoverers-head', 'FIRST DISCOVERED BY'));
-      for (const disc of discovers) {
-        const line = el('div', 'rk-discoverer');
-        line.innerHTML = `<b>${disc.discoveryOrder}</b><span>${disc.playerName}</span>`;
-        d.appendChild(line);
-      }
-      box.appendChild(d);
-    }
-
-    // ---- match action (plan §49/§50)
-    const queue = ClientCache.shared.myQueue();
-    if (queue?.ranked) {
-      const searching = el('button', 'rk-btn primary wide searching', `SEARCHING — ${p.name.toUpperCase()}…`) as HTMLButtonElement;
-      searching.type = 'button';
-      searching.addEventListener('click', () => this.ctx.goQueue());
-      box.appendChild(searching);
-    } else if (queue) {
-      box.appendChild(el('p', 'rk-card-note', 'You are already in a matchmaking queue — cancel it first.'));
-    } else if (!mine) {
-      box.appendChild(el('p', 'rk-card-note', `This world fights at ${RING_CONFIGS[p.ring].name} — reach that ring to battle here.`));
-    } else if (controlled || reserved) {
-      const other = this.findAnother(p);
-      const b = el('button', 'rk-btn primary wide', other ? `FIND ANOTHER PLANET — ${other.name.toUpperCase()}` : 'SEARCH THE NEXT GALAXY') as HTMLButtonElement;
-      b.type = 'button';
-      b.addEventListener('click', () => {
-        const target = this.findAnother(p);
-        if (target) {
-          this.jumpTo(target);
-          this.ctx.toast(`${p.name.toUpperCase()} is shielded — target acquired: ${target.name.toUpperCase()}.`);
-        } else {
-          const ring = this.myRing();
-          const home = ringHome(this.universeSeed(), ring);
-          this.ctx.toast(`All of ${galaxyAt(this.universeSeed(), home.gx, home.gy)?.name.toUpperCase() ?? 'this galaxy'} is held — searching outward is a future update.`);
-        }
-      });
-      box.appendChild(b);
-    } else {
-      const b = el('button', 'rk-btn primary wide', `FIND MATCH — LIBERATE ${p.name.toUpperCase()}`) as HTMLButtonElement;
-      b.type = 'button';
-      b.addEventListener('click', () => this.startRanked(p));
-      box.appendChild(b);
-      box.appendChild(el('p', 'rk-card-note', 'Win the match to raise your colony\'s 72-hour shield over this planet.'));
-    }
-    return box;
   }
 
   private findAnother(p: PlanetDescriptor): PlanetDescriptor | null {
@@ -881,16 +885,6 @@ export class RankPage {
     }
     findRankedMatch(p.ring, p.galaxyId, p.systemId, p.planetId);
     this.ctx.toast(`Searching for a ranked match on ${p.name.toUpperCase()}…`);
-  }
-
-  private countdownText(expiresUs: number): string {
-    const remain = Math.max(0, expiresUs - this.serverNowUs());
-    if (remain <= 0) return '00:00:00';
-    const s = Math.floor(remain / 1e6);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
   }
 
   // ------------------------------------------------------------ discovery flash

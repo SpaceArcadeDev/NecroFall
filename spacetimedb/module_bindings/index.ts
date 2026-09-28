@@ -40,6 +40,7 @@ import ClaimAdminReducer from "./claim_admin_reducer";
 import ConfirmMatchReducer from "./confirm_match_reducer";
 import CreatePartyReducer from "./create_party_reducer";
 import DeclineMatchReducer from "./decline_match_reducer";
+import DiscoverLocationReducer from "./discover_location_reducer";
 import DiscoverPlanetReducer from "./discover_planet_reducer";
 import EquipItemReducer from "./equip_item_reducer";
 import FindMatchReducer from "./find_match_reducer";
@@ -97,10 +98,12 @@ import PlayerStatsRow from "./player_stats_table";
 import PlayerWalletRow from "./player_wallet_table";
 import ProfileViewRow from "./profile_view_table";
 import RankHistoryRow from "./rank_history_table";
+import RankedLocationDiscoveryRow from "./ranked_location_discovery_table";
 import RankedPlanetRow from "./ranked_planet_table";
 import RankedPlanetReservationRow from "./ranked_planet_reservation_table";
 import RankedSeasonRow from "./ranked_season_table";
 import RankedTopRow from "./ranked_top_table";
+import ServerClockRow from "./server_clock_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -385,6 +388,23 @@ const tablesSchema = __schema({
       { name: 'rank_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, RankHistoryRow),
+  rankedLocationDiscovery: __table({
+    name: 'ranked_location_discovery',
+    indexes: [
+      { accessor: 'galaxy_id', name: 'ranked_location_discovery_galaxy_id_idx_btree', algorithm: 'btree', columns: [
+        'galaxyId',
+      ] },
+      { accessor: 'id', name: 'ranked_location_discovery_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'location_key', name: 'ranked_location_discovery_location_key_idx_btree', algorithm: 'btree', columns: [
+        'locationKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'ranked_location_discovery_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, RankedLocationDiscoveryRow),
   rankedPlanet: __table({
     name: 'ranked_planet',
     indexes: [
@@ -421,6 +441,17 @@ const tablesSchema = __schema({
       { name: 'ranked_season_season_id_key', constraint: 'unique', columns: ['seasonId'] },
     ],
   }, RankedSeasonRow),
+  serverClock: __table({
+    name: 'server_clock',
+    indexes: [
+      { accessor: 'id', name: 'server_clock_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'server_clock_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ServerClockRow),
   myCandidate: __table({
     name: 'my_candidate',
     indexes: [
@@ -466,6 +497,7 @@ const reducersSchema = __reducers(
   __reducerSchema("confirm_match", ConfirmMatchReducer),
   __reducerSchema("create_party", CreatePartyReducer),
   __reducerSchema("decline_match", DeclineMatchReducer),
+  __reducerSchema("discover_location", DiscoverLocationReducer),
   __reducerSchema("discover_planet", DiscoverPlanetReducer),
   __reducerSchema("equip_item", EquipItemReducer),
   __reducerSchema("find_match", FindMatchReducer),
@@ -535,12 +567,16 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "profile_view": Omit<typeof tablesSchema.schemaType.tables["profileView"], "accessorName"> & { readonly accessorName: "profile_view" };
     /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
     readonly "rank_history": Omit<typeof tablesSchema.schemaType.tables["rankHistory"], "accessorName"> & { readonly accessorName: "rank_history" };
+    /** @deprecated Use `rankedLocationDiscovery` instead. This alias will be removed in the next major version. */
+    readonly "ranked_location_discovery": Omit<typeof tablesSchema.schemaType.tables["rankedLocationDiscovery"], "accessorName"> & { readonly accessorName: "ranked_location_discovery" };
     /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
     readonly "ranked_planet": Omit<typeof tablesSchema.schemaType.tables["rankedPlanet"], "accessorName"> & { readonly accessorName: "ranked_planet" };
     /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
     readonly "ranked_planet_reservation": Omit<typeof tablesSchema.schemaType.tables["rankedPlanetReservation"], "accessorName"> & { readonly accessorName: "ranked_planet_reservation" };
     /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
     readonly "ranked_season": Omit<typeof tablesSchema.schemaType.tables["rankedSeason"], "accessorName"> & { readonly accessorName: "ranked_season" };
+    /** @deprecated Use `serverClock` instead. This alias will be removed in the next major version. */
+    readonly "server_clock": Omit<typeof tablesSchema.schemaType.tables["serverClock"], "accessorName"> & { readonly accessorName: "server_clock" };
     /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
     readonly "my_candidate": Omit<typeof tablesSchema.schemaType.tables["myCandidate"], "accessorName"> & { readonly accessorName: "my_candidate" };
     /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
@@ -585,9 +621,11 @@ const tableAccessorAliases = {
   "player_wallet": "playerWallet",
   "profile_view": "profileView",
   "rank_history": "rankHistory",
+  "ranked_location_discovery": "rankedLocationDiscovery",
   "ranked_planet": "rankedPlanet",
   "ranked_planet_reservation": "rankedPlanetReservation",
   "ranked_season": "rankedSeason",
+  "server_clock": "serverClock",
   "my_candidate": "myCandidate",
   "my_candidate_players": "myCandidatePlayers",
   "my_match_usage": "myMatchUsage",
@@ -645,12 +683,16 @@ export type DbView = __DbViewBase & {
   readonly "profile_view": __DbViewBase["profileView"];
   /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
   readonly "rank_history": __DbViewBase["rankHistory"];
+  /** @deprecated Use `rankedLocationDiscovery` instead. This alias will be removed in the next major version. */
+  readonly "ranked_location_discovery": __DbViewBase["rankedLocationDiscovery"];
   /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
   readonly "ranked_planet": __DbViewBase["rankedPlanet"];
   /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
   readonly "ranked_planet_reservation": __DbViewBase["rankedPlanetReservation"];
   /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
   readonly "ranked_season": __DbViewBase["rankedSeason"];
+  /** @deprecated Use `serverClock` instead. This alias will be removed in the next major version. */
+  readonly "server_clock": __DbViewBase["serverClock"];
   /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
   readonly "my_candidate": __DbViewBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
@@ -697,12 +739,16 @@ export type Tables = __TablesBase & {
   readonly "profile_view": __TablesBase["profileView"];
   /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
   readonly "rank_history": __TablesBase["rankHistory"];
+  /** @deprecated Use `rankedLocationDiscovery` instead. This alias will be removed in the next major version. */
+  readonly "ranked_location_discovery": __TablesBase["rankedLocationDiscovery"];
   /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
   readonly "ranked_planet": __TablesBase["rankedPlanet"];
   /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
   readonly "ranked_planet_reservation": __TablesBase["rankedPlanetReservation"];
   /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
   readonly "ranked_season": __TablesBase["rankedSeason"];
+  /** @deprecated Use `serverClock` instead. This alias will be removed in the next major version. */
+  readonly "server_clock": __TablesBase["serverClock"];
   /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
   readonly "my_candidate": __TablesBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */

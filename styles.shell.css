@@ -447,6 +447,52 @@ html.nf-onb-colony .count-badge { display: none; }
    term keeps one long word inside a narrow phone: at 52px it was 405px wide on a 390px screen. */
 .nf-home-title { font-size: clamp(30px, min(6.2vh, 11.5vw), 52px); animation: nf-title-glow 4.5s ease-in-out infinite; }
 .home-page .menu-sub { margin-bottom: 2px; font-size: clamp(10px, 1.7vh, 12.5px); }
+
+/* MAIN MENU HEADER (plan §38/§39): the wordmark lives IN the chrome header row,
+   in the SAME row as the profile button — absolutely centred on the VIEWPORT
+   (never "centred in the space left over after the profile"), with the profile
+   docked to the right edge. The size is a clamp so a narrow frame SHRINKS the
+   title instead of shifting it off-centre. */
+.nf-shell.on-home .nf-chrome { position: relative; }
+/* the bottom nav must stay glued to the viewport — the chrome became positioned */
+.nf-shell.on-home .nf-bottom { position: fixed; }
+.nf-shell.on-home .nf-top-me { order: 9; margin-left: auto; }
+.nf-shell.on-home .nf-top-currency { margin-left: 0; }
+.nf-home-header-title {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 2;
+  white-space: nowrap;
+  font-size: clamp(18px, 3vw, 38px);
+  letter-spacing: 0.24em;
+}
+/* Phone portrait: every pixel is contested — the glyphs shrink, the profile
+   drops its name, the currency chips tighten and the ?/gear join the profile
+   side (the how-to stays available from every other shell screen). The title
+   NEVER moves off-centre. */
+@media (max-width: 560px) {
+  .nf-shell.on-home .nf-home-header-title { font-size: 15px; letter-spacing: 0.16em; }
+  .nf-shell.on-home .nf-top-name { display: none; }
+  .nf-shell.on-home .nf-top-level { display: none; }
+  .nf-shell.on-home .nf-currency { padding: 5px 8px; font-size: 12px; gap: 4px; }
+  .nf-shell.on-home .nf-top { gap: 6px; }
+  .nf-shell.on-home .nf-top-howto { display: none; }
+  .nf-shell.on-home .nf-top-settings { order: 8; margin-left: auto; }
+  .nf-shell.on-home .nf-top-me { order: 9; margin-left: 0; }
+}
+/* Landscape phones (the game's real home): the row is wide, the title can breathe. */
+@media (orientation: landscape) and (max-height: 560px) {
+  .nf-home-header-title { font-size: clamp(18px, 2.4vw, 28px); letter-spacing: 0.22em; top: 46%; }
+}
+/* Tiny portrait frames (320px): the gear joins the how-to on the bench so the
+   centred title never has to squeeze — both stay one screen away. */
+@media (max-width: 360px) {
+  .nf-shell.on-home .nf-top-settings:not(.nf-top-howto) { display: none; }
+  .nf-shell.on-home .nf-home-header-title { font-size: 13px; }
+}
 /* the stage soaks up whatever height is left BETWEEN the wordmark and the caption — never more
    than the viewport holds, so the avatar always scales to fit and is never cropped. It is also
    the character's LAYER: the canvas inside it is oversized (it spills towards the wordmark and the

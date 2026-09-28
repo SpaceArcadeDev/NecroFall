@@ -4,17 +4,33 @@
 // animation: twinkling starfield, drifting nebulae, orbiting planets, pulsing
 // selections and countdown shield arcs.
 //
+// INTERACTION MODEL (plan §19–§28/§72): TAP = SELECT (never zoom), a SECOND tap
+// enters the object, DRAG = pan, PINCH/WHEEL = zoom. At SOLAR SYSTEM level the
+// drag is locked to the current system (pinned focus + bounded camera), so the
+// player can never slide into a neighbouring system — zooming out releases it.
+//
 // The map is VIEW-ONLY: nothing here decides availability or ownership — rows
 // come from the server subscription, everything else is regenerated from the
-// season seed (plan §0).
+// season seed (plan §0). Discovery is only ever REQUESTED here (plan §6/§47);
+// the server decides, and the DOM panels render what came back.
 import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from './procedural/GalaxyTypes';
 import { planetsInSystem, ringHome } from './procedural/UniverseGenerator';
 import { galaxyAt } from './procedural/GalaxyGenerator';
 import { systemAt, systemsInGalaxy } from './procedural/SolarSystemGenerator';
 import { systemPlanetCount } from './procedural/SolarSystemGenerator';
 import { ringConfig } from './procedural/RankRingConfig';
-import { MAX_RING_RADIUS, ringCenterRadius, ringInnerRadius, ringOfGalaxy, ringOuterRadius } from './procedural/SeedHash';
-import { getTerritoryVisual, planetOwnershipColor, type TerritoryVisual } from './Ownership';
+import { decodeGalaxyId, MAX_RING_RADIUS, ringCenterRadius, ringInnerRadius, ringOfGalaxy, ringOuterRadius } from './procedural/SeedHash';
+import { getTerritoryVisual, planetOwnershipColor, NECROPHAGE_CONTROL_COLOR, type TerritoryVisual } from './Ownership';
+import { calculateDominance } from './LocationControlSummary';
+import {
+  galaxyLocationKey,
+  planetLocationKey,
+  systemLocationKey,
+  LOCATION_GALAXY,
+  LOCATION_PLANET,
+  LOCATION_SYSTEM,
+  type DiscoveryEntry,
+} from './DiscoveryTypes';
 
 export const RANKED_PLANET_INFESTED = 0;
 export const RANKED_PLANET_CONTROLLED = 1;
@@ -33,6 +49,28 @@ export interface PlanetRowData {
   discovered: boolean;
 }
 
+/** A first-contact request the map hands to the page (plan §47). */
+export interface DiscoveryRequest {
+  locationType: number;
+  locationKey: string;
+  galaxyId: number;
+  systemId: number;
+  planetId: number;
+}
+
+/**
+ * The authoritative SELECTION (plan §21): ONE object drives the canvas
+ * highlight AND the DOM panel. Selection is NOT navigation (plan §22) — it
+ * changes when the player taps (or when a planet soft-locks at the crosshair),
+ * never the camera.
+ */
+export interface LocationSelection {
+  type: 'galaxy' | 'system' | 'planet';
+  galaxy: GalaxyDescriptor;
+  system?: SystemDescriptor;
+  planet?: PlanetDescriptor;
+}
+
 export interface MapData {
   universeSeed: number;
   myRing: number;
@@ -42,7 +80,20 @@ export interface MapData {
   /** Every planet row (ownership overlays sweep this — plan §33). Optional for tests. */
   allRows?(): PlanetRowData[];
   reservedKeys(): Set<string>;
+  /**
+   * SERVER time in micros (plan §14/§46) — the shield countdown reads this,
+   * never `Date.now()` directly.
+   */
   serverNowUs(): number;
+  /** Discovery history of ONE galaxy / system / planet, scoped on demand (plan §7/§43). */
+  discoveriesForGalaxy(galaxyId: number): DiscoveryEntry[];
+  discoveriesForSystem(galaxyId: number, systemId: number): DiscoveryEntry[];
+  discoveriesForPlanet(planetKey: string): DiscoveryEntry[];
+  /** The signed-in player (plan §7) — used to mark "you" and gate requests. */
+  currentPlayerId: string;
+  currentPlayerName: string;
+  /** Ask the SERVER to record first contact (plan §6/§47). Optional for tests. */
+  requestDiscovery?(req: DiscoveryRequest): void;
 }
 
 export type MapLevel = 'galactic' | 'galaxy' | 'system';
@@ -52,6 +103,8 @@ export interface MapSelection {
   galaxy: GalaxyDescriptor | null;
   system: SystemDescriptor | null;
   planet: PlanetDescriptor | null;
+  /** The authoritative user selection (plan §21) — null when nothing is selected. */
+  selected: LocationSelection | null;
 }
 
 interface Camera {
@@ -96,6 +149,20 @@ interface LockState {
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
 const ramp01 = (v: number, a: number, b: number): number => clamp01((v - a) / Math.max(1e-6, b - a));
 
+/**
+ * Rubber-band bound for the system drag lock (plan §24/§25). Inside the bound
+ * the value is untouched; outside it is eased back with a CAPPED overshoot, so
+ * the camera stops softly but can never escape the solar system.
+ */
+function softBound(v: number, centre: number, radius: number, half: number): number {
+  const min = centre - radius + half;
+  const max = centre + radius - half;
+  if (min > max) return centre; // the viewport is larger than the system — centre it
+  if (v < min) return min - Math.min(min - v, 2) * 0.18;
+  if (v > max) return max + Math.min(v - max, 2) * 0.18;
+  return v;
+}
+
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
 /** Below this body radius a galaxy is a plain LIGHT DOT — the intergalactic view is a
@@ -125,8 +192,23 @@ export class GalacticMap {
   private level: MapLevel = 'galactic';
   private focusGalaxy: GalaxyDescriptor | null = null;
   private focusSystem: SystemDescriptor | null = null;
-  private selectedPlanet: PlanetDescriptor | null = null;
-  private selectedSystem: SystemDescriptor | null = null;
+  /**
+   * SYSTEM DRAG LOCK (plan §23–§26): once the solar-system level is entered the
+   * focused system is PINNED — camera movement can never swap the lock onto a
+   * neighbour, and the camera itself is clamped to the system's own bounds.
+   * Zooming out to the galaxy tier clears the pin (that is the release).
+   */
+  private pinnedSystem: SystemDescriptor | null = null;
+  /** Per-system camera-clamp radius (world units), computed once per system. */
+  private systemBoundsCache = new Map<number, number>();
+  /** THE authoritative selection (plan §21). */
+  private selected: LocationSelection | null = null;
+  /** Planets the player explicitly deselected — auto soft-select skips them (plan §50/§51). */
+  private suppressAutoSelect = new Set<string>();
+  /** Discovery requests are debounced + deduped (plan §5/§47). */
+  private discoveryTimer = 0;
+  private discoveryPending: DiscoveryRequest | null = null;
+  private discoveryAsked = new Set<string>();
   private hover: Hover = { kind: null, sx: 0, sy: 0 };
   private stars: { x: number; y: number; r: number; seed: number; layer: number }[] = [];
   private shooting: { x: number; y: number; vx: number; vy: number; life: number } | null = null;
@@ -145,7 +227,8 @@ export class GalacticMap {
   private raf = 0;
   private disposed = false;
   private resizeObserver: ResizeObserver | null = null;
-  private drag: { x: number; y: number; camx: number; camy: number; moved: boolean } | null = null;
+  /** Drag/tap state: `moved` flips once the pointer travels past `slop` px (plan §20). */
+  private drag: { x: number; y: number; camx: number; camy: number; moved: boolean; slop: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
   private pinch: { dist: number; zoom: number } | null = null;
   private t0 = performance.now();
@@ -188,6 +271,7 @@ export class GalacticMap {
   dispose(): void {
     this.disposed = true;
     if (this.raf) cancelAnimationFrame(this.raf);
+    if (this.discoveryTimer) window.clearTimeout(this.discoveryTimer);
     this.resizeObserver?.disconnect();
     this.canvas.remove();
   }
@@ -198,16 +282,18 @@ export class GalacticMap {
     /* data is read live through the provider each frame */
   }
 
-  /** Fly the camera to a ring's anchor galaxy ("YOUR RING" / ring rail). */
+  /** Fly the camera to a ring's anchor galaxy ("YOUR RING" / ring rail / BACK TO POSITION).
+   *  Also clears the selection and releases the focus (plan §52). */
   flyToRing(ring: number): void {
     const home = ringHome(this.data.universeSeed, ring);
     this.level = 'galactic';
     this.focusGalaxy = null;
     this.focusSystem = null;
-    this.selectedSystem = null;
-    this.selectedPlanet = null;
+    this.pinnedSystem = null;
+    this.selected = null;
+    this.suppressAutoSelect.clear();
     this.camTarget = { x: home.gx, y: home.gy, zoom: this.ringViewZoom(ring) };
-    this.onSelect({ level: 'galactic', galaxy: null, system: null, planet: null });
+    this.emitSelection();
   }
 
   centerOnHome(): void {
@@ -231,13 +317,19 @@ export class GalacticMap {
     return this.focusSystem;
   }
 
+  /** THE authoritative selection (plan §21). */
+  get selection(): LocationSelection | null {
+    return this.selected;
+  }
+
   back(): void {
     const ranges = this.zoomRamps();
     if (this.level === 'system') {
       // Ease back out toward the galaxy tier — the soft-focus pass unwinds the
       // levels on its own as the ramps collapse (no hard reset, no jump).
       this.camTarget = { x: this.cam.x, y: this.cam.y, zoom: Math.max(6, ranges.plStart * 0.62) };
-      this.selectedPlanet = null;
+      if (this.selected?.type === 'planet') this.selected = null;
+      this.emitSelection();
     } else if (this.level === 'galaxy') {
       const left = this.focusGalaxy;
       this.camTarget = left
@@ -246,9 +338,56 @@ export class GalacticMap {
     }
   }
 
-  selectPlanet(p: PlanetDescriptor | null): void {
-    this.selectedPlanet = p;
-    this.onSelect({ level: this.level, galaxy: this.focusGalaxy, system: this.focusSystem, planet: p });
+  /**
+   * SELECT a planet (plan §21/§47) — panel-driven jumps and deep-zoom soft lock.
+   * Selection NEVER moves the camera (plan §22); it only drives highlight + panel
+   * + the debounced discovery request.
+   */
+  selectPlanet(p: PlanetDescriptor | null, galaxy?: GalaxyDescriptor, system?: SystemDescriptor): void {
+    if (!p) {
+      this.clearSelection();
+      return;
+    }
+    const g = galaxy ?? this.focusGalaxy ?? this.resolveGalaxy(p);
+    const sys =
+      system ??
+      (this.focusSystem?.systemId === p.systemId ? this.focusSystem : undefined) ??
+      (g ? this.resolveSystem(p, g) ?? undefined : undefined);
+    if (!g || !sys) return; // descriptors can only be resolved for real locations
+    this.suppressAutoSelect.delete(p.key);
+    this.selected = { type: 'planet', galaxy: g, system: sys, planet: p };
+    this.queueDiscovery(this.selected);
+    this.emitSelection();
+  }
+
+  /** Clear the selection WITHOUT touching the camera (plan §51 — empty-space tap). */
+  clearSelection(): void {
+    if (!this.selected) return;
+    if (this.selected.type === 'planet' && this.selected.planet) {
+      // Do not immediately re-select the same planet by the close-up soft lock.
+      this.suppressAutoSelect.add(this.selected.planet.key);
+    }
+    this.selected = null;
+    this.emitSelection();
+  }
+
+  private emitSelection(): void {
+    this.onSelect({
+      level: this.level,
+      galaxy: this.focusGalaxy,
+      system: this.focusSystem,
+      planet: this.selected?.planet ?? null,
+      selected: this.selected,
+    });
+  }
+
+  private resolveGalaxy(p: PlanetDescriptor): GalaxyDescriptor | null {
+    const { gx, gy } = decodeGalaxyId(p.galaxyId);
+    return galaxyAt(this.data.universeSeed, gx, gy);
+  }
+
+  private resolveSystem(p: PlanetDescriptor, g: GalaxyDescriptor): SystemDescriptor | null {
+    return systemAt(this.data.universeSeed, p.ring, p.galaxyId, p.systemId, g.systemCount);
   }
 
   /** Does an availability predicate say this planet could host a ranked match? */
@@ -599,7 +738,12 @@ export class GalacticMap {
     const ranges = this.zoomRamps();
     const galaxy = this.nearestGalaxyToViewCentre();
     const sysAlpha = ramp01(zoom, ranges.sysStart, ranges.sysEnd);
-    const system = galaxy && sysAlpha > 0.04 ? this.nearestSystemToViewCentre(galaxy) : null;
+    // SYSTEM DRAG LOCK (plan §23/§26): while the system level is active the focus
+    // is PINNED to the system we entered — panning can never slide the lock onto
+    // a neighbouring system. Zooming out clears the pin (that IS the release).
+    const nearest = galaxy && sysAlpha > 0.04 ? this.nearestSystemToViewCentre(galaxy) : null;
+    const pinnedHere = this.pinnedSystem && galaxy && this.pinnedSystem.galaxyId === galaxy.galaxyId;
+    const system = this.level === 'system' && pinnedHere ? this.pinnedSystem : nearest;
     const planetAlpha = ramp01(zoom, ranges.plStart, ranges.plEnd);
     const closeAlpha = ramp01(zoom, ranges.closeStart, ranges.closeEnd);
     const planet = galaxy && system && planetAlpha > 0.08 ? this.nearestPlanetToViewCentre(galaxy, system) : null;
@@ -617,12 +761,17 @@ export class GalacticMap {
       this.focusGalaxy = next === 'galactic' ? null : galaxy;
       this.focusSystem = next === 'system' ? system : null;
       if (next === 'galactic') {
-        this.selectedSystem = null;
-        this.selectedPlanet = null;
+        this.pinnedSystem = null; // zoom-out releases the system drag lock (plan §26)
+        this.suppressAutoSelect.clear();
+        this.selected = null;
       }
+      if (next === 'system' && system && !this.pinnedSystem) this.pinnedSystem = system;
+      // DISCOVERY (plan §5): entering the galaxy tier / solar-system tier counts.
+      if (next === 'galaxy' && galaxy) this.queueDiscoveryForGalaxy(galaxy);
+      if (next === 'system' && galaxy && system) this.queueDiscoveryForSystem(galaxy, system);
       // a selected planet only survives while its OWN system is the focus
-      if (this.selectedPlanet && this.focusSystem && this.selectedPlanet.systemId !== this.focusSystem.systemId) {
-        this.selectedPlanet = null;
+      if (this.selected?.planet && this.focusSystem && this.selected.planet.systemId !== this.focusSystem.systemId) {
+        this.selected = null;
       }
       // RECENTRE on the tier we just entered (user: "I'm not able to zoom into the
       // solar system"): the locked galaxy/system glides under the crosshair as the
@@ -635,11 +784,83 @@ export class GalacticMap {
           this.camTarget = { x: w.x, y: w.y };
         }
       }
-      this.onSelect({ level: next, galaxy: this.focusGalaxy, system: this.focusSystem, planet: this.selectedPlanet });
+      this.emitSelection();
     }
     // deep close-up: the planet at the crosshair becomes the selection (this is the
-    // end of the journey — galaxy → solar system → planet)
-    if (planet && closeAlpha > 0.35 && this.selectedPlanet?.key !== planet.key) this.selectPlanet(planet);
+    // end of the journey — galaxy → solar system → planet). A planet the player
+    // explicitly deselected stays deselected until the close-up range is left
+    // (plan §50/§51) — an empty-space tap must never bounce back on its own.
+    if (closeAlpha < 0.3 && this.suppressAutoSelect.size) this.suppressAutoSelect.clear();
+    if (planet && closeAlpha > 0.35 && this.selected?.planet?.key !== planet.key && !this.suppressAutoSelect.has(planet.key)) {
+      this.selectPlanet(planet);
+    }
+  }
+
+  // ------------------------------------------------------------ discovery requests (plan §5/§6/§47)
+
+  /** Only locations of YOUR rank band are discoverable (the server enforces this too). */
+  private discoveryAllowed(ring: number): boolean {
+    return ring === this.data.myRing && Boolean(this.data.requestDiscovery);
+  }
+
+  private queueDiscovery(sel: LocationSelection): void {
+    if (sel.type === 'planet' && sel.planet && sel.system) this.queueDiscoveryForPlanet(sel.galaxy, sel.system, sel.planet);
+    else if (sel.type === 'system' && sel.system) this.queueDiscoveryForSystem(sel.galaxy, sel.system);
+    else this.queueDiscoveryForGalaxy(sel.galaxy);
+  }
+
+  private queueDiscoveryForGalaxy(g: GalaxyDescriptor): void {
+    if (!this.discoveryAllowed(g.ring)) return;
+    this.scheduleDiscovery({
+      locationType: LOCATION_GALAXY,
+      locationKey: galaxyLocationKey(g.gx, g.gy),
+      galaxyId: g.galaxyId,
+      systemId: 0,
+      planetId: 0,
+    });
+  }
+
+  private queueDiscoveryForSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
+    if (!this.discoveryAllowed(sys.ring)) return;
+    this.scheduleDiscovery({
+      locationType: LOCATION_SYSTEM,
+      locationKey: systemLocationKey(g.gx, g.gy, sys.systemId),
+      galaxyId: sys.galaxyId,
+      systemId: sys.systemId,
+      planetId: 0,
+    });
+  }
+
+  private queueDiscoveryForPlanet(_g: GalaxyDescriptor, _sys: SystemDescriptor, p: PlanetDescriptor): void {
+    if (!this.discoveryAllowed(p.ring)) return;
+    const { gx, gy } = decodeGalaxyId(p.galaxyId);
+    this.scheduleDiscovery({
+      locationType: LOCATION_PLANET,
+      locationKey: planetLocationKey(gx, gy, p.systemId, p.planetId),
+      galaxyId: p.galaxyId,
+      systemId: p.systemId,
+      planetId: p.planetId,
+    });
+  }
+
+  /**
+   * Debounce (plan §5: ~500–1000 ms): the LAST location the player settles on
+   * inside the window is the one requested, so a quick fly-through only claims
+   * the place they actually stopped at. Each location is asked at most once per
+   * session; the server no-ops for duplicates and full lists (plan §6).
+   */
+  private scheduleDiscovery(req: DiscoveryRequest): void {
+    if (this.discoveryAsked.has(req.locationKey)) return;
+    this.discoveryPending = req;
+    if (this.discoveryTimer) window.clearTimeout(this.discoveryTimer);
+    this.discoveryTimer = window.setTimeout(() => {
+      this.discoveryTimer = 0;
+      const pending = this.discoveryPending;
+      this.discoveryPending = null;
+      if (this.disposed || !pending || this.discoveryAsked.has(pending.locationKey)) return;
+      this.discoveryAsked.add(pending.locationKey);
+      this.data.requestDiscovery?.(pending);
+    }, 700);
   }
 
   // ------------------------------------------------------------ sizing & camera
@@ -653,6 +874,9 @@ export class GalacticMap {
     this.canvas.height = Math.floor(this.height * this.dpr);
     this.canvas.style.width = `${this.width}px`;
     this.canvas.style.height = `${this.height}px`;
+    // Fullscreen / resize keeps cam + selection; only re-apply the system bound
+    // for the new viewport extents (plan §25/§53).
+    this.clampCameraToSystem();
   }
 
   private fitZoom(worldSpan: number): number {
@@ -707,6 +931,11 @@ export class GalacticMap {
   }
 
   private flyToGalaxy(g: GalaxyDescriptor, keepZoom = false): void {
+    // Navigation implies focus: the galaxy you are entering IS the selection.
+    if (this.selected?.type !== 'galaxy' || this.selected.galaxy.galaxyId !== g.galaxyId) {
+      this.selected = { type: 'galaxy', galaxy: g };
+      this.queueDiscovery(this.selected);
+    }
     const ranges = this.zoomRamps();
     // land INSIDE the galaxy tier (ramp 80%), so a click really opens the systems
     const into = ranges.sysStart + (ranges.sysEnd - ranges.sysStart) * 0.8;
@@ -714,6 +943,12 @@ export class GalacticMap {
   }
 
   private flyToSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
+    // SYSTEM DRAG LOCK (plan §23): pin the system the moment the player enters it.
+    this.pinnedSystem = sys;
+    if (this.selected?.type !== 'system' || this.selected.system?.systemId !== sys.systemId) {
+      this.selected = { type: 'system', galaxy: g, system: sys };
+      this.queueDiscovery(this.selected);
+    }
     const ranges = this.zoomRamps();
     const wx = g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD;
     const wy = g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD;
@@ -747,6 +982,9 @@ export class GalacticMap {
     }
     // ownership overlays refresh lazily (rows change on match ends, not per frame)
     this.refreshOwnedIds(now);
+    // SYSTEM DRAG LOCK (plan §26): while the system tier is active the camera stays
+    // inside the current solar system; zooming out past the tier releases it.
+    this.clampCameraToSystem();
     // Seamless soft zoom: tier ramps decide what is visible, and the DOM tier
     // follows them — pinch, wheel and the ± buttons all flow through here.
     this.updateSoftFocus();
@@ -1015,6 +1253,12 @@ export class GalacticMap {
           } else if (terr.color) {
             ctx.globalAlpha = 0.16 * field2 * (1 - inside * 0.85);
             ctx.drawImage(this.glow(terr.color, 64), p.x - tintR, p.y - tintR, tintR * 2, tintR * 2);
+            // GALAXY CORE GLOW (plan §17): the dominant owner's colour pools at the
+            // core — brighter for the Necrophages (their red reads as an infection,
+            // not a paint job). The morphology stays visible; only the light changes.
+            const coreR = faceR * 0.85;
+            ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - inside * 0.85);
+            ctx.drawImage(this.glow(terr.color, 64), p.x - coreR, p.y - coreR, coreR * 2, coreR * 2);
           }
           ctx.globalAlpha = 1;
         }
@@ -1155,6 +1399,25 @@ export class GalacticMap {
     return { x: g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD, y: g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD };
   }
 
+  /** Per-galaxy system territory map, rebuilt lazily — NEVER per frame (plan §58). */
+  private systemTerrCache = new Map<number, { at: number; map: Map<number, TerritoryVisual> }>();
+  private systemTerrFor(g: GalaxyDescriptor): Map<number, TerritoryVisual> {
+    const now = performance.now();
+    const hit = this.systemTerrCache.get(g.galaxyId);
+    if (hit && now - hit.at < 2500) return hit.map;
+    const map = new Map<number, TerritoryVisual>();
+    const rows = this.data.rowsForGalaxy(g.galaxyId);
+    if (rows.length) {
+      for (const sys of this.systemsFor(g)) {
+        const vis = getTerritoryVisual(rows, this.data.colonyColors, sys.systemId);
+        if (vis.kind !== 'NONE') map.set(sys.systemId, vis);
+      }
+    }
+    if (this.systemTerrCache.size >= 16) this.systemTerrCache.clear(); // bounded (plan §43)
+    this.systemTerrCache.set(g.galaxyId, { at: now, map });
+    return map;
+  }
+
   /**
    * The systems of the LOCKED galaxy: born as motes, growing into named stars as the
    * galaxy ramp deepens. The front system (the one the planet tier is opening)
@@ -1165,15 +1428,9 @@ export class GalacticMap {
     if (!galaxy || sysAlpha <= 0.01) return;
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
-    const rows = this.data.rowsForGalaxy(galaxy.galaxyId);
-    // per-system ownership (plan §13/§35): one pass over the (small) row list
-    const systemTerr = new Map<number, TerritoryVisual>();
-    if (rows.length) {
-      for (const sys of this.systemsFor(galaxy)) {
-        const vis = getTerritoryVisual(rows, this.data.colonyColors, sys.systemId);
-        if (vis.kind !== 'NONE') systemTerr.set(sys.systemId, vis);
-      }
-    }
+    // per-system ownership comes from the LAZY cache (plan §58): rows change on
+    // match ends, never per frame, so this is at most one rebuild every ~2.5 s.
+    const systemTerr = this.systemTerrFor(galaxy);
     const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
     // the front system crossfades on the same sqrt curve as the planets layer
     const pa = Math.sqrt(planetAlpha);
@@ -1193,7 +1450,7 @@ export class GalacticMap {
       const p = this.world2screen(w.x, w.y);
       if (p.x < -60 || p.x > this.width + 60 || p.y < -60 || p.y > this.height + 60) continue;
       const isHover = this.hover.kind === 'system' && this.hover.system?.systemId === sys.systemId;
-      const isSel = this.selectedSystem?.systemId === sys.systemId;
+      const isSel = this.selected?.type === 'system' && this.selected.system?.systemId === sys.systemId;
       const front = Boolean(system && sys.systemId === system.systemId);
       const twinkle = 0.85 + 0.15 * Math.sin(t * 2.2 + (sys.seed % 50));
       const r = baseR * twinkle;
@@ -1234,25 +1491,39 @@ export class GalacticMap {
       ctx.arc(p.x, p.y, Math.max(0.9, r), 0, Math.PI * 2);
       ctx.fill();
 
-      // colony control ring segments in this system (plan §41) — scale with the star
-      const systemRows = rows.filter((rr) => rr.systemId === sys.systemId && rr.state === RANKED_PLANET_CONTROLLED && rr.colony < 3);
-      if (systemRows.length && r >= 2.4) {
-        const per = [0, 0, 0];
-        for (const rr of systemRows) per[rr.colony]++;
-        const total = systemRows.length;
-        let a0 = -Math.PI / 2;
-        ctx.globalAlpha = a;
-        for (let c = 0; c < 3; c++) {
-          if (!per[c]) continue;
-          const a1 = a0 + (per[c] / total) * Math.PI * 2;
-          ctx.strokeStyle = this.data.colonyColors[c];
-          ctx.lineWidth = Math.max(1.4, r * 0.35);
+      // SYSTEM CONTROL RING (plan §18): ownership colour lives in the glow and this
+      // ring — a single owner paints one ring in their colour, a contested system
+      // gets a SEGMENTED ring in party colours (Necrophage red included), and the
+      // star core stays white so the star keeps its identity.
+      if (terr && r >= 2.4) {
+        const ringR = Math.max(3.4, r * 2.4);
+        const lw = Math.max(1.4, r * 0.35);
+        if (terr.kind === 'CONTESTED') {
+          const n = Math.min(3, terr.colors.length);
+          let a0 = -Math.PI / 2;
+          let remaining = 1;
+          ctx.globalAlpha = a;
+          for (let ci = 0; ci < n; ci++) {
+            const take = ci === n - 1 ? remaining : terr.share[ci];
+            remaining -= take;
+            const a1 = a0 + take * Math.PI * 2;
+            ctx.strokeStyle = terr.colors[ci];
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, ringR, a0 + 0.06, a1 - 0.06);
+            ctx.stroke();
+            a0 = a1;
+          }
+          ctx.globalAlpha = 1;
+        } else if (terr.color) {
+          ctx.globalAlpha = 0.85 * a;
+          ctx.strokeStyle = terr.color;
+          ctx.lineWidth = lw;
           ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.max(3.4, r * 2.4), a0 + 0.06, a1 - 0.06);
+          ctx.arc(p.x, p.y, ringR, 0, Math.PI * 2);
           ctx.stroke();
-          a0 = a1;
+          ctx.globalAlpha = 1;
         }
-        ctx.globalAlpha = 1;
       }
 
       if (isHover || isSel) {
@@ -1325,7 +1596,7 @@ export class GalacticMap {
       const row = rows.find((r) => r.planetKey === p.key);
       const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.colony < 3;
       const isReserved = reserved.has(p.key);
-      const isSel = this.selectedPlanet?.key === p.key;
+      const isSel = this.selected?.planet?.key === p.key;
       const isHover = this.hover.kind === 'planet' && this.hover.planet?.key === p.key;
       // orbit position (animated) + body radius — both grow continuously with zoom
       const c = this.planetScreenCircle(galaxy, system, p, t);
@@ -1369,6 +1640,19 @@ export class GalacticMap {
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(px, py, pr + 2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+      // OWNERSHIP RING (plan §16): controlled planets wear their colony's ring and
+      // infested-and-mapped worlds wear the Necrophage red ring; the BIOME body
+      // colour underneath is never replaced. Contested does not exist at planet
+      // level — a planet has exactly one owner (plan §12).
+      if (ownerColor) {
+        ctx.globalAlpha = 0.55 * pa;
+        ctx.strokeStyle = ownerColor;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(px, py, pr + 3.4, 0, Math.PI * 2);
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
@@ -1561,13 +1845,25 @@ export class GalacticMap {
       }
       this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
       if (this.pointers.size === 2) {
+        // PINCH (plan §49): a two-pointer gesture NEVER selects — it owns the
+        // camera zoom from here, and both fingers' lifts are swallowed below.
         const [a, b] = [...this.pointers.values()];
         this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: this.cam.zoom };
         this.drag = null;
         this.camTarget = null; // a pinch owns the camera from here
         return;
       }
-      this.drag = { x: e.offsetX, y: e.offsetY, camx: this.cam.x, camy: this.cam.y, moved: false };
+      // TOUCH SLOP (plan §20): a finger wobbles — 10px there, 5px with a mouse.
+      // `moved` is measured with hypot(), not |dx|+|dy|, so a diagonal micro-drag
+      // does not cancel a tap.
+      this.drag = {
+        x: e.offsetX,
+        y: e.offsetY,
+        camx: this.cam.x,
+        camy: this.cam.y,
+        moved: false,
+        slop: e.pointerType === 'mouse' ? 5 : 10,
+      };
       this.camTarget = null;
     });
     el.addEventListener('pointermove', (e) => {
@@ -1584,14 +1880,23 @@ export class GalacticMap {
         const after = this.screen2world(mx, my);
         this.cam.x += before.x - after.x;
         this.cam.y += before.y - after.y;
+        // SYSTEM LOCK (plan §27): a pinch may not escape the system either.
+        this.clampCameraToSystem();
         return;
       }
       if (this.drag) {
         const dx = e.offsetX - this.drag.x;
         const dy = e.offsetY - this.drag.y;
-        if (Math.abs(dx) + Math.abs(dy) > 4) this.drag.moved = true;
+        if (!this.drag.moved) {
+          // Below the slop the gesture is still a TAP candidate — the camera
+          // must not jitter (plan §20/§48: small finger movement ≠ pan).
+          if (Math.hypot(dx, dy) <= this.drag.slop) return;
+          this.drag.moved = true;
+        }
         this.cam.x = this.drag.camx - dx / this.cam.zoom;
         this.cam.y = this.drag.camy - dy / this.cam.zoom;
+        // SYSTEM LOCK (plan §24): the drag is clamped inside the current system.
+        this.clampCameraToSystem();
         return;
       }
       this.updateHover(e.offsetX, e.offsetY);
@@ -1599,6 +1904,7 @@ export class GalacticMap {
     const endPointer = (e: PointerEvent): void => {
       this.pointers.delete(e.pointerId);
       if (this.pointers.size < 2) this.pinch = null;
+      // TAP (plan §48): only a press that did not travel past the slop selects.
       if (this.drag && !this.drag.moved) this.clickAt(e.offsetX, e.offsetY);
       this.drag = null;
     };
@@ -1623,6 +1929,9 @@ export class GalacticMap {
         this.cam.x += before.x - after.x;
         this.cam.y += before.y - after.y;
         this.camTarget = null;
+        // SYSTEM LOCK (plan §28): clamp the camera, NEVER the zoom — zooming out
+        // is how the player escapes the lock.
+        this.clampCameraToSystem();
       },
       { passive: false }
     );
@@ -1630,23 +1939,40 @@ export class GalacticMap {
 
   private hitTest(sx: number, sy: number): Hover {
     const lock = this.lock;
-    // planets first — the front-most tier once its ramp has opened
+    // planets first — the front-most tier once its ramp has opened. The NEAREST
+    // candidate wins: orbit rings can overlap, and "first match" picked the wrong
+    // planet when two sat close together.
     if (lock.planetAlpha > 0.25 && lock.galaxy && lock.system) {
       const t = (performance.now() - this.t0) / 1000;
+      let bestP: PlanetDescriptor | null = null;
+      let bestD = Infinity;
       for (const p of this.planetsFor(lock.system)) {
         const c = this.planetScreenCircle(lock.galaxy, lock.system, p, t);
-        if ((sx - c.x) ** 2 + (sy - c.y) ** 2 <= (c.r + 9) ** 2) return { kind: 'planet', planet: p, sx, sy };
+        const d = (sx - c.x) ** 2 + (sy - c.y) ** 2;
+        if (d <= (c.r + 9) ** 2 && d < bestD) {
+          bestD = d;
+          bestP = p;
+        }
       }
+      if (bestP) return { kind: 'planet', planet: bestP, sx, sy };
     }
-    // systems of the locked galaxy
+    // systems of the locked galaxy — nearest candidate again, so a dense cluster
+    // never makes a tap select the "first in generation order" neighbour.
     if (lock.sysAlpha > 0.25 && lock.galaxy) {
       const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * this.cam.zoom);
+      const r = Math.max(10, baseR * 3);
+      let bestS: SystemDescriptor | null = null;
+      let bestD = Infinity;
       for (const sys of this.systemsFor(lock.galaxy)) {
         const w = this.systemWorldPos(lock.galaxy, sys);
         const p = this.world2screen(w.x, w.y);
-        const r = Math.max(10, baseR * 3);
-        if ((sx - p.x) ** 2 + (sy - p.y) ** 2 <= r * r) return { kind: 'system', system: sys, sx, sy };
+        const d = (sx - p.x) ** 2 + (sy - p.y) ** 2;
+        if (d <= r * r && d < bestD) {
+          bestD = d;
+          bestS = sys;
+        }
       }
+      if (bestS) return { kind: 'system', system: bestS, sx, sy };
     }
     // galaxies are always hittable
     const w = this.screen2world(sx, sy);
@@ -1684,27 +2010,102 @@ export class GalacticMap {
     }
   }
 
+  /**
+   * TAP (plan §19/§22/§47): SELECT the tapped location — the camera does NOT
+   * move. A SECOND tap on the already-selected galaxy/system enters it (the
+   * dedicated "fly" affordance); an empty-space tap clears the selection
+   * without recentring (plan §51).
+   */
   private clickAt(sx: number, sy: number): void {
     const hit = this.hitTest(sx, sy);
     if (hit.kind === 'galaxy' && hit.galaxy) {
-      // a click is a shortcut for the gesture: fly in and let the ramps take over
-      this.flyToGalaxy(hit.galaxy);
+      if (this.selected?.type === 'galaxy' && this.selected.galaxy.galaxyId === hit.galaxy.galaxyId) {
+        this.flyToGalaxy(hit.galaxy); // 2nd tap: enter
+        return;
+      }
+      this.selectGalaxy(hit.galaxy);
     } else if (hit.kind === 'system' && hit.system) {
       const g = this.lock.galaxy ?? this.focusGalaxy;
-      if (g) this.flyToSystem(g, hit.system);
+      if (!g) return;
+      if (this.selected?.type === 'system' && this.selected.system?.systemId === hit.system.systemId) {
+        this.flyToSystem(g, hit.system); // 2nd tap: enter
+        return;
+      }
+      this.selectSystem(g, hit.system);
     } else if (hit.kind === 'planet' && hit.planet) {
       this.selectPlanet(hit.planet);
+    } else {
+      this.clearSelection();
     }
+  }
+
+  private selectGalaxy(g: GalaxyDescriptor): void {
+    this.selected = { type: 'galaxy', galaxy: g };
+    this.queueDiscovery(this.selected);
+    this.emitSelection();
+  }
+
+  private selectSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
+    this.selected = { type: 'system', galaxy: g, system: sys };
+    this.queueDiscovery(this.selected);
+    this.emitSelection();
   }
 
   /** Zoom around the viewport centre (the ± buttons). */
   zoomStep(factor: number): void {
     this.cam.zoom = Math.max(4, Math.min(1700, this.cam.zoom * factor));
     this.camTarget = null;
+    this.clampCameraToSystem();
   }
 
-  /** Ring a system as selected without entering (panel-driven). */
+  /** Mark a system as selected without entering (panel-driven jumps / planet list). */
   markSystem(sys: SystemDescriptor | null): void {
-    this.selectedSystem = sys;
+    if (!sys) {
+      if (this.selected?.type !== 'planet') this.clearSelection();
+      return;
+    }
+    const { gx, gy } = decodeGalaxyId(sys.galaxyId);
+    const g = this.focusGalaxy ?? galaxyAt(this.data.universeSeed, gx, gy);
+    if (!g) return;
+    // The caller is jumping INTO this system (panel action) — pin it so the
+    // system drag lock is armed the moment the approach opens the tier.
+    this.pinnedSystem = sys;
+    this.selectSystem(g, sys);
+  }
+
+  // ------------------------------------------------------------ system drag lock (plan §23–§28)
+
+  /**
+   * The camera may not leave the CURRENT solar system (plan §24/§25): the soft
+   * bound keeps the whole system framed — on a viewport larger than the system
+   * the camera centres on it — with a small rubber band instead of a wall.
+   * Scripted flights are exempt (they ARE navigation, not a drag).
+   */
+  private clampCameraToSystem(): void {
+    if (this.camTarget) return;
+    if (this.level !== 'system' || !this.focusGalaxy || !this.focusSystem) return;
+    const sw = this.systemWorldPos(this.focusGalaxy, this.focusSystem);
+    const radius = this.systemClampRadius(this.focusGalaxy, this.focusSystem);
+    const halfW = this.width / (2 * this.cam.zoom);
+    const halfH = this.height / (2 * this.cam.zoom);
+    this.cam.x = softBound(this.cam.x, sw.x, radius, halfW);
+    this.cam.y = softBound(this.cam.y, sw.y, radius, halfH);
+  }
+
+  /**
+   * World-space radius the camera roams (plan §25): the outermost planet orbit
+   * plus a little space. The clamp subtracts the viewport half extents, so the
+   * system can never slide off screen and a small map still allows a real drag.
+   */
+  private systemClampRadius(g: GalaxyDescriptor, sys: SystemDescriptor): number {
+    const key = sys.systemId * 4096 + (g.galaxyId % 4096);
+    const hit = this.systemBoundsCache.get(key);
+    if (hit !== undefined) return hit;
+    let outer = 0;
+    for (const p of this.planetsFor(sys)) outer = Math.max(outer, p.orbitRadius);
+    const radius = outer * SYSTEM_SCALE * 1.35 + 0.22;
+    if (this.systemBoundsCache.size >= 64) this.systemBoundsCache.clear(); // bounded (plan §43)
+    this.systemBoundsCache.set(key, radius);
+    return radius;
   }
 }

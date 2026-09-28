@@ -29,7 +29,9 @@ import {
   RankedPlanetRow,
   RankedPlanetReservationRow,
   RankedSeasonRow,
+  RankedLocationDiscoveryRow,
   RankHistoryRow,
+  ServerClockRow,
 } from './rows';
 
 type Row = { [key: string]: unknown };
@@ -52,9 +54,11 @@ const TABLES = [
   'rankedSeason',
   'rankedPlanet',
   'planetDiscovery',
+  'rankedLocationDiscovery',
   'rankedPlanetReservation',
   'planetControlHistory',
   'rankHistory',
+  'serverClock',
 ] as const;
 
 const VIEWS = ['myQueueEntry', 'myCandidate', 'myCandidatePlayers', 'myMatchUsage', 'rankedTop'] as const;
@@ -66,6 +70,9 @@ export class ClientCache {
   private listeners = new Set<() => void>();
   private attached: SpacetimeConnectionLike | null = null;
   private pending = false;
+  /** SERVER CLOCK (plan §14): last server stamp + the client time it landed at. */
+  private clockServerUs = 0;
+  private clockClientUs = 0;
 
   attach(conn: SpacetimeConnectionLike): void {
     if (this.attached === conn) return;
@@ -114,7 +121,14 @@ export class ClientCache {
     if (!handle) return;
     const rebuild = (): void => {
       try {
-        this.rows.set(name, [...handle.iter()] as Row[]);
+        const next = [...handle.iter()] as Row[];
+        this.rows.set(name, next);
+        // The clock row is special: remember WHEN it landed so `serverNowUs`
+        // can interpolate server time between the 1 Hz stamps.
+        if (name === 'serverClock' && next[0]) {
+          this.clockServerUs = Number((next[0] as unknown as ServerClockRow).nowUs);
+          this.clockClientUs = Date.now() * 1000;
+        }
       } catch (err) {
         console.warn(`[NECROFALL] cache rebuild failed for ${name}`, err);
         this.rows.set(name, []);
@@ -265,6 +279,30 @@ export class ClientCache {
     return this.list<PlanetDiscoveryRow>('planetDiscovery')
       .filter(r => r.planetKey === key)
       .sort((a, b) => a.discoveryOrder - b.discoveryOrder);
+  }
+
+  // ------------------------------------------------------------ location discovery (plan §1–§4)
+
+  /**
+   * The first discoverers of ONE location (`G:gx:gy` / `…:S:id` / `…:P:id`),
+   * in order — slot 1 is the first footfall, slot 9 is the last that counts.
+   * Empty when the location is undiscovered OR its scope is not subscribed.
+   */
+  locationDiscoveries(locationKey: string): RankedLocationDiscoveryRow[] {
+    return this.list<RankedLocationDiscoveryRow>('rankedLocationDiscovery')
+      .filter(r => r.locationKey === locationKey)
+      .sort((a, b) => a.discoveryIndex - b.discoveryIndex);
+  }
+
+  /**
+   * SERVER TIME in micros (plan §14/§46) — the last 1 Hz stamp plus the client
+   * milliseconds elapsed since it landed. Falls back to the device clock while
+   * the subscription is still empty (offline/guest), never for authoritative
+   * decisions: the server owns every expiry.
+   */
+  serverNowUs(): number {
+    if (!this.clockClientUs) return Date.now() * 1000;
+    return this.clockServerUs + (Date.now() * 1000 - this.clockClientUs);
   }
 
   /** Ownership stints of a planet, newest first (plan §77). */

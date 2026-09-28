@@ -48,6 +48,7 @@ export { search_players } from './social/search';
 
 // ---- ranked mode (plan §33–§60)
 export { discover_planet, colony_stats } from './ranked/planets';
+export { discover_location } from './ranked/discovery';
 export { find_ranked_match } from './ranked/matchmaking';
 
 // ---- views (plan §22/§23)

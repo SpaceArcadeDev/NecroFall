@@ -18,6 +18,7 @@ import {
 } from '../schema/matchmaking';
 import { match, match_player } from '../schema/match';
 import { match_event, match_tick } from '../schema/game';
+import { server_clock } from '../schema/clock';
 import { player, player_presence } from '../schema/player';
 import {
   CANDIDATE_CONFIRMING,
@@ -121,6 +122,13 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
   { arg: matchmaking_scan.rowType },
   (ctx) => {
     const now = nowMicros(ctx);
+
+    // SERVER CLOCK (plan §14/§46): one tiny public row, stamped every scan, so
+    // the map can render planetary-shield countdowns on SERVER time instead of
+    // trusting the device clock.
+    const clock = [...ctx.db.server_clock.iter()][0];
+    if (clock) ctx.db.server_clock.id.update({ ...clock, now_us: now });
+    else ctx.db.server_clock.insert({ id: 0, now_us: now });
 
     // 1) Age open candidates.
     for (const candidate of [...ctx.db.candidate_match.iter()]) {

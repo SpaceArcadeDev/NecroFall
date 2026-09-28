@@ -11,6 +11,8 @@ import { MAX_PLANET_DISCOVERERS, PLANET_CONTROL_US, PLANET_MATCH_RESERVATION_US,
 import { getRankRing } from './rank';
 import { decodeGalaxyId, parsePlanetKey, planetKey, planetSeed, ringOfGalaxy, UNIVERSE_GENERATION_VERSION } from './seed';
 import { requireOnboarded } from '../auth/authorization';
+import { LOCATION_PLANET, planetLocationKey } from './location';
+import { recordLocationDiscovery } from './record';
 
 export const COLONY_NONE = 255;
 
@@ -124,6 +126,24 @@ export const discover_planet = spacetimedb.reducer(
         discovery_order: count + 1,
       });
     }
+    // The NEW discovery log (plan §1–§4) is the single source every map panel
+    // reads; the legacy first-5 table above stays for the old clients.
+    const { gx, gy } = decodeGalaxyId(galaxyId);
+    recordLocationDiscovery(
+      ctx,
+      me,
+      {
+        type: LOCATION_PLANET,
+        key: planetLocationKey(gx, gy, systemId, planetId),
+        gx,
+        gy,
+        galaxyId,
+        ring,
+        systemId,
+        planetId,
+      },
+      now
+    );
   }
 );
 

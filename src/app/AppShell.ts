@@ -17,7 +17,7 @@ import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthPro
 import { isAuthCallbackUrl } from './auth/authCallback';
 import { ClientCache } from './spacetimedb/cache';
 import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, type ConnectionState } from './spacetimedb/connection';
-import { reportMatchStats, chooseColony, setPlayerName, discoverPlanet } from './spacetimedb/reducers';
+import { reportMatchStats, chooseColony, setPlayerName, discoverLocation } from './spacetimedb/reducers';
 import { COLONY_NONE, hexOf } from './spacetimedb/rows';
 import { subscribeAccount, subscribeMatchmaking, subscribePlayer } from './spacetimedb/subscriptions';
 import { OfficialMultiplayerProvider } from './multiplayer/OfficialMultiplayerProvider';
@@ -47,7 +47,8 @@ import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
 import { showRankResultOverlay } from './rank/RankResultOverlay';
-import { DEFAULT_UNIVERSE_SEED, parsePlanetKey } from '../rankmap/procedural/SeedHash';
+import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../rankmap/procedural/SeedHash';
+import { LOCATION_PLANET, planetLocationKey } from '../rankmap/DiscoveryTypes';
 
 type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
@@ -110,6 +111,8 @@ export class AppShell implements ShellContext {
    */
   private bootWatchdog = 0;
   private static readonly BOOT_WATCHDOG_MS = 12_000;
+  /** The main-menu wordmark — lives IN the chrome header row (plan §38). */
+  private homeTitleEl: HTMLElement | null = null;
 
   constructor(private app: HTMLElement) {
     this.auth = APP_CONFIG.authConfigured ? new SpacetimeAuthProvider() : new NullAuthProvider();
@@ -630,13 +633,21 @@ export class AppShell implements ShellContext {
       const me = ClientCache.shared.playerByHex(this.myHex());
       const season = ClientCache.shared.rankedSeason();
       const universeSeed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
-      // Discovery is earned by PLAYING (user ask 2026-09-28): the history row proves
-      // this seat fought here, so first contact is recorded NOW — never on a mere
-      // map tap. Galaxies/systems/planets stay unmapped until someone battles on them.
+      // Discovery is EARNED BY PLAYING and by explicit first contact (plan §5/§47):
+      // the history row proves this seat fought here, so the planet's first-contact
+      // record is requested NOW through the ONE discovery path — the server decides
+      // (duplicate slots / full lists / another ring all no-op there).
       const planetKey = m.planetKey || history.planetKey;
       const parsed = planetKey ? parsePlanetKey(planetKey) : null;
-      if (parsed && !ClientCache.shared.rankedPlanet(planetKey)?.discovered) {
-        discoverPlanet(parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
+      if (parsed) {
+        const { gx, gy } = decodeGalaxyId(parsed.galaxyId);
+        discoverLocation({
+          locationType: LOCATION_PLANET,
+          locationKey: planetLocationKey(gx, gy, parsed.systemId, parsed.planetId),
+          galaxyId: parsed.galaxyId,
+          systemId: parsed.systemId,
+          planetId: parsed.planetId,
+        });
       }
       showRankResultOverlay({
         matchId,
@@ -681,6 +692,12 @@ export class AppShell implements ShellContext {
     clear(this.screenHost);
     this.screen = screen;
     this.root.classList.remove('hidden');
+    // MAIN MENU HEADER (plan §38/§39): the wordmark shares the HEADER ROW with the
+    // profile button — mathematically centred on the viewport. Every other screen
+    // drops the title and the `on-home` layout tweaks.
+    this.homeTitleEl?.remove();
+    this.homeTitleEl = null;
+    this.root.classList.toggle('on-home', screen === 'home');
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
@@ -976,9 +993,15 @@ export class AppShell implements ShellContext {
   private renderHome(): void {
     const wrap = el('div', 'nf-page home-page');
 
-    // ---- the wordmark at the top, floating over the see-through part of the gradient
+    // ---- the wordmark rides the CHROME header row (plan §38) so it is truly
+    // centred on the viewport, in the SAME row as the profile button; the page
+    // itself keeps only the subtitle under it.
+    const title = el('div', 'menu-title nf-home-title nf-home-header-title', 'NECROFALL');
+    this.homeTitleEl = title;
+    this.chrome.appendChild(title);
+
+    // ---- the subtitle at the top of the content, floating over the gradient
     const head = el('div', 'nf-home-head');
-    head.appendChild(el('div', 'menu-title nf-home-title', 'NECROFALL'));
     head.appendChild(el('div', 'menu-sub', 'Dive • Purge • Dominate'));
     wrap.appendChild(head);
 

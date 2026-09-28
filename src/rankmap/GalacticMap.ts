@@ -435,7 +435,9 @@ export class GalacticMap {
     const sysEnd = Math.max(sysStart + 18, Math.min(gal * 2.6, 280));
     const zSys = this.fitZoom(SYSTEM_SCALE * 2.5);
     const plStart = Math.min(Math.max(zSys * 1.1, sysEnd + 12), 320);
-    const plEnd = Math.min(Math.max(zSys * 2.4, plStart + 30), 560);
+    // the planet reveal lands sooner (1.6× headroom, capped) so full bodies with
+    // names are reached with room left in the zoom — "zoom in and VIEW the planets"
+    const plEnd = Math.min(Math.max(zSys * 1.6, plStart + 30), 520);
     return { gal, sysStart, sysEnd, plStart, plEnd };
   }
 
@@ -499,7 +501,8 @@ export class GalacticMap {
     return {
       x: centre.x + Math.cos(angle) * orbitR,
       y: centre.y + Math.sin(angle) * orbitR * 0.86,
-      r: Math.max(1.6, p.radius * 0.03 * this.cam.zoom),
+      // bodies grow to the old system-view scale (radius·16) well before max zoom
+      r: Math.max(2.6, p.radius * Math.min(16, this.cam.zoom * 0.05)),
     };
   }
 
@@ -538,6 +541,17 @@ export class GalacticMap {
       // a selected planet only survives while its OWN system is the focus
       if (this.selectedPlanet && this.focusSystem && this.selectedPlanet.systemId !== this.focusSystem.systemId) {
         this.selectedPlanet = null;
+      }
+      // RECENTRE on the tier we just entered (user: "I'm not able to zoom into the
+      // solar system"): the locked galaxy/system glides under the crosshair as the
+      // ramps deepen, so its systems/planets come INTO VIEW instead of drifting off.
+      // Never while the user is actively panning — that gesture owns the centre.
+      if (next !== 'galactic' && galaxy && !this.drag) {
+        const w = next === 'system' && system ? this.systemWorldPos(galaxy, system) : { x: galaxy.gx, y: galaxy.gy };
+        const onScreen = this.world2screen(w.x, w.y);
+        if (Math.abs(onScreen.x - this.width / 2) > 12 || Math.abs(onScreen.y - this.height / 2) > 12) {
+          this.camTarget = { x: w.x, y: w.y };
+        }
       }
       this.onSelect({ level: next, galaxy: this.focusGalaxy, system: this.focusSystem, planet: this.selectedPlanet });
     }
@@ -589,16 +603,18 @@ export class GalacticMap {
 
   private flyToGalaxy(g: GalaxyDescriptor, keepZoom = false): void {
     const ranges = this.zoomRamps();
-    this.camTarget = keepZoom
-      ? { x: g.gx, y: g.gy }
-      : { x: g.gx, y: g.gy, zoom: Math.max(this.cam.zoom, ranges.sysStart * 1.6) };
+    // land INSIDE the galaxy tier (ramp 80%), so a click really opens the systems
+    const into = ranges.sysStart + (ranges.sysEnd - ranges.sysStart) * 0.8;
+    this.camTarget = keepZoom ? { x: g.gx, y: g.gy } : { x: g.gx, y: g.gy, zoom: Math.max(this.cam.zoom, into) };
   }
 
   private flyToSystem(g: GalaxyDescriptor, sys: SystemDescriptor): void {
     const ranges = this.zoomRamps();
     const wx = g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD;
     const wy = g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD;
-    this.camTarget = { x: wx, y: wy, zoom: Math.max(this.cam.zoom, ranges.plStart * 1.15) };
+    // land where the planets are fully open (ramp 85% of the planet band)
+    const into = ranges.plStart + (ranges.plEnd - ranges.plStart) * 0.85;
+    this.camTarget = { x: wx, y: wy, zoom: Math.max(this.cam.zoom, into) };
   }
 
   // ------------------------------------------------------------ animation
@@ -966,8 +982,10 @@ export class GalacticMap {
     const zoom = this.cam.zoom;
     const rows = this.data.rowsForGalaxy(galaxy.galaxyId);
     const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
+    // the front system crossfades on the same sqrt curve as the planets layer
+    const pa = Math.sqrt(planetAlpha);
     // the galaxy's own seeded face fades in behind the systems as the disc fills the view
-    const faceAlpha = sysAlpha * 0.35 * (1 - planetAlpha * 0.6);
+    const faceAlpha = sysAlpha * 0.35 * (1 - pa * 0.6);
     if (faceAlpha > 0.02) {
       const centre = this.world2screen(galaxy.gx, galaxy.gy);
       const discR = (GAL_DISC_WORLD / 2) * zoom * (1.6 + sysAlpha * 1.4);
@@ -984,7 +1002,7 @@ export class GalacticMap {
       const front = Boolean(system && sys.systemId === system.systemId);
       const twinkle = 0.85 + 0.15 * Math.sin(t * 2.2 + (sys.seed % 50));
       const r = baseR * twinkle;
-      const a = sysAlpha * (front ? 1 - planetAlpha : 1);
+      const a = sysAlpha * (front ? 1 - pa : 1);
       if (a <= 0.02) continue;
       // star glow + core (the dot GROWS with zoom instead of a fixed 30px blob)
       const ss = r * 6;
@@ -1059,6 +1077,8 @@ export class GalacticMap {
   private drawPlanetsLayer(t: number): void {
     const { galaxy, system, planetAlpha } = this.lock;
     if (!galaxy || !system || planetAlpha <= 0.01) return;
+    // sqrt ramp: bodies firm up early in the band instead of reading as dim marbles
+    const pa = Math.sqrt(planetAlpha);
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
     const sw = this.systemWorldPos(galaxy, system);
@@ -1066,9 +1086,9 @@ export class GalacticMap {
 
     // system star — crossfades in as the systems layer's dot for this system fades out
     const starR = Math.max(2.5, 0.12 * SYSTEM_SCALE * zoom);
-    ctx.globalAlpha = 0.9 * planetAlpha;
+    ctx.globalAlpha = 0.9 * pa;
     ctx.drawImage(this.glow(galaxy.starColor, 128), center.x - starR * 4, center.y - starR * 4, starR * 8, starR * 8);
-    ctx.globalAlpha = planetAlpha;
+    ctx.globalAlpha = pa;
     ctx.fillStyle = galaxy.starColor;
     ctx.beginPath();
     ctx.arc(center.x, center.y, starR, 0, Math.PI * 2);
@@ -1094,7 +1114,7 @@ export class GalacticMap {
       const orbitR = p.orbitRadius * SYSTEM_SCALE * zoom;
 
       // orbit path (fades up with the tier)
-      ctx.globalAlpha = 0.14 * planetAlpha;
+      ctx.globalAlpha = 0.16 * pa;
       ctx.strokeStyle = 'rgba(180,170,220,1)';
       ctx.lineWidth = 1;
       ctx.save();
@@ -1109,10 +1129,10 @@ export class GalacticMap {
       const bob = 1 + 0.04 * Math.sin(t * 1.6 + p.orbit);
       // atmosphere glow
       const glowColor = controlled ? this.data.colonyColors[row.colony] : p.biomeColor;
-      ctx.globalAlpha = 0.55 * planetAlpha;
+      ctx.globalAlpha = 0.6 * pa;
       ctx.drawImage(this.glow(glowColor, 48), px - pr * 3, py - pr * 3, pr * 6, pr * 6);
       // body
-      ctx.globalAlpha = planetAlpha;
+      ctx.globalAlpha = pa;
       const grad = ctx.createRadialGradient(px - pr * 0.35, py - pr * 0.35, pr * 0.1, px, py, pr);
       grad.addColorStop(0, '#ffffff');
       grad.addColorStop(0.25, p.biomeColor);
@@ -1123,7 +1143,7 @@ export class GalacticMap {
       ctx.fill();
       ctx.globalAlpha = 1;
       if (row?.discovered && !controlled) {
-        ctx.globalAlpha = planetAlpha;
+        ctx.globalAlpha = pa;
         ctx.strokeStyle = 'rgba(123,232,255,0.5)';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -1138,7 +1158,7 @@ export class GalacticMap {
         const frac = Math.min(1, remain / total);
         const low = remain < 10 * 60 * 1e6;
         const alpha = low ? 0.55 + 0.45 * Math.sin(t * 6) : 1;
-        ctx.globalAlpha = alpha * planetAlpha;
+        ctx.globalAlpha = alpha * pa;
         ctx.strokeStyle = this.data.colonyColors[row.colony];
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -1147,7 +1167,7 @@ export class GalacticMap {
         ctx.globalAlpha = 1;
       }
       if (isReserved && !controlled) {
-        ctx.globalAlpha = planetAlpha;
+        ctx.globalAlpha = pa;
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = '#ffd166';
         ctx.lineWidth = 1.4;
@@ -1167,7 +1187,7 @@ export class GalacticMap {
       }
       // name — only once the body has grown, and sized WITH it (user: names too big;
       // a selected/hovered planet always names itself so the lock is readable)
-      const nameA = isSel || isHover ? 1 : planetAlpha * ramp01(pr, 7, 13);
+      const nameA = isSel || isHover ? 1 : pa * ramp01(pr, 7, 13);
       if (nameA > 0.02) {
         ctx.globalAlpha = nameA * 0.95;
         ctx.font = `600 ${Math.min(12, Math.max(8.5, pr * 0.7))}px Rajdhani, sans-serif`;
@@ -1179,7 +1199,7 @@ export class GalacticMap {
     }
 
     // system name — fades in as the system opens, scaled by its own star
-    const sysNameA = planetAlpha * ramp01(starR, 6, 16);
+    const sysNameA = pa * ramp01(starR, 6, 16);
     if (sysNameA > 0.02) {
       ctx.globalAlpha = sysNameA * 0.9;
       ctx.font = `700 ${Math.min(15, Math.max(10, starR * 0.75))}px Rajdhani, sans-serif`;

@@ -26,18 +26,14 @@ export class MatchmakingPage {
 
     this.queueStatus = new QueueStatus(() => this.ctx.official.cancelFindMatch());
     this.element.appendChild(this.queueStatus.element);
-    this.modal = new MatchFoundModal(
-      () => {
-        this.ctx.official.confirmMatch();
-        // Render the optimistic ✓ in the SAME frame as the click — the 300 ms poll would leave
-        // the button flipped while its slot still read '?'.
-        this.tick();
-      },
-      () => {
-        this.ctx.official.declineMatch();
-        this.ctx.returnFromQueue();
-      }
-    );
+    // One callback only: CONFIRM. There is no LEAVE in the confirmation window (user ask
+    // 2026-09-29) — a seat must answer the prompt; the server's deadline handles no-shows.
+    this.modal = new MatchFoundModal(() => {
+      this.ctx.official.confirmMatch();
+      // Render the optimistic ✓ in the SAME frame as the click — the 300 ms poll would leave
+      // the button flipped while its slot still read '?'.
+      this.tick();
+    });
     this.element.appendChild(this.modal.element);
 
     // Keep the countdown fresh between row updates (display only).

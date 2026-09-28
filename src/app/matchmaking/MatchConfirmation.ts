@@ -1,9 +1,12 @@
 // NECROFALL — the confirmation card (plan §14/§70/§36).
 //
-// Minimal on purpose: the MATCH FOUND heading already fired in the fill window, so the confirm
-// phase is just the colony line-up, the countdown and one button. The DOM is BUILT ONCE and then
-// PATCHED — the old version rebuilt the columns on every 300 ms display tick, which replayed the
-// entrance animations and read as a flicker/reset (the same disease the pause panel had).
+// Minimal on purpose: the CONFIRM MATCH heading tops the card, then the colony line-up, the
+// countdown, the draining bar and one CONFIRM button at the bottom. There is deliberately NO
+// leave/decline button (user ask 2026-09-29): a seat in the confirmation window must answer the
+// prompt — walking out mid-window is what the server's deadline (a no-show requeues the rest) is
+// for. The DOM is BUILT ONCE and then PATCHED — the old version rebuilt the columns on every
+// 300 ms display tick, which replayed the entrance animations and read as a flicker/reset (the
+// same disease the pause panel had).
 import { COLONIES } from '../../core/Config';
 import { el } from '../ui/dom';
 
@@ -26,7 +29,7 @@ export class MatchConfirmation {
   private confirmBtn: HTMLButtonElement;
   private lastBtnState = '';
 
-  constructor(private onConfirm: () => void, private onDecline: () => void) {
+  constructor(private onConfirm: () => void) {
     this.element = el('div', 'nf-confirm');
 
     // The colony line-up: three columns, each with three slots. A seat fills the next open slot;
@@ -64,11 +67,6 @@ export class MatchConfirmation {
       this.onConfirm();
     });
     this.element.appendChild(this.confirmBtn);
-
-    const leave = el('button', 'nf-btn ghost small', 'LEAVE') as HTMLButtonElement;
-    leave.type = 'button';
-    leave.addEventListener('click', () => this.onDecline());
-    this.element.appendChild(leave);
   }
 
   update(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean, allConfirmed = false): void {

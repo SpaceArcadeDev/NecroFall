@@ -570,11 +570,14 @@ export class AppShell implements ShellContext {
 
   private renderLogin(message?: string): void {
     const wrap = el('div', 'nf-page login-page');
-    wrap.appendChild(el('div', 'menu-title nf-login-title', 'NECROFALL'));
-    wrap.appendChild(el('div', 'menu-sub', 'Dive · Liberate · Dominate'));
+    // Title + tagline live in their own wrapper so landscape can set them BESIDE the card.
+    const side = el('div', 'nf-login-side');
+    side.appendChild(el('div', 'menu-title nf-login-title', 'NECROFALL'));
+    side.appendChild(el('div', 'menu-sub', 'Dive · Liberate · Dominate'));
+    wrap.appendChild(side);
 
     const card = el('div', 'nf-login-card');
-    card.appendChild(el('h1', 'nf-login-welcome', 'ENTER THE FALL'));
+    card.appendChild(el('h1', 'nf-login-welcome', 'SIGN UP / LOG IN'));
     const slot = el('div', 'nf-login-slot');
     card.appendChild(slot);
     wrap.appendChild(card);
@@ -595,7 +598,8 @@ export class AppShell implements ShellContext {
       const send = el('button', 'btn primary nf-wide-btn', 'SEND MAGIC LINK') as HTMLButtonElement;
       send.type = 'button';
       send.disabled = true;
-      const skip = el('button', 'btn nf-wide-btn', 'SKIP — PLAY ANONYMOUS') as HTMLButtonElement;
+      // SKIP is a bare text action — no button chrome; the card's only real control is the link.
+      const skip = el('button', 'nf-skip-link', 'Skip') as HTMLButtonElement;
       skip.type = 'button';
       email.addEventListener('input', () => {
         send.disabled = !email.checkValidity();
@@ -618,7 +622,7 @@ export class AppShell implements ShellContext {
       });
       skip.addEventListener('click', () => {
         skip.disabled = true;
-        skip.textContent = 'SIGNING IN…';
+        skip.textContent = 'Signing in…';
         void auth.loginAnonymous().catch((err: unknown) =>
           showForm(err instanceof Error ? err.message : 'Could not sign in anonymously.')
         );
@@ -626,7 +630,6 @@ export class AppShell implements ShellContext {
       form.appendChild(email);
       form.appendChild(send);
       form.appendChild(skip);
-      form.appendChild(el('p', 'nf-login-note', 'A one-time link — no password to remember'));
       slot.appendChild(form);
       window.setTimeout(() => email.focus(), 80);
     };

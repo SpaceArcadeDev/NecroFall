@@ -212,8 +212,16 @@
 .nf-input.big { min-height: 54px; font-size: 16px; }
 
 /* ---------------------------------------------------------------- login */
-.login-page { justify-content: center; align-items: center; text-align: center; gap: 0; padding-top: 2vh; }
-.nf-login-title { margin-top: 4vh; animation: nf-title-glow 4.5s ease-in-out infinite; }
+.login-page {
+  /* `safe` centering: when the card is taller than the viewport the top stays REACHABLE
+     instead of being clipped above the scroll start (plain centering cut it off). */
+  justify-content: safe center;
+  align-items: center;
+  text-align: center;
+  gap: 0;
+}
+.nf-login-side { display: flex; flex-direction: column; align-items: center; }
+.nf-login-title { margin-top: 2vh; animation: nf-title-glow 4.5s ease-in-out infinite; }
 .nf-login-card {
   margin-top: 16px;
   display: flex;
@@ -230,6 +238,37 @@
 }
 .nf-login-welcome { margin: 0 0 4px; font-size: 17px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
 .nf-wide-btn { width: 100%; justify-content: center; }
+/* SKIP — the anonymous door as a bare text action: no fill, no border, no size. */
+.nf-skip-link {
+  margin-top: 2px;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: var(--ui-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.nf-skip-link:hover:not(:disabled),
+.nf-skip-link:focus-visible:not(:disabled) { color: var(--ui-accent); text-decoration: underline; }
+.nf-skip-link:disabled { opacity: 0.6; cursor: default; }
+/* Landscape (a phone held sideways): the wordmark takes the LEFT half and the sign-in card the
+   right, so nothing has to stack taller than the screen and the top can never clip. */
+@media (orientation: landscape) and (max-height: 640px) {
+  .login-page {
+    flex-direction: row;
+    gap: clamp(14px, 4vw, 56px);
+    padding: 10px clamp(12px, 4vw, 48px) 14px;
+    text-align: left;
+  }
+  .nf-login-side { align-items: flex-start; flex: 0 1 auto; min-width: 0; }
+  .nf-login-title { margin-top: 0; font-size: clamp(32px, 8.5vh, 60px); }
+  .nf-login-side .menu-sub { margin-bottom: 0; }
+  .nf-login-card { margin-top: 0; width: min(400px, 52vw); flex: 0 1 auto; }
+}
 /* the direct sign-in card: email → magic link, or SKIP into anonymous */
 .nf-login-slot { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
 .nf-login-email { text-align: center; letter-spacing: 0.06em; }

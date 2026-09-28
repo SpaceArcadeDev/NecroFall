@@ -4,7 +4,7 @@
 // Species are original designs inspired only by broad creature archetypes
 // (jelly blobs, burrowing worms, web spiders, fast crawlers, heavy brutes).
 import { Rand, clamp } from '../utils/Utils';
-import type { AttackPattern, EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship, SwarmProfile, TargetPreference } from './procedural/EnemyGenome';
+import type { AttackPattern, BossHeavyId, EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship, SwarmProfile, TargetPreference } from './procedural/EnemyGenome';
 
 export type SpeciesId = 'slime' | 'worm' | 'spider' | 'crawler' | 'brute' | 'hunter';
 export type Tier = 'small' | 'large' | 'apex' | 'boss' | 'nexus';
@@ -301,6 +301,12 @@ export interface EnemyGenome {
   swarm?: SwarmProfile;
   /** The pattern its signature projectile attack fires (plan §19) — mirrors its attack kit. */
   projPattern?: AttackPattern;
+  /**
+   * The boss's own heavy rotation (plan §24) — written by the generator, so each Beacon Guardian
+   * fields its own set of telegraphed heavies instead of every warden running the same script
+   * (see `pickBossMechanics`, which falls back to deriving one from the body + kit when absent).
+   */
+  bossHeavy?: BossHeavyId[];
 }
 
 /**
@@ -336,7 +342,12 @@ export interface HunterProfile {
 export interface Bestiary {
   seed: number;
   genomes: EnemyGenome[];
-  bossIdx: number;
+  /**
+   * The FOUR Beacon Guardians, in Beacon order (0-3). Each Beacon keeps its own warden, generated
+   * from its own stream — two Beacons never field the same creature, so a match is four different
+   * tower fights instead of the same boss four times (the "guardians are all identical" report).
+   */
+  bossIdxes: number[];
   nexusIdx: number;
   apexIdx: number;
   smallIdx: number[];
@@ -712,8 +723,10 @@ function makeHunter(rand: Rand, idx: number, kind: 1 | 2, usedNames: Set<string>
 }
 
 /**
- * Builds the match bestiary: 3 small swarm species, 3 large species, 1 apex,
- * 1 Beacon Guardian and 1 Nexus Overseer — all generated from the match seed.
+ * Builds the match bestiary: 3 small swarm species, 3 large species, 1 apex, the FOUR Beacon
+ * Guardians and 1 Nexus Overseer — all generated from the match seed. (The ecology generator in
+ * `procedural/EcologyGenerator` is the live path; this remains the classic/P2P fallback and the
+ * default instance, kept here so both rosters share one shape.)
  */
 export function generateBestiary(seed: number): Bestiary {
   const rand = new Rand(seed ^ 0xb3775f);
@@ -742,9 +755,13 @@ export function generateBestiary(seed: number): Bestiary {
   const apexIdx = genomes.length;
   genomes.push(makeGenome(rand, apexIdx, rand.pick(['brute', 'worm', 'spider']), 'apex', 4, used));
 
-  // --- Beacon Guardian boss
-  const bossIdx = genomes.length;
-  genomes.push(makeGenome(rand, bossIdx, rand.pick(['brute', 'worm', 'spider']), 'boss', 4, used));
+  // --- the four Beacon Guardians: one PER BEACON, each its own species frame + generated name
+  // (a `used` set keeps the names distinct, so the four wardens never read as clones).
+  const bossIdxes: number[] = [];
+  for (const species of ['brute', 'worm', 'spider', 'brute'] as SpeciesId[]) {
+    bossIdxes.push(genomes.length);
+    genomes.push(makeGenome(rand, genomes.length, species, 'boss', 4, used));
+  }
 
   // --- Nexus Overseer (always a brute chassis, biggest and nastiest)
   const nexusIdx = genomes.length;
@@ -753,7 +770,7 @@ export function generateBestiary(seed: number): Bestiary {
   return {
     seed,
     genomes,
-    bossIdx,
+    bossIdxes,
     nexusIdx,
     apexIdx,
     hunterIdx,

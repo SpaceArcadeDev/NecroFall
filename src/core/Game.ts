@@ -2048,7 +2048,9 @@ export class Game {
       `[NECROFALL] planet ${this.planet.archetype.biome}${rankedPlanet ? ` (ring ${rankRing})` : ''} · planet seed ${planetSeed} · bestiary seed ${seed}\n` +
       bestiary.genomes.map(g => `  #${g.idx} ${g.name} [${g.tier}${g.role ? `/${g.role}` : ''}${g.locomotion ? `/${g.locomotion}` : ''}${g.visual.rig ? `/${g.visual.rig}` : ''}] hp ${Math.round(g.hp)} spd ${g.speed.toFixed(1)} — ${g.attacks?.map(a => a.name).join(', ') || g.abilities.map(a => ABILITY_META[a].name).join(', ') || 'no abilities'}`).join('\n')
     );
-    this.ui.banner(`${bestiary.genomes[bestiary.bossIdx].name.toUpperCase()} AWAKENS`, 2600);
+    // Four wardens, four different creatures — the names go to the console log above; the banner
+    // states the fact (one name would play favourites with Beacons 2-4).
+    this.ui.banner('FOUR GUARDIANS AWAKEN — ONE GUARDS EACH BEACON', 3200);
     this.combat.clear();
     this.abilities.clear();
     this.entityResetPickups();

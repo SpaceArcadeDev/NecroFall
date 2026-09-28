@@ -7,12 +7,12 @@ import { Rand, clamp } from '../../utils/Utils';
 import { applyTraitVisual, type Bestiary, type EnemyGenome, type GenomeVisual, type SpeciesId } from '../EnemyGenomes';
 import type { BiomeClass } from '../../world/PlanetArchetypes';
 import { deriveArchetype } from '../../world/PlanetArchetypes';
-import type { EcoRole, EcologyKind, LocomotionId, PlanetFacts, ProcRelationship } from './EnemyGenome';
+import type { BossHeavyId, EcoRole, EcologyKind, LocomotionId, PlanetFacts, ProcRelationship } from './EnemyGenome';
 import { hash32 } from '../../rankmap/procedural/SeedHash';
-import { rollBodyPlan } from './BodyGrammar';
+import { rollBodyPlan, type BodyCore } from './BodyGrammar';
 import { rollLimbs } from './LimbGrammar';
 import { gaitFor, rollLocomotion } from './LocomotionGrammar';
-import { rollOrgans, organVisual } from './OrganGrammar';
+import { rollOrgans, organVisual, type AttackOrgan } from './OrganGrammar';
 import { buildAttacks, huntFromAttack } from './AttackGrammar';
 import { behaviorFor } from './BehaviorGrammar';
 import { rollTargetPreference } from './TargetGrammar';
@@ -89,6 +89,28 @@ const ROLE_SUFFIX: Partial<Record<EcoRole, string>> = {
   OVERSEER: ' OVERSEER',
 };
 
+/** Role nouns for the four Beacon Guardians — each is "The <biome> <noun>" and all four differ. */
+const GUARDIAN_NOUNS = ['Warden', 'Colossus', 'Sentinel', 'Maw', 'Tyrant', 'Devourer', 'Bastion', 'Reaver', 'Proctor', 'Behemoth'];
+
+/**
+ * A Beacon Guardian's name. The planet's own boss name (`bossNameFor`) is reserved for the Mega
+ * Necrophage, so the four wardens get four DIFFERENT names — the `used` set guarantees that even
+ * two guardians sharing a prefix cannot collide.
+ */
+export function guardianNameFor(facts: PlanetFacts, rng: Rand, used: Set<string>): string {
+  const prefixes = PREFIX[facts.biome] ?? ['Hollow', 'Grim', 'Vile', 'Ash'];
+  for (let guard = 0; guard < 32; guard++) {
+    const name = `The ${rng.pick(prefixes)} ${rng.pick(GUARDIAN_NOUNS)}`;
+    if (!used.has(name)) {
+      used.add(name);
+      return name;
+    }
+  }
+  const fallback = `The ${rng.pick(prefixes)} Guardian ${used.size}`;
+  used.add(fallback);
+  return fallback;
+}
+
 /** Names derive from the genome itself (plan §71): biome word + locomotion noun + role suffix. */
 export function enemyName(rng: Rand, facts: PlanetFacts, locomotion: LocomotionId, role: EcoRole, used: Set<string>): string {
   const prefixes = PREFIX[facts.biome] ?? ['Feral', 'Grim', 'Vile', 'Ash'];
@@ -158,8 +180,9 @@ export interface EcologyBestiary extends Bestiary {
 
 /**
  * The planet's whole bestiary. Same slots as the shipped generator (3 small, 3 large, the two
- * Hunters, an apex, a Beacon Guardian and the Nexus Overseer) so the spawner, rewards and
- * network code run untouched — but every genome now comes from the grammars.
+ * Hunters, an apex, FOUR Beacon Guardians and the Nexus Overseer) so the spawner, rewards and
+ * network code run untouched — but every genome now comes from the grammars, and the four
+ * guardians are four distinct creatures.
  */
 export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestiary {
   const rng = new Rand((seed ^ 0xb3775f) >>> 0);
@@ -167,7 +190,15 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
   const genomes: EnemyGenome[] = [];
   const roleOf: Record<number, EcoRole> = {};
 
-  const make = (role: EcoRole, forced?: Partial<{ locomotion: LocomotionId; hunter: 1 | 2; boss: boolean; color: number }>): EnemyGenome => {
+  const make = (role: EcoRole, forced?: Partial<{
+    locomotion: LocomotionId; hunter: 1 | 2; boss: boolean; color: number;
+    /** Pins the body frame (the guardian plan promises four DIFFERENT silhouettes). */
+    core: BodyCore;
+    /** Signature hardware added on top of the role's baseline kit (one flavour per guardian). */
+    organs: AttackOrgan[];
+    /** The boss's own telegraphed heavy rotation (plan §24) — one set per guardian. */
+    heavies: BossHeavyId[];
+  }>): EnemyGenome => {
     const tier = TIER_OF[role];
     const base = ROLE_STATS[role];
     const isBoss = role === 'BOSS' || role === 'OVERSEER' || role === 'APEX';
@@ -181,9 +212,14 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
     // ---- locomotion → body → limbs → organs → attacks → behaviour (plan §16 flow)
     const motion = rollLocomotion(sub('motion'), facts.ring, isBoss, forced?.locomotion);
     const locomotion = motion.locomotion;
-    const body = rollBodyPlan(sub('body'), role, locomotion, facts.ring);
+    const body = rollBodyPlan(sub('body'), role, locomotion, facts.ring, forced?.core);
     const limbs = rollLimbs(sub('limbs'), locomotion, body, facts.ring);
     const organs = rollOrgans(sub('organs'), role, locomotion, facts.ring, facts.landmarkBiases);
+    // A guardian plan's signature organs join the kit BEFORE the attacks are built, so the extra
+    // hardware fires (and grows visibly) exactly like a rolled organ would.
+    if (forced?.organs) {
+      for (const extra of forced.organs) if (organs.organs.indexOf(extra) < 0) organs.organs.push(extra);
+    }
     const accent = forced?.color ?? 0xffffff;
     const kit = buildAttacks(sub('attack'), organs.organs, locomotion, role, tier, facts.ring, facts.ecology, accent);
     // Bosses always field a full kit (plan §29) — the padded organs also GROW their hardware.
@@ -222,7 +258,7 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
     const color = forced?.color ?? shiftColor(colourRng, facts.biome);
 
     const name = role === 'BOSS'
-      ? bossNameFor(facts, nameRng)
+      ? guardianNameFor(facts, nameRng, used)
       : role === 'OVERSEER'
         ? `${bossNameFor(facts, nameRng)} OVERSEER`
         : enemyName(nameRng, facts, locomotion, role, used);
@@ -263,6 +299,7 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
       armor: body.armor,
       targetPreference,
       swarm,
+      bossHeavy: forced?.heavies,
     } as EnemyGenome;
 
     // hunters: bake the leap cycle from their own generated leap attack (plan §28)
@@ -287,8 +324,33 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
   hunterIdx.push(make('HUNTER', { hunter: 2, locomotion: 'LEAPER' }).idx);
 
   const apexIdx = make('APEX').idx;
-  const bossIdx = make('BOSS', { locomotion: 'CHARGER' }).idx;
-  const nexusIdx = make('OVERSEER', { locomotion: 'CHARGER' }).idx;
+
+  // ---- the FOUR Beacon Guardians (plan §26/§29): one genome PER BEACON. Every warden pins a
+  // different frame, movement class, signature organ AND telegraphed heavy rotation, so the four
+  // tower fights of a match are four different creatures: an armoured ram that stomps and charges,
+  // a leg-chain crawler that marks your ground, a venom hulk that bursts and rolls, and a burrower
+  // that dives, erupts and fires a bore-beam. All four heavy sets are distinct (and so are the
+  // openers), so no two wardens read alike in a fight.
+  const guardianPlan: { locomotion: LocomotionId; core: BodyCore; organs: AttackOrgan[]; heavies: BossHeavyId[] }[] = [
+    { locomotion: 'CHARGER', core: 'ARMORED', organs: ['THORN_HIDE'], heavies: ['quake', 'dash', 'nova'] },
+    { locomotion: 'WALKER', core: 'MYRIAPOD', organs: ['TAIL'], heavies: ['impact', 'nova', 'quake'] },
+    { locomotion: 'CRAWLER', core: 'MOLLUSK', organs: ['VENOM_GLAND'], heavies: ['nova', 'impact', 'dash'] },
+    { locomotion: 'BURROWER', core: 'SEGMENTED', organs: ['BEAM_ORGAN'], heavies: ['dash', 'impact', 'quake'] },
+  ];
+  const bossIdxes: number[] = [];
+  for (const plan of guardianPlan) {
+    bossIdxes.push(make('BOSS', { locomotion: plan.locomotion, core: plan.core, organs: plan.organs, heavies: plan.heavies }).idx);
+  }
+
+  // ---- the Mega Necrophage (Nexus Overseer): its own frame rolls EVERY match — a bulbous tyrant,
+  // an armoured behemoth, a centipede horror or a tentacled maw — so no two seasons' megas meet
+  // the players the same way twice.
+  const overseerCores: BodyCore[] = facts.ring >= 3
+    ? ['BULBOUS', 'ARMORED', 'MYRIAPOD', 'MOLLUSK', 'ELONGATED']
+    : ['BULBOUS', 'ARMORED', 'SEGMENTED'];
+  const overseerCore = rng.pick(overseerCores);
+  const overseerLocomotion = rng.pick(['CHARGER', 'CRAWLER'] as LocomotionId[]);
+  const nexusIdx = make('OVERSEER', { locomotion: overseerLocomotion, core: overseerCore, organs: ['EXPLOSIVE_SAC'] }).idx;
 
   // ---- food chain (plan §27): prey → hunters, guardians → boss, kin pack together
   const relationships: ProcRelationship[] = [];
@@ -301,7 +363,7 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
   return {
     seed,
     genomes,
-    bossIdx,
+    bossIdxes,
     nexusIdx,
     apexIdx,
     hunterIdx,

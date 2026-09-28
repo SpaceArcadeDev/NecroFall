@@ -31,7 +31,7 @@ import { assembleEnemy } from './procedural/EnemyAssembler';
 import { animateEnemyRig } from './procedural/EnemyAnimator';
 import { generateEcology as generateEcologyBestiary } from './procedural/EcologyGenerator';
 import { factsFromSeed } from './procedural/EcologyGenerator';
-import type { PlanetFacts } from './procedural/EnemyGenome';
+import type { BossHeavyId, PlanetFacts } from './procedural/EnemyGenome';
 
 /**
  * The behavioural states every Necrophage can be in. A creature only ever holds one, transitions
@@ -62,16 +62,13 @@ const F_ENRAGING = 16;
 /**
  * A boss HEAVY. Every one of them is telegraphed on the terrain before it lands, and each uses its
  * own shape so a player can read which is coming: a filled disc (leave the area), a hollow ring
- * (leave the edge), or a lane (leave the line). The set is chosen from the boss's own generated
- * kit, so two bosses fight differently without a single hand-authored encounter.
+ * (leave the edge), or a lane (leave the line).
+ *
+ * The vocabulary itself lives in the procedural layer (`BossHeavyId`) so generated genomes can
+ * CARRY their rotation — the four Beacon Guardians each promise a different fight, and the
+ * generator is what decides which heavies belong to which body. This alias keeps the sim-side name.
  */
-export type BossMechanicId =
-  | 'quake'      // big area slam — knocks players UP off the ground
-  | 'dash'       // long telegraphed charge straight down a lane
-  | 'nova'       // status burst: poison, burn, or chill + weakened
-  | 'impact'     // aimed ground impact that leaves a burning crater
-  | 'ragechain'  // ENRAGED only: three eruptions marching at the player
-  | 'rageleap';  // ENRAGED only: it leaps on to the marked spot and knocks everyone up
+export type BossMechanicId = BossHeavyId;
 
 interface BossMechanicSpec {
   /** Telegraph lead (s): how long the marker fills before the hit lands. */
@@ -97,15 +94,34 @@ const BOSS_MECHANICS: Record<BossMechanicId, BossMechanicSpec> = {
 const ENRAGED_MECHANICS: BossMechanicId[] = ['ragechain', 'rageleap'];
 
 /**
- * What heavies a boss owns, read off its GENERATED genome. Every boss gets the area slam and a
- * status burst — the two things a player must always be able to read — and the third slot is its
- * own flavour: a mobile genome gets the dash, everything else gets the aimed impact.
+ * What heavies a boss owns, read off its GENERATED genome — body, kit and locomotion, never a
+ * fixed template. Every heavy still draws its own marker on the ground first, so a player always
+ * reads it the same way; the SET is what differs, so a burrower and a venom hulk do not fight
+ * alike. The pad order rotates on the genome index, so even two bosses of the same body type
+ * never cycle the exact same three heavies.
  */
-function pickBossMechanics(g: EnemyGenome): BossMechanicId[] {
+export function pickBossMechanics(g: EnemyGenome): BossMechanicId[] {
+  // A stored rotation wins outright: the generator chose these heavies FOR this body. The four
+  // Beacon Guardians each carry their own set, so no two wardens cycle the same fight.
+  if (g.bossHeavy && g.bossHeavy.length > 0) return [...g.bossHeavy];
   const has = (id: AbilityId): boolean => g.abilities.indexOf(id) >= 0;
-  const out: BossMechanicId[] = ['quake', 'nova'];
-  if (has('charge') || has('blink') || has('leap') || g.behavior.chaseSpeedMul > 1.05) out.push('dash');
-  else out.push('impact');
+  const out: BossMechanicId[] = [];
+  const add = (id: BossMechanicId): void => { if (out.indexOf(id) < 0) out.push(id); };
+  // the body's own hardware
+  const heavy = (g.visual.plates ?? 1) >= 3 || (g.armor ?? 1) < 0.95 || has('slam');
+  const mobile = has('charge') || has('blink') || has('leap') || g.locomotion === 'CHARGER' || g.locomotion === 'BURROWER';
+  const ranged = has('spit') || has('volley') || has('web');
+  const elemental = has('venomCloud') || has('detonate') || has('web') || has('thorn');
+  // quake (centred disc) is the universal opener: heavy frames or anything that cannot chase
+  if (heavy || !mobile) add('quake');
+  // nova (hollow ring): the status carriers, plus the OVERSEER by default
+  if (elemental || g.role === 'OVERSEER') add('nova');
+  // dash (lane): the chargers and divers
+  if (mobile) add('dash');
+  // impact (aimed disc): artillery that would rather not close the distance
+  if (ranged && !mobile) add('impact');
+  const PAD: BossMechanicId[] = ['quake', 'nova', 'impact', 'dash'];
+  for (let k = 0; out.length < 3 && k < PAD.length * 2; k++) add(PAD[(g.idx + k) % PAD.length]);
   return out;
 }
 
@@ -862,7 +878,11 @@ export class Enemy {
           game.effects.burst(this.position, this.genome.accent, { count: 12, speed: 8, life: 0.35, size: 0.6, gravity: 10 });
         }
       }
-      if (this.has('burrow') && this.cd('burrow') <= 0 && dist < 26) {
+      // BOSSES never dive out of sight: their plate stays on screen for everyone to shoot at, so a
+      // body that blinks under the terrain with no telegraph reads as a bug (and a lancer guardian
+      // would look exactly like the "things disappear" class of report). The dive itself lives on
+      // as its dash heavy — telegraphed on a lane like every other boss move.
+      if (this.has('burrow') && !this.isBoss && this.cd('burrow') <= 0 && dist < 26) {
         this.setCd('burrow', ABILITY_META.burrow.cd);
         this.stealthed = true;
         if (this.rig) this.rig.group.visible = false;
@@ -2605,7 +2625,13 @@ export class EnemyManager {
   }
 
   spawnBoss(towerIdx: number, kind: 'beacon' | 'nexus', pos: THREE.Vector3): Enemy {
-    const genomeIdx = kind === 'nexus' ? this.bestiary.nexusIdx : this.bestiary.bossIdx;
+    // Each Beacon's warden is ITS OWN generated guardian: the four genomes were rolled from four
+    // different plans (frame, movement, signature organ) when the bestiary was built, so this
+    // Beacon's fight is never a copy of the next one's.
+    const guards = this.bestiary.bossIdxes;
+    const genomeIdx = kind === 'nexus'
+      ? this.bestiary.nexusIdx
+      : guards[((towerIdx % guards.length) + guards.length) % guards.length] ?? this.bestiary.apexIdx;
     const playerScale = 1 + Math.max(0, this.game.playerCount - 1) * 0.35;
     // Bosses ride the same match-time curve as the crowd (they used to keep a flat health pool while
     // their damage ramped), and the Nexus Mega Necrophage gets its own multiplier on top.

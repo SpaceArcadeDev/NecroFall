@@ -48,8 +48,14 @@ function corePool(ring: number, role: EcoRole): BodyCore[] {
   return [...base, ...exotic];
 }
 
-export function rollBodyPlan(rng: Rand, role: EcoRole, locomotion: LocomotionId, ring: number): BodyPlan {
-  let core = rng.pick(corePool(ring, role));
+/**
+ * `forceCore` pins the frame module (the four Beacon Guardians each promise a DIFFERENT silhouette,
+ * so the generator hands the guardian plan its core instead of re-rolling it). The locomotion
+ * compatibility rules below still apply — a forced frame that contradicts its movement is pulled
+ * back into a legal one rather than allowed to produce a broken model.
+ */
+export function rollBodyPlan(rng: Rand, role: EcoRole, locomotion: LocomotionId, ring: number, forceCore?: BodyCore): BodyPlan {
+  let core = forceCore ?? rng.pick(corePool(ring, role));
   // locomotion compatibility: slither/burrow need length, hoppers/floating favour compact cores
   if (locomotion === 'SLITHER') core = rng.next() < 0.7 ? 'SEGMENTED' : 'ELONGATED';
   if (locomotion === 'BURROWER') core = rng.next() < 0.6 ? 'ELONGATED' : 'SEGMENTED';

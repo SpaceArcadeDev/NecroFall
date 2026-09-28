@@ -70,6 +70,25 @@ export interface TelegraphSpec {
 
 export type AttackMovement = 'none' | 'leap' | 'charge' | 'burrow' | 'blink' | 'hover';
 
+// ------------------------------------------------------------ boss heavies (plan §24)
+
+/**
+ * A boss HEAVY. Every one of them is telegraphed on the terrain before it lands, and each uses its
+ * own shape so a player can read which is coming: a filled disc (leave the area), a hollow ring
+ * (leave the edge), or a lane (leave the line).
+ *
+ * The vocabulary lives here so a GENERATED genome can carry its own rotation (`bossHeavy`): the
+ * four Beacon Guardians each promise a different fight, and the generator is what decides which
+ * telegraphed heavies belong to which body. `Enemies.pickBossMechanics` reads it.
+ */
+export type BossHeavyId =
+  | 'quake'      // big area slam — knocks players UP off the ground
+  | 'dash'       // long telegraphed charge straight down a lane
+  | 'nova'       // status burst: poison, burn, or chill + weakened
+  | 'impact'     // aimed ground impact that leaves a burning crater
+  | 'ragechain'  // ENRAGED only: three eruptions marching at the player
+  | 'rageleap';  // ENRAGED only: it leaps on to the marked spot and knocks everyone up
+
 /**
  * ATTACK PATTERN (plan §19): two creatures using the SAME projectile ability must still
  * fight differently. The pattern is executed by the firing code — a FAN is three shots

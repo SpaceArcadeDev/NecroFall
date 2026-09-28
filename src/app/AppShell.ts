@@ -17,7 +17,7 @@ import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthPro
 import { isAuthCallbackUrl } from './auth/authCallback';
 import { ClientCache } from './spacetimedb/cache';
 import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, type ConnectionState } from './spacetimedb/connection';
-import { reportMatchStats, chooseColony, setPlayerName } from './spacetimedb/reducers';
+import { reportMatchStats, chooseColony, setPlayerName, discoverPlanet } from './spacetimedb/reducers';
 import { COLONY_NONE, hexOf } from './spacetimedb/rows';
 import { subscribeAccount, subscribeMatchmaking, subscribePlayer } from './spacetimedb/subscriptions';
 import { OfficialMultiplayerProvider } from './multiplayer/OfficialMultiplayerProvider';
@@ -47,7 +47,7 @@ import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
 import { showRankResultOverlay } from './rank/RankResultOverlay';
-import { DEFAULT_UNIVERSE_SEED } from '../rankmap/procedural/SeedHash';
+import { DEFAULT_UNIVERSE_SEED, parsePlanetKey } from '../rankmap/procedural/SeedHash';
 
 type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
@@ -630,6 +630,14 @@ export class AppShell implements ShellContext {
       const me = ClientCache.shared.playerByHex(this.myHex());
       const season = ClientCache.shared.rankedSeason();
       const universeSeed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+      // Discovery is earned by PLAYING (user ask 2026-09-28): the history row proves
+      // this seat fought here, so first contact is recorded NOW — never on a mere
+      // map tap. Galaxies/systems/planets stay unmapped until someone battles on them.
+      const planetKey = m.planetKey || history.planetKey;
+      const parsed = planetKey ? parsePlanetKey(planetKey) : null;
+      if (parsed && !ClientCache.shared.rankedPlanet(planetKey)?.discovered) {
+        discoverPlanet(parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
+      }
       showRankResultOverlay({
         matchId,
         delta: history.delta,
@@ -638,7 +646,7 @@ export class AppShell implements ShellContext {
         newStars: Number(me?.rankPoints ?? history.newStars),
         winnerColony: m.winnerColony ?? null,
         myColony: me?.colony ?? 255,
-        planetKey: m.planetKey || history.planetKey,
+        planetKey,
         universeSeed,
         onViewMap: () => {
           this.rankResultsShown.add(matchId);

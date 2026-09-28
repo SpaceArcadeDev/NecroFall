@@ -5,11 +5,12 @@
 //
 // The page is a pure VIEW over the server subscriptions: availability, control
 // and countdowns all come from `ranked_planet` rows; everything else is
-// regenerated from the season seed. The only writes it performs are
-// `discoverPlanet` (first contact — plan §34) and `findRankedMatch` (§53).
+// regenerated from the season seed. The only write it performs is
+// `findRankedMatch` (§53) — first contact/discovery is earned by PLAYING and is
+// recorded by AppShell when a ranked match ends (user ask 2026-09-28).
 import { ClientCache } from '../spacetimedb/cache';
 import { hexOf } from '../spacetimedb/rows';
-import { colonyStats, ColonyStatsResult, discoverPlanet, findRankedMatch } from '../spacetimedb/reducers';
+import { colonyStats, ColonyStatsResult, findRankedMatch } from '../spacetimedb/reducers';
 import { subscribePlanetDetail, subscribeRank, subscribeRankGalaxy } from '../spacetimedb/subscriptions';
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
@@ -49,8 +50,6 @@ export class RankPage {
   private headSig = '';
   private railSig = '';
   private crumbSig = '';
-  private knownKeys = new Set<string>();
-  private pendingDiscovery: PlanetDescriptor | null = null;
   private discoveryShown = new Set<string>();
   private stats: ColonyStatsResult | null = null;
   private subscribedGalaxies = new Set<number>();
@@ -290,23 +289,17 @@ export class RankPage {
   }
 
   private onData(): void {
-    // Track discoveries we triggered (plan §74 — the reveal moment). ONLY a genuinely fresh
-    // find celebrates: the first discoverer must be me AND the server must have stamped the
-    // discovery moments ago (a reloaded page re-sends `discover_planet` for old worlds —
-    // those must stay quiet).
-    if (this.pendingDiscovery) {
-      const key = this.pendingDiscovery.key;
-      const discoveries = ClientCache.shared.planetDiscoveries(key);
-      const mine = discoveries.find((d) => hexOf(d.identity) === this.ctx.myHex());
-      const row = this.planetRow(key);
-      const fresh = row ? Date.now() * 1000 - Number(row.firstDiscoveredAt) < 120_000_000 : false;
-      if (mine && mine.discoveryOrder === 1 && fresh && !this.discoveryShown.has(key)) {
-        this.discoveryShown.add(key);
-        this.flashDiscovery(this.pendingDiscovery, mine.discoveryOrder);
-        this.pendingDiscovery = null;
-      } else if (row?.discovered || (mine && !fresh)) {
-        // Already known (or an old find) — no celebration, just clear the pending state.
-        this.pendingDiscovery = null;
+    // The discovery FLASH celebrates a world mapped by PLAYING (AppShell fires the
+    // write when a ranked match ends — user ask 2026-09-28): only a genuinely fresh
+    // find AND only the first discoverer celebrate, so reloads stay quiet.
+    const selPlanet = this.selection.planet;
+    if (selPlanet && !this.discoveryShown.has(selPlanet.key)) {
+      const mine = ClientCache.shared.planetDiscoveries(selPlanet.key).find((d) => hexOf(d.identity) === this.ctx.myHex());
+      const row = this.planetRow(selPlanet.key);
+      const fresh = row ? Date.now() * 1000 - Number(row.firstDiscoveredAt) < 90_000_000 : false;
+      if (mine && fresh) {
+        this.discoveryShown.add(selPlanet.key);
+        this.flashDiscovery(selPlanet, mine.discoveryOrder);
       }
     }
     this.renderHead();
@@ -566,7 +559,6 @@ export class RankPage {
     this.renderBreadcrumb();
     this.renderSide();
     if (sel.planet) {
-      // Contact = discovery (plan §34): only in YOUR ring, once per key.
       subscribePlanetDetail(sel.planet.key);
       // A planet can be selected before its galaxy is (deep links, programmatic jumps) —
       // its ownership rows must be subscribed or the panel would read UNDISCOVERED.
@@ -574,14 +566,8 @@ export class RankPage {
         this.subscribedGalaxies.add(sel.planet.galaxyId);
         subscribeRankGalaxy(sel.planet.galaxyId);
       }
-      if (sel.planet.ring === this.myRing() && !this.knownKeys.has(sel.planet.key)) {
-        this.knownKeys.add(sel.planet.key);
-        const row = this.planetRow(sel.planet.key);
-        if (!row?.discovered) {
-          this.pendingDiscovery = sel.planet;
-          discoverPlanet(sel.planet.ring, sel.planet.galaxyId, sel.planet.systemId, sel.planet.planetId);
-        }
-      }
+      // NO discovery here: worlds are only mapped by PLAYING on them (user ask
+      // 2026-09-28) — AppShell fires `discoverPlanet` when a ranked match ends.
     }
     // Subscribe the galaxy rows the moment one is focused (plan §61).
     if (sel.galaxy && !this.subscribedGalaxies.has(sel.galaxy.galaxyId)) {

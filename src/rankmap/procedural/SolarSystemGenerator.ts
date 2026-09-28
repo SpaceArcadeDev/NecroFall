@@ -1,16 +1,19 @@
-// NECROFALL — solar system generation (plan §8). Each galaxy contains
-// `systemCount` deterministic systems laid out on a golden-angle spiral so the
-// map reads as a real cluster, never a grid.
+// NECROFALL — solar system generation (plan §8). Each galaxy contains HUNDREDS
+// of deterministic systems laid out on a golden-angle spiral so the map reads as
+// a real cluster, never a grid (user: "a galaxy should have hundreds of solar
+// systems with varying planes and count").
 import { SystemDescriptor, SYSTEM_DESIGNATIONS } from './GalaxyTypes';
 import { hash32, rng } from './SeedHash';
 import { galaxyName } from './GalaxyGenerator';
 
-export function systemAt(universeSeed: number, ring: number, galaxyId: number, systemId: number): SystemDescriptor {
+export function systemAt(universeSeed: number, ring: number, galaxyId: number, systemId: number, systemCount = 200): SystemDescriptor {
   const seed = hash32(universeSeed >>> 0, 'system', ring, galaxyId, systemId);
   const r = rng(seed);
-  // Golden-angle spiral: even coverage, organic feel, fully deterministic.
+  // Golden-angle spiral: even AREAL coverage whatever the count — the radius is
+  // normalised by the galaxy's own system total so 70 and 260 systems both fill
+  // the disc (the old hard-coded /12 spaced ~12 systems only).
   const angle = systemId * 2.399963 + r() * 0.5;
-  const radius = systemId === 0 ? 0 : Math.sqrt((systemId + 0.6) / 12) * 0.92;
+  const radius = systemId === 0 ? 0 : Math.sqrt((systemId + 0.6) / Math.max(8, systemCount)) * 0.92;
   const base = galaxyName(hash32(universeSeed >>> 0, 'galaxy', ring, galaxyId));
   const designation = SYSTEM_DESIGNATIONS[Math.floor(r() * SYSTEM_DESIGNATIONS.length)];
   return {
@@ -36,6 +39,6 @@ export function systemPlanetCount(universeSeed: number, ring: number, galaxyId: 
 /** All systems of a galaxy. */
 export function systemsInGalaxy(universeSeed: number, ring: number, galaxyId: number, systemCount: number): SystemDescriptor[] {
   const out: SystemDescriptor[] = [];
-  for (let s = 0; s < systemCount; s++) out.push(systemAt(universeSeed, ring, galaxyId, s));
+  for (let s = 0; s < systemCount; s++) out.push(systemAt(universeSeed, ring, galaxyId, s, systemCount));
   return out;
 }

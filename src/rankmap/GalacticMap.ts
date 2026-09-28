@@ -65,13 +65,17 @@ interface CameraTarget {
   zoom?: number;
 }
 
-/** World zoom bands where each tier fades in — see `zoomRamps()`. */
+/** World zoom bands where each tier fades in — see `zoomRamps()`. The planet band
+ *  is split: `plStart..plEnd` opens the SOLAR SYSTEM (small solid planets), and
+ *  `closeStart..closeEnd` drives the planet close-up (bodies grow, names appear). */
 interface ZoomRanges {
   gal: number;
   sysStart: number;
   sysEnd: number;
   plStart: number;
   plEnd: number;
+  closeStart: number;
+  closeEnd: number;
 }
 
 /** The live soft-lock: what the crosshair is aiming at, tier by tier, plus how far
@@ -82,6 +86,7 @@ interface LockState {
   planet: PlanetDescriptor | null;
   sysAlpha: number;
   planetAlpha: number;
+  closeAlpha: number;
   ranges: ZoomRanges;
 }
 
@@ -90,9 +95,12 @@ const ramp01 = (v: number, a: number, b: number): number => clamp01((v - a) / Ma
 
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
-/** Below this body radius a galaxy is a plain mote — at intergalactic zoom there can
- *  be thousands on screen and a soft shaped sprite each would cost real fill-rate. */
-const GALAXY_DOT_RADIUS = 4.2;
+/** Below this body radius a galaxy is a plain LIGHT DOT — the intergalactic view is a
+ *  starfield of motes (user: "show all galaxies as light dots until I zoom in a certain
+ *  amount… make it look like No Man's Sky"), and it is also the reason a wide frame
+ *  with thousands of galaxies stays cheap: no shaped faces until they are genuinely
+ *  grown on screen. */
+const GALAXY_DOT_RADIUS = 18;
 
 interface Hover {
   kind: 'galaxy' | 'system' | 'planet' | null;
@@ -162,6 +170,7 @@ export class GalacticMap {
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
+    if (import.meta.env.DEV) (globalThis as unknown as { __nfMap?: GalacticMap }).__nfMap = this;
   }
 
   dispose(): void {
@@ -420,25 +429,30 @@ export class GalacticMap {
     planet: null,
     sysAlpha: 0,
     planetAlpha: 0,
-    ranges: { gal: 40, sysStart: 41, sysEnd: 110, plStart: 200, plEnd: 450 },
+    closeAlpha: 0,
+    ranges: { gal: 40, sysStart: 41, sysEnd: 110, plStart: 200, plEnd: 450, closeStart: 400, closeEnd: 800 },
   };
 
   /**
-   * Tier ramps (user: "no sudden transitions — just like No Man's Sky"): each tier
-   * fades in over a zoom RANGE instead of switching at a line. Everything is derived
-   * from the canvas' own framing zooms, so a tiny squircle map and a fullscreen map
-   * reveal the same way, just sooner or later in absolute zoom terms.
+   * Tier ramps (user: "no sudden transitions — just like No Man's Sky"; v3: the
+   * solar system is its OWN stage between the galaxy and the planets):
+   *   galaxy view → hundreds of system motes → ONE solar system opens (star, orbits,
+   *   small solid planets) → planet close-up (bodies grow, names appear).
+   * Everything is derived from the canvas' own framing zooms, so a tiny mini-map and
+   * a fullscreen map reveal the same way, just sooner or later in absolute zoom.
    */
   private zoomRamps(): ZoomRanges {
     const gal = this.fitZoom(GAL_DISC_WORLD * 2.4);
     const sysStart = gal * 1.02;
     const sysEnd = Math.max(sysStart + 18, Math.min(gal * 2.6, 280));
     const zSys = this.fitZoom(SYSTEM_SCALE * 2.5);
-    const plStart = Math.min(Math.max(zSys * 1.1, sysEnd + 12), 320);
-    // the planet reveal lands sooner (1.6× headroom, capped) so full bodies with
-    // names are reached with room left in the zoom — "zoom in and VIEW the planets"
-    const plEnd = Math.min(Math.max(zSys * 1.6, plStart + 30), 520);
-    return { gal, sysStart, sysEnd, plStart, plEnd };
+    // the solar system opens WELL past the galaxy stage (2.2×), so the galaxy view
+    // stays a galaxy view instead of jumping straight to planets
+    const plStart = Math.min(Math.max(zSys * 1.4, sysEnd * 2.2), 460);
+    const plEnd = Math.min(Math.max(zSys * 2.0, plStart * 1.6), 900);
+    const closeStart = plEnd * 0.9;
+    const closeEnd = Math.min(plEnd * 2.1, 1600);
+    return { gal, sysStart, sysEnd, plStart, plEnd, closeStart, closeEnd };
   }
 
   private nearestGalaxyToViewCentre(): GalaxyDescriptor | null {
@@ -491,18 +505,34 @@ export class GalacticMap {
     return best;
   }
 
-  /** Where a planet sits on screen right now (orbit animation included). */
+  /** Per-system orbital plane (user: systems vary in plane): inclination + spin,
+   *  derived from the system seed so every system hangs its planets differently. */
+  private systemPlane(sys: SystemDescriptor): { inc: number; rot: number } {
+    const s = (sys.seed ^ (sys.systemId * 2654435761)) >>> 0;
+    return {
+      inc: 0.28 + (((s >>> 4) % 1000) / 1000) * 0.55,
+      rot: ((s >>> 14) % 628) / 100,
+    };
+  }
+
+  /** Where a planet sits on screen right now (orbit animation + its system's plane). */
   private planetScreenCircle(g: GalaxyDescriptor, sys: SystemDescriptor, p: PlanetDescriptor, t: number): { x: number; y: number; r: number } {
     const sw = this.systemWorldPos(g, sys);
     const centre = this.world2screen(sw.x, sw.y);
     const speed = 0.05 / (0.4 + p.orbitRadius);
     const angle = p.orbit + t * speed;
     const orbitR = p.orbitRadius * SYSTEM_SCALE * this.cam.zoom;
+    const plane = this.systemPlane(sys);
+    const cR = Math.cos(plane.rot);
+    const sR = Math.sin(plane.rot);
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
+    // STAGED SIZE: the solar-system stage frames modest, solid bodies (radius·6) and
+    // the close-up grows them to the classic full view (radius·17) as you approach.
     return {
-      x: centre.x + Math.cos(angle) * orbitR,
-      y: centre.y + Math.sin(angle) * orbitR * 0.86,
-      // bodies grow to the old system-view scale (radius·16) well before max zoom
-      r: Math.max(2.6, p.radius * Math.min(16, this.cam.zoom * 0.05)),
+      x: centre.x + (ca * cR - sa * sR) * orbitR,
+      y: centre.y + (ca * sR + sa * cR) * orbitR * plane.inc,
+      r: Math.max(2.4, p.radius * (6 + 11 * this.lock.closeAlpha)),
     };
   }
 
@@ -520,8 +550,9 @@ export class GalacticMap {
     const sysAlpha = ramp01(zoom, ranges.sysStart, ranges.sysEnd);
     const system = galaxy && sysAlpha > 0.04 ? this.nearestSystemToViewCentre(galaxy) : null;
     const planetAlpha = ramp01(zoom, ranges.plStart, ranges.plEnd);
+    const closeAlpha = ramp01(zoom, ranges.closeStart, ranges.closeEnd);
     const planet = galaxy && system && planetAlpha > 0.08 ? this.nearestPlanetToViewCentre(galaxy, system) : null;
-    this.lock = { galaxy, system, planet, sysAlpha, planetAlpha, ranges };
+    this.lock = { galaxy, system, planet, sysAlpha, planetAlpha, closeAlpha, ranges };
 
     const enterGalaxyAt = this.level === 'galactic' ? 0.5 : 0.34;
     const enterSystemAt = this.level === 'system' ? 0.4 : 0.52;
@@ -555,7 +586,9 @@ export class GalacticMap {
       }
       this.onSelect({ level: next, galaxy: this.focusGalaxy, system: this.focusSystem, planet: this.selectedPlanet });
     }
-    if (planet && planetAlpha > 0.72 && this.selectedPlanet?.key !== planet.key) this.selectPlanet(planet);
+    // deep close-up: the planet at the crosshair becomes the selection (this is the
+    // end of the journey — galaxy → solar system → planet)
+    if (planet && closeAlpha > 0.35 && this.selectedPlanet?.key !== planet.key) this.selectPlanet(planet);
   }
 
   // ------------------------------------------------------------ sizing & camera
@@ -822,18 +855,27 @@ export class GalacticMap {
         const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
         const radius = this.galaxyScreenRadius(g);
         const pulse = 1 + 0.06 * Math.sin(t * 2 + (g.seed % 100));
-        // far LOD: a plain mote (there can be thousands on screen)
+        // Once you are INSIDE a galaxy (its systems layer is opening) the galaxy faces
+        // withdraw — otherwise a handful of near neighbours smear the frame into one
+        // opaque wall. What remains is the NMS view: a faint ghost of the cluster plus
+        // its stars.
+        const inside = this.lock.sysAlpha;
+        // far LOD: a light mote (there can be thousands on screen — No Man's Sky look)
         if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
-          ctx.globalAlpha = 0.5 * field;
+          ctx.globalAlpha = 0.78 * field * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
           ctx.fillStyle = g.starColor;
           ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
           ctx.globalAlpha = 1;
           continue;
         }
         // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
-        // Alpha scales with size so the field reads in DEPTH instead of confetti.
-        const s = radius * 3.1 * pulse;
-        ctx.globalAlpha = (0.22 + Math.min(0.68, radius / 16) * pulse) * field;
+        // Size compresses past the "face" range and the face sinks into HAZE once you
+        // are deep inside the field. Alpha still scales with size so the field reads
+        // in DEPTH instead of confetti.
+        const faceR = (radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - inside * 0.35);
+        const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
+        const s = faceR * 3.1 * pulse;
+        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34) * pulse) * field * haze * (1 - inside * 0.85);
         ctx.drawImage(this.galaxySprite(g), p.x - s / 2, p.y - s / 2, s, s);
         ctx.globalAlpha = 1;
         // POI marker (plan §55)
@@ -854,7 +896,7 @@ export class GalacticMap {
         }
         // name — sized WITH the body, and only once it is genuinely big on screen
         // (user: "no need to show names, should be smaller until I zoom in")
-        const nameA = ramp01(radius, 14, 24) * field;
+        const nameA = ramp01(radius, 16, 28) * field;
         if (nameA > 0.02) {
           ctx.globalAlpha = nameA * 0.95;
           ctx.font = `600 ${Math.min(12, Math.max(8.5, radius * 0.55))}px Rajdhani, sans-serif`;
@@ -984,11 +1026,13 @@ export class GalacticMap {
     const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
     // the front system crossfades on the same sqrt curve as the planets layer
     const pa = Math.sqrt(planetAlpha);
-    // the galaxy's own seeded face fades in behind the systems as the disc fills the view
-    const faceAlpha = sysAlpha * 0.35 * (1 - pa * 0.6);
+    // the galaxy's own seeded face fades in behind the systems as the disc fills the
+    // view — a NEBULA HINT, not a billboard: kept faint and only slightly inflated,
+    // otherwise a 2000px sprite at 0.35 alpha washes the whole frame to milk
+    const faceAlpha = sysAlpha * 0.15 * (1 - pa * 0.6);
     if (faceAlpha > 0.02) {
       const centre = this.world2screen(galaxy.gx, galaxy.gy);
-      const discR = (GAL_DISC_WORLD / 2) * zoom * (1.6 + sysAlpha * 1.4);
+      const discR = (GAL_DISC_WORLD / 2) * zoom * (1.2 + sysAlpha * 0.7);
       ctx.globalAlpha = faceAlpha;
       ctx.drawImage(this.galaxySprite(galaxy), centre.x - discR * 1.1, centre.y - discR * 1.1, discR * 2.2, discR * 2.2);
       ctx.globalAlpha = 1;
@@ -1002,8 +1046,20 @@ export class GalacticMap {
       const front = Boolean(system && sys.systemId === system.systemId);
       const twinkle = 0.85 + 0.15 * Math.sin(t * 2.2 + (sys.seed % 50));
       const r = baseR * twinkle;
-      const a = sysAlpha * (front ? 1 - pa : 1);
+      // when the solar system stage opens, the OTHER systems recede hard so the
+      // frame reads as one system, not a galaxy sprinkled with planets
+      const a = sysAlpha * (front ? 1 - pa : 1 - pa * 0.92);
       if (a <= 0.02) continue;
+      // LOD (user: "show all solar systems as light dots until I zoom in"): only the
+      // system under the crosshair (or hovered/selected) carries detail — every other
+      // system stays a light mote, which is also what keeps hundreds of them cheap.
+      if (!front && !isHover && !isSel) {
+        ctx.globalAlpha = 0.8 * a * twinkle;
+        ctx.fillStyle = '#dfe9ff';
+        ctx.fillRect(p.x - 1.15, p.y - 1.15, 2.3, 2.3);
+        ctx.globalAlpha = 1;
+        continue;
+      }
       // star glow + core (the dot GROWS with zoom instead of a fixed 30px blob)
       const ss = r * 6;
       ctx.globalAlpha = 0.6 * a;
@@ -1113,13 +1169,15 @@ export class GalacticMap {
       const pr = c.r;
       const orbitR = p.orbitRadius * SYSTEM_SCALE * zoom;
 
-      // orbit path (fades up with the tier)
+      // orbit path — the system's OWN plane (rotate, then flatten)
       ctx.globalAlpha = 0.16 * pa;
       ctx.strokeStyle = 'rgba(180,170,220,1)';
       ctx.lineWidth = 1;
+      const plane = this.systemPlane(system);
       ctx.save();
       ctx.translate(center.x, center.y);
-      ctx.scale(1, 0.86);
+      ctx.rotate(plane.rot);
+      ctx.scale(1, plane.inc);
       ctx.beginPath();
       ctx.arc(0, 0, orbitR, 0, Math.PI * 2);
       ctx.stroke();
@@ -1236,7 +1294,7 @@ export class GalacticMap {
       if (this.pinch && this.pointers.size === 2) {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        this.cam.zoom = Math.max(4, Math.min(600, (this.pinch.zoom * d) / Math.max(1, this.pinch.dist)));
+        this.cam.zoom = Math.max(4, Math.min(1700, (this.pinch.zoom * d) / Math.max(1, this.pinch.dist)));
         return;
       }
       if (this.drag) {
@@ -1271,7 +1329,7 @@ export class GalacticMap {
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.0016);
         const before = this.screen2world(e.offsetX, e.offsetY);
-        this.cam.zoom = Math.max(4, Math.min(600, this.cam.zoom * factor));
+        this.cam.zoom = Math.max(4, Math.min(1700, this.cam.zoom * factor));
         const after = this.screen2world(e.offsetX, e.offsetY);
         this.cam.x += before.x - after.x;
         this.cam.y += before.y - after.y;
@@ -1352,7 +1410,7 @@ export class GalacticMap {
 
   /** Zoom around the viewport centre (the ± buttons). */
   zoomStep(factor: number): void {
-    this.cam.zoom = Math.max(4, Math.min(600, this.cam.zoom * factor));
+    this.cam.zoom = Math.max(4, Math.min(1700, this.cam.zoom * factor));
     this.camTarget = null;
   }
 

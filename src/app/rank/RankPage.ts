@@ -92,8 +92,8 @@ export class RankPage {
       b.addEventListener('click', fn);
       return b;
     };
-    zoomCtl.appendChild(mkZoom('+', () => this.zoomBy(1.35)));
-    zoomCtl.appendChild(mkZoom('−', () => this.zoomBy(1 / 1.35)));
+    zoomCtl.appendChild(mkZoom('+', () => this.zoomBy(1.5)));
+    zoomCtl.appendChild(mkZoom('−', () => this.zoomBy(1 / 1.5)));
     zoomCtl.appendChild(mkZoom('⌂', () => this.map.flyToRing(this.myRing())));
     // ---- fullscreen map toggle (user ask: “small galactic map … with option to expand”)
     const mapExpand = el('button', 'rk-map-expand', '⤢') as HTMLButtonElement;
@@ -852,7 +852,7 @@ export class RankPage {
     const { gx, gy } = decodeGalaxyId(p.galaxyId);
     const g = galaxyAt(this.universeSeed(), gx, gy) ?? this.map.currentGalaxy;
     if (g && g.galaxyId !== this.map.currentGalaxy?.galaxyId) this.map.openGalaxy(g);
-    const sys = systemAt(this.universeSeed(), p.ring, p.galaxyId, p.systemId);
+    const sys = systemAt(this.universeSeed(), p.ring, p.galaxyId, p.systemId, g?.systemCount ?? 200);
     this.map.markSystem(sys);
     this.map.selectPlanet(p);
   }

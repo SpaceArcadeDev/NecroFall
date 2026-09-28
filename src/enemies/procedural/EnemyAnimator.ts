@@ -46,11 +46,28 @@ export function animateEnemyRig(rig: CreatureRig, genome: EnemyGenome, phase: nu
   // ---- segmented bodies: travelling wave, amplitude from the gait (slither)
   const waveAmp = (gait.slither > 0 ? gait.slither : 0.28) * (0.4 + moving);
   const waveRate = gait.style === 'SLITHER' ? 2.1 : 1.6;
+  // Chain links (worm / myriapod) are MARCHED: each link is placed one step behind the previous
+  // along a cumulative heading, so the body bends like a real chain — and because the links are
+  // FLAT children of the body (see the rig comments in EnemyModels), nothing can compound. The
+  // other rigs' secondary parts (chest/abdomen/bell/…) keep their own local sway.
+  let chainAng = 0;
+  let chainX = 0;
+  let chainZ = 0;
   for (let i = 1; i < rig.segments.length; i++) {
     const seg = rig.segments[i];
     const wave = Math.sin(phase * waveRate - i * 0.7);
-    seg.rotation.y = wave * waveAmp;
-    seg.position.x = wave * s * 0.06;
+    if (seg.userData.chain === 1) {
+      chainAng += wave * waveAmp;
+      const step = seg.userData.step as number;
+      chainX += Math.sin(chainAng) * step;
+      chainZ -= Math.cos(chainAng) * step;
+      seg.position.x = chainX;
+      seg.position.z = chainZ;
+      seg.rotation.y = chainAng;
+    } else {
+      seg.rotation.y = wave * waveAmp;
+      seg.position.x = wave * s * 0.06;
+    }
   }
 
   // ---- body: squash/breathe + gait bob/lean + hover

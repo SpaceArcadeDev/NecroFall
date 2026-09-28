@@ -4462,6 +4462,8 @@ export class Game {
       this.refreshFrozenPlayers();
       if (this.localPlayer) this.towers.collidePlayer(this.localPlayer);
       if (this.localPlayer) this.bases.collidePlayer(this.localPlayer, this);
+      // the fortress deck's outer edge is a springboard: running off the rim flings you outward
+      if (this.localPlayer) this.bases.edgeLaunch(this.localPlayer, this);
       this.towers.update(dt);
       this.pads.update(dt);
       this.bases.update(dt, this.matchElapsed);

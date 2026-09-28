@@ -421,18 +421,29 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
 
   if (rig === 'WORM') {
     // ---------------- segmented burrower (worm): a chain of body rings
+    // The rings are FLAT children of `body`, each at its own ABSOLUTE offset, and the animator
+    // marches them along a cumulative heading (see EnemyAnimator). They used to be NESTED (each
+    // ring the child of the previous one), which multiplied every ring's offsets by all of its
+    // ancestors' scales — the tail then grew GEOMETRICALLY with the genome and a large segmented
+    // creature trailed a multi-kilometre tail (user report 2026-09-29: "super duper long tail").
+    // Flat links scale LINEARLY with `s`, like every other body part.
     const count = Math.round(v.segments);
-    let parent: THREE.Object3D = body;
+    let chainZ = 0;
     for (let i = 0; i < count; i++) {
       const k = i / (count - 1);
       const ring = new THREE.Mesh(i === 0 ? GEO.shell : GEO.plate, carapace);
       const rw = s * (0.62 - k * 0.34) * wMul;
+      const step = s * (0.5 - k * 0.06) * lMul;
       ring.scale.set(rw, rw * 1.0, s * (0.45 - k * 0.14) * lMul);
-      ring.position.z = i === 0 ? 0 : -s * (0.5 - k * 0.06) * lMul;
-      parent.add(ring);
+      chainZ -= i === 0 ? 0 : step;
+      ring.position.z = chainZ;
+      if (i > 0) {
+        // the animator marches chain links: it needs each link's own spacing
+        ring.userData.chain = 1;
+        ring.userData.step = step;
+      }
+      body.add(ring);
       segments.push(ring);
-      // each following ring hangs off the previous one so the chain can wriggle
-      if (i > 0) parent = ring;
     }
     const headGroup = new THREE.Group();
     headGroup.position.set(0, s * 0.1, s * 0.62 * lMul);
@@ -582,16 +593,18 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
     }
   } else if (rig === 'MYRIAPOD') {
     // ---------------- myriapod (centipede-like): long chain, a leg pair on EVERY segment
+    // (FLAT chain links, exactly like the WORM rig above — see the comment there for the
+    // geometric tail explosion the old nested version produced.)
     const count = Math.max(4, Math.round(v.segments));
-    let parent: THREE.Object3D = body;
+    let chainZ = 0;
     for (let i = 0; i < count; i++) {
       const k = i / (count - 1);
       const ring = new THREE.Mesh(i === 0 ? GEO.shell : GEO.plate, carapace);
       const rw = s * (0.5 - k * 0.27) * wMul;
+      const step = s * (0.44 - k * 0.05) * lMul;
       ring.scale.set(rw, rw * (0.95 - k * 0.25), s * (0.42 - k * 0.1) * lMul);
-      ring.position.z = i === 0 ? 0 : -s * (0.44 - k * 0.05) * lMul;
-      parent.add(ring);
-      segments.push(ring);
+      chainZ -= i === 0 ? 0 : step;
+      ring.position.z = chainZ;
       if (i > 0) {
         // the signature: a small leg pair swept off each segment, registered with the gait
         const legLen = Math.max(s * 0.3, s * (0.62 - k * 0.3));
@@ -601,9 +614,11 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
           ring.add(root);
           legs.push({ root, knee, side, phase: i * 1.05 + (side > 0 ? Math.PI : 0) });
         }
-        // each following ring hangs off the previous one so the chain can wriggle
-        parent = ring;
+        ring.userData.chain = 1;
+        ring.userData.step = step;
       }
+      body.add(ring);
+      segments.push(ring);
     }
     const headGroup = new THREE.Group();
     headGroup.position.set(0, s * 0.08, s * 0.55 * lMul);

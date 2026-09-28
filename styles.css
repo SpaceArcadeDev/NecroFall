@@ -1078,41 +1078,9 @@ body {
 }
 .nt-row .tag.mut { font-weight: 800; }
 
-/* ---- RECALL (idle-gated return to base): the RIGHTMOST chip of the Necrotech row, the last thing
-   before the ability stack. Dim until the idle gate opens, lit and breathing when a recall can
-   start, and counting the channel down in place once it is running. */
-.recall-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 22px;
-  padding: 3px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(143, 215, 255, 0.3);
-  background: rgba(20, 13, 34, 0.8);
-  color: #7d8aa6;
-  font: inherit;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.18s ease, color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
-}
-.recall-btn svg { display: block; }
-.recall-btn.ready {
-  opacity: 1;
-  color: #cfeaff;
-  border-color: rgba(143, 215, 255, 0.75);
-  animation: recallPulse 1.6s ease-in-out infinite;
-}
-.recall-btn.channel {
-  opacity: 1;
-  color: #ffffff;
-  border-color: #8fd7ff;
-  background: rgba(48, 96, 132, 0.85);
-  box-shadow: 0 0 16px rgba(143, 215, 255, 0.5);
-  animation: none;
-}
+/* ---- RECALL (idle-gated return to base): its own small round action button at the bottom-left
+   of the ability cluster — see `.ab-sm.recall` beside the Jump / Dash rail rules. It is NEVER a
+   text chip like the Necrotech pills (user ask 2026-09-29). */
 @keyframes recallPulse {
   0%, 100% { box-shadow: 0 0 8px rgba(143, 215, 255, 0.25); }
   50% { box-shadow: 0 0 16px rgba(143, 215, 255, 0.55); }
@@ -1930,6 +1898,29 @@ body {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* RECALL — the small round action button at the bottom-left of the action cluster (user ask
+   2026-09-29): the home glyph in the rail's own language, caption underneath, dim until the idle
+   gate opens, breathing while usable, lit with the countdown ticking while the channel runs. */
+.ab-sm.recall {
+  color: #7d8aa6;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+}
+.ab-sm.recall.ready {
+  opacity: 1;
+  color: #cfeaff;
+  box-shadow: 0 0 0 1px rgba(143, 215, 255, 0.75), 0 0 16px rgba(143, 215, 255, 0.45), inset 0 0 10px rgba(0, 0, 0, 0.6);
+  animation: recallPulse 1.6s ease-in-out infinite;
+}
+.ab-sm.recall.channel {
+  opacity: 1;
+  color: #ffffff;
+  box-shadow: 0 0 0 1.5px #8fd7ff, 0 0 20px rgba(143, 215, 255, 0.65), inset 0 0 12px rgba(64, 140, 200, 0.5);
+  animation: none;
+}
+.ab-sm.recall .rc-cd { font-size: 15px; }
 
 /* ---- ability description overlay (desktop hover, touch long-press) */
 .ab-tip {

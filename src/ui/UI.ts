@@ -412,6 +412,10 @@ const ICON_BEACON =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">' +
   '<path d="M13.6 2.6 7.8 12.2h3.6l-1.2 8.9 6.2-10.6h-3.6z" fill="currentColor" stroke="none"/>' +
   '<path d="M5.2 8.6 3.6 12l1.6 3.4"/><path d="M18.8 8.6 20.4 12l-1.6 3.4"/></svg>';
+// RECALL — a house: the way home to your colony's fortress deck (user ask 2026-09-29).
+const ICON_HOME =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M3.4 11.4 12 4.1l8.6 7.3"/><path d="M5.6 10.2v9.7h12.8v-9.7"/><path d="M9.8 19.9v-5h4.4v5"/></svg>';
 
 /** CLASSIC — crossed swords: the plain, unranked fight for the planet. */
 const ICON_SWORDS =
@@ -576,10 +580,13 @@ export class UI {
   private minimap!: HTMLCanvasElement;
   private ntTag!: HTMLElement;
   /** The RECALL button (idle-gated return-to-base) and its channel progress bar. */
-  private recallBtn!: HTMLButtonElement;
-  private recallTxt!: HTMLElement;
+  private recallBtn!: HTMLElement;
+  private recallCd!: HTMLElement;
   private recallBar!: HTMLElement;
   private recallFill!: HTMLElement;
+  /** The touch cluster's recall mini and its countdown (null before `buildMobile`). */
+  private mRecallBtn: HTMLElement | null = null;
+  private mRecallCd: HTMLElement | null = null;
   /** The mutation chip: it carries the mutation's NAME (the cap lives in its tooltip). */
   private mutTag!: HTMLElement;
   /** Fields the mutation chip's tooltip reads — refreshed by `updateHud`. */
@@ -2153,6 +2160,22 @@ export class UI {
     // ---------------- bottom right: Jump / Dash counters, then Skill + Ultimate
     const rightStack = el('div', 'hud-right-stack');
     const actions = el('div', 'action-row');
+    // RECALL — its own small round action button at the BOTTOM-LEFT of the action cluster (user
+    // ask 2026-09-29): the rail's language (a round glyph button with a caption underneath), NOT
+    // another text chip on the Necrotech row. It stays dim until the idle gate opens (`ready`),
+    // then breathes, and carries the channel countdown in the middle while a recall is running.
+    const recallBox = el('div', 'ab-sm recall');
+    recallBox.innerHTML = ICON_HOME;
+    const recallCd = el('div', 'ab-cd rc-cd', '');
+    recallBox.appendChild(recallCd);
+    recallBox.appendChild(el('div', 'ab-sm-key', 'RECALL'));
+    recallBox.addEventListener('click', e => {
+      e.stopPropagation();
+      this.cbs.recall();
+    });
+    actions.appendChild(recallBox);
+    this.recallBtn = recallBox;
+    this.recallCd = recallCd;
     /** A small round action button (jump / dash) with its charge count in the corner. */
     const mkSmall = (cls: string, key: string, svg: string, onClick: () => void): { box: HTMLElement; count: HTMLElement } => {
       const box = el('div', `ab-sm ${cls}`);
@@ -2239,17 +2262,6 @@ export class UI {
     ntRow.appendChild(this.mutTag);
     this.ntTag = el('span', 'tag nt-name', 'NECROTECH');
     ntRow.appendChild(this.ntTag);
-    // RECALL — the right end of the Necrotech row, the last thing before the ability stack. Icon + 
-    // text so it reads at a glance; it stays dim until the player has been truly idle long enough
-    // (HudData.recallReady), and it carries the channel countdown while the recall is running.
-    this.recallBtn = button('', 'recall-btn', () => this.cbs.recall());
-    this.recallBtn.innerHTML =
-      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
-      'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M12 4v9"></path><path d="m7.5 9.5 4.5 4.5 4.5-4.5"></path><path d="M5 19h14"></path></svg>';
-    this.recallTxt = el('span', 'rc-txt', 'RECALL');
-    this.recallBtn.appendChild(this.recallTxt);
-    ntRow.appendChild(this.recallBtn);
     // The buff strip (the COLONY OVERDRIVE countdown) sits ABOVE the mutation / Necrotech line: it
     // is a timed state of the whole colony, not part of the loadout headline — and as the last item
     // in that row it wrapped UNDER the very text it is meant to announce.
@@ -2534,10 +2546,14 @@ export class UI {
     // ---- Esc panel live stats (only while it is open)
     if (this.pauseOpen) this.renderPausePanel(d);
 
-    // ---- RECALL: dim until the idle gate passes, lit when ready, counting down while channeling
+    // ---- RECALL: dim until the idle gate passes, lit when ready, counting down while channeling.
+    // The desktop rail button and the touch cluster's mini are driven together.
     setClass(this.recallBtn, 'ready', d.recallReady);
     setClass(this.recallBtn, 'channel', d.recallActive);
-    setText(this.recallTxt, d.recallActive ? `${Math.ceil(d.recallSeconds)}s` : 'RECALL');
+    setText(this.recallCd, d.recallActive ? `${Math.ceil(d.recallSeconds)}` : '');
+    setClass(this.mRecallBtn ?? null, 'ready', d.recallReady);
+    setClass(this.mRecallBtn ?? null, 'channel', d.recallActive);
+    setText(this.mRecallCd ?? null, d.recallActive ? `${Math.ceil(d.recallSeconds)}` : '');
     setClass(this.recallBar, 'hidden', !d.recallActive);
     if (d.recallActive) setStyle(this.recallFill, 'width', `${clamp01(d.recallFrac) * 100}%`);
 
@@ -4033,6 +4049,12 @@ export class UI {
     const beacon = mk('beacon', 'BEACON');
     // the ability's own glyph, the same one the desktop rail shows
     beacon.ico.innerHTML = ICON_BEACON;
+    // RECALL — the fan's own small action button at its bottom-left (left of the Beacon slot):
+    // the same idle-gated button as the desktop rail, with the home glyph.
+    const recall = mk('recall', 'RECALL');
+    recall.ico.innerHTML = ICON_HOME;
+    this.mRecallBtn = recall.box;
+    this.mRecallCd = recall.cd;
     // Jump and dash carry the desktop rail's glyphs too — a bare "JUMP" / "DASH" word left the two
     // buttons that are pressed most often as the only unlabelled-by-shape controls on the pad.
     jump.ico.innerHTML = ICON_JUMP;
@@ -4068,6 +4090,7 @@ export class UI {
     bindButton(jump.box, () => this.input?.queueJump());
     bindButton(dash.box, () => this.input?.queueDash());
     bindButton(beacon.box, () => this.input?.queueBeacon());
+    bindButton(recall.box, () => this.cbs.recall());
 
     // ---- abilities: drag the button itself to aim, like a MOBA skill button.
     // Press and drag away from the button to swing the aim (the ground chevron follows), release to

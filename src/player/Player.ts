@@ -1328,6 +1328,22 @@ export class Player {
   }
 
   /**
+   * Springboarded off a platform's outer edge (a colony fortress deck): the same pinning `launch`
+   * does — airborne, jumps refilled, no snap-back — but the shove points OUT along `dir` instead
+   * of straight up, so the body leaves the platform along its own run. See `BaseManager.edgeLaunch`.
+   */
+  edgeBoost(dir: THREE.Vector3, speed: number, lift: number): void {
+    if (!this.alive) return;
+    this.up.copy(this.position).normalize();
+    this.velocity.addScaledVector(dir, speed);
+    this.velocity.addScaledVector(this.up, lift);
+    this.grounded = false;
+    this.jumpsLeft = this.mods.jumps;
+    this.coyote = 0;
+    this.jumpLock = 0.2;
+  }
+
+  /**
    * Blitz pad: become an energy CUBE. Invulnerable, much faster, and the exit blast is fired through
    * the ability event channel so the host applies the damage (see AbilitySystem 'blitz'). The ride
    * ends early the instant the runner stops holding a direction — the charge is spent by moving.

@@ -104,6 +104,11 @@ export interface ColonyBase {
   flares: THREE.MeshBasicMaterial[];
   /** Counter-rotating containment rings under the hull. */
   rings: THREE.Mesh[];
+  /** Edge-launch rings: flat hoops that expand OUTWARD from the deck rim (colony colour). */
+  edgeRings: THREE.Mesh[];
+  edgeMat: THREE.MeshBasicMaterial;
+  /** Seconds of edge-launch splash throttle left (one run-off must never double-fire). */
+  edgeT: number;
   /** The long engine tail: a tapered plume drawn along the path the ship has just flown. */
   tail: THREE.Mesh;
   /** Recent flight-path points, newest at `tailHead` and `TAIL_SPACING` metres apart. */
@@ -145,6 +150,8 @@ const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
 /** Outward normal at a player/base-dome contact point. */
 const _pushN = new THREE.Vector3();
+/** Outward-at-the-rim direction for the edge-launch check (never shares with `_pushN`). */
+const _edgeN = new THREE.Vector3();
 /** Ship placement scratch (update-time — never shares with the build/spawn scratches). */
 const _shipDir = new THREE.Vector3();
 const _shipGround = new THREE.Vector3();
@@ -450,6 +457,36 @@ export class BaseManager {
     return true;
   }
 
+  /**
+   * The platform's outer edge is a SPRINGBOARD (user ask 2026-09-29): a colony-mate who runs at the
+   * rim is flung outward ALONG THEIR OWN DIRECTION — the shield bounce's numbers, spent on the
+   * player instead of against them. Movement is owner-simulated, so this runs for the local player
+   * only; the trigger is a band just inside the walkable footprint's edge (the deck, not the ground
+   * under it) plus real outward momentum, and a short per-base throttle keeps one run-off from
+   * double-firing while the body is still crossing the band.
+   */
+  edgeLaunch(p: Player, game: Game): void {
+    if (!p.alive || !p.grounded || p.colony < 0) return;
+    const b = this.bases[p.colony];
+    if (!b || b.edgeT > 0) return;
+    // standing ON the deck itself: the same footprint test the support solver uses — a body on the
+    // terrain below the ship (or through a hostile dome) reads `overDeck` far under and never fires
+    if (this.deckUnder(p.up) !== b) return;
+    _edgeN.copy(p.position).addScaledVector(b.up, -p.position.dot(b.up));
+    const r = _edgeN.length();
+    if (r < b.padRadius - 0.9) return;          // not at the rim yet
+    _edgeN.multiplyScalar(1 / Math.max(0.001, r));
+    const vn = p.velocity.dot(_edgeN);
+    if (vn < 0.8) return;                       // it has to be a RUN at the edge, not a drift
+    const push = CONFIG.base.edgePush;
+    p.edgeBoost(_edgeN, vn * push.mirror + push.kick, push.kick * push.lift);
+    b.edgeT = 0.5;
+    const col = COLONIES[b.colony]?.color ?? 0xffffff;
+    game.effects.ring(p.position, _edgeN, 1.7, col, 0.5, 4.2, 1);
+    game.effects.burst(p.position, col, { count: 22, speed: 14, life: 0.5, size: 0.7, gravity: 0 });
+    game.audio.sfx('jump', 0.8);
+  }
+
   /** Called when somebody spawns, so the pad lights up briefly. */
   flashSpawn(colony: number): void {
     const b = this.forColony(colony);
@@ -495,6 +532,19 @@ export class BaseManager {
       }
       b.rings[0].rotation.y += dt * 0.5;
       b.rings[1].rotation.y -= dt * 0.34;
+      // the edge-launch hoops: each sweeps outward from the rim on its own cycle, staggered per
+      // ring and per colony — skipped (like the wake) when nobody is near this half of the planet
+      if (b.edgeT > 0) b.edgeT = Math.max(0, b.edgeT - dt);
+      const localP = this.game.localPlayer;
+      const edgeNear = !localP || b.center.distanceToSquared(localP.position) <= 280 * 280;
+      for (let i = 0; i < b.edgeRings.length; i++) {
+        const ring = b.edgeRings[i];
+        ring.visible = edgeNear;
+        if (!edgeNear) continue;
+        const cyc = (this.t * 0.34 + i / b.edgeRings.length + b.colony * 0.11) % 1;
+        ring.scale.setScalar(b.padRadius * (0.98 + cyc * 1.75));
+      }
+      b.edgeMat.opacity = edgeNear ? 0.16 + 0.1 * Math.sin(this.t * 2.2 + b.colony * 2.1) : 0;
       if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 1.6);
 
       this.updateTail(b);
@@ -771,6 +821,27 @@ export class BaseManager {
       rings.push(ring);
     }
 
+    // ---- EDGE-LAUNCH RINGS (user ask 2026-09-29): three flat hoops that rise at the deck's outer
+    // edge and swell AWAY from the platform in the colony's colour — the jump pad's ring cycle
+    // rotated 90 degrees: it climbs nowhere and expands instead. They are the readable tell for
+    // the springboard edge: a colony-mate who runs at the rim is thrown off (see `edgeLaunch`).
+    const edgeMat = new THREE.MeshBasicMaterial({
+      color: col.color, transparent: true, opacity: 0.2,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const edgeRings: THREE.Mesh[] = [];
+    // one unit torus, scaled per ring: radius = deck edge .. ~2.7x it, so the hoops sweep past
+    // the shield bubble and dissolve into the air around the ship
+    const edgeGeo = new THREE.TorusGeometry(1, 0.03, 6, 64);
+    edgeGeo.rotateX(Math.PI / 2);
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(edgeGeo, edgeMat);
+      ring.position.y = 0.06;   // same level as the deck plane — right on the platform
+      ring.renderOrder = 4;
+      group.add(ring);
+      edgeRings.push(ring);
+    }
+
     // ---- deck markings: spray rail, painted ring, colony emblem
     const rimMat = new THREE.MeshBasicMaterial({
       color: col.color, transparent: true, opacity: 0.4,
@@ -1039,6 +1110,7 @@ export class BaseManager {
       padRadius: padR, deckRadius: center.length(), shieldRadius: shieldR, platformHeight: H,
       footCos: Math.cos(padR / Math.max(1, center.length())),
       group, padGroup, dome, domeMat, groundConeMat, deckMat, emblem, emblemMat, rimMat, flares, rings,
+      edgeRings, edgeMat, edgeT: 0,
       tail, tailPts, tailHead: 0,
       padRimMat, padEmblemMat,
       plusBig, plusBigMat, plusHover, pluses, plusMat, plusX, plusZ, plusPhase, plusSpin,

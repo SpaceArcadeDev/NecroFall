@@ -241,6 +241,13 @@ export const CONFIG = {
     pylonCount: 6,
     /** Health per second gained while a colony-mate stands in its own healing pad. */
     healRate: 26,
+    /**
+     * The platform's outer edge is a SPRINGBOARD (user ask 2026-09-29): a colony-mate who runs at
+     * the rim is flung outward along their own direction — the shield bounce's own language —
+     * mirroring their outward speed by this much, adding `kick` on top, and putting `kick * lift`
+     * straight up so the launch reads as a jump, not a skid. See `BaseManager.edgeLaunch`.
+     */
+    edgePush: { mirror: 2, kick: 26, lift: 0.5 },
   },
   /**
    * Absorbed Necrotechs a player may carry, ON TOP of their starting class — so a full loadout is

@@ -112,6 +112,13 @@ const COLONY_SCALE_MAX_TOUCH = 1.65;
  * world at the figures' plane, so this spread still keeps clear air at the frame edges.
  */
 const COLONY_SLOT = 3.4;
+
+/**
+ * The menu's pet leash (surface metres): on the shell home the pet circles close to its standing
+ * owner so the tight stage frame can always hold it (a gameplay ring of 1.1–3.4 m walked the pet
+ * straight off the side of the board). In a real line-up pets keep their authored ring.
+ */
+const MENU_PET_ROAM = { min: 0.55, max: 0.75 };
 /** Below this stage height (px) a TOUCH device is a phone-style strip, not a desktop stage. */
 const COLONY_SHALLOW = 160;
 /** A calm breath: one full inhale/exhale every ~3.4 s. The base layer of every champion's idle. */
@@ -487,6 +494,9 @@ export class SelectionPreview {
     if (container) {
       this.host = container;
       if (this.canvas.parentElement !== container) container.appendChild(this.canvas);
+      // A fresh mount starts unpositioned: the solo home's oversized box (see `soloBox`) writes its
+      // own inline geometry every frame, and every OTHER screen keeps the plain 100% layout.
+      this.canvas.style.cssText = '';
       // the customize avatar AND the lobby line-up are turntables: dragging the box turns the body
       if (mode === 'customize' || mode === 'lobby') this.attachDrag(container);
       else this.detachDrag();
@@ -531,6 +541,11 @@ export class SelectionPreview {
     this.lobbyData = list.map(p => ({ ...p }));
     this.lobbySoloFill = soloFill;
     this.lobbyDirty = true;
+    // The solo home's canvas spills past the stage box, so its turntable drag belongs to the whole
+    // page (nothing on the home page competes for a press); a line-up keeps the rail host.
+    if (this.mode === 'lobby' && this.host) {
+      this.attachDrag(soloFill ? this.host.closest('.nf-page') ?? this.host : this.host);
+    }
   }
 
   /**
@@ -797,15 +812,23 @@ export class SelectionPreview {
   private update(dt: number): void {
     this.t += dt;
     const el = this.host;
-    const w = el ? el.clientWidth : 0;
-    const h = el ? el.clientHeight : 0;
-    if (w < 8 || h < 8) return;
+    const hostW = el ? el.clientWidth : 0;
+    const hostH = el ? el.clientHeight : 0;
+    if (!el || hostW < 8 || hostH < 8) return;
+    // The shell home's lone champion renders into an oversized box around the stage (see
+    // `soloBox`); every other mode renders straight into its host box.
+    const box = this.mode === 'lobby' && this.lobbySoloFill ? this.soloBox(el) : null;
+    const w = box ? box.w : hostW;
+    const h = box ? box.h : hostH;
+    if (box) this.placeCanvas(box, w, h);
     if (w !== this.width || h !== this.height) {
       this.width = w;
       this.height = h;
       this.renderer?.setSize(w, h, false);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
+      // The line-up's frustum is solved from the render size — a reflow must re-layout it.
+      if (this.mode === 'lobby') this.layoutLobby();
     }
 
     if (this.mode === 'colony') {
@@ -976,6 +999,50 @@ export class SelectionPreview {
   }
 
   /**
+   * The shell home's solitary champion stage: the render box the avatar may GROW into. The stage
+   * itself is a shallow layout strip between the wordmark and the colony caption, and framing the
+   * camera to that strip sliced tall hats off the top and cut the pet off at the sides. The canvas
+   * is therefore allowed to spill past the stage — up towards the wordmark, sideways to the pane's
+   * edges — while always staying INSIDE the pane that clips it: the avatar can slide behind the
+   * shell's own text and bars (all of them painted above the canvas), never off the screen.
+   */
+  private soloBox(host: HTMLElement): { x: number; y: number; w: number; h: number } {
+    const rect = host.getBoundingClientRect();
+    const pane = host.closest('.nf-main')?.getBoundingClientRect() ?? null;
+    const nav = document.querySelector('.nf-bottom')?.getBoundingClientRect() ?? null;
+    const vw = window.innerWidth;
+    const left = Math.max(pane ? pane.left + 4 : 4, rect.left - 280);
+    const right = Math.min(pane ? pane.right - 4 : vw - 4, rect.right + 280);
+    const top = Math.max(pane ? pane.top + 4 : 4, rect.top - 340);
+    // Below the stage the avatar only needs room for its floor pad: 24px of spill keeps the feet
+    // just past the caption line without reaching the floating bar (which is z-raised above it).
+    const bottom = Math.min(
+      nav && nav.height > 0 ? nav.top - 6 : Infinity,
+      pane ? pane.bottom - 4 : Infinity,
+      rect.bottom + 24
+    );
+    return {
+      x: left - rect.left,
+      y: top - rect.top,
+      w: Math.max(rect.width, right - left),
+      h: Math.max(rect.height, bottom - top),
+    };
+  }
+
+  /** Writes the oversized canvas geometry (inline px beats the stylesheet's 100% defaults). */
+  private placeCanvas(box: { x: number; y: number }, w: number, h: number): void {
+    const cs = this.canvas.style;
+    const px = (v: number): string => `${Math.round(v)}px`;
+    if (cs.left !== px(box.x) || cs.top !== px(box.y) || cs.width !== px(w) || cs.height !== px(h)) {
+      cs.position = 'absolute';
+      cs.left = px(box.x);
+      cs.top = px(box.y);
+      cs.width = px(w);
+      cs.height = px(h);
+    }
+  }
+
+  /**
    * Places the line-up and frames it. The ortho frustum is sized so that one world "slot" is
    * exactly one seat card wide, then every figure is centred on the middle of its own slot — the
    * same (i + 0.5)/n the seat row uses in CSS.
@@ -984,22 +1051,47 @@ export class SelectionPreview {
     const n = this.lobbyAvatars.length;
     const aspect = Math.max(0.3, this.width / Math.max(1, this.height));
     const solo = n === 1 && this.lobbySoloFill;
-    const SLOT = 1.85;                                  // world width budget per player
-    // A lone champion in the shell home gets the tighter framing (see lobbySoloFill); a line-up
-    // always gets the 3.0 guard that never crops a standing avatar.
-    const minH = solo ? 2.2 : 3.0;                      // never crop a standing avatar
-    const visH = Math.max(minH, (SLOT * n) / aspect);
-    const visW = visH * aspect;
     const cam = this.lobbyCam;
+    if (solo) {
+      // ONE champion, staged alone on the shell home. The frame is solved from what the avatar
+      // actually IS — body, ground pad and hat air — plus the pet's menu ring (see the roam clamp
+      // in `tickLobby`), never from the stage's own shallow strip. The `fill` term keeps the body
+      // as large as the board allows (0.72 of the canvas height) and the two fit terms stop it
+      // from ever growing past the pieces that must stay visible.
+      const AV = 2.0;          // the standing body the player reads
+      const GROUND_PAD = 0.32; // floor left under the feet for the lit pad's front rim
+      const MIN_H = 2.72;      // ground + body + tall-hat air
+      const MIN_W = 2.6;       // the pet's menu ring, both bodies included, either side of the owner
+      const dens = Math.min((this.height * 0.72) / AV, this.width / MIN_W, this.height / MIN_H);
+      const visW = this.width / Math.max(1, dens);
+      const visH = this.height / Math.max(1, dens);
+      cam.left = -visW / 2;
+      cam.right = visW / 2;
+      cam.top = visH / 2;
+      cam.bottom = -visH / 2;
+      const midY = -GROUND_PAD + visH / 2;
+      cam.position.set(0, midY + 1.5, 7.6);
+      cam.lookAt(0, midY - 0.08, 0);
+      cam.updateProjectionMatrix();
+      for (const fig of this.lobbyAvatars) {
+        fig.parts.group.position.x = 0;
+        fig.pad.position.x = 0;
+      }
+      return;
+    }
+    const SLOT = 1.85;                                  // world width budget per player
+    // A line-up always gets the 3.0 guard that never crops a standing avatar (the solo home was
+    // branched out above).
+    const visH = Math.max(3.0, (SLOT * n) / aspect);
+    const visW = visH * aspect;
     cam.left = -visW / 2;
     cam.right = visW / 2;
     cam.top = visH / 2;
     cam.bottom = -visH / 2;
     // Feet a fixed slice above the bottom edge whatever the line-up's size, and the camera sits a
     // little HIGH and aims a little low: the pads under the avatars are what stop the near-black
-    // bodies dissolving into the backdrop, and a dead-level view would show them edge-on. Solo home
-    // raises the ground slice so the tight frustum still centres the body instead of cropping it.
-    const groundY = solo ? -0.2 : -0.35;
+    // bodies dissolving into the backdrop, and a dead-level view would show them edge-on.
+    const groundY = -0.35;
     const midY = groundY + visH / 2;
     cam.position.set(0, midY + 1.5, 7.6);
     cam.lookAt(0, midY - 0.08, 0);
@@ -1019,6 +1111,7 @@ export class SelectionPreview {
    */
   private tickLobby(dt: number): void {
     const t = this.t;
+    const solo = this.lobbyAvatars.length === 1 && this.lobbySoloFill;
     // the turntable: drag sets the target, a flick coasts, and a pause lets the idle sway return
     if (!this.dragging) {
       this.lobbyYawTarget += this.lobbyYawVel * dt;
@@ -1041,7 +1134,7 @@ export class SelectionPreview {
       if (pet) {
         fig.anchor.set(parts.group.position.x, 0, 0);
         pet.setVisible(true);
-        pet.update(dt, fig.anchor, UP_AXIS, t, null);
+        pet.update(dt, fig.anchor, UP_AXIS, t, null, solo ? MENU_PET_ROAM : undefined);
       }
       const want = fig.data.me ? 0.6 : fig.data.ready ? 0.46 : 0.16;
       fig.ringMat.opacity += (want + Math.sin(t * 1.5 + ph) * 0.05 - fig.ringMat.opacity) * Math.min(1, dt * 5);

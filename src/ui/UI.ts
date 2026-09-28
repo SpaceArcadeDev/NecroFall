@@ -37,8 +37,13 @@ import {
   QUALITY_BLURBS,
   QUALITY_LABELS,
   QUALITY_PREFS,
+  FPS_LABELS,
+  FPS_PREFS,
+  fpsBlurb,
+  loadFpsPref,
   loadQualityPref,
   resolveQuality,
+  type FpsPref,
   type QualityName,
   type QualityPref,
 } from '../core/Config';
@@ -67,6 +72,8 @@ export interface UICallbacks {
   closeMenu(): void;
   /** The player picked a graphics level on the main menu. */
   setGraphics(pref: QualityPref): void;
+  /** The player picked a frame-rate ceiling on the main menu. */
+  setFps(pref: FpsPref): void;
   /** The customize screen changed the outfit (Game stores it, persists it and re-dresses the player). */
   setAccessories(sel: AccessorySelection): void;
 }
@@ -533,6 +540,9 @@ export class UI {
   private graphicsOpts = new Map<QualityPref, HTMLElement>();
   private graphicsNote: HTMLElement | null = null;
   private graphicsPref: QualityPref = 'auto';
+  /** Frame-rate cap row on the main menu (the same options the account shell's page offers). */
+  private fpsOpts = new Map<FpsPref, HTMLElement>();
+  private fpsNote: HTMLElement | null = null;
   /** Objective rows are built once and then diffed (they used to be re-parsed from HTML per frame). */
   private taskRows: { row: HTMLElement; mark: HTMLElement; label: HTMLElement; prog: HTMLElement }[] = [];
   private taskSig = '';
@@ -1072,6 +1082,21 @@ export class UI {
     row.appendChild(this.graphicsNote);
     col.appendChild(row);
 
+    // ---- frame-rate ceiling: auto keeps the device-aware pacing, a number pins matches AND menus
+    const fpsRow = el('div', 'graphics-row');
+    fpsRow.appendChild(el('div', 'graphics-label', 'MAX FPS'));
+    const fpsOpts = el('div', 'graphics-opts');
+    for (const pref of FPS_PREFS) {
+      const b = button(FPS_LABELS[String(pref)], 'opt', () => this.cbs.setFps(pref));
+      b.title = fpsBlurb(pref);
+      fpsOpts.appendChild(b);
+      this.fpsOpts.set(pref, b);
+    }
+    fpsRow.appendChild(fpsOpts);
+    this.fpsNote = el('div', 'graphics-note', '');
+    fpsRow.appendChild(this.fpsNote);
+    col.appendChild(fpsRow);
+
     s.appendChild(col);
     const foot = el('div', 'muted menu-foot', '');
     foot.style.marginTop = '26px';
@@ -1083,6 +1108,7 @@ export class UI {
     // Reflect whatever is already saved, before the player touches anything.
     const saved = loadQualityPref();
     this.setGraphicsPref(saved, resolveQuality(saved));
+    this.setFpsPref(loadFpsPref());
   }
 
   /** Highlights the active graphics level and explains what it does on this device. */
@@ -1093,6 +1119,12 @@ export class UI {
     this.graphicsNote.textContent = pref === 'auto'
       ? `${QUALITY_BLURBS.auto} This device runs ${resolved.toUpperCase()}.`
       : QUALITY_BLURBS[pref] + (pref === 'high' ? ' Smoothing applies after a reload.' : '');
+  }
+
+  /** Highlights the active frame-rate ceiling and spells out what AUTO does here. */
+  setFpsPref(pref: FpsPref): void {
+    for (const [key, btn] of this.fpsOpts) btn.classList.toggle('active', key === pref);
+    if (this.fpsNote) this.fpsNote.textContent = fpsBlurb(pref);
   }
 
   /** Necrotech idx for the current loadout, or -1 for a fusion (mutated) loadout. */

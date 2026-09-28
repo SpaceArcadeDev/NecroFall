@@ -57,6 +57,10 @@
   gap: 12px;
   padding: 10px 14px;
   background: linear-gradient(180deg, rgba(10, 6, 20, 0.85), rgba(10, 6, 20, 0));
+  /* NOT positioned on purpose: the friends rail and the floating nav inside it are absolutely
+     placed against the SHELL, and giving this box a position would re-anchor the nav to the top
+     bar. The home stage's canvas can never reach the chrome anyway — it is clamped to the main
+     pane, which starts below this bar. */
 }
 
 .nf-top {
@@ -419,8 +423,10 @@ html.nf-onb-colony .count-badge { display: none; }
   height: 100%;
   min-height: 0;
   position: relative;
-  /* the decorative orbs bleed past the column on purpose — never a scrollbar */
-  overflow: hidden;
+  /* The character's canvas is ALLOWED to spill past this column (the stage grows into the room
+     around it — see `soloBox` in ui/SelectionPreview.ts). The main pane above still cuts the
+     screen; the spill never reaches past it, so no scrollbar can appear. */
+  overflow: visible;
 }
 .nf-home-head {
   display: flex;
@@ -431,14 +437,21 @@ html.nf-onb-colony .count-badge { display: none; }
      anything above its top edge, so the old -6/-10px chase after the chrome kept reading as
      "cut off at the top" (user report) — 0 can never clip on any viewport. */
   margin-top: 0;
+  /* Positioned on purpose: a z-index on a static box is ignored, and the avatar's canvas is an
+     absolutely positioned sibling layer — the wordmark must PAINT over it, never the other way. */
+  position: relative;
   z-index: 1;
 }
 /* The wordmark is the HEADER here, not the hero — kept small at the top centre so the avatar
-   gets the space and the character can never be pushed below the fold on short screens. */
-.nf-home-title { font-size: clamp(30px, 6.2vh, 52px); animation: nf-title-glow 4.5s ease-in-out infinite; }
+   gets the space and the character can never be pushed below the fold on short screens. The vw
+   term keeps one long word inside a narrow phone: at 52px it was 405px wide on a 390px screen. */
+.nf-home-title { font-size: clamp(30px, min(6.2vh, 11.5vw), 52px); animation: nf-title-glow 4.5s ease-in-out infinite; }
 .home-page .menu-sub { margin-bottom: 2px; font-size: clamp(10px, 1.7vh, 12.5px); }
 /* the stage soaks up whatever height is left BETWEEN the wordmark and the caption — never more
-   than the viewport holds, so the avatar always scales to fit and is never cropped */
+   than the viewport holds, so the avatar always scales to fit and is never cropped. It is also
+   the character's LAYER: the canvas inside it is oversized (it spills towards the wordmark and the
+   side edges), so the stage sits UNDER the page's text — the wordmark and the caption read over
+   the model, never behind it. */
 .nf-stage {
   flex: 1 1 auto;
   width: min(640px, 96vw);
@@ -446,19 +459,21 @@ html.nf-onb-colony .count-badge { display: none; }
   max-height: none;
   margin-top: 2px;
   position: relative;
-  z-index: 1;
+  z-index: 0;
 }
 /* very short landscape frames: the stage is the only thing that can give way — the caption must
    never be clipped by the page's own overflow guard */
 @media (max-height: 430px) {
   .nf-stage { min-height: 96px; }
 }
-.nf-stage canvas { display: block; width: 100% !important; height: 100% !important; }
+.nf-stage canvas { display: block; width: 100%; height: 100%; }
 .nf-home-caption {
   display: flex;
   flex-direction: column;
   align-items: center;
   margin: 2px 0 6px;
+  /* Same as the wordmark: positioned, so the colony line reads OVER the model's feet and pad. */
+  position: relative;
   z-index: 1;
 }
 .nf-home-colony {
@@ -497,6 +512,53 @@ html.nf-onb-colony .count-badge { display: none; }
   text-shadow: 0 0 14px rgba(154, 107, 255, 0.6);
 }
 .nf-link-dot { color: rgba(170, 130, 255, 0.45); }
+
+/* ---------------------------------------------------------------- graphics page */
+/* Settings ▸ GRAPHICS: the preset list and the frame-rate chips. One full-width row per preset
+   (name + what it buys + the ACTIVE mark) reads faster than a row of four letter chips, and the
+   chips that remain (MAX FPS) stay thumb-sized on touch. */
+.nf-gfx-page { max-width: 720px; align-self: center; width: 100%; }
+.nf-gfx-section { display: flex; flex-direction: column; gap: 10px; }
+.nf-gfx-list { display: flex; flex-direction: column; gap: 8px; }
+.nf-gfx-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+.nf-gfx-opt:hover { border-color: rgba(210, 170, 255, 0.55); }
+.nf-gfx-opt:active { transform: scale(0.985); }
+.nf-gfx-opt.on {
+  border-color: var(--ui-accent-2);
+  box-shadow: 0 0 18px rgba(70, 224, 200, 0.16);
+}
+.nf-gfx-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.nf-gfx-name { font-weight: 800; font-size: 14px; letter-spacing: 0.14em; }
+.nf-gfx-desc { font-size: 12px; color: var(--ui-text-muted); }
+.nf-gfx-mark {
+  min-width: 58px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  padding: 4px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  color: transparent;
+}
+.nf-gfx-opt.on .nf-gfx-mark { color: var(--ui-accent-2); border-color: var(--ui-accent-2); }
+.nf-gfx-note { margin: 0; }
+.nf-gfx-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.nf-fps-chip { min-width: 64px; font-weight: 800; letter-spacing: 0.1em; font-size: 13px; }
 
 @keyframes nf-title-glow {
   0%, 100% { text-shadow: 0 0 36px rgba(160, 80, 255, 0.32); }

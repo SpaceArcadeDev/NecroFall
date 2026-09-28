@@ -42,9 +42,18 @@ export class PetController {
   }
 
   /** Drops the pet beside its owner (fresh spawn / respawn / accessory swap). */
-  reset(anchor: THREE.Vector3, up: THREE.Vector3, terrainRadius: ((p: THREE.Vector3) => number) | null = null): void {
+  reset(
+    anchor: THREE.Vector3,
+    up: THREE.Vector3,
+    terrainRadius: ((p: THREE.Vector3) => number) | null = null,
+    roam?: { min: number; max: number }
+  ): void {
     tangentBasis(up, _t1, _t2);
-    this.pos.copy(anchor).addScaledVector(_t1, 1.4).addScaledVector(_t2, 0.6);
+    // Menu stages pass a tight ring: the pet must appear INSIDE the board it will wander, not at
+    // the gameplay drop distance (1.4 + 0.6) only to walk in from off-stage.
+    const drop = roam ? roam.min + (roam.max - roam.min) * 0.6 : 1.4;
+    const side = roam ? (roam.max - roam.min) * 0.4 : 0.6;
+    this.pos.copy(anchor).addScaledVector(_t1, drop).addScaledVector(_t2, side);
     this.vel.set(0, 0, 0);
     this.facing.copy(_t1);
     this.lingerT = 0.2;
@@ -55,17 +64,22 @@ export class PetController {
   /**
    * `terrainRadius` maps a world point to the terrain radius under it (planet.heightAt); pass null
    * on flat ground (the menu preview) where the pet is simply anchored to the owner's plane.
+   * `roam` overrides the motion's own wander ring (surface metres) — the menu stages pass a tight
+   * one so the pet stays beside the standing avatar instead of patrolling its gameplay leash.
    */
   update(
     dt: number,
     anchor: THREE.Vector3,
     up: THREE.Vector3,
     t: number,
-    terrainRadius: ((p: THREE.Vector3) => number) | null
+    terrainRadius: ((p: THREE.Vector3) => number) | null,
+    roam?: { min: number; max: number }
   ): void {
-    if (!this.spawned) this.reset(anchor, up, terrainRadius);
+    if (!this.spawned) this.reset(anchor, up, terrainRadius, roam);
     this.age += dt;
     const m = this.motion;
+    const roamMin = roam ? roam.min : m.roamMin;
+    const roamMax = roam ? Math.max(roam.min, roam.max) : m.roamMax;
 
     tangentBasis(up, _t1, _t2);
     const dist = this.pos.distanceTo(anchor);
@@ -73,7 +87,7 @@ export class PetController {
     // A new wander point: on arrival, on boredom, or… when left behind (see the leash below).
     if (this.lingerT <= 0 || this.pos.distanceToSquared(this.target) < 0.12) {
       const a = Math.random() * TAU;
-      const r = m.roamMin + Math.random() * (m.roamMax - m.roamMin);
+      const r = roamMin + Math.random() * (roamMax - roamMin);
       this.target
         .copy(anchor)
         .addScaledVector(_t1, Math.cos(a) * r)

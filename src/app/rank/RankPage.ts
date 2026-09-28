@@ -54,6 +54,15 @@ export class RankPage {
   private discoveryShown = new Set<string>();
   private stats: ColonyStatsResult | null = null;
   private subscribedGalaxies = new Set<number>();
+  private recordEl: HTMLElement;
+  private quickEl: HTMLElement;
+  private quickJoin!: HTMLButtonElement;
+  private quickCreate!: HTMLButtonElement;
+  private quickFind!: HTMLButtonElement;
+  private quickJoinRow!: HTMLElement;
+  private quickInput!: HTMLInputElement;
+  private quickSig = '';
+  private colonySig = '';
 
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page rank-page');
@@ -65,6 +74,11 @@ export class RankPage {
     // ---- standing strip: crest · rank · stars · progress + the two actions
     this.stripEl = el('div', 'rk-strip');
     this.element.appendChild(this.stripEl);
+
+    // ---- expandable rank details (record / last match / to next) — the strip's
+    // chevron toggles it; the drawer is why the strip itself can stay one line.
+    this.recordEl = el('div', 'rk-record');
+    this.element.appendChild(this.recordEl);
 
     // ---- body: map + ring rail + context panel
     const main = el('div', 'rk-main');
@@ -82,10 +96,22 @@ export class RankPage {
     zoomCtl.appendChild(mkZoom('+', () => this.zoomBy(1.35)));
     zoomCtl.appendChild(mkZoom('−', () => this.zoomBy(1 / 1.35)));
     zoomCtl.appendChild(mkZoom('⌂', () => this.map.flyToRing(this.myRing())));
+    // ---- fullscreen map toggle (user ask: “small galactic map … with option to expand”)
+    const mapExpand = el('button', 'rk-map-expand', '⤢') as HTMLButtonElement;
+    mapExpand.type = 'button';
+    mapExpand.title = 'Expand the map';
+    mapExpand.setAttribute('aria-label', 'Expand the map');
+    mapExpand.addEventListener('click', () => {
+      const full = this.element.classList.toggle('map-full');
+      mapExpand.textContent = full ? '✕' : '⤢';
+      mapExpand.title = full ? 'Close the map' : 'Expand the map';
+      mapExpand.setAttribute('aria-label', mapExpand.title);
+    });
     this.mapWrap.appendChild(this.breadcrumb);
     this.mapWrap.appendChild(zoomCtl);
     this.mapWrap.appendChild(this.hoverTip);
     this.mapWrap.appendChild(this.discoverEl);
+    this.mapWrap.appendChild(mapExpand);
     main.appendChild(this.mapWrap);
 
     this.railEl = el('div', 'rk-rail');
@@ -97,6 +123,54 @@ export class RankPage {
     this.statsEl = el('div', 'rk-colonies');
     sideCol.appendChild(this.statsEl);
     main.appendChild(sideCol);
+
+    // ---- quick actions (user ask): JOIN · CREATE PARTY · FIND MATCH. In landscape
+    // these own the right column; in portrait they are a compact row under the panel.
+    this.quickEl = el('div', 'rk-quick');
+    this.quickJoin = el('button', 'rk-btn', 'JOIN') as HTMLButtonElement;
+    this.quickJoin.type = 'button';
+    this.quickCreate = el('button', 'rk-btn', 'CREATE PARTY') as HTMLButtonElement;
+    this.quickCreate.type = 'button';
+    this.quickFind = el('button', 'rk-btn primary', 'FIND MATCH') as HTMLButtonElement;
+    this.quickFind.type = 'button';
+    this.quickJoinRow = el('div', 'rk-join-row hidden');
+    this.quickInput = el('input', 'rk-join-input') as HTMLInputElement;
+    this.quickInput.maxLength = 8;
+    this.quickInput.placeholder = 'PARTY CODE';
+    this.quickInput.autocapitalize = 'characters';
+    this.quickInput.autocomplete = 'off';
+    const quickGo = el('button', 'rk-btn primary', 'GO') as HTMLButtonElement;
+    quickGo.type = 'button';
+    this.quickJoin.addEventListener('click', () => {
+      this.quickJoinRow.classList.toggle('hidden');
+      if (!this.quickJoinRow.classList.contains('hidden')) this.quickInput.focus();
+    });
+    quickGo.addEventListener('click', () => {
+      const code = this.quickInput.value.trim().toUpperCase();
+      if (code.length < 4) {
+        this.ctx.toast('Enter a valid party code.');
+        return;
+      }
+      this.ctx.official.joinPartyByCode(code);
+      this.ctx.goParty();
+    });
+    this.quickInput.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') quickGo.click();
+    });
+    this.quickCreate.addEventListener('click', () => {
+      const hex = this.ctx.myHex();
+      const party = hex ? ClientCache.shared.myParty(hex) : null;
+      if (party) {
+        this.ctx.goParty();
+        return;
+      }
+      this.ctx.official.createParty();
+      this.ctx.goParty(); // CREATE PARTY opens the PARTY screen
+    });
+    this.quickFind.addEventListener('click', () => this.quickRankedSearch());
+    this.quickJoinRow.append(this.quickInput, quickGo);
+    this.quickEl.append(this.quickJoin, this.quickCreate, this.quickFind, this.quickJoinRow);
+    main.appendChild(this.quickEl);
 
     this.element.appendChild(main);
 
@@ -125,6 +199,7 @@ export class RankPage {
     this.renderRail();
     this.renderBreadcrumb();
     this.renderSide();
+    this.renderQuick();
     void this.refreshStats();
     this.statsTimer = window.setInterval(() => {
       if (!this.element.isConnected) return;
@@ -151,6 +226,7 @@ export class RankPage {
     this.renderHead();
     this.renderRail();
     this.renderSide();
+    this.renderQuick();
   }
 
   // ------------------------------------------------------------ data sources
@@ -237,6 +313,8 @@ export class RankPage {
     this.renderRail();
     this.renderBreadcrumb();
     this.renderSide();
+    this.renderQuick();
+    this.renderColony();
   }
 
   // ------------------------------------------------------------ header
@@ -252,16 +330,36 @@ export class RankPage {
     // constantly (presence heartbeats, other matches…), and every rebuild restarted
     // the bar's fill + shimmer mid-sweep — "the progress bar animates halfway and
     // stops" (user report 2026-09-28).
-    const sig = `${stars}|${seasonId}|${streak}`;
+    const history = ClientCache.shared.myRankHistory(this.ctx.myHex());
+    let wins = 0;
+    let draws = 0;
+    let losses = 0;
+    for (const row of history) {
+      if (row.delta > 0) wins++;
+      else if (row.delta < 0) losses++;
+      else draws++;
+    }
+    const record = history.length ? `${wins}W · ${draws}D · ${losses}L` : 'NO BATTLES YET';
+    const toNext = info.toNext > 0 ? `${info.toNext} ★` : 'MAX';
+    const last = history[0];
+    const lastTxt = last ? `${last.delta > 0 ? '+' : ''}${last.delta} ★` : '—';
+    const lastCls = last ? (last.delta > 0 ? 'up' : last.delta < 0 ? 'down' : 'flat') : 'flat';
+    const sig = `${stars}|${seasonId}|${streak}|${record}|${lastTxt}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
     // The wordmark row: gradient title + season chip (the party page's lobby-head).
     this.headEl.innerHTML =
       `<div class="menu-title lobby-title rk-title">RANKED</div>` +
       `<span class="lobby-mode rk-season-chip">SEASON ${seasonId}</span>`;
-    // The standing strip: every number that used to be in the old head banner.
+    // The standing strip: in landscape this is THE one row — colony left, rank right
+    // — so the crest/info dress lives in `.rk-strip-rank` next to the expander.
     this.stripEl.style.setProperty('--rk-accent', cfg.accent);
     this.stripEl.innerHTML =
+      `<div class="rk-colony" data-colony>` +
+      `<span class="rk-colony-orb" data-colony-orb></span>` +
+      `<span class="rk-colony-txt"><b data-colony-name>—</b><span data-colony-stats>—</span></span>` +
+      `</div>` +
+      `<div class="rk-strip-rank">` +
       `<div class="rk-crest" data-tier="${info.tier}">` +
       `<svg viewBox="0 0 48 56" aria-hidden="true"><path class="rk-crest-shield" d="M24 2 44 10v18c0 12-8 20-20 26C12 48 4 40 4 28V10z"/><path class="rk-crest-inner" d="M24 8 38 14v14c0 8.5-5.5 14.5-14 19.4C15.5 42.5 10 36.5 10 28V14z"/></svg>` +
       `<span class="rk-crest-star">★</span></div>` +
@@ -271,6 +369,10 @@ export class RankPage {
       `<div class="rk-progress"><div class="rk-progress-fill" data-fill></div></div>` +
       `<div class="rk-next">${streak}</div>` +
       `</div>` +
+      `<button class="rk-expand" data-act="record" title="Rank details" aria-label="Rank details">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 9 6.5 6.5L18.5 9"/></svg>` +
+      `</button>` +
+      `</div>` +
       `<div class="rk-strip-actions">` +
       `<button class="rk-btn" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11"/><path d="M12 20V4"/><path d="M19 20v-6"/></svg>` +
@@ -278,6 +380,14 @@ export class RankPage {
       `<button class="rk-btn primary" data-act="myring" title="Fly to your ring" aria-label="Fly to your ring">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/><path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4"/></svg>` +
       `<span class="rk-btn-label">YOUR RING</span></button>` +
+      `</div>`;
+    // The expandable details: win/loss record, last match, stars to next rank.
+    this.recordEl.innerHTML =
+      `<div class="rk-record-grid">` +
+      `<div class="rk-record-cell"><span>RECORD</span><b>${record}</b></div>` +
+      `<div class="rk-record-cell"><span>LAST MATCH</span><b class="${lastCls}">${lastTxt}</b></div>` +
+      `<div class="rk-record-cell"><span>TO NEXT RANK</span><b>${toNext}</b></div>` +
+      `<div class="rk-record-cell"><span>BATTLES</span><b>${history.length}</b></div>` +
       `</div>`;
     // The fill starts at 0 and WIDENS into its target on the next frame, so the
     // 0.8s transition plays exactly once per real change (never mid-tick).
@@ -290,6 +400,85 @@ export class RankPage {
     }
     this.stripEl.querySelector('[data-act="myring"]')?.addEventListener('click', () => this.map.flyToRing(this.myRing()));
     this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
+    this.stripEl.querySelector('[data-act="record"]')?.addEventListener('click', () => this.toggleRecord());
+    this.colonySig = '';
+    this.renderColony();
+  }
+
+  /** The colony chip of the strip row (landscape: LEFT of the rank; portrait: hidden). */
+  private renderColony(): void {
+    const host = this.stripEl.querySelector<HTMLElement>('[data-colony]');
+    if (!host) return;
+    const me = this.me();
+    const hasColony = Boolean(me && me.colony < 3);
+    const col = hasColony ? COLONIES[me!.colony] : null;
+    const stats = hasColony ? this.stats?.colonies[me!.colony] : undefined;
+    const name = col ? `${col.symbol} ${col.name}` : 'NO COLONY';
+    const line = stats ? `${stats.planets} PLANETS · ${stats.systems} SYSTEMS` : 'UNCHARTED';
+    const sig = `${name}|${line}`;
+    if (sig === this.colonySig) return;
+    this.colonySig = sig;
+    const accent = col?.css ?? '#8fd7ff';
+    host.style.setProperty('--rk-colony', accent);
+    const orb = host.querySelector<HTMLElement>('[data-colony-orb]');
+    if (orb) orb.style.background = accent;
+    const nameEl = host.querySelector<HTMLElement>('[data-colony-name]');
+    if (nameEl) nameEl.textContent = name;
+    const statsEl = host.querySelector<HTMLElement>('[data-colony-stats]');
+    if (statsEl) statsEl.textContent = line;
+  }
+
+  private toggleRecord(): void {
+    const open = this.recordEl.classList.toggle('open');
+    this.stripEl.querySelector('[data-act="record"]')?.classList.toggle('open', open);
+  }
+
+  /** JOIN · CREATE PARTY · FIND MATCH — labels follow the party/queue state. */
+  private renderQuick(): void {
+    const hex = this.ctx.myHex();
+    const party = hex ? ClientCache.shared.myParty(hex) : null;
+    const queue = ClientCache.shared.myQueue();
+    const sig = `${party ? 1 : 0}|${queue?.ranked ? 1 : queue ? 2 : 0}`;
+    if (sig === this.quickSig) return;
+    this.quickSig = sig;
+    this.quickJoinRow.classList.add('hidden');
+    this.quickJoin.classList.toggle('hidden', Boolean(party));
+    this.quickCreate.textContent = party ? 'OPEN PARTY' : 'CREATE PARTY';
+    this.quickFind.classList.toggle('searching', Boolean(queue?.ranked));
+    this.quickFind.textContent = queue?.ranked ? 'SEARCHING…' : 'FIND MATCH';
+  }
+
+  /** FIND MATCH with no planet picked: lock onto the nearest open world in my ring. */
+  private quickRankedSearch(): void {
+    const queue = ClientCache.shared.myQueue();
+    if (queue?.ranked) {
+      this.ctx.goQueue();
+      return;
+    }
+    if (queue) {
+      this.ctx.toast('You are already in a matchmaking queue — cancel it first.');
+      return;
+    }
+    const sel = this.selection.planet;
+    if (sel && sel.ring === this.myRing() && this.planetAvailable(sel)) {
+      this.startRanked(sel);
+      return;
+    }
+    const target = this.autoTargetPlanet();
+    if (!target) {
+      this.ctx.toast('No open planet in your ring right now — try again in a moment.');
+      return;
+    }
+    this.jumpTo(target);
+    this.startRanked(target);
+  }
+
+  private autoTargetPlanet(): PlanetDescriptor | null {
+    const ring = this.myRing();
+    const home = ringHome(this.universeSeed(), ring);
+    const g = galaxyAt(this.universeSeed(), home.gx, home.gy);
+    if (!g) return null;
+    return nearestAvailablePlanet(this.universeSeed(), ring, g.galaxyId, 0, 0, g.systemCount, (cand) => this.planetAvailable(cand));
   }
 
   private streakLabel(): string {
@@ -728,6 +917,7 @@ export class RankPage {
     if (stats) {
       this.stats = stats;
       this.renderStats();
+      this.renderColony();
     }
   }
 

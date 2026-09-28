@@ -1,5 +1,6 @@
 // NECROFALL — shared context passed to every shell screen (plan §87 file map).
 // Keeps pages decoupled from the concrete AppShell implementation.
+import { FpsPref, QualityPref } from '../core/Config';
 import { AppConfig } from './config';
 import { OfficialMultiplayerProvider } from './multiplayer/OfficialMultiplayerProvider';
 import { P2PMultiplayerProvider } from './multiplayer/P2PMultiplayerProvider';
@@ -31,6 +32,16 @@ export interface ShellContext {
   goPlay(): void;
   /** The RANK page — the intergalactic map (plan §48). */
   goRank(): void;
+  /** The GRAPHICS settings page (preset + frame-rate cap). */
+  goGraphics(): void;
+  /** The saved graphics choice (the live game's, or the stored one before it boots). */
+  currentGraphicsPref(): QualityPref;
+  /** Apply + persist a graphics choice on the running world (settings ▸ GRAPHICS). */
+  setGraphicsPref(pref: QualityPref): void;
+  /** The saved frame-rate ceiling. */
+  currentFpsPref(): FpsPref;
+  /** Apply + persist a frame-rate ceiling on the running world. */
+  setFpsPref(pref: FpsPref): void;
   /** Jump back into the queue screen (the ranked panel's "VIEW SEARCH"). */
   goQueue(): void;
   /** The LOBBY screen (CLASSIC's home): official party or the P2P entry. */

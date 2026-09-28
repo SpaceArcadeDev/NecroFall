@@ -8,7 +8,7 @@
 // come from the server subscription, everything else is regenerated from the
 // season seed (plan §0).
 import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from './procedural/GalaxyTypes';
-import { galaxiesInView, planetsInSystem, ringHome } from './procedural/UniverseGenerator';
+import { planetsInSystem, ringHome } from './procedural/UniverseGenerator';
 import { galaxyAt } from './procedural/GalaxyGenerator';
 import { systemAt, systemsInGalaxy } from './procedural/SolarSystemGenerator';
 import { systemPlanetCount } from './procedural/SolarSystemGenerator';
@@ -57,9 +57,19 @@ interface Camera {
   zoom: number;
 }
 
+/** Scripted camera flight. `zoom` is OPTIONAL: seamless-zoom transitions recentre
+ *  WITHOUT touching zoom, so an active pinch/wheel keeps owning the scale. */
+interface CameraTarget {
+  x: number;
+  y: number;
+  zoom?: number;
+}
+
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
-const MAX_VIEW_GALAXIES = 380;
+/** Below this body radius a galaxy is a plain mote — at intergalactic zoom there can
+ *  be thousands on screen and a soft shaped sprite each would cost real fill-rate. */
+const GALAXY_DOT_RADIUS = 4.2;
 
 interface Hover {
   kind: 'galaxy' | 'system' | 'planet' | null;
@@ -77,7 +87,7 @@ export class GalacticMap {
   private width = 0;
   private height = 0;
   private cam: Camera = { x: 0, y: 0, zoom: 26 };
-  private camTarget: Camera | null = null;
+  private camTarget: CameraTarget | null = null;
   private level: MapLevel = 'galactic';
   private focusGalaxy: GalaxyDescriptor | null = null;
   private focusSystem: SystemDescriptor | null = null;
@@ -88,6 +98,10 @@ export class GalacticMap {
   private shooting: { x: number; y: number; vx: number; vy: number; life: number } | null = null;
   private nextShooting = 0;
   private glowCache = new Map<string, HTMLCanvasElement>();
+  /** Memoised galaxy lattice: one generator call per cell, EVER (far views sweep thousands). */
+  private galaxyMemo = new Map<number, GalaxyDescriptor | null>();
+  /** Per-galaxy seeded face sprites (spiral / elliptical / irregular), baked once. */
+  private galaxySprites = new Map<number, HTMLCanvasElement>();
   private raf = 0;
   private disposed = false;
   private resizeObserver: ResizeObserver | null = null;
@@ -208,6 +222,259 @@ export class GalacticMap {
     return true;
   }
 
+  // ------------------------------------------------------------ galaxy field
+
+  /** Memoised lattice lookup — the far zoom-out sweeps tens of thousands of cells. */
+  private galaxyAtCached(gx: number, gy: number): GalaxyDescriptor | null {
+    const key = ((gx + 8192) << 14) | (gy + 8192);
+    let hit = this.galaxyMemo.get(key);
+    if (hit !== undefined) return hit;
+    hit = galaxyAt(this.data.universeSeed, gx, gy);
+    this.galaxyMemo.set(key, hit);
+    return hit;
+  }
+
+  /** Screen radius of a galaxy's body — ONE formula for drawing AND hit-testing. */
+  private galaxyScreenRadius(g: GalaxyDescriptor): number {
+    return Math.max(3, g.radius * 0.012 * this.cam.zoom);
+  }
+
+  /**
+   * A galaxy's OWN face, generated once from its seed (user ask 2026-09-28): four
+   * body plans — spiral, barred spiral, elliptical, irregular — so no two are the
+   * same smudge. Baked into a cached sprite (rotation included), so drawing stays
+   * a plain `drawImage`.
+   */
+  private galaxySprite(g: GalaxyDescriptor): HTMLCanvasElement {
+    const hit = this.galaxySprites.get(g.galaxyId);
+    if (hit) return hit;
+    const size = 160;
+    const c = document.createElement('canvas');
+    c.width = size;
+    c.height = size;
+    const ctx = c.getContext('2d');
+    if (ctx) {
+      const cx = size / 2;
+      const cy = size / 2;
+      let a = (g.seed ^ 0x9e3779b9) >>> 0;
+      const rnd = (): number => {
+        a = (a * 1664525 + 1013904223) >>> 0;
+        return a / 4294967296;
+      };
+      const haze = g.nebulaColor ?? g.starColor;
+      const kind = (g.seed >>> 3) % 4;
+      const rot = rnd() * Math.PI * 2;
+      const squash = 0.72 + rnd() * 0.24;
+      // halo — stacked soft discs (no rgba strings needed)
+      for (let i = 10; i >= 1; i--) {
+        ctx.globalAlpha = 0.026;
+        ctx.fillStyle = haze;
+        ctx.beginPath();
+        ctx.arc(cx, cy, (size / 2) * (i / 10) * 0.92, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      if (kind === 0 || kind === 1) {
+        // spiral / barred spiral — tapered motes along 2-3 arms
+        const arms = kind === 1 ? 2 : rnd() < 0.5 ? 2 : 3;
+        const spin = 2.1 + rnd() * 1.1;
+        const barLen = kind === 1 ? 8 + rnd() * 9 : 0;
+        if (barLen) {
+          ctx.globalAlpha = 0.4;
+          ctx.fillStyle = haze;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy, barLen, barLen * 0.3, rot, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (let arm = 0; arm < arms; arm++) {
+          const base = rot + (arm / arms) * Math.PI * 2;
+          for (let step = 1; step <= 26; step++) {
+            const tt = step / 26;
+            if (barLen && tt < 0.22) continue;
+            const ang = base + tt * spin;
+            const r = 6 + tt * size * 0.38;
+            const x = Math.cos(ang) * r;
+            const y = Math.sin(ang) * r * squash;
+            ctx.globalAlpha = 0.14 + 0.34 * (1 - tt);
+            ctx.fillStyle = tt < 0.6 ? '#ffffff' : haze;
+            ctx.beginPath();
+            ctx.arc(cx + x, cy + y, 9.5 * (1 - tt * 0.62) + 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      } else if (kind === 2) {
+        // elliptical — a tilted, dustless disc
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(rot);
+        ctx.scale(1, squash);
+        for (let i = 6; i >= 1; i--) {
+          ctx.globalAlpha = 0.1 + (6 - i) * 0.075;
+          ctx.fillStyle = haze;
+          ctx.beginPath();
+          ctx.arc(0, 0, 12 + i * 7.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 0.5;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        // irregular — a scatter of motes with the odd bright knot
+        const n = 9 + Math.floor(rnd() * 7);
+        for (let i = 0; i < n; i++) {
+          const ang = rnd() * Math.PI * 2;
+          const r = Math.pow(rnd(), 0.7) * size * 0.36;
+          ctx.globalAlpha = 0.14 + rnd() * 0.3;
+          ctx.fillStyle = haze;
+          ctx.beginPath();
+          ctx.arc(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r * squash, 3.2 + rnd() * 7.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // core — every galaxy keeps its star's own colour
+      for (let i = 5; i >= 1; i--) {
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = g.starColor;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 3 + i * 3.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    if (this.galaxySprites.size > 320) this.galaxySprites.clear();
+    this.galaxySprites.set(g.galaxyId, c);
+    return c;
+  }
+
+  // ------------------------------------------------------------ seamless zoom
+
+  private levelEnterZoom(): number {
+    return Math.max(34, this.fitZoom(GAL_DISC_WORLD * 2.4) * 1.15);
+  }
+
+  private systemEnterZoom(): number {
+    return Math.max(150, this.fitZoom(SYSTEM_SCALE * 2.5) * 1.15);
+  }
+
+  private planetFocusZoom(): number {
+    return this.systemEnterZoom() * 1.35;
+  }
+
+  private nearestGalaxyToViewCentre(): GalaxyDescriptor | null {
+    const c = this.screen2world(this.width / 2, this.height / 2);
+    const gx = Math.round(c.x);
+    const gy = Math.round(c.y);
+    let best: GalaxyDescriptor | null = null;
+    let bestD = Infinity;
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const g = this.galaxyAtCached(gx + dx, gy + dy);
+        if (!g) continue;
+        const d = (g.gx - c.x) ** 2 + (g.gy - c.y) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = g;
+        }
+      }
+    }
+    return best;
+  }
+
+  private nearestSystemToViewCentre(): SystemDescriptor | null {
+    const g = this.focusGalaxy;
+    if (!g) return null;
+    const c = this.screen2world(this.width / 2, this.height / 2);
+    let best: SystemDescriptor | null = null;
+    let bestD = Infinity;
+    for (const sys of this.systemsFor(g)) {
+      const w = this.systemWorldPos(g, sys);
+      const d = (w.x - c.x) ** 2 + (w.y - c.y) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = sys;
+      }
+    }
+    return best;
+  }
+
+  private nearestPlanetToViewCentre(): PlanetDescriptor | null {
+    const g = this.focusGalaxy;
+    const sys = this.focusSystem;
+    if (!g || !sys) return null;
+    const sw = this.systemWorldPos(g, sys);
+    const centre = this.world2screen(sw.x, sw.y);
+    const t = (performance.now() - this.t0) / 1000;
+    let best: PlanetDescriptor | null = null;
+    let bestD = Infinity;
+    for (const p of this.planetsFor(sys)) {
+      const speed = 0.05 / (0.4 + p.orbitRadius);
+      const angle = p.orbit + t * speed;
+      const orbitR = p.orbitRadius * SYSTEM_SCALE * this.cam.zoom;
+      const px = centre.x + Math.cos(angle) * orbitR;
+      const py = centre.y + Math.sin(angle) * orbitR * 0.86;
+      const d = (px - this.width / 2) ** 2 + (py - this.height / 2) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * The semantic-zoom gate (user ask 2026-09-28): crossing a zoom threshold hands
+   * the view to the next LEVEL under the crosshair — intergalactic → galaxy →
+   * system → planet — with 1.15×-in / 0.62×-out hysteresis so a boundary can never
+   * oscillate, and a gentle recentre (no zoom change) so an active pinch keeps its
+   * own scale. Scripted flights own the camera and are never interrupted.
+   */
+  private updateLevelFlow(): void {
+    if (this.camTarget) return;
+    const z = this.cam.zoom;
+    if (this.level === 'galactic') {
+      if (z >= this.levelEnterZoom()) {
+        const g = this.nearestGalaxyToViewCentre();
+        if (g) this.enterGalaxy(g, true, true);
+      }
+      return;
+    }
+    if (this.level === 'galaxy') {
+      if (z < this.levelEnterZoom() * 0.62) {
+        this.level = 'galactic';
+        this.focusGalaxy = null;
+        this.focusSystem = null;
+        this.selectedSystem = null;
+        this.selectedPlanet = null;
+        this.onSelect({ level: 'galactic', galaxy: null, system: null, planet: null });
+      } else if (z >= this.systemEnterZoom()) {
+        const sys = this.nearestSystemToViewCentre();
+        if (sys && sys.systemId !== this.focusSystem?.systemId) {
+          this.selectedSystem = sys;
+          this.enterSystem(sys, true);
+        }
+      }
+      return;
+    }
+    // system level
+    if (z < this.systemEnterZoom() * 0.62) {
+      this.level = 'galaxy';
+      this.focusSystem = null;
+      this.selectedPlanet = null;
+      this.onSelect({ level: 'galaxy', galaxy: this.focusGalaxy, system: null, planet: null });
+    } else if (z >= this.planetFocusZoom()) {
+      const p = this.nearestPlanetToViewCentre();
+      if (p && this.selectedPlanet?.key !== p.key) this.selectPlanet(p);
+    }
+  }
+
   // ------------------------------------------------------------ sizing & camera
 
   private resize(): void {
@@ -251,16 +518,20 @@ export class GalacticMap {
     };
   }
 
-  private enterGalaxy(g: GalaxyDescriptor, announce: boolean): void {
+  private enterGalaxy(g: GalaxyDescriptor, announce: boolean, keepZoom = false): void {
     this.level = 'galaxy';
     this.focusGalaxy = g;
     this.focusSystem = null;
+    this.selectedSystem = null;
     this.selectedPlanet = null;
-    this.camTarget = { x: g.gx, y: g.gy, zoom: this.fitZoom(GAL_DISC_WORLD * 2.4) };
+    // keepZoom = the seamless pinch path: recentre only, the gesture owns the scale.
+    this.camTarget = keepZoom
+      ? { x: g.gx, y: g.gy }
+      : { x: g.gx, y: g.gy, zoom: Math.max(this.cam.zoom, this.fitZoom(GAL_DISC_WORLD * 2.4)) };
     if (announce) this.onSelect({ level: 'galaxy', galaxy: g, system: null, planet: null });
   }
 
-  private enterSystem(sys: SystemDescriptor): void {
+  private enterSystem(sys: SystemDescriptor, keepZoom = false): void {
     this.level = 'system';
     this.focusSystem = sys;
     this.selectedPlanet = null;
@@ -268,7 +539,7 @@ export class GalacticMap {
     if (g) {
       const wx = g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD;
       const wy = g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD;
-      this.camTarget = { x: wx, y: wy, zoom: this.fitZoom(SYSTEM_SCALE * 2.5) };
+      this.camTarget = keepZoom ? { x: wx, y: wy } : { x: wx, y: wy, zoom: Math.max(this.cam.zoom, this.fitZoom(SYSTEM_SCALE * 2.5)) };
     }
     this.onSelect({ level: 'system', galaxy: g, system: sys, planet: null });
   }
@@ -279,16 +550,23 @@ export class GalacticMap {
     const t = (now - this.t0) / 1000;
     if (this.camTarget) {
       const k = 1 - Math.pow(0.0016, 1 / 60);
-      this.cam.x += (this.camTarget.x - this.cam.x) * k;
-      this.cam.y += (this.camTarget.y - this.cam.y) * k;
-      this.cam.zoom += (this.camTarget.zoom - this.cam.zoom) * k;
-      if (Math.abs(this.camTarget.x - this.cam.x) < 0.002 && Math.abs(this.camTarget.zoom - this.cam.zoom) < 0.01) {
-        this.cam.x = this.camTarget.x;
-        this.cam.y = this.camTarget.y;
-        this.cam.zoom = this.camTarget.zoom;
+      const target = this.camTarget;
+      this.cam.x += (target.x - this.cam.x) * k;
+      this.cam.y += (target.y - this.cam.y) * k;
+      if (target.zoom !== undefined) this.cam.zoom += (target.zoom - this.cam.zoom) * k;
+      const settledXY = Math.abs(target.x - this.cam.x) < 0.002 && Math.abs(target.y - this.cam.y) < 0.002;
+      const settledZ = target.zoom === undefined || Math.abs(target.zoom - this.cam.zoom) < 0.01;
+      if (settledXY && settledZ) {
+        this.cam.x = target.x;
+        this.cam.y = target.y;
+        if (target.zoom !== undefined) this.cam.zoom = target.zoom;
         this.camTarget = null;
       }
     }
+    // Seamless semantic zoom: crossing a threshold hands the view to the next level
+    // under the crosshair (intergalactic → galaxy → system → planet) — pinch, wheel
+    // and the ± buttons all flow through here, no tap on a dot required.
+    this.updateLevelFlow();
     this.draw(t);
   }
 
@@ -325,8 +603,8 @@ export class GalacticMap {
 
   private drawStarfield(t: number): void {
     const ctx = this.ctx;
-    const px = -this.cam.x * 8;
-    const py = -this.cam.y * 8;
+    const px = -this.cam.x * 2.2;
+    const py = -this.cam.y * 2.2;
     for (const s of this.stars) {
       const twinkle = 0.55 + 0.45 * Math.sin(t * (0.6 + s.layer) + s.seed);
       const x = ((s.x * this.width + px * (0.3 + s.layer)) % (this.width + 40) + this.width + 40) % (this.width + 40) - 20;
@@ -440,68 +718,86 @@ export class GalacticMap {
       ctx.globalAlpha = 1;
     }
 
-    // ---- galaxies in view
-    const pad = 80 / this.cam.zoom;
+    // ---- galaxies in view: swept from the MEMOISED lattice. (The old capped sweep
+    // truncated the field to one corner at wide zooms — galaxies slid in and out of
+    // the frame as you zoomed, "out of position" — user report 2026-09-28.)
+    const pad = 60 / this.cam.zoom;
     const minW = this.screen2world(-pad, -pad);
     const maxW = this.screen2world(this.width + pad, this.height + pad);
-    const galaxies = galaxiesInView(this.data.universeSeed, minW.x, maxW.x, minW.y, maxW.y, MAX_VIEW_GALAXIES);
     const zoom = this.cam.zoom;
-    const spriteScale = Math.max(14, zoom * 0.5);
-
-    for (const g of galaxies) {
-      const p = this.world2screen(g.gx, g.gy);
-      const isFocus = this.focusGalaxy?.galaxyId === g.galaxyId;
-      const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
-      // A galaxy is a STAR here (≈0.5 world cells): the old 0.055 factor drew every galaxy
-      // at full disc scale, so an overview frame became overlapping bokeh (user report).
-      const radius = Math.max(3, g.radius * 0.012 * zoom);
-      const pulse = 1 + 0.06 * Math.sin(t * 2 + g.seed % 100);
-      // nebula underlay (kept subtle: at ring-overview zoom the sprites overlap, and the
-      // old 7×/0.16 values washed the whole canvas into one pastel blur — user report)
-      if (g.nebulaColor) {
-        ctx.globalAlpha = 0.1;
-        const n = this.glow(g.nebulaColor, 128);
-        const ns = radius * 4.5 * pulse;
-        ctx.drawImage(n, p.x - ns / 2, p.y - ns / 2, ns, ns);
+    // at the widest frames every galaxy is a mote: sweep one row in two
+    const stride = zoom < 9 ? 2 : 1;
+    const gy0 = Math.floor(minW.y / stride) * stride;
+    const gy1 = Math.ceil(maxW.y);
+    const gx0 = Math.floor(minW.x);
+    const gx1 = Math.ceil(maxW.x);
+    for (let gy = gy0; gy <= gy1; gy += stride) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const g = this.galaxyAtCached(gx, gy);
+        if (!g) continue;
+        const p = this.world2screen(g.gx, g.gy);
+        if (p.x < -70 || p.x > this.width + 70 || p.y < -70 || p.y > this.height + 70) continue;
+        const isFocus = this.focusGalaxy?.galaxyId === g.galaxyId;
+        const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
+        const radius = this.galaxyScreenRadius(g);
+        const pulse = 1 + 0.06 * Math.sin(t * 2 + (g.seed % 100));
+        // far LOD: a plain mote (there can be thousands on screen)
+        if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
+          ctx.globalAlpha = 0.5;
+          ctx.fillStyle = g.starColor;
+          ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
+          ctx.globalAlpha = 1;
+          continue;
+        }
+        // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
+        // Alpha scales with size so the field reads in DEPTH instead of confetti.
+        const s = radius * 3.1 * pulse;
+        ctx.globalAlpha = 0.22 + Math.min(0.68, radius / 16) * pulse;
+        ctx.drawImage(this.galaxySprite(g), p.x - s / 2, p.y - s / 2, s, s);
         ctx.globalAlpha = 1;
-      }
-      // star glow
-      const sprite = this.glow(g.starColor, 64);
-      const ss = Math.max(radius * 3.2, spriteScale);
-      ctx.globalAlpha = 0.72;
-      ctx.drawImage(sprite, p.x - ss / 2, p.y - ss / 2, ss, ss);
-      ctx.globalAlpha = 1;
-      // core
-      ctx.fillStyle = g.starColor;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(1.4, radius * 0.42 * pulse), 0, Math.PI * 2);
-      ctx.fill();
-      // POI marker (plan §55)
-      if (g.poi !== 'NORMAL' && zoom > 16) {
-        ctx.globalAlpha = 0.8;
-        ctx.fillStyle = g.poi === 'SWARM' || g.poi === 'DEAD' ? '#ff5d73' : g.poi === 'STRONGHOLD' ? '#ffd166' : '#7be0c8';
-        ctx.font = '9px Rajdhani, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(g.poi === 'SWARM' ? '☣' : g.poi === 'DEAD' ? '✝' : g.poi === 'STRONGHOLD' ? '⚑' : '✦', p.x, p.y - radius - 3);
-        ctx.globalAlpha = 1;
-      }
-      // selection / hover ring
-      if (isFocus || isHover) {
-        const rr = radius * 2.1 + Math.sin(t * 3) * 1.5;
-        ctx.strokeStyle = isFocus ? '#ffffff' : 'rgba(255,255,255,0.55)';
-        ctx.lineWidth = isFocus ? 1.8 : 1.2;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      // name for big zoom or focus
-      if (zoom > 26 || isFocus) {
-        ctx.font = '600 10px Rajdhani, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(233,226,255,0.9)';
-        ctx.fillText(g.name.toUpperCase(), p.x, p.y + radius + 12);
+        // POI marker (plan §55)
+        if (g.poi !== 'NORMAL' && zoom > 16) {
+          ctx.globalAlpha = 0.8;
+          ctx.fillStyle = g.poi === 'SWARM' || g.poi === 'DEAD' ? '#ff5d73' : g.poi === 'STRONGHOLD' ? '#ffd166' : '#7be0c8';
+          ctx.font = '9px Rajdhani, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(g.poi === 'SWARM' ? '☣' : g.poi === 'DEAD' ? '✝' : g.poi === 'STRONGHOLD' ? '⚑' : '✦', p.x, p.y - radius - 3);
+          ctx.globalAlpha = 1;
+        }
+        // selection / hover ring
+        if (isFocus || isHover) {
+          const rr = radius * 2.1 + Math.sin(t * 3) * 1.5;
+          ctx.strokeStyle = isFocus ? '#ffffff' : 'rgba(255,255,255,0.55)';
+          ctx.lineWidth = isFocus ? 1.8 : 1.2;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, rr, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // name for big zoom or focus
+        if (zoom > 26 || isFocus) {
+          ctx.font = '600 10px Rajdhani, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(233,226,255,0.9)';
+          ctx.fillText(g.name.toUpperCase(), p.x, p.y + radius + 12);
+        }
       }
     }
+
+    // ---- band edges ride ON TOP of the field so the rings stay readable in a
+    // dense frame (the fill pass below the galaxies keeps the tint)
+    for (let ring = 7; ring >= 0; ring--) {
+      const rc = ringConfig(ring);
+      const p0 = this.world2screen(0, 0);
+      const rOut = (ring + 1) * RING_WIDTH_CELLS * this.cam.zoom;
+      if (rOut < 30) continue;
+      ctx.globalAlpha = ring === this.data.myRing ? 0.3 : 0.1;
+      ctx.strokeStyle = rc.accent;
+      ctx.lineWidth = ring === this.data.myRing ? 1.4 : 1;
+      ctx.beginPath();
+      ctx.arc(p0.x, p0.y, rOut, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
 
     // ---- player home marker
     const home = ringHome(this.data.universeSeed, this.data.myRing);
@@ -545,16 +841,13 @@ export class GalacticMap {
     const center = this.world2screen(g.gx, g.gy);
     const discR = (GAL_DISC_WORLD / 2) * this.cam.zoom;
 
-    // disc glow + nebula
-    ctx.globalAlpha = 0.85;
-    const sprite = this.glow(g.starColor, 128);
-    ctx.drawImage(sprite, center.x - discR * 1.6, center.y - discR * 1.6, discR * 3.2, discR * 3.2);
-    if (g.nebulaColor) {
-      const n = this.glow(g.nebulaColor, 128);
-      ctx.globalAlpha = 0.22;
-      const drift = Math.sin(t * 0.4) * discR * 0.05;
-      ctx.drawImage(n, center.x - discR * 1.2 + drift, center.y - discR * 1.2 - drift, discR * 2.4, discR * 2.4);
-    }
+    // ---- the galaxy's own seeded face fills the disc (same sprite as the overview)
+    const face = this.galaxySprite(g);
+    const fs = discR * 3.6;
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(face, center.x - fs / 2, center.y - fs / 2, fs, fs);
+    ctx.globalAlpha = 0.45;
+    ctx.drawImage(this.glow(g.starColor, 128), center.x - discR * 1.4, center.y - discR * 1.4, discR * 2.8, discR * 2.8);
     ctx.globalAlpha = 1;
     // spiral arms
     ctx.save();
@@ -776,6 +1069,7 @@ export class GalacticMap {
         const [a, b] = [...this.pointers.values()];
         this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: this.cam.zoom };
         this.drag = null;
+        this.camTarget = null; // a pinch owns the camera from here
         return;
       }
       this.drag = { x: e.offsetX, y: e.offsetY, camx: this.cam.x, camy: this.cam.y, moved: false };
@@ -834,14 +1128,17 @@ export class GalacticMap {
   private hitTest(sx: number, sy: number): Hover {
     if (this.level === 'galactic') {
       const w = this.screen2world(sx, sy);
-      const { gx, gy } = { gx: Math.round(w.x), gy: Math.round(w.y) };
+      const gx = Math.round(w.x);
+      const gy = Math.round(w.y);
+      // a fair tap radius: dots are tiny, but at enter zoom they are already fat
+      const tapRadius = this.cam.zoom >= this.levelEnterZoom() * 0.8 ? 14 : 11;
       for (let dy = -2; dy <= 2; dy++) {
         for (let dx = -2; dx <= 2; dx++) {
-          const g = galaxyAt(this.data.universeSeed, gx + dx, gy + dy);
+          const g = this.galaxyAtCached(gx + dx, gy + dy);
           if (!g) continue;
           const p = this.world2screen(g.gx, g.gy);
-          const r = Math.max(10, g.radius * 0.055 * this.cam.zoom);
-          if ((sx - p.x) ** 2 + (sy - p.y) ** 2 <= r * r * 2.2) return { kind: 'galaxy', galaxy: g, sx, sy };
+          const r = Math.max(tapRadius, this.galaxyScreenRadius(g) * 1.6);
+          if ((sx - p.x) ** 2 + (sy - p.y) ** 2 <= r * r) return { kind: 'galaxy', galaxy: g, sx, sy };
         }
       }
       return { kind: null, sx, sy };

@@ -485,7 +485,7 @@ export function COLONY_BUFF_DEFAULTS(): ColonyBuffState[] {
 
 // ---------------------------------------------------------------- quality
 
-export type QualityName = 'low' | 'medium' | 'high';
+export type QualityName = 'low' | 'medium' | 'high' | 'ultra';
 
 export interface QualitySettings {
   name: QualityName;
@@ -506,15 +506,21 @@ export interface QualitySettings {
 }
 
 /**
- * Buffers are always allocated at the HIGH preset's capacity, so the graphics option can be raised
- * at any time (and the watchdog can hand budget back) without a reallocation. Only the *effective*
- * ceilings move — see `Effects.setCap` / `CombatSystem.setCap`. The extra memory is a few dozen KB.
+ * Buffers are always allocated at the TOP preset's capacity (ULTRA), so the graphics option can be
+ * raised at any time (and the watchdog can hand budget back) without a reallocation. Only the
+ * *effective* ceilings move — see `Effects.setCap` / `CombatSystem.setCap`. The extra memory is a
+ * few dozen KB.
  */
-export const MAX_PARTICLES = 1100;
-export const MAX_PROJECTILES = 260;
+export const MAX_PARTICLES = 1600;
+export const MAX_PROJECTILES = 320;
 
 export function qualitySettings(name: QualityName): QualitySettings {
   switch (name) {
+    case 'ultra':
+      // The top rung is about POPULATION and budget, not another terrain subdivision: `planetDetail`
+      // stays at HIGH's 6 (7 quadruples the icosphere build/triangles for a silhouette gain nobody
+      // sees at gameplay range), and the resolution is already at the device cap for both classes.
+      return { name, planetDetail: 6, particles: 1500, maxEnemies: 180, decorations: 620, pixelRatio: 2, maxProjectiles: 320, damageNumbers: true, grassDensity: 1 };
     case 'high':
       return { name, planetDetail: 6, particles: 1100, maxEnemies: 150, decorations: 420, pixelRatio: 2, maxProjectiles: 260, damageNumbers: true, grassDensity: 1 };
     case 'medium':
@@ -596,7 +602,7 @@ export const IS_TOUCH =
 /** The player's graphics choice: a fixed preset, or `auto` (the device is probed at boot). */
 export type QualityPref = QualityName | 'auto';
 
-export const QUALITY_PREFS: QualityPref[] = ['auto', 'low', 'medium', 'high'];
+export const QUALITY_PREFS: QualityPref[] = ['auto', 'low', 'medium', 'high', 'ultra'];
 
 const QUALITY_STORE_KEY = 'nf.graphics';
 
@@ -630,6 +636,7 @@ export const QUALITY_LABELS: Record<QualityPref, string> = {
   low: 'LOW',
   medium: 'MEDIUM',
   high: 'HIGH',
+  ultra: 'ULTRA',
 };
 
 export const QUALITY_BLURBS: Record<QualityPref, string> = {
@@ -637,4 +644,57 @@ export const QUALITY_BLURBS: Record<QualityPref, string> = {
   low: 'Fewest effects, sharpest framerate.',
   medium: 'Balanced detail and performance.',
   high: 'Full detail. Desktop or fast tablets.',
+  ultra: 'Biggest crowds and effects. Gaming desktops.',
 };
+
+// ---------------------------------------------------------------- max frame rate
+
+/**
+ * The player's frame-rate ceiling: `auto` keeps the device-aware pacing PERF describes, a number
+ * pins matches AND menus to at most that many rendered frames per second (a 30 cap on a 60 Hz panel
+ * simply draws every second frame). Persisted like the graphics preset.
+ */
+export type FpsPref = 'auto' | 30 | 60 | 90 | 120;
+
+export const FPS_PREFS: FpsPref[] = ['auto', 30, 60, 90, 120];
+
+const FPS_STORE_KEY = 'nf.maxfps';
+
+/** Reads the saved frame-rate cap, falling back to `auto`. Storage can be unavailable (webviews). */
+export function loadFpsPref(): FpsPref {
+  try {
+    const raw = window.localStorage.getItem(FPS_STORE_KEY);
+    const num = Number(raw);
+    if ((FPS_PREFS as (string | number)[]).indexOf(num) >= 0) return num as FpsPref;
+  } catch {
+    /* private mode / sandboxed webview — the default is fine */
+  }
+  return 'auto';
+}
+
+export function saveFpsPref(pref: FpsPref): void {
+  try {
+    window.localStorage.setItem(FPS_STORE_KEY, String(pref));
+  } catch {
+    /* ignore: the choice then only lasts for the session */
+  }
+}
+
+/** Short label for the frame-rate chips. */
+export const FPS_LABELS: Record<string, string> = {
+  auto: 'AUTO',
+  '30': '30',
+  '60': '60',
+  '90': '90',
+  '120': '120',
+};
+
+/** What a frame-rate cap means, in one line. */
+export function fpsBlurb(pref: FpsPref): string {
+  if (pref === 'auto') {
+    return IS_MOBILE
+      ? 'AUTO: 60 in matches, 30 in menus, 15 while idle — tuned for battery and heat.'
+      : 'AUTO: uncapped in matches, 60 in menus, 30 while idle.';
+  }
+  return `Renders at most ${pref} frames per second, in matches and menus alike.`;
+}

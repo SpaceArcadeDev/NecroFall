@@ -14,11 +14,14 @@ import {
   ColonyBuffState,
   Mods,
   QualityPref,
+  FpsPref,
   detectQuality,
   loadQualityPref,
+  loadFpsPref,
   qualitySettings,
   resolveQuality,
   saveQualityPref,
+  saveFpsPref,
   beaconName,
 } from './Config';
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
@@ -443,6 +446,14 @@ export class Game {
    * idle-menu drop. See `frameTargetFps`.
    */
   private rafGapMs = 16.7;
+  /**
+   * Fastest raw frame gap seen in the last `RAF_MIN_WINDOW` ms — a load-independent estimate of
+   * the PANEL's refresh rate (the EMA above melts under load, this does not). The DPR ladder uses
+   * it so an explicit 120 fps cap on a 60 Hz screen cannot read every frame as "missed".
+   */
+  private rafGapMin = 64;
+  private rafGapMinT = 0;
+  private static readonly RAF_MIN_WINDOW = 3000;
   private lastRawTick = 0;
   private lastInteractionAt = performance.now();
   /** Seconds of warm-up during which the DPR ladder ignores samples (boot / match-start jank). */
@@ -464,10 +475,13 @@ export class Game {
   private debugTeleportIdx = 0;
   /** The player's graphics choice (`auto` = probe the device). Persisted; applied live. */
   private qualityPref: QualityPref = 'auto';
+  /** The player's frame-rate ceiling (`auto` = the device-aware PERF pacing). Persisted; live. */
+  private fpsPref: FpsPref = 'auto';
 
   constructor(private app: HTMLElement, options: GameOptions = {}) {
     this.officialMatch = options.official ?? null;
     this.qualityPref = loadQualityPref();
+    this.fpsPref = loadFpsPref();
     this.settings = qualitySettings(resolveQuality(this.qualityPref));
     this.renderer = new THREE.WebGLRenderer({
       antialias: this.settings.name !== 'low',
@@ -520,6 +534,7 @@ export class Game {
       openMenu: () => this.togglePauseMenu(),
       closeMenu: () => this.closePauseMenu(),
       setGraphics: pref => this.setGraphicsPref(pref),
+      setFps: pref => this.setFpsPref(pref),
       setAccessories: sel => this.applyAccessorySelection(sel),
     });
     this.ui.onColonyClick = idx => this.selectColony(idx);
@@ -901,8 +916,13 @@ export class Game {
       return;
     }
     const last = PERF.dprLadder.length - 1;
-    const bad = target > 0 ? target * 0.8 : PERF.badFps;
-    const good = target > 0 ? target * 0.93 : PERF.goodFps;
+    // Explicit fps caps are compared against the DISPLAY, not the raw cap: a 120 target on a 60 Hz
+    // panel is "hitting 60" — without this the ladder read every frame as a miss and ground the
+    // render scale down for a cap the hardware cannot even express. AUTO keeps its own rules.
+    const panelHz = this.rafGapMin > 1 ? 1000 / this.rafGapMin : 0;
+    const ref = this.fpsPref !== 'auto' && panelHz > 0 ? Math.min(target, panelHz) : target;
+    const bad = ref > 0 ? ref * 0.8 : PERF.badFps;
+    const good = ref > 0 ? ref * 0.93 : PERF.goodFps;
     if (this.dprCooldown > 0) this.dprCooldown -= SAMPLE;
     if (fps < bad) {
       this.dprBadT += SAMPLE;
@@ -936,6 +956,9 @@ export class Game {
    *     player has not touched anything for `PERF.idleAfter` seconds (plan §38).
    */
   private frameTargetFps(): number {
+    // An explicit cap from the settings owns EVERY phase: the player asked for a ceiling, not for
+    // the device-aware curve (which would be a suggestion). `auto` keeps the pacing below.
+    if (this.fpsPref !== 'auto') return this.fpsPref;
     if (this.phase === 'playing' || this.phase === 'colony' || this.phase === 'necrotech') {
       return this.rafGapMs < 9.5 ? PERF.matchFps : 0;
     }
@@ -948,13 +971,14 @@ export class Game {
   // ------------------------------------------------------------ graphics preset
 
   /**
-   * The player picked a graphics level. The choice is remembered across sessions and applied
-   * immediately: everything the preset changes at runtime (render scale, crowd cap, particle and
-   * projectile ceilings, damage numbers) moves at once, and the parts that live in the world mesh
-   * (terrain vertex density, decoration field) are rebuilt with the next match — the planet is
-   * already recreated per match, so nothing has to be disposed just to change a setting.
+   * The player picked a graphics level (the game's own menu row or the account shell's GRAPHICS
+   * page). The choice is remembered across sessions and applied immediately: everything the preset
+   * changes at runtime (render scale, crowd cap, particle and projectile ceilings, damage numbers)
+   * moves at once, and the parts that live in the world mesh (terrain vertex density, decoration
+   * field) are rebuilt with the next match — the planet is already recreated per match, so nothing
+   * has to be disposed just to change a setting.
    */
-  private setGraphicsPref(pref: QualityPref): void {
+  setGraphicsPref(pref: QualityPref): void {
     this.qualityPref = pref;
     saveQualityPref(pref);
     const name = resolveQuality(pref);
@@ -966,6 +990,29 @@ export class Game {
         : `GRAPHICS: ${name.toUpperCase()}`,
       2600
     );
+  }
+
+  /** The graphics choice right now (the account shell's GRAPHICS page reads this). */
+  get graphicsChoice(): QualityPref {
+    return this.qualityPref;
+  }
+
+  /** The frame-rate ceiling right now (the account shell's GRAPHICS page reads this). */
+  get fpsChoice(): FpsPref {
+    return this.fpsPref;
+  }
+
+  /**
+   * The player picked a frame-rate ceiling. Remembered across sessions and honoured from the very
+   * next frame (`frameTargetFps` is read every tick), so the choice is immediately visible in the
+   * F1 diagnostics too. A change is a pacing-target change: `updateRenderScale` notices it and
+   * restarts its clocks, so no stale window is ever blamed on the new cap.
+   */
+  setFpsPref(pref: FpsPref): void {
+    this.fpsPref = pref;
+    saveFpsPref(pref);
+    this.ui.setFpsPref(pref);
+    this.ui.toast(pref === 'auto' ? 'FRAME RATE: AUTO' : `FRAME RATE: MAX ${pref} FPS`, 2400);
   }
 
   // ------------------------------------------------------------ customization
@@ -1068,8 +1115,18 @@ export class Game {
       }
       // Display-refresh estimate from the RAW rAF cadence — sampled before any pacing skips, and
       // the only thing that decides whether a 60 fps match target is worthwhile (see
-      // `frameTargetFps`).
-      if (this.lastRawTick > 0) this.rafGapMs += (Math.min(64, t - this.lastRawTick) - this.rafGapMs) * 0.05;
+      // `frameTargetFps`). The minimum over a 3 s window is the PANEL's own cadence: the EMA
+      // slides up whenever the machine is slow, the minimum only moves when the display does.
+      if (this.lastRawTick > 0) {
+        const gap = Math.min(64, t - this.lastRawTick);
+        this.rafGapMs += (gap - this.rafGapMs) * 0.05;
+        this.rafGapMin = Math.min(this.rafGapMin, gap);
+        this.rafGapMinT += gap;
+        if (this.rafGapMinT > Game.RAF_MIN_WINDOW) {
+          this.rafGapMinT = 0;
+          this.rafGapMin = 64;
+        }
+      }
       this.lastRawTick = t;
 
       // Render pacing (2026-09 thermal pass): matches keep the gameplay budget, menus/shells only

@@ -25,10 +25,11 @@ import { ProviderGameEvent } from './multiplayer/MultiplayerProvider';
 import { OfficialMatchPayload } from './multiplayer/OfficialTypes';
 import { P2PMultiplayerProvider, LegacyLauncher } from './multiplayer/P2PMultiplayerProvider';
 import { MultiplayerSession } from './multiplayer/MultiplayerSession';
-import { COLONIES, IS_TOUCH } from '../core/Config';
+import { COLONIES, IS_TOUCH, loadFpsPref, loadQualityPref, saveFpsPref, saveQualityPref, type FpsPref, type QualityPref } from '../core/Config';
 import { loadSelection, selectionToWire } from '../customization/CustomizationStore';
 import { Keybinds } from '../input/Keybinds';
 import { ControlsModal } from './settings/ControlsModal';
+import { GraphicsPage } from './settings/GraphicsPage';
 import type { ScreenName } from '../ui/UI';
 import { OrientationGate } from '../ui/Orientation';
 import { fullscreenMode } from '../ui/Fullscreen';
@@ -48,7 +49,7 @@ import { RankPage } from './rank/RankPage';
 import { showRankResultOverlay } from './rank/RankResultOverlay';
 import { DEFAULT_UNIVERSE_SEED } from '../rankmap/procedural/SeedHash';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -231,6 +232,33 @@ export class AppShell implements ShellContext {
   /** The RANK page — the intergalactic map (plan §48). */
   goRank(): void {
     this.navigateTo({ name: 'rank' });
+  }
+
+  /** The GRAPHICS settings page (settings ▸ GRAPHICS): preset + frame-rate cap. */
+  goGraphics(): void {
+    this.navigateTo({ name: 'graphics' });
+  }
+
+  /** The saved graphics choice — the live game's, or the stored one before it boots. */
+  currentGraphicsPref(): QualityPref {
+    return this.game?.graphicsChoice ?? loadQualityPref();
+  }
+
+  /** Apply + persist a graphics choice on the running world (no-op-safe before the world boots). */
+  setGraphicsPref(pref: QualityPref): void {
+    if (this.game) this.game.setGraphicsPref(pref);
+    else saveQualityPref(pref);
+  }
+
+  /** The saved frame-rate ceiling. */
+  currentFpsPref(): FpsPref {
+    return this.game?.fpsChoice ?? loadFpsPref();
+  }
+
+  /** Apply + persist a frame-rate ceiling on the running world. */
+  setFpsPref(pref: FpsPref): void {
+    if (this.game) this.game.setFpsPref(pref);
+    else saveFpsPref(pref);
   }
 
   /** Jump back into the queue screen (the ranked panel's "SEARCHING…" button). */
@@ -528,6 +556,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'party') this.showShell('party');
       else if (route.name === 'rank') this.showShell('rank');
+      else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
       if (!APP_CONFIG.authConfigured) {
@@ -545,6 +574,8 @@ export class AppShell implements ShellContext {
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'rank') this.showShell('rank');
+      else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
       this.toast(`Welcome, ${me.playerName}.`);
@@ -560,6 +591,7 @@ export class AppShell implements ShellContext {
     else if (route.name === 'lobby') this.showShell('lobby');
     else if (route.name === 'party') this.showShell('party');
     else if (route.name === 'rank') this.showShell('rank');
+    else if (route.name === 'graphics') this.showShell('graphics');
     else if (route.name === 'match') this.showShell('match', String(route.id));
     else if (this.screen !== 'queue' && this.screen !== 'onboarding' && this.screen !== 'loading') this.showShell('home');
   }
@@ -644,7 +676,7 @@ export class AppShell implements ShellContext {
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
-    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'party' || screen === 'rank' || screen === 'queue' || screen === 'profile';
+    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'party' || screen === 'rank' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
     this.nav.element.classList.toggle('hidden', screen !== 'home');
     this.backBtn.classList.toggle('hidden', !childScreen);
     this.root.classList.toggle('no-nav', screen !== 'home');
@@ -687,6 +719,10 @@ export class AppShell implements ShellContext {
       case 'rank':
         this.nav.setActive('play');
         this.renderRank();
+        break;
+      case 'graphics':
+        this.nav.setActive(null);
+        this.renderGraphics();
         break;
       case 'match':
         this.nav.setActive('play');
@@ -1009,6 +1045,14 @@ export class AppShell implements ShellContext {
     const page = new RankPage(this);
     this.page = page;
     this.screenHost.appendChild(page.element);
+  }
+
+  /** Settings ▸ GRAPHICS: the preset list and the frame-rate chips (applies live, persists). */
+  private renderGraphics(): void {
+    const page = new GraphicsPage(this);
+    this.page = page;
+    this.screenHost.appendChild(page.element);
+    page.update();
   }
 
   /**
@@ -1340,6 +1384,10 @@ export class AppShell implements ShellContext {
     menu.appendChild(button('PROFILE', 'nf-btn ghost', () => {
       menu.remove();
       this.openProfile(this.myHex());
+    }));
+    menu.appendChild(button('GRAPHICS', 'nf-btn ghost', () => {
+      menu.remove();
+      this.goGraphics();
     }));
     menu.appendChild(button('CONTROLS', 'nf-btn ghost', () => {
       menu.remove();

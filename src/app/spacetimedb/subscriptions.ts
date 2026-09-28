@@ -101,6 +101,10 @@ export function subscribeMatchmaking(hex: string): void {
     `SELECT * FROM my_queue_entry`,
     `SELECT * FROM my_candidate`,
     `SELECT * FROM my_candidate_players`,
+    // The server usage summary of the caller's LATEST match — the debug block on the end screen.
+    // It rode no scope before, so `matchEnded` always shipped `usage: undefined` and the results
+    // screen never showed the SpacetimeDB numbers (user report).
+    `SELECT * FROM my_match_usage`,
     `SELECT * FROM match_player WHERE identity = ${hexLiteral(hex)}`,
     // Parties: membership, members and the invite code — the OFFICIAL lobby reads these.
     'SELECT * FROM party',

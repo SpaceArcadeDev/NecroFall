@@ -27,6 +27,7 @@ import {
   setPartyLoadout,
   leaveMatch as leaveMatchReducer,
   joinMatch as joinMatchReducer,
+  reportNexusCapture,
 } from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
@@ -82,6 +83,27 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
    */
   private optimisticConfirmed = false;
 
+  /**
+   * The 0.5 s all-confirmed beat (user ask 2026-09-28): the last ✓ must be SEEN before the loading
+   * screen takes over. A candidate that vanishes (finalized) within this window means the match
+   * was born from a confirmation, so `beginMatch` holds the summary — every slot forced ✓ — for
+   * CONFIRM_HOLD_MS. Clients that confirmed EARLIER never render the last ✓ themselves (the server
+   * finalizes in the same commit), which is exactly why the hold synthesizes it.
+   */
+  private static readonly CONFIRM_HOLD_MS = 500;
+  /** The last live candidate snapshot (seats + effective confirmed flags), kept for the hold. */
+  private lastCandidateView: {
+    deadlineSeconds: number;
+    seats: { colony: number; confirmed: boolean; me: boolean }[];
+    myConfirmed: boolean;
+  } | null = null;
+  /** When the candidate row disappeared (0 = none recently) — the confirmation-birth signal. */
+  private candidateGoneAt = 0;
+  /** While set, `currentCandidateInfo` renders this held all-✓ summary until `until`. */
+  private confirmHold: { until: number; seats: { colony: number; confirmed: boolean; me: boolean }[] } | null = null;
+  /** Pending deferred queue-idle emit (a consumed candidate may still become a match). */
+  private idleEmitTimer = 0;
+
   // pose diffing state (all in local seconds / world units)
   private lastPos = { x: 0, y: 0, z: 0, t: 0 };
   private lastDir = { x: 0, y: 0, z: 0 };
@@ -136,6 +158,18 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.gameApi = null;
     this.lastQueueSignature = '';
     this.lastCandidateSignature = '';
+    this.clearConfirmHold();
+  }
+
+  /** Forget any pending all-confirmed beat — a new queue must never inherit the old one's. */
+  private clearConfirmHold(): void {
+    this.lastCandidateView = null;
+    this.candidateGoneAt = 0;
+    this.confirmHold = null;
+    if (this.idleEmitTimer) {
+      window.clearTimeout(this.idleEmitTimer);
+      this.idleEmitTimer = 0;
+    }
   }
 
   // ------------------------------------------------------------ provider api
@@ -168,6 +202,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
 
   cancelFindMatch(): void {
     this.optimisticConfirmed = false;
+    this.clearConfirmHold();
     cancelFindMatch();
   }
 
@@ -270,6 +305,25 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   /** The match id this session has already walked out of (never auto-rejoin it). */
   private leftMatchId: number | null = null;
 
+  /**
+   * The LOCAL simulation concluded the match. Latch the id FIRST: between now and the server's
+   * status-2 row there is a window in which `detectMatchStart` could otherwise pull the player
+   * back into a match that is, for them, over (the "brought back into the game / back to the end
+   * screen" reports). A Nexus capture (`colony` non-null) is additionally reported so the server
+   * finishes the match for every seat at once; `detectMatchEnd` is unaffected either way and still
+   * delivers the finalized usage summary.
+   */
+  reportVictory(colony: number | null): void {
+    if (!this.matchId) return;
+    this.endedMatchIds.add(this.matchId);
+    if (colony !== null) reportNexusCapture(colony);
+  }
+
+  /** True when this session already concluded the given match locally (never re-enter it). */
+  hasEndedLocally(matchId: number): boolean {
+    return this.endedMatchIds.has(matchId);
+  }
+
   /** The boot payload for the game, available once a match has started. */
   getMatchPayload(): OfficialMatchPayload | null {
     return this.payload;
@@ -283,17 +337,43 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     deadlineSeconds: number;
     seats: { colony: number; confirmed: boolean; me: boolean }[];
     myConfirmed: boolean;
+    /** Every seat is ✓ — the summary holds this state for a beat instead of blinking away. */
+    allConfirmed: boolean;
     filling: boolean;
   } | null {
     const cache = ClientCache.shared;
     const candidate = cache.myCandidate();
-    if (!candidate) return null;
+    if (!candidate) {
+      // The 0.5 s all-confirmed beat: the candidate row is CONSUMED the moment everyone confirms
+      // (the server finalizes in the same commit), so the last ✓ would otherwise never render.
+      const hold = this.confirmHold;
+      if (hold && performance.now() < hold.until) {
+        return {
+          deadlineSeconds: Math.max(0, (hold.until - performance.now()) / 1000),
+          seats: hold.seats,
+          myConfirmed: true,
+          allConfirmed: true,
+          filling: false,
+        };
+      }
+      this.confirmHold = null;
+      return null;
+    }
     const seats = cache.myCandidatePlayers();
     const mySeat = seats.find(s => hexOf(s.identity) === this.myHex);
+    // The optimistic flag is what makes the local ✓ visible in the server-finalize-in-one-call
+    // solo case (see `optimisticConfirmed`) — the polling page reads THIS path, not the event.
+    const mine = Boolean(mySeat?.confirmed) || this.optimisticConfirmed;
+    const view = seats.map(s => ({
+      colony: s.colony,
+      confirmed: hexOf(s.identity) === this.myHex ? mine : s.confirmed,
+      me: hexOf(s.identity) === this.myHex,
+    }));
     return {
       deadlineSeconds: Math.max(0, (Number(candidate.deadline) - this.serverNowUs()) / 1e6),
-      seats: seats.map(s => ({ colony: s.colony, confirmed: s.confirmed, me: hexOf(s.identity) === this.myHex })),
-      myConfirmed: Boolean(mySeat?.confirmed),
+      seats: view,
+      myConfirmed: mine,
+      allConfirmed: view.length > 0 && view.every(s => s.confirmed),
       filling: candidate.status === 0,
     };
   }
@@ -425,6 +505,15 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
         : q.status === 2
           ? 'confirmed'
           : 'queued';
+    // The candidate was JUST consumed (all confirmed): the confirmation beat and the match-start
+    // take over from here. Emitting 'idle' now would navigate the shell back to the lobby before
+    // the all-✓ summary could render (observed live: the hold died before its first frame).
+    // Deferred: if no match starts within the beat (the candidate expired instead), idle fires.
+    if (!q && !this.matchId && (this.lastCandidateView || this.candidateGoneAt)) {
+      this.lastQueueSignature = '';
+      this.deferQueueIdle();
+      return;
+    }
     const signature = `${status}`;
     if (signature === this.lastQueueSignature) return;
     this.lastQueueSignature = signature;
@@ -432,29 +521,74 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     else if (status !== 'idle') this.emit({ type: 'queue', status, queuedSeconds: 0 });
   }
 
+  /**
+   * Defer the queue-idle signal while a consumed candidate may still become a match. The match
+   * start cancels it (see `beginMatch`); otherwise it fires after the confirmation beat, which is
+   * exactly the old "candidate expired → back to the lobby" behaviour, just a moment later.
+   */
+  private deferQueueIdle(): void {
+    if (this.idleEmitTimer) return;
+    this.idleEmitTimer = window.setTimeout(() => {
+      this.idleEmitTimer = 0;
+      if (this.matchId) return; // a match started — nothing to report
+      const cache = ClientCache.shared;
+      if (cache.myQueue() || cache.myCandidate()) return; // the queue moved on
+      this.emit({ type: 'queue', status: 'idle', queuedSeconds: 0 });
+    }, OfficialMultiplayerProvider.CONFIRM_HOLD_MS + 250);
+  }
+
   private emitCandidate(cache: ClientCache): void {
     const candidate = cache.myCandidate();
     if (!candidate) {
       this.optimisticConfirmed = false;
+      // Mark the moment the candidate row was consumed: a match that starts right after was born
+      // from a confirmation and earns the 0.5 s all-confirmed beat (see `startConfirmHold`).
+      if (this.lastCandidateView && !this.candidateGoneAt) this.candidateGoneAt = performance.now();
+      this.lastCandidateView = null;
       if (this.lastCandidateSignature) {
         this.lastCandidateSignature = '';
       }
       return;
     }
+    this.confirmHold = null; // a live candidate owns the summary again
     const seats = cache.myCandidatePlayers();
     const mySeat = seats.find(s => hexOf(s.identity) === this.myHex);
     if (mySeat?.confirmed) this.optimisticConfirmed = false; // the server caught up — truth takes over
     const mine = Boolean(mySeat?.confirmed) || this.optimisticConfirmed;
     const deadlineSeconds = Math.max(0, (Number(candidate.deadline) - this.serverNowUs()) / 1e6);
-    const signature = `${candidate.matchId}:${deadlineSeconds.toFixed(0)}:${seats.map(s => `${hexOf(s.identity) === this.myHex ? (mine ? 'me+' : 'me-') : s.colony + (s.confirmed ? '+' : '-')}`).join(',')}`;
+    const view = {
+      deadlineSeconds,
+      seats: seats.map(s => ({
+        colony: s.colony,
+        confirmed: hexOf(s.identity) === this.myHex ? mine : s.confirmed,
+        me: hexOf(s.identity) === this.myHex,
+      })),
+      myConfirmed: mine,
+    };
+    this.lastCandidateView = view;
+    this.candidateGoneAt = 0;
+    const signature = `${candidate.matchId}:${deadlineSeconds.toFixed(0)}:${view.seats.map(s => `${s.me ? (mine ? 'me+' : 'me-') : s.colony + (s.confirmed ? '+' : '-')}`).join(',')}`;
     if (signature === this.lastCandidateSignature) return;
     this.lastCandidateSignature = signature;
-    this.emit({
-      type: 'candidate',
-      deadlineSeconds,
-      myConfirmed: mine,
-      seats: seats.map(s => ({ colony: s.colony, confirmed: hexOf(s.identity) === this.myHex ? mine : s.confirmed, me: hexOf(s.identity) === this.myHex })),
-    });
+    this.emit({ type: 'candidate', deadlineSeconds, myConfirmed: mine, seats: view.seats });
+  }
+
+  /**
+   * Arm the all-confirmed beat when this match was born from a confirmation (the candidate row
+   * vanished moments ago — user ask 2026-09-28). Returns the delay `beginMatch` waits before
+   * handing the game over, so the summary shows every ✓ for a beat instead of vanishing.
+   */
+  private startConfirmHold(): number {
+    const since = this.candidateGoneAt ? performance.now() - this.candidateGoneAt : Number.POSITIVE_INFINITY;
+    this.candidateGoneAt = 0;
+    const view = this.lastCandidateView;
+    this.lastCandidateView = null;
+    if (!view || view.seats.length === 0 || since > 3000) return 0;
+    this.confirmHold = {
+      until: performance.now() + OfficialMultiplayerProvider.CONFIRM_HOLD_MS,
+      seats: view.seats.map(s => ({ ...s, confirmed: true })),
+    };
+    return OfficialMultiplayerProvider.CONFIRM_HOLD_MS;
   }
 
   private detectMatchStart(cache: ClientCache): void {
@@ -502,6 +636,13 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private beginMatch(cache: ClientCache, matchId: number, seed: number, elapsed: number): void {
     this.matchId = matchId;
     this.matchEndEmitted = false;
+    if (this.idleEmitTimer) {
+      // The match materialized — the deferred idle signal would be a lie.
+      window.clearTimeout(this.idleEmitTimer);
+      this.idleEmitTimer = 0;
+    }
+    // A match born from a confirmation holds the all-✓ summary for a beat first (see above).
+    const holdMs = this.startConfirmHold();
     subscribeMatch(matchId);
     const rows = cache.matchPlayers(matchId);
     for (const p of rows) {
@@ -513,7 +654,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       if (this.matchId !== matchId) return;
       this.payload = this.buildPayload();
       this.emit({ type: 'match-start', matchId });
-    }, 0);
+    }, holdMs);
   }
 
   private buildPayload(): OfficialMatchPayload {

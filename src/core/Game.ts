@@ -272,6 +272,12 @@ export class Game {
   private officialMatch: GameOptions['official'] | null = null;
   /** Server usage summary of the last OFFICIAL match (plan §28) — printed on the results screen. */
   private officialUsage: NonNullable<OfficialMatchResult['usage']> | null = null;
+  /**
+   * The last settled result, kept so a LATE server verdict (the authoritative finish of a match
+   * this client already concluded locally — e.g. after a Nexus capture) can repaint the SAME
+   * results screen with the finalized usage summary instead of dropping the numbers on the floor.
+   */
+  private lastEnd: { winner: number | null; tiles: { label: string; owner: number }[]; reason?: string } | null = null;
 
   players = new Map<string, Player>();
   localPlayer: Player | null = null;
@@ -1194,9 +1200,20 @@ export class Game {
 
   /** The official server finished the match: show its authoritative result. */
   officialMatchEnded(result: OfficialMatchResult): void {
-    if (this.phase === 'ended') return;
+    // A LATE server verdict for a match this client already concluded locally (the Nexus capture
+    // ends the fight before the server's finish transaction lands): keep the results screen that
+    // is already up, but stamp the finalized SpacetimeDB usage summary onto it — that is the
+    // number sheet the end screen prints.
+    if (this.phase === 'ended') {
+      if (result.usage && this.lastEnd) {
+        this.officialUsage = result.usage;
+        this.showResults(this.lastEnd.winner, this.lastEnd.tiles, this.lastEnd.reason);
+      }
+      return;
+    }
+    if (this.phase !== 'playing') return; // the player already moved on (menu) — nothing to project
     this.officialUsage = result.usage ?? null;
-    this.endMatch(result.winnerColony, result.reason);
+    this.endMatch(result.winnerColony, result.reason, true);
   }
 
   // ------------------------------------------------------------ roles
@@ -2214,7 +2231,7 @@ export class Game {
     return p.necrotechColor ?? COLONIES[Math.max(0, p.colony)].color;
   }
 
-  endMatch(winner: number | null, reason?: string): void {
+  endMatch(winner: number | null, reason?: string, fromServer = false): void {
     if (this.phase === 'ended') return;
     this.phase = 'ended';
     this.lateSelect = null;
@@ -2231,10 +2248,17 @@ export class Game {
     this.ui.hidePickup();
     this.pendingLevelUp = null;
     this.pendingPickup = null;
+    // OFFICIAL: a LOCAL conclusion must not let the still-RUNNING server row pull this player
+    // back in while the authoritative finish lands, and a Nexus capture (`winner` set) is
+    // reported so the server ends the match for EVERY seat at once — no waiting out the clock
+    // (user report: the game kept dragging players back into a match that was already over).
+    // A server-projected end (`fromServer`) reports nothing: it IS the finish landing.
+    if (this.officialMatch && !fromServer) this.officialMatch.bridge.reportVictory(winner);
     const tiles = this.towers.towers.map((t, i) => ({
       label: t.kind === 'nexus' ? 'Nexus' : `Beacon ${i + 1}`,
       owner: t.owner,
     }));
+    this.lastEnd = { winner, tiles, reason };
     if (this.isHost) {
       this.net.broadcast({ t: 'end', winner, tiles, reason: reason ?? '' });
     }
@@ -2294,6 +2318,7 @@ export class Game {
     this.lateSelect = null;
     this.isHost = true;
     this.phase = 'menu';
+    this.lastEnd = null;
     this.officialUsage = null;
     this.roster.clear();
     for (const p of this.players.values()) p.dispose();

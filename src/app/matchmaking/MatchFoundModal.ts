@@ -55,12 +55,14 @@ export class MatchFoundModal {
   /**
    * Confirmation window: 10 seconds, every player confirms (plan §14). No heading and no explainer
    * — the user asked for the minimal card: the colony line-up, the countdown, the bar, the button.
+   * `allConfirmed` is the final beat: the bar fills and the clock turns into a ✓ so the last
+   * confirmation is SEEN before the loading screen takes over (user ask 2026-09-28).
    */
-  updateConfirming(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean): void {
+  updateConfirming(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean, allConfirmed = false): void {
     this.title.classList.add('hidden');
     this.fillNote.classList.add('hidden');
     this.fillClock.classList.add('hidden');
     this.confirmation.element.classList.remove('hidden');
-    this.confirmation.update(deadlineSeconds, seats, myConfirmed);
+    this.confirmation.update(deadlineSeconds, seats, myConfirmed, allConfirmed);
   }
 }

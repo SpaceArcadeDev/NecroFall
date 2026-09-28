@@ -25,7 +25,12 @@ export class MatchmakingPage {
     this.queueStatus = new QueueStatus(() => this.ctx.official.cancelFindMatch());
     this.element.appendChild(this.queueStatus.element);
     this.modal = new MatchFoundModal(
-      () => this.ctx.official.confirmMatch(),
+      () => {
+        this.ctx.official.confirmMatch();
+        // Render the optimistic ✓ in the SAME frame as the click — the 300 ms poll would leave
+        // the button flipped while its slot still read '?'.
+        this.tick();
+      },
       () => {
         this.ctx.official.declineMatch();
         this.ctx.returnFromQueue();
@@ -57,6 +62,6 @@ export class MatchmakingPage {
     }
     this.modal.show();
     if (info.filling) this.modal.updateFilling(info.deadlineSeconds);
-    else this.modal.updateConfirming(info.deadlineSeconds, info.seats, info.myConfirmed);
+    else this.modal.updateConfirming(info.deadlineSeconds, info.seats, info.myConfirmed, info.allConfirmed);
   }
 }

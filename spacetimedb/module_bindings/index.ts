@@ -53,6 +53,7 @@ import LeaveMatchReducer from "./leave_match_reducer";
 import LeavePartyReducer from "./leave_party_reducer";
 import RecordProfileViewReducer from "./record_profile_view_reducer";
 import ReportMatchStatsReducer from "./report_match_stats_reducer";
+import ReportNexusCaptureReducer from "./report_nexus_capture_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetBanAdminReducer from "./set_ban_admin_reducer";
 import SetKeybindsReducer from "./set_keybinds_reducer";
@@ -383,6 +384,7 @@ const reducersSchema = __reducers(
   __reducerSchema("leave_party", LeavePartyReducer),
   __reducerSchema("record_profile_view", RecordProfileViewReducer),
   __reducerSchema("report_match_stats", ReportMatchStatsReducer),
+  __reducerSchema("report_nexus_capture", ReportNexusCaptureReducer),
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_ban_admin", SetBanAdminReducer),
   __reducerSchema("set_keybinds", SetKeybindsReducer),

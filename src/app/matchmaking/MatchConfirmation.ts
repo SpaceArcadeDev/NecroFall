@@ -71,11 +71,17 @@ export class MatchConfirmation {
     this.element.appendChild(leave);
   }
 
-  update(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean): void {
+  update(deadlineSeconds: number, seats: CandidateSeat[], myConfirmed: boolean, allConfirmed = false): void {
     const shown = Math.max(0, Math.ceil(deadlineSeconds));
-    if (this.countdown.textContent !== `${shown}`) this.countdown.textContent = `${shown}`;
-    this.countdown.classList.toggle('urgent', shown <= 3);
-    this.bar.style.width = `${Math.min(100, Math.max(0, (deadlineSeconds / MatchConfirmation.CONFIRM_SECONDS) * 100))}%`;
+    // The all-confirmed beat: the clock reports "✓" and the bar sits FULL (the window is not
+    // counting out anymore — everyone said yes and the match is about to start).
+    const clock = allConfirmed ? '✓' : `${shown}`;
+    if (this.countdown.textContent !== clock) this.countdown.textContent = clock;
+    this.countdown.classList.toggle('urgent', !allConfirmed && shown <= 3);
+    this.countdown.classList.toggle('done', allConfirmed);
+    this.bar.style.width = allConfirmed
+      ? '100%'
+      : `${Math.min(100, Math.max(0, (deadlineSeconds / MatchConfirmation.CONFIRM_SECONDS) * 100))}%`;
 
     const btnState = myConfirmed ? 'ok' : 'wait';
     if (btnState !== this.lastBtnState) {
@@ -94,8 +100,10 @@ export class MatchConfirmation {
       for (let i = 0; i < SLOTS_PER_COLONY; i++) {
         const seat = byColony[c][i];
         const slot = this.slots[c][i];
+        // Waiting seats read INACTIVE (a dim '?'), and only a real confirmation turns the slot
+        // into the filled circular checkmark ('on'). `me` marks your own seat without lighting it.
         const cls = seat
-          ? `nf-confirm-slot${seat.confirmed ? ' on' : ' live'}${seat.me ? ' me' : ''}`
+          ? `nf-confirm-slot${seat.confirmed ? ' on' : ' wait'}${seat.me ? ' me' : ''}`
           : 'nf-confirm-slot dim';
         const txt = seat && seat.confirmed ? '✓' : '?';
         if (slot.className !== cls) slot.className = cls;

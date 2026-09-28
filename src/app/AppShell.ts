@@ -16,7 +16,7 @@ import { AuthProvider } from './auth/AuthProvider';
 import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthProvider';
 import { isAuthCallbackUrl } from './auth/authCallback';
 import { ClientCache } from './spacetimedb/cache';
-import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection } from './spacetimedb/connection';
+import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, type ConnectionState } from './spacetimedb/connection';
 import { reportMatchStats, chooseColony, setPlayerName } from './spacetimedb/reducers';
 import { COLONY_NONE, hexOf } from './spacetimedb/rows';
 import { subscribeAccount, subscribeMatchmaking, subscribePlayer } from './spacetimedb/subscriptions';
@@ -94,6 +94,14 @@ export class AppShell implements ShellContext {
   private lastGameScreen: ScreenName = 'menu';
   /** `?party=CODE` invite link — consumed once the account is ready to join. */
   private invitedPartyCode = '';
+  /**
+   * The boot watchdog (user report: "blank screen with the rotating planet, no UI"): a wedged
+   * token refresh or a connect that never answers must NEVER leave the shell invisible. If no
+   * account screen has appeared after this long, the login card surfaces with the reason — and a
+   * late success still takes the screen over through `onData()`.
+   */
+  private bootWatchdog = 0;
+  private static readonly BOOT_WATCHDOG_MS = 12_000;
 
   constructor(private app: HTMLElement) {
     this.auth = APP_CONFIG.authConfigured ? new SpacetimeAuthProvider() : new NullAuthProvider();
@@ -150,7 +158,8 @@ export class AppShell implements ShellContext {
       this.official.onGameEvent((event) => this.onProviderEvent(event)),
       ClientCache.shared.onChange(() => this.onData()),
       onRouteChange(() => this.onRoute()),
-      SpacetimeConnection.shared.onConnect(() => this.onConnected())
+      SpacetimeConnection.shared.onConnect(() => this.onConnected()),
+      SpacetimeConnection.shared.onState((state) => this.onConnectionState(state))
     );
 
     // Reducer validation failures (SenderError from the module) become toasts — with one
@@ -163,6 +172,12 @@ export class AppShell implements ShellContext {
       if (/already in a match/i.test(detail.message)) {
         const live = ClientCache.shared.activeMatchFor(this.myHex());
         if (live) {
+          // A match this session ALREADY concluded locally is not a re-entry target: its server
+          // finish is on the way (nexus report / time limit), so never yank the player back in.
+          if (this.official.hasEndedLocally(live.matchId)) {
+            this.toast('Your last match is wrapping up — try again in a moment.');
+            return;
+          }
           this.toast(`You're still in match #${live.matchId} — opening it…`);
           navigate({ name: 'match', id: live.matchId });
           return;
@@ -377,6 +392,9 @@ export class AppShell implements ShellContext {
     //     so the shell menus sit on the same rotating planet the in-game menu did.
     this.ensureBackdrop();
 
+    // The planet must never be the ONLY thing on screen: seconds, not forever.
+    this.armBootWatchdog();
+
     // 3) No OIDC provider (local server / guest-only setup): connect straight
     //    away with the stored device identity.
     if (!APP_CONFIG.authConfigured) {
@@ -412,6 +430,42 @@ export class AppShell implements ShellContext {
     // onConnected() fires from the connection listener and takes over.
   }
 
+  /**
+   * Watchdog arm: if the shell is still on 'boot' after BOOT_WATCHDOG_MS, surface the login card
+   * with the reason instead of an invisible shell over a rotating planet. The connection keeps
+   * retrying in the background; a later success still takes over via `onData()`.
+   */
+  private armBootWatchdog(): void {
+    if (this.bootWatchdog) return;
+    this.bootWatchdog = window.setTimeout(() => {
+      this.bootWatchdog = 0;
+      if (this.accountReady || this.screen !== 'boot') return;
+      const reason =
+        SpacetimeConnection.shared.state === 'connected'
+          ? 'Your account did not load — retry below.'
+          : 'Could not reach the game server. Retry below.';
+      this.showShell('login', undefined, reason);
+    }, AppShell.BOOT_WATCHDOG_MS);
+  }
+
+  private clearBootWatchdog(): void {
+    if (!this.bootWatchdog) return;
+    window.clearTimeout(this.bootWatchdog);
+    this.bootWatchdog = 0;
+  }
+
+  /**
+   * A failed FIRST connect must show something: without this the boot stayed silent (the old
+   * `connect()` returned before the socket actually answered, so its error arrived after the
+   * caller's one-shot state check) and the user stared at an empty planet until they cleared
+   * site data. Sign-out still works because `accountReady` gates it.
+   */
+  private onConnectionState(state: ConnectionState): void {
+    if (state !== 'error' || this.accountReady) return;
+    if (this.screen !== 'boot') return; // login/loading screens already carry their own message
+    this.showShell('login', undefined, 'Could not reach the game server. Retry below.');
+  }
+
   private onConnected(): void {
     const hex = this.myHex();
     if (!hex) return;
@@ -440,6 +494,7 @@ export class AppShell implements ShellContext {
     const me = this.myHex() ? ClientCache.shared.me(this.myHex()) : null;
     if (!this.accountReady && me) {
       this.accountReady = true;
+      this.clearBootWatchdog();
       const needsOnboarding = me.colony === COLONY_NONE || !me.playerName;
       const route = parseRoute();
       if (needsOnboarding) this.showShell('onboarding');
@@ -1122,7 +1177,9 @@ export class AppShell implements ShellContext {
   }
 
   private beginLoading(): void {
-    if (this.officialMatchActive && this.screen === 'loading') return;
+    // An official match that is already live owns the screen: a stray match-start must never
+    // re-enter the loading path (it used to be able to re-boot a playing instance and reload-loop).
+    if (this.officialMatchActive) return;
     this.loadingSince = performance.now();
     this.showShell('loading');
 
@@ -1139,7 +1196,17 @@ export class AppShell implements ShellContext {
           // OFFICIAL MATCHES CARRY THEIR ID IN THE URL — shareable, and a reload rejoins it.
           window.history.replaceState({}, document.title, `#/match/${payload.matchId}`);
           this.bootOfficialGame(payload);
-        } else if (timedOut) this.toast('Match found, but no server state arrived — returning to lobby.');
+        }
+        return;
+      }
+      if (timedOut) {
+        // No usable payload: never strand the loading screen. Drop the match state (a re-entry
+        // loop would keep the player pinned here) and hand the screen back to the shell.
+        this.toast('Match found, but no server state arrived — returning to the menu.');
+        this.official.resetMatch();
+        // The queued row may still exist server-side; cancelling is idempotent.
+        this.official.cancelFindMatch();
+        this.showShell('home');
         return;
       }
       window.setTimeout(tryBoot, 250);

@@ -78,6 +78,12 @@ export const leaveMatch = (): void => callReducer('leaveMatch');
 export const joinMatch = (matchId: number, colony: number, necrotech: number): void =>
   callReducer('joinMatch', { matchId, colony, necrotech });
 
+/**
+ * REPORT NEXUS CAPTURE — the local sim took the Nexus; the server finishes the match for
+ * everyone the moment the first report lands (`finishMatchInternal` is idempotent).
+ */
+export const reportNexusCapture = (colony: number): void => callReducer('reportNexusCapture', { colony });
+
 export interface SyncPoseArgs {
   x: number;
   y: number;

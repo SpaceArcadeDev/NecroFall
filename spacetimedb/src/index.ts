@@ -36,7 +36,7 @@ export { find_match, cancel_find_match, matchmaking_scan_tick } from './matchmak
 export { confirm_match, decline_match } from './matchmaking/confirmation';
 
 // ---- the official game server (plan §16–§19/§40/§74)
-export { submit_input, sync_pose, match_sim_tick, leave_match, join_match } from './game/simulation';
+export { submit_input, sync_pose, match_sim_tick, leave_match, join_match, report_nexus_capture } from './game/simulation';
 export { report_match_stats } from './game/rewards';
 
 // ---- social (plan §5/§6)

@@ -67,4 +67,11 @@ export interface OfficialGameBridge {
   attachGame(api: OfficialGameApi): void;
   /** The player pressed LEAVE MATCH: abandon the seat server-side (never auto-rejoin). */
   leaveMatch(): void;
+  /**
+   * The LOCAL simulation concluded the match. A non-null `colony` = a Nexus capture: the provider
+   * also reports it to the server (`report_nexus_capture`) so the match finishes for everyone at
+   * once. Either way it latches the id so the still-RUNNING row cannot pull the player back in
+   * while the authoritative finish lands. Server-projected ends do NOT come through here.
+   */
+  reportVictory(colony: number | null): void;
 }

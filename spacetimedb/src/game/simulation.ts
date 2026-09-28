@@ -18,6 +18,7 @@ import { match_event, match_tick } from '../schema/game';
 import { player_presence } from '../schema/player';
 import {
   COLONY_CAP,
+  EVENT_NEXUS_CAPTURED,
   EVENT_PLAYER_SPAWNED,
   MATCH_EMPTY_GRACE_US,
   MATCH_FINISHED,
@@ -426,3 +427,38 @@ export const leave_match = spacetimedb.reducer((ctx) => {
   if (!seat) return; // nothing to leave — idempotent
   ctx.db.match_player.id.update({ ...seat, left: true, connected: false, updated_at: ctx.timestamp });
 });
+
+/**
+ * REPORT NEXUS CAPTURE (user ask 2026-09-28): the Nexus is the win condition — the match ends the
+ * moment a colony takes it, full stop. Towers/objectives are not server-simulated yet (milestone),
+ * so the client whose simulation completed the capture reports it here. The reducer is idempotent
+ * by construction: `finishMatchInternal` only acts on a RUNNING match, so the first report wins.
+ *
+ * Why this exists at all: without it the server match stayed RUNNING after a local victory and the
+ * client's matchmaking watcher kept pulling the player back into a game that was already over (the
+ * "brought back into the match / back to the end screen" reports) — and the results screen never
+ * received the finalized usage summary, because `detectMatchEnd` only fires on a FINISHED row.
+ */
+export const report_nexus_capture = spacetimedb.reducer(
+  { colony: t.u8() },
+  (ctx, { colony }) => {
+    if (colony > 2) throw new SenderError('Invalid colony.');
+    let target: any | undefined;
+    for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
+      if (s.left) continue; // tombstone seats never declare a winner
+      const m = ctx.db.match.match_id.find(s.match_id);
+      if (m && m.status === MATCH_RUNNING) { target = s; break; }
+    }
+    if (!target) throw new SenderError('You are not in a running match.');
+    ctx.db.match_event.insert({
+      id: 0,
+      match_id: target.match_id,
+      kind: EVENT_NEXUS_CAPTURED,
+      a: colony,
+      b: 0,
+      x: 0, y: 0, z: 0,
+      at: ctx.timestamp,
+    });
+    finishMatchInternal(ctx, target.match_id, colony, 'NEXUS CAPTURED');
+  }
+);

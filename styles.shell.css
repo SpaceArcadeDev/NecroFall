@@ -832,6 +832,8 @@ html.nf-onb-colony .count-badge { display: none; }
 /* the fill window: a big clock over a draining bar */
 .nf-queue-clock { font-size: clamp(44px, 11vw, 68px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1; text-shadow: 0 0 34px rgba(180, 120, 255, 0.4); }
 .nf-queue-clock.urgent { color: #ff5c7a; text-shadow: 0 0 34px rgba(255, 92, 122, 0.5); animation: nf-pulse 0.6s infinite alternate; }
+/* The all-confirmed beat: the clock shows a green ✓ instead of a number (everyone said yes). */
+.nf-queue-clock.done { color: #4cf490; text-shadow: 0 0 34px rgba(76, 244, 144, 0.55); }
 .nf-fill-track {
   width: min(360px, 84%);
   height: 6px;
@@ -879,15 +881,24 @@ html.nf-onb-colony .count-badge { display: none; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
 }
 .nf-confirm-slot.dim { opacity: 0.35; }
-.nf-confirm-slot.live { border-color: rgba(255, 255, 255, 0.4); color: var(--ui-text); }
-.nf-confirm-slot.me { border-color: #ffffff; color: #ffffff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.3); }
-/* confirmed: the grey '?' fills in as a GREEN CIRCULAR CHECKMARK */
+/* A player who has NOT confirmed yet: the slot reads INACTIVE — a dim, low-contrast '?' with no
+   glow. It only lights up (below) when that player actually confirms. */
+.nf-confirm-slot.wait { border-color: rgba(255, 255, 255, 0.14); color: rgba(255, 255, 255, 0.42); }
+.nf-confirm-slot.wait.me { border-color: rgba(255, 255, 255, 0.42); color: rgba(255, 255, 255, 0.72); }
+.nf-confirm-slot.me { box-shadow: 0 0 10px rgba(255, 255, 255, 0.12); }
+/* confirmed: the grey '?' fills in as a GREEN CIRCULAR CHECKMARK with a one-time pop */
 .nf-confirm-slot.on {
   background: radial-gradient(circle at 35% 30%, #5bffa4, #149e63 78%);
   border-color: #d6ffe9;
   color: #042b1c;
   font-weight: 900;
   box-shadow: 0 0 16px rgba(76, 244, 144, 0.6);
+  animation: nf-confirm-pop 0.32s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes nf-confirm-pop {
+  0% { transform: scale(0.55); }
+  60% { transform: scale(1.14); }
+  100% { transform: scale(1); }
 }
 @keyframes nf-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
 .nf-confirm-btn {

@@ -55,8 +55,9 @@ import { UI, ScreenName } from '../ui/UI';
 import type { BossPlate, TowerPlate, HudData, MiniData } from '../ui/UI';
 import { Player, PlayerNet } from '../player/Player';
 import { DecoySystem } from '../player/Decoy';
-import { AccessorySelection } from '../customization/AccessoryTypes';
+import { AccessorySelection, EffectCategory } from '../customization/AccessoryTypes';
 import { loadSelection, saveSelection, selectionFromWire, selectionToWire } from '../customization/CustomizationStore';
+import { CosmeticFxRunner } from '../customization/CosmeticFx';
 import { NECROTECHS, NecrotechDef, defForDrop, ALL_NECROTECHS, ensureAim, aimDefault } from '../necrotech/NecrotechData';
 import { PERKS, Perk, rollPerks } from '../necromutation/Perks';
 import { Rand, clamp, dirFromAngles, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
@@ -217,6 +218,8 @@ export class Game {
   cam: GameCamera;
   planet: Planet;
   effects: Effects;
+  /** One-shot cosmetic effects (recall / spawn / eliminated) — owned here, ticked every frame. */
+  cosmeticFx: CosmeticFxRunner;
   /**
    * Terrain-conforming danger decals. Every boss telegraph is projected on to the planet through
    * this system, so a warning area always hugs the ground it will actually hit.
@@ -428,14 +431,13 @@ export class Game {
     towers: this.hudTowers, counts: this.hudCounts, zone: null, perks: this.hudPerks, tasks: this.hudTasks,
   };
   /**
-   * The local player's RECALL channel (null = none). Recall is a vulnerable channel: the idle gate
-   * (`input.idleFor >= CONFIG.recall.idleTime` of no directional/action input) unlocks the button,
-   * the channel runs `channelTime` seconds of standing still, and the FIRST fresh input, hit or
-   * death breaks it — see `requestRecall` / `cancelRecall` / `updateRecall`.
+   * The local player's RECALL channel (null = none). Recall is a committed, vulnerable channel:
+   * the button is PRESSABLE ANYTIME (user ask 2026-09-29 — the old idle gate is gone), pressing
+   * it locks the body in place (`Player.recallHold`) so it can neither move nor fire, and a FRESH
+   * input edge, any hit or death breaks it — the next press starts the count all over. See
+   * `requestRecall` / `watchRecallInput` / `cancelRecall` / `updateRecall`.
    */
-  private recall: { p: Player; t: number; total: number } | null = null;
-  /** FX clock of the running channel (a rising ring every third of a second). */
-  private recallFxT = 0;
+  private recall: { p: Player; t: number; total: number; since: number } | null = null;
   private miniPlayers: MiniData['players'] = [];
   private miniTowers: MiniData['towers'] = [];
   private miniEnemies: MiniData['enemies'] = [];
@@ -545,6 +547,7 @@ export class Game {
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
     this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
     this.effects = new Effects(this.scene, this.settings);
+    this.cosmeticFx = new CosmeticFxRunner(this.scene);
     this.telegraphs = new TelegraphSystem(this.scene);
     this.telegraphs.setPlanet(this.planet);
     this.decoys = new DecoySystem(this.scene);
@@ -1072,6 +1075,15 @@ export class Game {
       if (this.isHost) this.pushLobby();
       else this.net.sendToHost({ t: 'sel', acc: entry.acc });
     }
+  }
+
+  /**
+   * Plays one of `p`'s equipped ONE-SHOT effects at a world point — a no-op when the slot is
+   * empty. `pos`/`up` are copied by the runner, so callers may hand it their scratch vectors.
+   */
+  private playPlayerFx(cat: EffectCategory, p: Player, pos: THREE.Vector3, up: THREE.Vector3): void {
+    const idx = p.accessorySelection[cat];
+    if (idx >= 0) this.cosmeticFx.play(cat, idx, pos, up);
   }
 
   /** Pushes a preset into every system that can honour it live. */
@@ -1947,6 +1959,7 @@ export class Game {
     this.phase = 'colony';
     this.phaseTimer = CONFIG.colonySelectTime;
     // a recall channel from the previous round dies with it
+    if (this.recall) this.recall.p.recallHold = false;
     this.recall = null;
     for (const r of this.roster.values()) {
       r.colony = -1;
@@ -1992,6 +2005,8 @@ export class Game {
     // A fresh match starts from a clean rescue slate — the previous match's trim (particle and
     // ambience budgets, hidden scenery) must never bleed into the new world.
     this.resetRescue();
+    // …and no cosmetic one-shot from the old match plays on into the new one.
+    this.cosmeticFx.clear();
     this.worstMs = 0;
     this.frameErrors = 0;
     this.buildPlayers(assignments);
@@ -2028,6 +2043,9 @@ export class Game {
       p.velocity.set(0, 0, 0);
       p.recompute();
     }
+    // match-start SPAWN effects: every seat's chosen arrival plays from the first frame (slots
+    // with nothing equipped simply stay quiet). Later respawns go through `placeRespawned`.
+    for (const p of this.players.values()) this.playPlayerFx('spawn', p, p.position, p.up);
     oldPlanet.dispose();
     const bestiary = (() => {
       // The ranked planet's descriptor regenerates the EXACT world the map showed (plan §32):
@@ -2371,8 +2389,16 @@ export class Game {
     this.orientTowardsCluster(p);
     if (p.isLocal) this.ui.hideRespawn();
     if (p.colony >= 0) this.bases.flashSpawn(p.colony);
-    this.effects.ring(p.position, p.up, 1.2, this.playerColor(p), 0.6, 2.4, 0.8);
-    this.effects.burst(p.position, this.playerColor(p), { count: 20, speed: 8, life: 0.6, size: 0.6, gravity: 0 });
+    // RESPAWN ARRIVAL (user ask 2026-09-29): the same satisfying pop a recall landing gets — a
+    // white flash ring inside the colony colour, a spread disc, sparks and an upward fountain.
+    const col = this.playerColor(p);
+    this.effects.ring(p.position, p.up, 1.2, col, 0.6, 2.4, 0.8);
+    this.effects.ring(p.position, p.up, 0.85, 0xffffff, 0.32, 2.2, 0.9);
+    this.effects.disk(p.position, p.up, 1.9, col, 0.5, 1.3, 0.3);
+    this.effects.burst(p.position, col, { count: 30, speed: 11, life: 0.7, size: 0.65, gravity: 0 });
+    this.effects.burst(p.position, 0xffffff, { count: 14, speed: 11, life: 0.5, size: 0.5, gravity: 0, dir: p.up, jitter: 0.5 });
+    // the seat's SPAWN EFFECT: every respawn plays it here (host and clients both run this path)
+    this.playPlayerFx('spawn', p, p.position, p.up);
     this.audio.sfx('respawn');
     if (p.isLocal) this.cam.snap();
   }
@@ -2395,27 +2421,42 @@ export class Game {
   }
 
   /**
-   * RECALL — the universal escape hatch (UI button, right end of the Necrotech tag row). It is a
-   * DELIBERATE three-step contract, so it can never be a mid-fight panic button: hold direction and
-   * action input still for `CONFIG.recall.idleTime` (the button lights up), press it, then keep
-   * standing defenceless for `CONFIG.recall.channelTime` — any fresh input, any hit, any death
-   * breaks the channel.
+   * RECALL — the universal escape hatch (HUD home button, under the minimap). Pressable ANYTIME
+   * while alive and in control (user ask 2026-09-29 — the old "stand still for 5 s" idle gate is
+   * gone): the press STARTS the channel and LOCKS the body — no movement, no action buttons — for
+   * `CONFIG.recall.channelTime`. Any fresh input edge (see `watchRecallInput`), any hit or death
+   * breaks it, and the next press starts the count all over again.
    */
   requestRecall(): void {
     const p = this.localPlayer;
     if (!p || this.recall || this.phase !== 'playing' || this.paused) return;
     // dead, mid-picker, or riding a Blitz cube: not recallable (the corpse respawns normally)
     if (!p.alive || p.frozen || p.blitzT > 0) return;
-    // the idle gate — the button is dim until this passes (see UI.updateHud `recallReady`)
-    if (this.input.idleFor < CONFIG.recall.idleTime) return;
-    this.recall = { p, t: CONFIG.recall.channelTime, total: CONFIG.recall.channelTime };
-    this.recallFxT = 0;
+    this.recall = { p, t: CONFIG.recall.channelTime, total: CONFIG.recall.channelTime, since: this.input.lastEdge };
+    // the LOCK: while the channel runs the body stands exactly here (Player.update reads this)
+    p.recallHold = true;
+    p.velocity.set(0, 0, 0);
     this.effects.ring(p.position, p.up, 1.6, 0x8fd7ff, 0.55, 2.6, 0.8);
+    // the channel opens on the player's own RECALL EFFECT — local only (peers have no event for
+    // a channel starting); they get the arrival/departure plays when it actually lands.
+    this.playPlayerFx('recall', p, p.position, p.up);
     this.audio.sfx('ui');
   }
 
   /**
-   * Ends a running recall. Called by the input/damage watch in `updateRecall` and directly from
+   * The channel's input watch — runs BEFORE the players simulate (see the playing block) so the
+   * very frame that breaks the channel is also the frame control comes back. A recall pressed
+   * mid-run survives the run key that was ALREADY held (that is not an edge); a new press, a new
+   * queued action, or re-engaging the stick cancels.
+   */
+  private watchRecallInput(): void {
+    const r = this.recall;
+    if (!r || this.paused) return;
+    if (this.input.lastEdge > r.since) this.cancelRecall(r.p, 'input');
+  }
+
+  /**
+   * Ends a running recall. Called by the input watch above and directly from
    * `Player.takeDamage` / `applyDotDamage` — taking a hit breaks the channel. Returns true when a
    * recall was actually cut short.
    */
@@ -2423,6 +2464,7 @@ export class Game {
     const r = this.recall;
     if (!r || r.p !== p) return false;
     this.recall = null;
+    p.recallHold = false;
     // A broken channel pops in red at the point it had reached: readable as "that failed" without
     // a wall of text (the banner is reserved for hits, which are the surprising case).
     this.effects.ring(p.position, p.up, 1.8, 0xff6b6b, 0.4, 3.0, 0.7);
@@ -2430,28 +2472,26 @@ export class Game {
     return true;
   }
 
-  /** Per-frame recall channel: the countdown, the lift FX, and the input watch that breaks it. */
+  /** Per-frame recall channel: the countdown, the anchor column FX and the completion. */
   private updateRecall(dt: number): void {
     const r = this.recall;
     if (!r || this.paused) return;
     const p = r.p;
     if (!p.alive) { this.cancelRecall(p, 'death'); return; }
-    // `idleFor` was past `idleTime` when the button was pressed, so it reading near zero again
-    // means the player moved (or queued an action) AFTER committing: hold still while you channel.
-    if (p.frozen || this.input.idleFor < 0.12) { this.cancelRecall(p, 'input'); return; }
+    // a picker must never open under a channel: it is an interruption, not an input break
+    if (p.frozen) { this.cancelRecall(p, 'interrupted'); return; }
     r.t -= dt;
-    this.recallFxT -= dt;
-    if (this.recallFxT <= 0) {
-      this.recallFxT = 0.33;
-      // the column of light pulling the body home: a ring rising off the ground every third of a second
-      this.effects.ring(p.position, p.up, 0.9, 0x8fd7ff, 0.5, 2.2, 0.65);
-    }
+    // The recall COLUMN (user ask 2026-09-29): a cylinder around the body with streaks sprinting
+    // up it and a breathing base ring — fed every frame, so it lives exactly as long as the
+    // channel and fades out on its own the moment the calls stop (cancel, death, completion).
+    this.effects.recallColumn(p.position, p.up, 0x8fd7ff, dt);
     if (r.t > 0) return;
     // COMPLETE — land on the colony's fortress deck, the same spot a respawn uses. Deliberately
     // NOT `spawnAt`: no free heal, no cooldown wipe (see Player.recallTo).
     const dest = this.spawnPointFor(p.colony, p.id);
     _v3.copy(p.position);
     this.recall = null;
+    p.recallHold = false;
     p.recallTo(dest);
     this.recallFx(p.id, _v3, p.position);
     if (p.colony >= 0) this.bases.flashSpawn(p.colony);
@@ -2466,24 +2506,38 @@ export class Game {
   }
 
   /**
-   * The two-ended recall flash: a departure pop where the body left, an arrival pillar where it
-   * lands. Runs for the local completion and for every remote `ev: recall` event.
+   * The two-ended recall flash: a departure pop where the body left, a full arrival burst where
+   * it lands. Runs for the local completion and for every remote `ev: recall` event.
    */
   private recallFx(srcId: string, from: THREE.Vector3, to: THREE.Vector3): void {
     const p = this.players.get(srcId);
     const color = p ? this.playerColor(p) : 0x8fd7ff;
     const upFrom = _v.copy(from).normalize();
     const upTo = _v2.copy(to).normalize();
+    // the seat's RECALL EFFECT runs at both ends of the jump — departure where the body left,
+    // arrival where it lands. `recallFx` fires once per machine per recall (local completion, or
+    // the relayed `ev`), so each end plays exactly once everywhere.
+    if (p) {
+      this.playPlayerFx('recall', p, from, upFrom);
+      this.playPlayerFx('recall', p, to, upTo);
+    }
     this.effects.ring(from, upFrom, 1.4, color, 0.45, 3.0, 0.8);
     this.effects.burst(from, color, { count: 18, speed: 9, life: 0.5, size: 0.5, gravity: 0 });
-    this.effects.ring(to, upTo, 1.6, color, 0.55, 2.4, 0.9);
-    this.effects.burst(to, color, { count: 26, speed: 11, life: 0.6, size: 0.6, gravity: 0 });
+    // ARRIVAL (user ask 2026-09-29: "satisfying burst"): a white flash ring under the colony
+    // colour, a spread disc, two shells of sparks and a fountain straight up — the trip ends with
+    // a pop you can feel, not a body quietly fading in.
+    this.effects.ring(to, upTo, 1.2, 0xffffff, 0.35, 2.4, 0.9);
+    this.effects.ring(to, upTo, 1.7, color, 0.6, 2.6, 0.9);
+    this.effects.disk(to, upTo, 2.1, color, 0.5, 1.25, 0.3);
+    this.effects.burst(to, color, { count: 40, speed: 13, life: 0.7, size: 0.65, gravity: 0 });
+    this.effects.burst(to, 0xffffff, { count: 16, speed: 12, life: 0.5, size: 0.5, gravity: 0, dir: upTo, jitter: 0.5 });
     if (p?.isLocal) this.cam.snap();
   }
   endMatch(winner: number | null, reason?: string, fromServer = false): void {
     if (this.phase === 'ended') return;
     this.phase = 'ended';
     this.lateSelect = null;
+    if (this.recall) this.recall.p.recallHold = false;
     this.recall = null;
     this.paused = false;
     this.ui.hidePauseMenu();
@@ -2500,10 +2554,11 @@ export class Game {
     this.pendingPickup = null;
     this.pendingLevelHideT = 0;
     // OFFICIAL: a LOCAL conclusion must not let the still-RUNNING server row pull this player
-    // back in while the authoritative finish lands, and a Nexus capture (`winner` set) is
-    // reported so the server ends the match for EVERY seat at once — no waiting out the clock
-    // (user report: the game kept dragging players back into a match that was already over).
-    // A server-projected end (`fromServer`) reports nothing: it IS the finish landing.
+    // back in while the authoritative finish lands, and the result is reported so the server
+    // ends the match for EVERY seat at once — a Nexus capture with its winner, a Necrophage
+    // victory (null) as a no-winner finish (user report: the row kept saying "already in a
+    // match" after the end screen, and a reload dragged the player back in). A server-projected
+    // end (`fromServer`) reports nothing: it IS the finish landing.
     if (this.officialMatch && !fromServer) this.officialMatch.bridge.reportVictory(winner);
     const tiles = this.towers.towers.map((t, i) => ({
       label: t.kind === 'nexus' ? 'Nexus' : `Beacon ${i + 1}`,
@@ -2578,6 +2633,7 @@ export class Game {
     this.enemies.reset();
     this.combat.clear();
     this.effects.reset();
+    this.cosmeticFx.clear();
     this.entityResetPickups();
     this.input.setEnabled(false);
     this.ui.show('menu');
@@ -3015,6 +3071,17 @@ export class Game {
         if (id === 'shielddown') {
           // The state change itself rides the next snapshot; this is just the audio cue.
           if (this.localPlayer) this.audio.sfx('shieldDown', 0.8);
+          return;
+        }
+        if (id === 'died') {
+          // A player was killed elsewhere: play the VICTIM's ELIMINATED effect where the host
+          // says the body fell. Host relays for third peers (same pattern as `recall`).
+          const victim = this.players.get(String(msg.pid));
+          if (victim) {
+            _v3.set(Number(msg.x) || 0, Number(msg.y) || 0, Number(msg.z) || 0);
+            this.playPlayerFx('eliminated', victim, _v3, _v3);
+          }
+          if (this.isHost && from !== this.net.myId) this.net.broadcast(msg, from);
           return;
         }
         if (id === 'recall') {
@@ -3771,6 +3838,13 @@ export class Game {
       // swallowed the blow (a dash i-frame or a shield the host had not seen yet). Without this
       // the client kept walking and its state stream stood the host's corpse back up.
       if (!p.isLocal) this.net.sendTo(p.id, { t: 'kill', pid: p.id, src: killer ? killer.id : '' });
+      // ELIMINATED effect: the host is the one machine that sees EVERY death (its own, and its
+      // authoritative copy of everyone else's), so it is the single broadcaster for this event.
+      // Each peer then plays the VICTIM's equipped effect at the reported spot.
+      if (p.accessorySelection.eliminated >= 0) {
+        this.playPlayerFx('eliminated', p, p.position, p.up);
+        this.net.broadcast({ t: 'ev', id: 'died', pid: p.id, x: p.position.x, y: p.position.y, z: p.position.z });
+      }
     } else if (p.isLocal) {
       this.net.sendToHost({ t: 'died', pid: p.id });
     }
@@ -4453,6 +4527,9 @@ export class Game {
         this.updateRespawns(dt);
       }
 
+      // the recall channel's input watch runs BEFORE anyone simulates, so the frame that breaks
+      // the channel is also the frame the player gets control back (they can move/act at once)
+      this.watchRecallInput();
       for (const p of this.players.values()) p.update(dt);
 
       // Keep this player's own run on disk — a refresh hands it straight back to the room.
@@ -4488,6 +4565,7 @@ export class Game {
     this.simMs += (performance.now() - simStart - this.simMs) * 0.1;
 
     this.effects.update(dt);
+    this.cosmeticFx.update(dt);
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
     this.planet.update(dt, this.cam.camera.position);
@@ -4844,13 +4922,13 @@ export class Game {
     d.jumpsMax = p?.jumpsTotal ?? CONFIG.player.baseJumps;
     d.autoTargets = p?.autoTargets ?? 1;
     d.beaconReady = beaconReady;
-    // RECALL: the button only lights once the player has been truly still long enough, and the
-    // channel bar reads its countdown straight off the running recall.
+    // RECALL: the button is pressable ANYTIME while alive and in control (user ask 2026-09-29), so
+    // it reads ready the moment there is nothing else in the way; the channel bar reads its
+    // countdown straight off the running recall.
     const rc = this.recall;
     d.recallActive = !!rc && this.phase === 'playing';
     d.recallReady = !d.recallActive && this.phase === 'playing' && !this.paused
-      && !!p && p.alive && !p.frozen && p.blitzT <= 0
-      && this.input.idleFor >= CONFIG.recall.idleTime;
+      && !!p && p.alive && !p.frozen && p.blitzT <= 0;
     d.recallSeconds = rc ? Math.max(0, rc.t) : 0;
     d.recallFrac = rc ? clamp(1 - rc.t / rc.total, 0, 1) : 0;
     d.colonyIdx = p?.colony ?? 0;

@@ -462,3 +462,27 @@ export const report_nexus_capture = spacetimedb.reducer(
     finishMatchInternal(ctx, target.match_id, colony, 'NEXUS CAPTURED');
   }
 );
+
+/**
+ * REPORT NECROPHAGE VICTORY (bug report 2026-09-29). The client's own clock ran out — or its
+ * simulation otherwise concluded — with NO colony claiming the Nexus: the Necrophages keep the
+ * planet. Without this report the server row stayed RUNNING long after every screen said
+ * NECROPHAGES WIN: "Find Match" answered "You are already in a match", a reload dragged the
+ * player back into a finished game, and the row only concluded once every socket had been gone
+ * for the whole 30 s rejoin grace.
+ *
+ * Idempotent by construction: `finishMatchInternal` only acts on a RUNNING match, so the first
+ * report from any seat ends it for everyone. Winner null = every seat is paid the loss reward
+ * and ranked records a draw — exactly what the server's own TIME LIMIT / ABANDONED paths do.
+ */
+export const report_necrophage_victory = spacetimedb.reducer((ctx) => {
+  let target: any | undefined;
+  for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
+    if (s.left) continue; // tombstone seats never declare a result
+    const m = ctx.db.match.match_id.find(s.match_id);
+    if (m && m.status === MATCH_RUNNING) { target = s; break; }
+  }
+  if (!target) throw new SenderError('You are not in a running match.');
+  // `finishMatchInternal` writes the MATCH ENDED event itself (winner 255 = nobody).
+  finishMatchInternal(ctx, target.match_id, null, 'NECROPHAGES WIN');
+});

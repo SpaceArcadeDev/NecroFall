@@ -396,6 +396,13 @@ interface WaveFX {
 }
 
 /**
+ * RECALL column dimensions (metres): the open cylinder stands taller than a survivor, and wide
+ * enough that the body is inside it, not wearing it.
+ */
+const RECALL_COL_H = 4.6;
+const RECALL_COL_R = 1.75;
+
+/**
  * A hexagonal energy curtain raised around a claimed patch of ground — Fortress Protocol's bastion
  * wall. Six flat panels that pulse and turn, collared top and bottom so the shape reads as built
  * rather than as a cylinder that happens to have corners.
@@ -468,6 +475,29 @@ export class Effects {
 
   private shakeAmt = 0;
   private quality: QualitySettings;
+  /**
+   * RECALL channel column (user ask 2026-09-29): ONE live emitter, fed every frame by
+   * `recallColumn` for as long as the ritual runs. `recallHeat` follows whether it was fed,
+   * so a broken channel fades the whole effect out instead of cutting it.
+   */
+  private recallMesh!: THREE.Mesh;
+  private recallMat!: THREE.MeshBasicMaterial;
+  private recallBase!: THREE.Mesh;
+  private recallBaseMat!: THREE.MeshBasicMaterial;
+  /** The column's top/bottom collars — one shared material, two rings. */
+  private recallCollarA!: THREE.Mesh;
+  private recallCollarB!: THREE.Mesh;
+  private recallCollarMat!: THREE.MeshBasicMaterial;
+  private recallHeat = 0;
+  private recallTime = 0;
+  private recallCalled = false;
+  private recallPulseT = 0;
+  private recallPulseN = 0;
+  private recallEmberT = 0;
+  private recallStreakT = 0;
+  private readonly recallPos = new THREE.Vector3();
+  private readonly recallUp = new THREE.Vector3(0, 1, 0);
+  private recallColor = 0x8fd7ff;
   /**
    * The planet ground effects are laid on. Optional: the menu and lobby build a scene with no
    * terrain, and a shape asked for before a match exists simply stays planar.
@@ -895,6 +925,47 @@ export class Effects {
       this.beams.push({ mesh, mat: m, life: 0, max: 1, a0: 1 });
     }
 
+    // RECALL column: one open cylinder around the caster plus the ground ring at its base — the
+    // streaks themselves are ordinary particles sprinted up its wall (see `recallColumn`).
+    const recallGeo = new THREE.CylinderGeometry(1, 1, 1, 26, 1, true);
+    recallGeo.translate(0, 0.5, 0);   // stands ON its base
+    this.recallMat = new THREE.MeshBasicMaterial({
+      color: 0x9fdcff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.recallMesh = new THREE.Mesh(recallGeo, this.recallMat);
+    this.recallMesh.visible = false;
+    this.recallMesh.renderOrder = 4;
+    this.recallMesh.frustumCulled = false;
+    scene.add(this.recallMesh);
+    const recallBaseGeo = new THREE.RingGeometry(0.82, 1, 40);
+    recallBaseGeo.rotateX(-Math.PI / 2);
+    this.recallBaseMat = new THREE.MeshBasicMaterial({
+      color: 0x9fdcff, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.recallBase = new THREE.Mesh(recallBaseGeo, this.recallBaseMat);
+    this.recallBase.visible = false;
+    this.recallBase.renderOrder = 4;
+    this.recallBase.frustumCulled = false;
+    scene.add(this.recallBase);
+    // top and bottom collars: flat rings on the tube's ends, so the column reads as BUILT (the
+    // Fortress Protocol curtain's own language) instead of a cylinder-shaped fog
+    const recallCollarGeo = new THREE.RingGeometry(0.9, 1.06, 40);
+    recallCollarGeo.rotateX(-Math.PI / 2);
+    this.recallCollarMat = new THREE.MeshBasicMaterial({
+      color: 0x9fdcff, transparent: true, opacity: 0, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    this.recallCollarA = new THREE.Mesh(recallCollarGeo, this.recallCollarMat);
+    this.recallCollarB = new THREE.Mesh(recallCollarGeo, this.recallCollarMat);
+    for (const collar of [this.recallCollarA, this.recallCollarB]) {
+      collar.visible = false;
+      collar.renderOrder = 4;
+      collar.frustumCulled = false;
+      scene.add(collar);
+    }
+
     // damage numbers
     if (quality.damageNumbers) {
       for (let i = 0; i < 22; i++) {
@@ -1113,6 +1184,143 @@ export class Effects {
     _q.setFromUnitVectors(_Y, _v2);
     mesh.quaternion.copy(_q);
     mesh.position.copy(_v).addScaledVector(_v2, 0.12);
+  }
+
+  /**
+   * RECALL — the channel column (user ask 2026-09-29). An open energy cylinder stands around the
+   * body while the ritual runs, STREAKS sprint up its wall, and the base breathes a ground ring
+   * with a halo of embers. Call it EVERY FRAME while the channel lives, with the frame's `dt`:
+   * the column fades in and holds, and it fades back out on its own within ~0.3 s of the calls
+   * stopping — a broken channel dies with the effect instead of snapping off.
+   */
+  recallColumn(pos: THREE.Vector3, up: THREE.Vector3, color: number, dt: number): void {
+    this.recallCalled = true;
+    this.recallPos.copy(pos);
+    this.recallUp.copy(up).normalize();
+    this.recallColor = color;
+    const heat = this.recallHeat;
+    if (heat <= 0.02) return;
+
+    // ---- STREAKS: particles sprinting up the cylinder's wall, from its whole height. Fed at a
+    // constant rate (~120/s) regardless of frame rate — a fast machine draws the same ritual.
+    tangentBasis(this.recallUp, _v, _v2);
+    const c = _col.setHex(color).lerp(_whiteColor, 0.34);
+    const n = clamp(Math.round((dt / 0.016) * 2 * (0.35 + 0.65 * heat)), 1, 6);
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const ca = Math.cos(a) * RECALL_COL_R * (0.8 + Math.random() * 0.32);
+      const sa = Math.sin(a) * RECALL_COL_R * (0.8 + Math.random() * 0.32);
+      const h = Math.random() * RECALL_COL_H;
+      const sp = 9 + Math.random() * 8;
+      // mostly up, a little sideways kick and a soft inward pull so the wall reads as spinning
+      const jx = (Math.random() - 0.5) * 3.4;
+      const jy = (Math.random() - 0.5) * 3.4;
+      const ex = _v.x * ca + _v2.x * sa;
+      const ey = _v.y * ca + _v2.y * sa;
+      const ez = _v.z * ca + _v2.z * sa;
+      this.spawnParticle(
+        this.recallPos.x + ex + this.recallUp.x * h,
+        this.recallPos.y + ey + this.recallUp.y * h,
+        this.recallPos.z + ez + this.recallUp.z * h,
+        ex * -1.1 + _v.x * jx + _v2.x * jy + this.recallUp.x * sp,
+        ey * -1.1 + _v.y * jx + _v2.y * jy + this.recallUp.y * sp,
+        ez * -1.1 + _v.z * jx + _v2.z * jy + this.recallUp.z * sp,
+        0.26 + Math.random() * 0.24,
+        (0.2 + Math.random() * 0.16) * (0.6 + 0.4 * heat),
+        c.r, c.g, c.b, 0, 0.5
+      );
+    }
+
+    // ---- base embers: low sparks skimming outward across the ground, lifting as they cool
+    this.recallEmberT -= dt;
+    while (this.recallEmberT <= 0) {
+      this.recallEmberT += 0.05;
+      const a = Math.random() * Math.PI * 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const r0 = RECALL_COL_R * (0.7 + Math.random() * 0.5);
+      const out = 2.2 + Math.random() * 2.6;
+      this.spawnParticle(
+        this.recallPos.x + _v.x * ca * r0 + _v2.x * sa * r0,
+        this.recallPos.y + _v.y * ca * r0 + _v2.y * sa * r0,
+        this.recallPos.z + _v.z * ca * r0 + _v2.z * sa * r0,
+        _v.x * ca * out + _v2.x * sa * out + this.recallUp.x * (1 + Math.random() * 2.4),
+        _v.y * ca * out + _v2.y * sa * out + this.recallUp.y * (1 + Math.random() * 2.4),
+        _v.z * ca * out + _v2.z * sa * out + this.recallUp.z * (1 + Math.random() * 2.4),
+        0.34 + Math.random() * 0.22,
+        0.22 + Math.random() * 0.2,
+        c.r, c.g, c.b, -3.6, 1.6
+      );
+    }
+
+    // ---- COMET STREAKS: short beams racing up the wall. The particle streaks above read as
+    // sparks; these read as SPEED — the "streaking" half of the user's ask.
+    this.recallStreakT -= dt;
+    if (this.recallStreakT <= 0 && heat > 0.25) {
+      this.recallStreakT = 0.035;
+      const a = Math.random() * Math.PI * 2;
+      const ca = Math.cos(a) * RECALL_COL_R * 0.99;
+      const sa = Math.sin(a) * RECALL_COL_R * 0.99;
+      const h = Math.random() * (RECALL_COL_H - 1.7);
+      _v3.copy(this.recallPos).addScaledVector(_v, ca).addScaledVector(_v2, sa).addScaledVector(this.recallUp, h);
+      _v4.copy(_v3).addScaledVector(this.recallUp, 1.3 + Math.random() * 1.5);
+      this.beam(_v3, _v4, color, 0.05 + Math.random() * 0.05, 0.11 + Math.random() * 0.08, 0.8);
+    }
+  }
+
+  /**
+   * The column's steady half: heat (fed or not-fed), the cylinder/base-ring transforms, and the
+   * ground pulse beat. Runs from `update` every frame so the fade-out finishes even after the
+   * last `recallColumn` call.
+   */
+  private updateRecallColumn(dt: number): void {
+    this.recallTime += dt;
+    this.recallHeat = this.recallCalled
+      ? Math.min(1, this.recallHeat + dt * 5)
+      : Math.max(0, this.recallHeat - dt * 3.4);
+    this.recallCalled = false;
+    const heat = this.recallHeat;
+    const on = heat > 0.01;
+    if (this.recallMesh.visible !== on) {
+      this.recallMesh.visible = on;
+      this.recallBase.visible = on;
+      this.recallCollarA.visible = on;
+      this.recallCollarB.visible = on;
+    }
+    if (!on) return;
+    _v.copy(this.recallUp);
+    this.recallMesh.position.copy(this.recallPos);
+    this.recallMesh.quaternion.setFromUnitVectors(_Y, _v);
+    const swell = 0.86 + 0.14 * heat;
+    const colH = RECALL_COL_H * (0.55 + 0.45 * heat);
+    this.recallMesh.scale.set(RECALL_COL_R * swell, colH, RECALL_COL_R * swell);
+    this.recallMat.color.setHex(this.recallColor).lerp(_whiteColor, 0.16);
+    this.recallMat.opacity = heat * (0.19 + 0.06 * Math.sin(this.recallTime * 8.5));
+    this.recallBase.position.copy(this.recallPos).addScaledVector(_v, 0.14);
+    this.recallBase.quaternion.setFromUnitVectors(_Y, _v);
+    const pulse = 0.5 + 0.5 * Math.sin(this.recallTime * 3.2);
+    this.recallBase.scale.setScalar(RECALL_COL_R * (0.9 + 0.1 * pulse));
+    this.recallBaseMat.color.setHex(this.recallColor).lerp(_whiteColor, 0.3 * pulse);
+    this.recallBaseMat.opacity = heat * (0.28 + 0.2 * pulse);
+    // collars: one hugging the base, one riding the tube's top, both beating with the wall
+    const collarScale = RECALL_COL_R * (0.97 + 0.05 * pulse);
+    this.recallCollarA.position.copy(this.recallPos).addScaledVector(_v, 0.2);
+    this.recallCollarB.position.copy(this.recallPos).addScaledVector(_v, colH - 0.08);
+    for (const collar of [this.recallCollarA, this.recallCollarB]) {
+      collar.quaternion.setFromUnitVectors(_Y, _v);
+      collar.scale.setScalar(collarScale);
+    }
+    this.recallCollarMat.color.setHex(this.recallColor).lerp(_whiteColor, 0.35 * pulse);
+    this.recallCollarMat.opacity = heat * (0.42 + 0.22 * pulse);
+    // a flat ground pulse on its own beat, alternating a sharp ring and a soft disc
+    this.recallPulseT -= dt;
+    if (this.recallPulseT <= 0 && heat > 0.35) {
+      this.recallPulseT = 0.46;
+      if (this.recallPulseN++ % 2 === 0) {
+        this.ring(this.recallPos, this.recallUp, RECALL_COL_R * 0.7, this.recallColor, 0.5, 1.5, 0.55 * heat);
+      } else {
+        this.disk(this.recallPos, this.recallUp, RECALL_COL_R * 0.95, this.recallColor, 0.5, 1.2, 0.26 * heat);
+      }
+    }
   }
 
   // ------------------------------------------------------------ beams
@@ -2159,6 +2367,9 @@ export class Effects {
     // vortexes: rings spiral inward, debris falls toward the horizon
     if (this.vortices.length > 0) this.updateVortices(dt);
 
+    // recall column: heat follows the feeds, transforms and fade-out live here
+    this.updateRecallColumn(dt);
+
     // eruptions: shards thrust up out of the ground, then hold and fade
     for (const fx of this.eruptions) {      if (fx.life <= 0) continue;
       fx.life -= dt;
@@ -2255,6 +2466,12 @@ export class Effects {
   reset(): void {
     this.pCount = 0;
     this.shakeAmt = 0;
+    this.recallHeat = 0;
+    this.recallCalled = false;
+    this.recallMesh.visible = false;
+    this.recallBase.visible = false;
+    this.recallCollarA.visible = false;
+    this.recallCollarB.visible = false;
     for (const fx of this.rings) {
       fx.life = 0;
       fx.mesh.visible = false;

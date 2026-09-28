@@ -278,12 +278,12 @@ export const CONFIG = {
     damageTaken: 0.5,
   },
   /**
-   * RECALL — the idle-gated trip back to your colony's floating base. After this long without any
-   * directional or action input the HUD button lights up; committing channels for `channelTime`
-   * seconds (any input, damage or death cancels) and then puts the survivor on their base deck.
+   * RECALL — the trip back to your colony's floating base (user ask 2026-09-29: the button is
+   * PRESSABLE ANYTIME; the old 5 s idle gate is gone). The press locks the body — no movement, no
+   * action buttons — for `channelTime` seconds; a fresh input, any hit or death breaks the channel
+   * and the next press starts the count over again.
    */
   recall: {
-    idleTime: 5,
     channelTime: 3,
   },
   player: {

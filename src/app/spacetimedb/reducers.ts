@@ -135,6 +135,13 @@ export const joinMatch = (matchId: number, colony: number, necrotech: number): v
  */
 export const reportNexusCapture = (colony: number): void => callReducer('reportNexusCapture', { colony });
 
+/**
+ * REPORT NECROPHAGE VICTORY — the local clock ran out with no colony claiming the Nexus. The
+ * server concludes the match for every seat at once (no winner), so the still-RUNNING row stops
+ * answering "You are already in a match" and the player can requeue immediately.
+ */
+export const reportNecrophageVictory = (): void => callReducer('reportNecrophageVictory');
+
 export interface SyncPoseArgs {
   x: number;
   y: number;

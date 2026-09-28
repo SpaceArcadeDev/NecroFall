@@ -542,7 +542,11 @@ export class BaseManager {
         ring.visible = edgeNear;
         if (!edgeNear) continue;
         const cyc = (this.t * 0.34 + i / b.edgeRings.length + b.colony * 0.11) % 1;
-        ring.scale.setScalar(b.padRadius * (0.98 + cyc * 1.75));
+        // from the rim to slightly PAST the shield bubble (user ask): the hoops are the dome's own
+        // pulse, not a field-wide marker, so their outermost radius is the shield's own + a hair
+        const r0 = b.padRadius * 0.98;
+        const r1 = b.shieldRadius * 1.1;
+        ring.scale.setScalar(r0 + (r1 - r0) * cyc);
       }
       b.edgeMat.opacity = edgeNear ? 0.16 + 0.1 * Math.sin(this.t * 2.2 + b.colony * 2.1) : 0;
       if (b.flash > 0) b.flash = Math.max(0, b.flash - dt * 1.6);
@@ -830,8 +834,9 @@ export class BaseManager {
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
     const edgeRings: THREE.Mesh[] = [];
-    // one unit torus, scaled per ring: radius = deck edge .. ~2.7x it, so the hoops sweep past
-    // the shield bubble and dissolve into the air around the ship
+    // one unit torus, scaled per ring: radius = deck edge .. just past the shield bubble (user
+    // ask 2026-09-29: the hoops used to swell to ~2.7x the rim, reading as a field-wide ring —
+    // they now stop slightly OUTSIDE the base's own shield, so they read as its pulse)
     const edgeGeo = new THREE.TorusGeometry(1, 0.03, 6, 64);
     edgeGeo.rotateX(Math.PI / 2);
     for (let i = 0; i < 3; i++) {

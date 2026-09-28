@@ -1236,6 +1236,10 @@ body {
 
 .hud-top { align-items: flex-start; }
 .hud-left { display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+/* the radar and the settings cog share one row: the cog hugs the map's TOP-RIGHT with the SAME
+   8px gap the old stacked layout used (user ask 2026-09-29), and RECALL takes the cog's old slot
+   under the map. `flex-start` keeps both pinned to the map's top edge, not centred on it. */
+.hud-map { display: flex; align-items: flex-start; gap: 8px; }
 
 /* ---- circular radar minimap: no panel, no background box */
 .minimap {
@@ -1249,7 +1253,7 @@ body {
    box in the layout, so nothing else in the HUD (timer, tower tracker, plates) shifts. */
 .hud.menu-open .minimap { visibility: hidden; }
 
-/* ---- settings cog (top-left, under the radar) — opens the same panel Esc does */
+/* ---- settings cog (top-RIGHT of the radar — user ask 2026-09-29) — opens the same panel Esc does */
 .hud-settings {
   width: clamp(30px, 3vw, 36px);
   height: clamp(30px, 3vw, 36px);
@@ -1280,6 +1284,17 @@ body {
   transform: rotate(35deg);
 }
 .hud-settings:active { transform: rotate(35deg) scale(0.92); }
+
+/* RECALL — the round action button UNDER the radar, in the slot the settings cog used to hold
+   (user ask 2026-09-29): the home glyph alone, no caption. It is pressable ANYTIME while alive
+   and in control, so it breathes (`ready`) nearly always and carries the channel countdown over
+   the glyph while the ritual runs. The touch thumb cluster no longer carries its own copy. */
+.hud-left .ab-sm.recall {
+  flex: 0 0 auto;
+}
+.hud-left .ab-sm.recall .rc-cd { font-size: 15px; }
+/* while channeling, the number IS the readout — the glyph fades out from under it */
+.hud-left .ab-sm.recall.channel svg { opacity: 0; }
 
 /* ---- tower symbols (4 beacons + nexus): styles.ui.css owns every `.tsym` rule (disc tiles, the
    outer ward/capture ring, the status dots). The duplicate block that used to live here was stale —
@@ -1899,9 +1914,9 @@ body {
   pointer-events: none;
 }
 
-/* RECALL — the small round action button at the bottom-left of the action cluster (user ask
-   2026-09-29): the home glyph in the rail's own language, caption underneath, dim until the idle
-   gate opens, breathing while usable, lit with the countdown ticking while the channel runs. */
+/* RECALL — the round home button under the radar (see `.hud-left .ab-sm.recall`): the home
+   glyph alone, dim when the press would do nothing, breathing while usable, lit with the
+   countdown ticking while the channel runs. */
 .ab-sm.recall {
   color: #7d8aa6;
   opacity: 0.55;
@@ -2336,37 +2351,50 @@ body {
 }
 
 /* ---- RAINBOW BORDER on the two arcade pickers (user request: a MegaBonk-style dopamine hit).
-   A masked conic rainbow hugs the card's own edge, and its ANGLE is animated through a registered
-   custom property so the colours sprint around the border while the rounded rectangle itself
-   stays put — rotating the element would rotate the shape, and a mask cannot be counter-rotated
-   against it. `@property` is what makes an angle interpolable: a browser without it paints the
-   same ring, statically. Redrawn per frame on one 3px band, so the cost stays trivial. */
-@property --nf-rb {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
+   (2026-09-29 flicker fix) The border used to be a masked conic whose ANGLE was animated through
+   a registered custom property — a per-frame MAIN-THREAD repaint of the whole card, one of the
+   classic "flickers in and out" triggers on Android Chromium. It is now a big conic layer that
+   only ever moves by `transform: rotate()` (compositor-only), clipped by the card's own rounded
+   rect, with a matching cover pseudo painting the card's surface back over everything but the
+   3px band. The content rides above both. No `@property`, no mask-composite, one paint ever. */
+.modal.levelup .modal-card,
+.modal.pickup .modal-card { overflow: hidden; }
+.modal.levelup .modal-card::before,
+.modal.pickup .modal-card::before {
+  content: '';
+  position: absolute;
+  left: -50%;
+  top: -50%;
+  width: 200%;
+  height: 200%;
+  /* A 2x rectangle centred on the card covers it at EVERY rotation angle (its half-diagonal is
+     twice the card's), so the spin can never expose a corner. */
+  background: conic-gradient(
+    #ff3d5a, #ff9a3d, #ffe93d, #6bff6b, #3dd6ff, #b45cff, #ff5ad0, #ff3d5a
+  );
+  animation: nf-rainbow-spin 1.5s linear infinite;
+  pointer-events: none;
+  will-change: transform;
 }
-@keyframes nf-rainbow-spin {
-  to { --nf-rb: 360deg; }
-}
+/* the cover: everything inside the 3px band is the card's own (opaque) surface again */
 .modal.levelup .modal-card::after,
 .modal.pickup .modal-card::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 3px;
-  background: conic-gradient(
-    from var(--nf-rb),
-    #ff3d5a, #ff9a3d, #ffe93d, #6bff6b, #3dd6ff, #b45cff, #ff5ad0, #ff3d5a
-  );
-  /* the xor of two full-coverage layers leaves only the 3px padding band = the ring */
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
+  inset: 3px;
+  border-radius: 15px;
+  background: linear-gradient(180deg, #170e27, #0b0715);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   pointer-events: none;
-  animation: nf-rainbow-spin 1.5s linear infinite;
+}
+/* the card's own content rides above the ring and its cover */
+.modal.levelup .modal-card > *,
+.modal.pickup .modal-card > * {
+  position: relative;
+  z-index: 1;
+}
+@keyframes nf-rainbow-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ---- perk cards: a LIST, never a WRAPPED list. Exactly three columns filling the card (a strict
@@ -2944,8 +2972,8 @@ body.nf-touch .modal.pickup .modal-card { width: min(820px, 90vw); }
   .modal.levelup::after,
   .modal.pickup::before,
   .modal.pickup::after,
-  .modal.levelup .modal-card::after,
-  .modal.pickup .modal-card::after,
+  .modal.levelup .modal-card::before,
+  .modal.pickup .modal-card::before,
   .perk,
   .mutate-reveal::before,
   .hud-bottom .nt-row.pills-in,

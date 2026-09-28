@@ -401,6 +401,13 @@ export class Player {
   grounded = false;
   alive = true;
   frozen = false; // level-up / pickup / results
+  /**
+   * RECALL channel lock (user ask 2026-09-29): while the local player's recall runs, the body may
+   * neither move nor fire anything. Set/cleared by `Game.requestRecall` / `cancelRecall`; a FRESH
+   * input edge during the channel is what BREAKS it (Game.watchRecallInput runs before this update),
+   * so this flag only ever swallows stale input and holds the body still.
+   */
+  recallHold = false;
 
   hp = CONFIG.player.maxHp;
   maxHp = CONFIG.player.maxHp;
@@ -1091,6 +1098,7 @@ export class Player {
     this.alive = true;
     this.hp = this.maxHp;
     this.frozen = false;
+    this.recallHold = false;
     this.respawnTimer = 0;
     this.respawnAsked = false;
     // the corpse is gone the moment the player is: no carried slide, no facing from the fall
@@ -1151,6 +1159,7 @@ export class Player {
     this.position.copy(pos);
     this.up.copy(pos).normalize();
     this.velocity.set(0, 0, 0);
+    this.recallHold = false;
     this.momentum = 0;
     this.dashTimer = 0;
     this.slam = null;
@@ -1595,6 +1604,17 @@ export class Player {
       return;
     }
 
+    // RECALL lock (user ask 2026-09-29): anything queued while the channel holds is STALE — the
+    // frame that a fresh press lands, Game.watchRecallInput has already broken the channel before
+    // this method runs, so surviving flags here are only same-frame leftovers and are swallowed.
+    if (this.recallHold) {
+      g.input.consumeDash();
+      g.input.consumeJump();
+      g.input.consumeSkill();
+      g.input.consumeUlt();
+      g.input.consumeBeacon();
+    }
+
     // Siegebreaker: a scripted arc from the takeoff point to the slam. Driven by the peer that owns
     // this player, so it is a visible fast descent rather than a snap teleport. The apex sits early
     // and the tail of the curve is steep, so the second half of the flight is a plunge.
@@ -1627,8 +1647,11 @@ export class Player {
     }
 
     const planet = g.planet;
+    // the recall lock pins the body: the stick and the direction keys are ignored while it holds
+    const hold = this.recallHold;
     g.cam.moveBasis(this.up, _f, _r);
-    _wish.set(0, 0, 0).addScaledVector(_f, g.input.moveY).addScaledVector(_r, g.input.moveX);
+    _wish.set(0, 0, 0);
+    if (!hold) _wish.addScaledVector(_f, g.input.moveY).addScaledVector(_r, g.input.moveX);
     const wishLen = _wish.length();
     if (wishLen > 0.001) _wish.multiplyScalar(1 / wishLen);
 
@@ -1640,7 +1663,11 @@ export class Player {
 
     // tangential velocity drive (momentum preserving)
     _tmp.copy(this.velocity).addScaledVector(this.up, -this.velocity.dot(this.up));
-    if (wishLen > 0.001) {
+    if (hold) {
+      // the lock bleeds off all drift (radial is untouched: falling still falls)
+      _tmp.multiplyScalar(Math.max(0, 1 - dt * 9));
+      if (_tmp.lengthSq() < 0.02) _tmp.set(0, 0, 0);
+    } else if (wishLen > 0.001) {
       _tgt.copy(_wish).multiplyScalar(maxSpeed);
       const accel = (this.grounded ? CONFIG.player.accel : CONFIG.player.airAccel) * dt;
       _tmp.lerp(_tgt, clamp(accel / Math.max(1, maxSpeed), 0, 1));
@@ -1653,7 +1680,7 @@ export class Player {
     this.velocity.copy(_tmp).addScaledVector(this.up, radial);
 
     // dash
-    if (g.input.consumeDash() && this.dashCharges > 0 && this.dashTimer <= 0) {
+    if (!hold && g.input.consumeDash() && this.dashCharges > 0 && this.dashTimer <= 0) {
       this.dashCharges--;
       this.dashTimer = CONFIG.player.dashDuration;
       // Every dash compounds the momentum: the burst is the same, but what the runner SETTLES at
@@ -1725,7 +1752,7 @@ export class Player {
     // jump (perks can grant extra leaps mid-air)
     this.coyote = this.grounded ? 0.12 : Math.max(0, this.coyote - dt);
     if (this.jumpLock > 0) this.jumpLock -= dt;
-    if (this.jumpLock <= 0 && g.input.consumeJump()) {
+    if (!hold && this.jumpLock <= 0 && g.input.consumeJump()) {
       if (this.coyote > 0) {
         this.velocity.addScaledVector(this.up, CONFIG.player.jumpSpeed);
         this.jumpsLeft = this.mods.jumps;
@@ -1814,14 +1841,14 @@ export class Player {
     this.updateMadmen(dt);
     this.tickSkillCharges(dt);
     this.ultCd = Math.max(0, this.ultCd - dt);
-    if (!this.blitzing) {
+    if (!this.blitzing && !hold) {
       if (g.input.consumeSkill()) g.abilities.castSkill(this);
       if (g.input.consumeUlt()) g.abilities.castUlt(this);
     } else {
       g.input.consumeSkill();
       g.input.consumeUlt();
     }
-    if (g.input.consumeBeacon()) g.towers.tryActivate(this);
+    if (!hold && g.input.consumeBeacon()) g.towers.tryActivate(this);
 
     this.tickDots(dt);
     this.tickBuffs(dt);

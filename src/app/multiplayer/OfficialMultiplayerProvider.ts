@@ -28,6 +28,7 @@ import {
   leaveMatch as leaveMatchReducer,
   joinMatch as joinMatchReducer,
   reportNexusCapture,
+  reportNecrophageVictory,
   findRankedMatch as findRankedMatchReducer,
 } from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
@@ -76,6 +77,24 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private matchEndEmitted = false;
   /** Matches this session already FINISHED — they must never pull the player back in. */
   private endedMatchIds = new Set<number>();
+  /** sessionStorage key for the ended-match latch (survives a reload of THIS tab). */
+  private static readonly ENDED_STORE = 'nf-ended-matches';
+  /**
+   * Latch a finished match and persist it for the tab. The in-memory set alone died with a
+   * reload, so a refresh right after the end screen walked straight back into the finished game
+   * (bug report 2026-09-29: "on reload it brings me back into the game").
+   */
+  private latchEnded(matchId: number): void {
+    this.endedMatchIds.add(matchId);
+    try {
+      const parsed: unknown = JSON.parse(sessionStorage.getItem(OfficialMultiplayerProvider.ENDED_STORE) ?? '[]');
+      const list = Array.isArray(parsed) ? parsed.filter((v): v is number => typeof v === 'number') : [];
+      if (!list.includes(matchId)) list.push(matchId);
+      sessionStorage.setItem(OfficialMultiplayerProvider.ENDED_STORE, JSON.stringify(list.slice(-20)));
+    } catch {
+      /* storage unavailable — the in-memory latch still covers this page's session */
+    }
+  }
   /**
    * CONFIRM clicked locally: the colony summary flips to its ✓ instantly instead of waiting for
    * the server round trip. In a SOLO candidate the server finalizes the match in the SAME reducer
@@ -132,6 +151,13 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   start(): void {
     this.myHex = SpacetimeConnection.shared.identityHex;
     this.myGameId = this.gameIdFor(this.myHex);
+    // Reload-safe ended latch: a refresh straight after an end screen must not re-enter the match.
+    try {
+      const parsed: unknown = JSON.parse(sessionStorage.getItem(OfficialMultiplayerProvider.ENDED_STORE) ?? '[]');
+      if (Array.isArray(parsed)) for (const v of parsed) if (typeof v === 'number') this.endedMatchIds.add(v);
+    } catch {
+      /* storage unavailable */
+    }
     if (!this.cacheUnsub) {
       this.cacheUnsub = ClientCache.shared.onChange(() => this.onCacheChanged());
     }
@@ -312,17 +338,20 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private leftMatchId: number | null = null;
 
   /**
-   * The LOCAL simulation concluded the match. Latch the id FIRST: between now and the server's
-   * status-2 row there is a window in which `detectMatchStart` could otherwise pull the player
-   * back into a match that is, for them, over (the "brought back into the game / back to the end
-   * screen" reports). A Nexus capture (`colony` non-null) is additionally reported so the server
-   * finishes the match for every seat at once; `detectMatchEnd` is unaffected either way and still
-   * delivers the finalized usage summary.
+   * The LOCAL simulation concluded the match. Latch the id FIRST (persisted for the tab): between
+   * now and the server's status-2 row there is a window in which `detectMatchStart` could
+   * otherwise pull the player back into a match that is, for them, over (the "brought back into
+   * the game / back to the end screen" reports) — and a reload in that window used to re-enter
+   * the finished match too. The result is ALWAYS reported so the server row concludes at once:
+   * a Nexus capture (`colony` non-null) with its winner, a Necrophage victory (null) as a
+   * no-winner finish — without that report the RUNNING row kept answering "You are already in a
+   * match" for up to the 30 s rejoin grace after every screen had already ended (bug 2026-09-29).
    */
   reportVictory(colony: number | null): void {
     if (!this.matchId) return;
-    this.endedMatchIds.add(this.matchId);
+    this.latchEnded(this.matchId);
     if (colony !== null) reportNexusCapture(colony);
+    else reportNecrophageVictory();
   }
 
   /** True when this session already concluded the given match locally (never re-enter it). */
@@ -737,8 +766,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     const m = cache.match(this.matchId);
     if (!m || m.status !== 2) return;
     this.matchEndEmitted = true;
-    // Latch the id: no cache churn may re-enter a concluded match.
-    this.endedMatchIds.add(this.matchId);
+    // Latch the id: no cache churn may re-enter a concluded match (persisted for a reload too).
+    this.latchEnded(this.matchId);
     const winner = m.winnerColony ?? null;
     // The server usage summary rides along (plan §28): the results screen prints it for debug.
     const usage = cache.myMatchUsage();

@@ -56,11 +56,18 @@ export class InputManager {
 
   /**
    * When the player last gave a DIRECTIONAL or ACTION input — movement, a jump / dash / ability
-   * press, a cast release. The RECALL button is gated on this being `idleTime` old: aim-only mouse
-   * movement deliberately does NOT count (on desktop the cursor never stops), while arrow-key
-   * aiming, the touch aim pad and the virtual joystick do.
+   * press, a cast release — INCLUDING holding one (movement keys / the stick re-mark this every
+   * frame, see `update`). Aim-only mouse movement deliberately does NOT count (on desktop the
+   * cursor never stops), while arrow-key aiming, the touch aim pad and the virtual joystick do.
    */
   private lastActivityAt = nowSec();
+  /**
+   * Timestamp of the last FRESH input EDGE — a new key press, a queued action, a stick or aim
+   * engage. Holding a direction does NOT re-mark this (that is the difference from
+   * `lastActivityAt`). The RECALL channel reads this: a channel pressed mid-run must not die just
+   * because the old run key is still held, but a NEW press during the channel must break it.
+   */
+  private lastEdgeAt = nowSec();
 
   private disposers: (() => void)[] = [];
 
@@ -86,7 +93,7 @@ export class InputManager {
       }
       if (this.keys.has(code)) return;
       this.keys.add(code);
-      this.markActivity();
+      this.markEdge();
       if (action === 'jump') this.qJump = true;
       else if (action === 'dash') this.qDash = true;
       else if (action === 'beacon') this.qBeacon = true;
@@ -123,11 +130,11 @@ export class InputManager {
       if (e.button === 0) {
         this.lmbDown = true;
         this.aimHold = 'skill';
-        this.markActivity();
+        this.markEdge();
       } else if (e.button === 2) {
         this.rmbDown = true;
         this.aimHold = 'ult';
-        this.markActivity();
+        this.markEdge();
       }
       e.preventDefault();
     });
@@ -141,8 +148,8 @@ export class InputManager {
       this.aimHold = null;
       // The RELEASE owns the cast: `aimHold` may have been wiped mid-hold (a blur, a focus steal),
       // so the button latches decide — not the aim bookkeeping.
-      if (e.button === 0 && (held === 'skill' || this.lmbDown)) { this.qSkill = true; this.markActivity(); }
-      else if (e.button === 2 && (held === 'ult' || this.rmbDown)) { this.qUlt = true; this.markActivity(); }
+      if (e.button === 0 && (held === 'skill' || this.lmbDown)) { this.qSkill = true; this.markEdge(); }
+      else if (e.button === 2 && (held === 'ult' || this.rmbDown)) { this.qUlt = true; this.markEdge(); }
       if (e.button === 0) this.lmbDown = false;
       if (e.button === 2) this.rmbDown = false;
     });
@@ -184,33 +191,52 @@ export class InputManager {
   /** Mobile: the skill / ult buttons report their drag as an aim hold. */
   setAiming(kind: 'skill' | 'ult' | null): void {
     this.aimHold = kind;
-    if (kind) this.markActivity();
+    if (kind) this.markEdge();
   }
 
-  /** Marks a fresh directional / action input (see `lastActivityAt`). */
+  /** Marks a directional / action input that is HELD (see `lastActivityAt`). */
   markActivity(): void { this.lastActivityAt = nowSec(); }
 
-  /** Seconds since the last directional or action input — the RECALL idle gate reads this. */
+  /** Marks a FRESH edge — a press, a queued action, a stick engage (see `lastEdgeAt`). */
+  markEdge(): void { this.markActivity(); this.lastEdgeAt = this.lastActivityAt; }
+
+  /** Seconds since the last directional or action input (holding counts — see `lastActivityAt`). */
   get idleFor(): number { return nowSec() - this.lastActivityAt; }
 
+  /** The last fresh input edge's timestamp — the RECALL channel's cancel watch reads this. */
+  get lastEdge(): number { return this.lastEdgeAt; }
+
   // ---- mobile plumbing -------------------------------------------------
+  /** Whether the stick / aim pad was engaged on the previous call (edge detection). */
+  private joyHot = false;
+  private touchAimHot = false;
   setJoystick(x: number, y: number, active: boolean): void {
     this.joyX = x;
     this.joyY = y;
     this.joyActive = active;
-    if (active && x * x + y * y > 0.02) this.markActivity();
+    const hot = active && x * x + y * y > 0.02;
+    if (hot) {
+      if (!this.joyHot) this.markEdge();
+      else this.markActivity();
+    }
+    this.joyHot = hot;
   }
   setTouchAim(x: number, y: number, active: boolean): void {
     this.touchAimX = x;
     this.touchAimY = y;
     this.touchAimActive = active;
-    if (active && x * x + y * y > 0.02) this.markActivity();
+    const hot = active && x * x + y * y > 0.02;
+    if (hot) {
+      if (!this.touchAimHot) this.markEdge();
+      else this.markActivity();
+    }
+    this.touchAimHot = hot;
   }
-  queueJump(): void { this.qJump = true; this.markActivity(); }
-  queueDash(): void { this.qDash = true; this.markActivity(); }
-  queueSkill(): void { this.qSkill = true; this.markActivity(); }
-  queueUlt(): void { this.qUlt = true; this.markActivity(); }
-  queueBeacon(): void { this.qBeacon = true; this.markActivity(); }
+  queueJump(): void { this.qJump = true; this.markEdge(); }
+  queueDash(): void { this.qDash = true; this.markEdge(); }
+  queueSkill(): void { this.qSkill = true; this.markEdge(); }
+  queueUlt(): void { this.qUlt = true; this.markEdge(); }
+  queueBeacon(): void { this.qBeacon = true; this.markEdge(); }
 
   // ---- consumed edges ---------------------------------------------------
   consumeJump(): boolean { const v = this.qJump; this.qJump = false; return v && this.enabled; }

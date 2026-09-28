@@ -29,8 +29,8 @@ import {
 } from './Fullscreen';
 import { installTouchGuards, touchDiagnostics } from './TouchGuard';
 import { formatTime } from '../utils/Utils';
-import { CATEGORY_LABELS, CATEGORY_ORDER, defAt, defsOf } from '../customization/AccessoryCatalog';
-import { AccessoryCategory, AccessorySelection } from '../customization/AccessoryTypes';
+import { CATEGORY_HINTS, CATEGORY_LABELS, CATEGORY_ORDER, CATEGORY_SHORT, defAt, defsOf } from '../customization/AccessoryCatalog';
+import { AccessoryCategory, AccessorySelection, isEffectCategory } from '../customization/AccessoryTypes';
 import type { PerkTier } from '../necromutation/Perks';
 import { loadSelection } from '../customization/CustomizationStore';
 import {
@@ -454,6 +454,18 @@ const ICON_PAW =
   '<circle cx="10.1" cy="8.9" r="1.75"/>' +
   '<circle cx="13.9" cy="8.9" r="1.75"/>' +
   '<circle cx="16.9" cy="11.9" r="1.75"/></svg>';
+/** SPAWN — an arrival: a rising spark with light breaking off both sides. */
+const ICON_SPAWN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M12 20V9"/><path d="M7.6 13.4 12 9l4.4 4.4"/>' +
+  '<path d="M5.2 5.4 7 9.2"/><path d="M18.8 5.4 17 9.2"/><path d="M12 3.4v2.4"/></svg>';
+/** ELIMINATED — a skull: what is left after the finisher. */
+const ICON_SKULL =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M12 3.2a7 7 0 0 0-7 7c0 2.4 1.2 3.9 2.4 4.9v2.9a1.8 1.8 0 0 0 1.8 1.8h5.6a1.8 1.8 0 0 0 1.8-1.8v-2.9c1.2-1 2.4-2.5 2.4-4.9a7 7 0 0 0-7-7z"/>' +
+  '<circle cx="9.4" cy="10.6" r="1.15" fill="currentColor" stroke="none"/>' +
+  '<circle cx="14.6" cy="10.6" r="1.15" fill="currentColor" stroke="none"/>' +
+  '<path d="M12 13.8v2.4"/></svg>';
 
 /** RANDOMIZE — the classic crossed-arrow shuffle, worn with no button pot. */
 const ICON_SHUFFLE =
@@ -470,6 +482,9 @@ function accTabIcon(cat: AccessoryCategory): string {
     case 'hat': return ICON_HAT;
     case 'backpack': return ICON_PACK;
     case 'pet': return ICON_PAW;
+    case 'recall': return ICON_HOME;
+    case 'spawn': return ICON_SPAWN;
+    case 'eliminated': return ICON_SKULL;
   }
 }
 
@@ -579,14 +594,11 @@ export class UI {
   private towerPlates = new Map<number, { el: HTMLElement; nm: HTMLElement; pct: HTMLElement; fill: HTMLElement; cd: HTMLElement }>();
   private minimap!: HTMLCanvasElement;
   private ntTag!: HTMLElement;
-  /** The RECALL button (idle-gated return-to-base) and its channel progress bar. */
+  /** The RECALL button (under the minimap — pressable anytime) and its channel progress bar. */
   private recallBtn!: HTMLElement;
   private recallCd!: HTMLElement;
   private recallBar!: HTMLElement;
   private recallFill!: HTMLElement;
-  /** The touch cluster's recall mini and its countdown (null before `buildMobile`). */
-  private mRecallBtn: HTMLElement | null = null;
-  private mRecallCd: HTMLElement | null = null;
   /** The mutation chip: it carries the mutation's NAME (the cap lives in its tooltip). */
   private mutTag!: HTMLElement;
   /** Fields the mutation chip's tooltip reads — refreshed by `updateHud`. */
@@ -723,6 +735,8 @@ export class UI {
   private accTabs = new Map<AccessoryCategory, HTMLButtonElement>();
   private accStrip!: HTMLElement;
   private accCaption!: HTMLElement;
+  /** One line under the tabs saying WHEN the open category's effects play. */
+  private accHint!: HTMLElement;
   /** Which card the pointer is over, and which one this player has actually picked. */
   private colonyHover = -1;
   private colonyPick = -1;
@@ -1978,6 +1992,10 @@ export class UI {
     }
     right.appendChild(tabs);
 
+    // one line of context per category: the three effect tabs must say WHEN they play
+    this.accHint = el('div', 'acc-hint', '');
+    right.appendChild(this.accHint);
+
     this.accStrip = el('div', 'acc-strip');
     right.appendChild(this.accStrip);
 
@@ -2027,13 +2045,14 @@ export class UI {
       card.addEventListener('click', () => this.equipAccessory(this.accTab, idx));
       this.accStrip.appendChild(card);
     };
-    mk(-1, 'NONE', 'Wear nothing in this slot.');
+    mk(-1, 'NONE', isEffectCategory(this.accTab) ? 'Play no effect here.' : 'Wear nothing in this slot.');
     // the list reads A→Z, but the INDICES stay the catalog's own: the wire format and the saved
     // selection are index/id based, so only the display order is sorted.
     defs
       .map((_d, i) => i)
       .sort((a, b) => defs[a].name.localeCompare(defs[b].name))
       .forEach(i => mk(i, defs[i].name, defs[i].desc));
+    this.accHint.textContent = CATEGORY_HINTS[this.accTab];
     this.refreshAccCaption();
   }
 
@@ -2046,11 +2065,14 @@ export class UI {
   }
 
   private randomizeAccessories(): void {
-    const pick = (n: number): number => Math.floor(Math.random() * (n + 1)) - 1;
+    const pick = (cat: AccessoryCategory): number => Math.floor(Math.random() * (defsOf(cat).length + 1)) - 1;
     this.accSel = {
-      hat: pick(defsOf('hat').length),
-      backpack: pick(defsOf('backpack').length),
-      pet: pick(defsOf('pet').length),
+      hat: pick('hat'),
+      backpack: pick('backpack'),
+      pet: pick('pet'),
+      recall: pick('recall'),
+      spawn: pick('spawn'),
+      eliminated: pick('eliminated'),
     };
     this.cbs.setAccessories(this.accSel);
     this.renderAccStrip();
@@ -2061,6 +2083,8 @@ export class UI {
   private refreshCustomizePreview(): void {
     // the avatar always wears exactly the SAVED selection — nothing else can dress it
     this.preview?.showAccessories(this.accSel);
+    // …and the effect tabs showcase their equipped effect on the stage (a looped playback)
+    this.preview?.showEffect(isEffectCategory(this.accTab) ? this.accTab : null, this.accSel[this.accTab]);
     this.refreshAccCaption();
   }
 
@@ -2072,7 +2096,7 @@ export class UI {
     if (!this.accCaption) return;
     this.accCaption.className = 'acc-caption';
     this.accCaption.textContent = CATEGORY_ORDER
-      .map(cat => `${CATEGORY_LABELS[cat].slice(0, -1)}: ${defAt(cat, this.accSel[cat])?.name ?? 'NONE'}`)
+      .map(cat => `${CATEGORY_SHORT[cat]}: ${defAt(cat, this.accSel[cat])?.name ?? 'NONE'}`)
       .join('   ·   ');
   }
 
@@ -2090,12 +2114,16 @@ export class UI {
     const top = el('div', 'hud-top');
 
     const leftCol = el('div', 'hud-left');
+    // The radar and the settings cog share one row: the cog sits at the map's TOP-RIGHT with the
+    // same 8px gap the old under-the-map stack used (user ask 2026-09-29), and the RECALL button
+    // takes the slot the cog used to hold under the map.
+    const mapRow = el('div', 'hud-map');
     this.minimap = document.createElement('canvas');
     this.minimap.className = 'minimap';
     this.minimap.width = 320;
     this.minimap.height = 320;
-    leftCol.appendChild(this.minimap);
-    // Settings cog, top-left under the radar: the same panel Esc opens.
+    mapRow.appendChild(this.minimap);
+    // Settings cog — the same panel Esc opens.
     const settings = el('div', 'hud-settings');
     settings.title = 'Settings — Esc';
     settings.setAttribute('role', 'button');
@@ -2109,7 +2137,24 @@ export class UI {
       e.stopPropagation();
       this.cbs.openMenu();
     });
-    leftCol.appendChild(settings);
+    mapRow.appendChild(settings);
+    leftCol.appendChild(mapRow);
+    // RECALL (user ask 2026-09-29): under the radar, exactly where the settings cog used to sit —
+    // a round home glyph with NO caption (the icon is the label), pressable ANYTIME while alive
+    // and in control, with the channel countdown ticking over the glyph. The touch thumb cluster
+    // no longer carries its own copy.
+    const recallBox = el('div', 'ab-sm recall');
+    recallBox.title = 'Recall — return to your base';
+    recallBox.innerHTML = ICON_HOME;
+    const recallCd = el('div', 'ab-cd rc-cd', '');
+    recallBox.appendChild(recallCd);
+    recallBox.addEventListener('click', e => {
+      e.stopPropagation();
+      this.cbs.recall();
+    });
+    this.recallBtn = recallBox;
+    this.recallCd = recallCd;
+    leftCol.appendChild(recallBox);
     top.appendChild(leftCol);
 
     const timerPanel = el('div', 'timer');
@@ -2160,22 +2205,6 @@ export class UI {
     // ---------------- bottom right: Jump / Dash counters, then Skill + Ultimate
     const rightStack = el('div', 'hud-right-stack');
     const actions = el('div', 'action-row');
-    // RECALL — its own small round action button at the BOTTOM-LEFT of the action cluster (user
-    // ask 2026-09-29): the rail's language (a round glyph button with a caption underneath), NOT
-    // another text chip on the Necrotech row. It stays dim until the idle gate opens (`ready`),
-    // then breathes, and carries the channel countdown in the middle while a recall is running.
-    const recallBox = el('div', 'ab-sm recall');
-    recallBox.innerHTML = ICON_HOME;
-    const recallCd = el('div', 'ab-cd rc-cd', '');
-    recallBox.appendChild(recallCd);
-    recallBox.appendChild(el('div', 'ab-sm-key', 'RECALL'));
-    recallBox.addEventListener('click', e => {
-      e.stopPropagation();
-      this.cbs.recall();
-    });
-    actions.appendChild(recallBox);
-    this.recallBtn = recallBox;
-    this.recallCd = recallCd;
     /** A small round action button (jump / dash) with its charge count in the corner. */
     const mkSmall = (cls: string, key: string, svg: string, onClick: () => void): { box: HTMLElement; count: HTMLElement } => {
       const box = el('div', `ab-sm ${cls}`);
@@ -2551,9 +2580,6 @@ export class UI {
     setClass(this.recallBtn, 'ready', d.recallReady);
     setClass(this.recallBtn, 'channel', d.recallActive);
     setText(this.recallCd, d.recallActive ? `${Math.ceil(d.recallSeconds)}` : '');
-    setClass(this.mRecallBtn ?? null, 'ready', d.recallReady);
-    setClass(this.mRecallBtn ?? null, 'channel', d.recallActive);
-    setText(this.mRecallCd ?? null, d.recallActive ? `${Math.ceil(d.recallSeconds)}` : '');
     setClass(this.recallBar, 'hidden', !d.recallActive);
     if (d.recallActive) setStyle(this.recallFill, 'width', `${clamp01(d.recallFrac) * 100}%`);
 
@@ -4049,12 +4075,7 @@ export class UI {
     const beacon = mk('beacon', 'BEACON');
     // the ability's own glyph, the same one the desktop rail shows
     beacon.ico.innerHTML = ICON_BEACON;
-    // RECALL — the fan's own small action button at its bottom-left (left of the Beacon slot):
-    // the same idle-gated button as the desktop rail, with the home glyph.
-    const recall = mk('recall', 'RECALL');
-    recall.ico.innerHTML = ICON_HOME;
-    this.mRecallBtn = recall.box;
-    this.mRecallCd = recall.cd;
+    // (RECALL lives under the minimap now — see buildHud; the fan has no recall slot any more.)
     // Jump and dash carry the desktop rail's glyphs too — a bare "JUMP" / "DASH" word left the two
     // buttons that are pressed most often as the only unlabelled-by-shape controls on the pad.
     jump.ico.innerHTML = ICON_JUMP;
@@ -4090,7 +4111,6 @@ export class UI {
     bindButton(jump.box, () => this.input?.queueJump());
     bindButton(dash.box, () => this.input?.queueDash());
     bindButton(beacon.box, () => this.input?.queueBeacon());
-    bindButton(recall.box, () => this.cbs.recall());
 
     // ---- abilities: drag the button itself to aim, like a MOBA skill button.
     // Press and drag away from the button to swing the aim (the ground chevron follows), release to

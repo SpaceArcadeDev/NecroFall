@@ -434,6 +434,7 @@ export const RankedSeason = __t.object("RankedSeason", {
   startedAt: __t.timestamp(),
   endsAt: __t.option(__t.timestamp()),
   active: __t.bool(),
+  universeGenerationVersion: __t.u32(),
 });
 export type RankedSeason = __Infer<typeof RankedSeason>;
 

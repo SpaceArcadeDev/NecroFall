@@ -16,4 +16,5 @@ export default __t.row({
   startedAt: __t.timestamp().name("started_at"),
   endsAt: __t.option(__t.timestamp()).name("ends_at"),
   active: __t.bool(),
+  universeGenerationVersion: __t.u32().name("universe_generation_version"),
 });

@@ -37,6 +37,7 @@ export class RankPage {
   private side: HTMLElement;
   private railEl: HTMLElement;
   private headEl: HTMLElement;
+  private stripEl: HTMLElement;
   private discoverEl: HTMLElement;
   private statsEl: HTMLElement;
   private boardEl: HTMLElement | null = null;
@@ -45,6 +46,9 @@ export class RankPage {
   private statsTimer = 0;
   private tickTimer = 0;
   private panelSig = '';
+  private headSig = '';
+  private railSig = '';
+  private crumbSig = '';
   private knownKeys = new Set<string>();
   private pendingDiscovery: PlanetDescriptor | null = null;
   private discoveryShown = new Set<string>();
@@ -54,9 +58,13 @@ export class RankPage {
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page rank-page');
 
-    // ---- header: ladder standing + season + boards
-    this.headEl = el('div', 'rk-head');
+    // ---- header: the RANKED wordmark on the lobby's lit rule (the party-page dress)
+    this.headEl = el('div', 'lobby-head rk-head');
     this.element.appendChild(this.headEl);
+
+    // ---- standing strip: crest · rank · stars · progress + the two actions
+    this.stripEl = el('div', 'rk-strip');
+    this.element.appendChild(this.stripEl);
 
     // ---- body: map + ring rail + context panel
     const main = el('div', 'rk-main');
@@ -238,27 +246,50 @@ export class RankPage {
     const info = getRankFromStars(stars);
     const cfg = ringConfig(info.tier);
     const name = getRankDisplayName(stars);
-    const nextName = info.toNext > 0 ? getRankDisplayName(stars + info.toNext) : '';
     const streak = this.streakLabel();
-    this.headEl.style.setProperty('--rk-accent', cfg.accent);
+    const seasonId = ClientCache.shared.rankedSeason()?.seasonId ?? 1;
+    // Rebuild ONLY when something actually changed. The page's data ticks fire
+    // constantly (presence heartbeats, other matches…), and every rebuild restarted
+    // the bar's fill + shimmer mid-sweep — "the progress bar animates halfway and
+    // stops" (user report 2026-09-28).
+    const sig = `${stars}|${seasonId}|${streak}`;
+    if (sig === this.headSig) return;
+    this.headSig = sig;
+    // The wordmark row: gradient title + season chip (the party page's lobby-head).
     this.headEl.innerHTML =
+      `<div class="menu-title lobby-title rk-title">RANKED</div>` +
+      `<span class="lobby-mode rk-season-chip">SEASON ${seasonId}</span>`;
+    // The standing strip: every number that used to be in the old head banner.
+    this.stripEl.style.setProperty('--rk-accent', cfg.accent);
+    this.stripEl.innerHTML =
       `<div class="rk-crest" data-tier="${info.tier}">` +
       `<svg viewBox="0 0 48 56" aria-hidden="true"><path class="rk-crest-shield" d="M24 2 44 10v18c0 12-8 20-20 26C12 48 4 40 4 28V10z"/><path class="rk-crest-inner" d="M24 8 38 14v14c0 8.5-5.5 14.5-14 19.4C15.5 42.5 10 36.5 10 28V14z"/></svg>` +
       `<span class="rk-crest-star">★</span></div>` +
       `<div class="rk-head-info">` +
       `<div class="rk-rank-name">${name}</div>` +
       `<div class="rk-stars-row">${this.starsHtml(info.stars, info.tier)}</div>` +
-      `<div class="rk-progress"><div class="rk-progress-fill" style="width:${Math.round(info.progress * 100)}%"></div></div>` +
+      `<div class="rk-progress"><div class="rk-progress-fill" data-fill></div></div>` +
       `<div class="rk-next">${streak}</div>` +
       `</div>` +
-      `<div class="rk-head-side">` +
-      `<div class="rk-season">SEASON ${ClientCache.shared.rankedSeason()?.seasonId ?? 1}<span>RING ${info.tier} · ${RING_CONFIGS[info.tier].name}</span></div>` +
-      `<div class="rk-head-btns">` +
-      `<button class="rk-btn" data-act="board">LEADERBOARD</button>` +
-      `<button class="rk-btn primary" data-act="myring">YOUR RING</button>` +
-      `</div></div>`;
-    this.headEl.querySelector('[data-act="myring"]')?.addEventListener('click', () => this.map.flyToRing(this.myRing()));
-    this.headEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
+      `<div class="rk-strip-actions">` +
+      `<button class="rk-btn" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11"/><path d="M12 20V4"/><path d="M19 20v-6"/></svg>` +
+      `<span class="rk-btn-label">LEADERBOARD</span></button>` +
+      `<button class="rk-btn primary" data-act="myring" title="Fly to your ring" aria-label="Fly to your ring">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/><path d="M12 1.8v3.4M12 18.8v3.4M1.8 12h3.4M18.8 12h3.4"/></svg>` +
+      `<span class="rk-btn-label">YOUR RING</span></button>` +
+      `</div>`;
+    // The fill starts at 0 and WIDENS into its target on the next frame, so the
+    // 0.8s transition plays exactly once per real change (never mid-tick).
+    const fill = this.stripEl.querySelector<HTMLElement>('[data-fill]');
+    if (fill) {
+      fill.style.width = '0%';
+      requestAnimationFrame(() => {
+        if (fill.isConnected) fill.style.width = `${Math.round(info.progress * 100)}%`;
+      });
+    }
+    this.stripEl.querySelector('[data-act="myring"]')?.addEventListener('click', () => this.map.flyToRing(this.myRing()));
+    this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
   }
 
   private streakLabel(): string {
@@ -290,6 +321,11 @@ export class RankPage {
   private renderRail(): void {
     const myRing = this.myRing();
     const current = this.map.currentLevel === 'galactic' ? null : this.map.currentGalaxy?.ring ?? null;
+    // Only rebuild when the highlighting would change — a rebuild restarted the
+    // "your ring" pulse mid-beat on every data tick.
+    const sig = `${myRing}|${current}`;
+    if (sig === this.railSig) return;
+    this.railSig = sig;
     this.railEl.innerHTML = '';
     RING_CONFIGS.forEach((cfg) => {
       const chip = el('button', `rk-ring${cfg.tier === myRing ? ' mine' : ''}${current === cfg.tier ? ' here' : ''}`);
@@ -310,6 +346,9 @@ export class RankPage {
     const sys = this.map.currentSystem;
     if (g) parts.push(g.name.toUpperCase());
     if (sys) parts.push(sys.name.toUpperCase());
+    const sig = parts.join('›');
+    if (sig === this.crumbSig) return;
+    this.crumbSig = sig;
     this.breadcrumb.innerHTML = '';
     parts.forEach((p, i) => {
       if (i > 0) this.breadcrumb.appendChild(el('span', 'rk-crumb-sep', '›'));

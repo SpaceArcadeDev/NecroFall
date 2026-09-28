@@ -29,6 +29,9 @@ import { TelegraphSystem } from '../effects/Telegraphs';
 import { CombatSystem } from '../combat/Combat';
 import { EnemyManager, Enemy } from '../enemies/Enemies';
 import { ABILITY_META } from '../enemies/EnemyGenomes';
+import { factsFromDescriptor } from '../enemies/procedural/EcologyGenerator';
+import { parsePlanetKey, DEFAULT_UNIVERSE_SEED } from '../rankmap/procedural/SeedHash';
+import { planetAt } from '../rankmap/procedural/PlanetGenerator';
 import { TowerManager, battlefieldCenterDir, BEACON_ABILITY } from '../towers/Towers';
 import { AbilitySystem } from '../necrotech/AbilitySystem';
 import { AimPreview } from '../necrotech/AimPreview';
@@ -1902,10 +1905,18 @@ export class Game {
     this.buildPlayers(assignments);
     this.enemies.reset();
     // Every match rolls its own world and its own Necrophage bestiary from the seed.
-    const planetSeed = seed * 2654435761 % 4294967296;
+    //
+    // RANKED matches (plan §32): the server's `map_seed` IS the planet seed, so the world uses it
+    // DIRECTLY — that is what makes the planet on the galactic map byte-identical to the planet
+    // you land on. Classic matches keep the decorrelating hash. The rank ring tunes the terrain
+    // archetype and the ecology's complexity (plan §6/§29).
+    const official = this.officialMatch?.match;
+    const rankedPlanet = Boolean(official?.ranked && official.planetKey);
+    const rankRing = rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
+    const planetSeed = (official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0);
     const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
     const oldPlanet = this.planet;
-    this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir);
+    this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing);
     // Every telegraph is projected on to the CURRENT planet — a system still holding last match's
     // height field would lay its warnings metres off the ground.
     this.telegraphs.setPlanet(this.planet);
@@ -1926,11 +1937,24 @@ export class Game {
       p.recompute();
     }
     oldPlanet.dispose();
-    const bestiary = this.enemies.generate(seed);
+    const bestiary = (() => {
+      // The ranked planet's descriptor regenerates the EXACT world the map showed (plan §32):
+      // biome, ecology kind, corruption and the landmark biases that bend the local ecology.
+      if (rankedPlanet && official?.planetKey) {
+        const parsed = parsePlanetKey(official.planetKey);
+        if (parsed) {
+          const universeSeed = official.universeSeed ?? DEFAULT_UNIVERSE_SEED;
+          const descriptor = planetAt(universeSeed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
+          const biases = Array.from(new Set(this.planet.landmarks.map((l) => l.bias)));
+          return this.enemies.generateEcology(seed, factsFromDescriptor(seed, parsed.ring, descriptor, biases));
+        }
+      }
+      return this.enemies.generate(seed);
+    })();
     // eslint-disable-next-line no-console
     console.log(
-      `[NECROFALL] planet seed ${planetSeed} · bestiary seed ${seed}\n` +
-      bestiary.genomes.map(g => `  #${g.idx} ${g.name} [${g.tier}] hp ${Math.round(g.hp)} spd ${g.speed.toFixed(1)} — ${g.abilities.map(a => ABILITY_META[a].name).join(', ') || 'no abilities'}`).join('\n')
+      `[NECROFALL] planet ${this.planet.archetype.biome}${rankedPlanet ? ` (ring ${rankRing})` : ''} · planet seed ${planetSeed} · bestiary seed ${seed}\n` +
+      bestiary.genomes.map(g => `  #${g.idx} ${g.name} [${g.tier}${g.role ? `/${g.role}` : ''}${g.locomotion ? `/${g.locomotion}` : ''}] hp ${Math.round(g.hp)} spd ${g.speed.toFixed(1)} — ${g.attacks?.map(a => a.name).join(', ') || g.abilities.map(a => ABILITY_META[a].name).join(', ') || 'no abilities'}`).join('\n')
     );
     this.ui.banner(`${bestiary.genomes[bestiary.bossIdx].name.toUpperCase()} AWAKENS`, 2600);
     this.combat.clear();

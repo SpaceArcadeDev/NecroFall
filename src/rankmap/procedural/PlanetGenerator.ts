@@ -1,23 +1,11 @@
 // NECROFALL — planet generation (plan §9/§12/§13/§28). The BIOME CLASSIFIER is
-// the plan's §13 exact shape: elevation/temperature/moisture/corruption/slope
-// style inputs collapse into one biome, so one formula yields the whole
-// palette of worlds.
+// shared with the match world (`world/PlanetArchetypes.deriveClimate` +
+// `classifyBiomeClass`), so the biome a player reads on the galactic map is the
+// biome they actually land on — same seed, same world.
 import { BOSS_ARCHETYPES, BIOME_COLORS, BIOME_LABELS, Biome, ECOLOGY_LABELS, Ecology, PlanetDescriptor } from './GalaxyTypes';
 import { hash32, planetKey, planetSeed, rng } from './SeedHash';
 import { systemAt } from './SolarSystemGenerator';
-
-function classifyBiome(temperature: number, moisture: number, corruption: number): Biome {
-  if (corruption > 0.72 && temperature > 0.66) return 'VOLCANIC';
-  if (corruption > 0.72 && moisture > 0.45) return 'CORRUPTED';
-  if (corruption > 0.6) return 'FUNGAL';
-  if (temperature < 0.24) return moisture > 0.5 ? 'FROZEN' : 'DEAD';
-  if (temperature > 0.8) return moisture < 0.35 ? 'DESERT' : moisture > 0.7 ? 'VOLCANIC' : 'SWAMP';
-  if (moisture > 0.78) return temperature > 0.55 ? 'OCEAN' : 'ABYSSAL';
-  if (moisture > 0.58) return temperature > 0.6 ? 'JUNGLE' : 'SWAMP';
-  if (temperature < 0.4) return 'CRYSTAL';
-  if (moisture > 0.42) return 'FUNGAL';
-  return temperature > 0.62 ? 'DESERT' : 'DEAD';
-}
+import { classifyBiomeClass, deriveClimate } from '../../world/PlanetArchetypes';
 
 function classifyEcology(rand: () => number, biome: Biome): Ecology {
   if (biome === 'TOXIC' || biome === 'FUNGAL' || biome === 'CORRUPTED') return rand() < 0.6 ? 'TOXIC_SWARM' : 'BURROW_COLONY';
@@ -29,15 +17,17 @@ function classifyEcology(rand: () => number, biome: Biome): Ecology {
 
 /**
  * One planet. `orbit`/`orbitRadius` are map-space (unit disc around the star)
- * so the system view can animate real orbits.
+ * so the system view can animate real orbits. Climate comes from the SHARED
+ * pipeline so the world matches the map exactly.
  */
 export function planetAt(universeSeed: number, ring: number, galaxyId: number, systemId: number, planetId: number): PlanetDescriptor {
   const seed = planetSeed(universeSeed, ring, galaxyId, systemId, planetId);
   const r = rng(seed);
-  const temperature = r();
-  const moisture = r();
-  const corruption = Math.min(1, r() * (0.45 + ring * 0.08) + ring * 0.02);
-  const biome = classifyBiome(temperature, moisture, corruption);
+  const climate = deriveClimate(seed, ring);
+  const temperature = climate.temperature;
+  const moisture = climate.moisture;
+  const corruption = climate.corruption;
+  const biome = classifyBiomeClass(temperature, moisture, corruption);
   const ecology = classifyEcology(r, biome);
   const system = systemAt(universeSeed, ring, galaxyId, systemId);
   const base = system.name.split(' ')[0];

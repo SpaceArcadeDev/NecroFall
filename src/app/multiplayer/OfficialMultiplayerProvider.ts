@@ -671,12 +671,19 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       colony: row.colony,
       necrotech: row.necrotech,
     }));
+    const row = cache.match(this.matchId);
+    const season = cache.rankedSeason();
     return {
       matchId: this.matchId,
-      seed: cache.match(this.matchId)?.mapSeed ?? 1,
-      elapsed: cache.match(this.matchId)?.durationSeconds ?? 0,
+      seed: row?.mapSeed ?? 1,
+      elapsed: row?.durationSeconds ?? 0,
       meId: this.myGameId,
       players,
+      // Ranked facts (plan §32): the game regenerates the whole planet + ecology from these.
+      ranked: Boolean(row?.ranked),
+      planetKey: row?.planetKey ?? '',
+      rankRing: row?.rankRing ?? 255,
+      universeSeed: season ? Number(season.universeSeed % 4294967296n) >>> 0 : undefined,
     };
   }
 

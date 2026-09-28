@@ -20,6 +20,14 @@ export interface OfficialMatchPayload {
   /** The local player's game-side id. */
   meId: string;
   players: OfficialGamePlayerInfo[];
+  /** RANKED match facts (plan §32): which planet is being fought over. */
+  ranked?: boolean;
+  /** `ring:galaxyId:systemId:planetId` of the ranked planet. */
+  planetKey?: string;
+  /** Rank ring (0..7); 255 = classic. Drives terrain + ecology complexity (plan §6/§29). */
+  rankRing?: number;
+  /** The season's universe seed — regenerates the planet descriptor client-side (plan §32). */
+  universeSeed?: number;
 }
 
 /**

@@ -228,6 +228,8 @@ function mergeStaticChildren(root: THREE.Object3D, skip: Set<THREE.Object3D>): n
     for (const child of [...parent.children]) {
       if (!(child as THREE.Mesh).isMesh) continue;
       if (skip.has(child)) continue;
+      // parts the animator drives per-frame (glow sacs, `userData.dynamic`) stay their own meshes
+      if (child.userData.dynamic === true) continue;
       const mesh = child as THREE.Mesh;
       const mat = mesh.material as THREE.Material;
       const list = buckets.get(mat);
@@ -563,6 +565,54 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
     sac.scale.setScalar(s * (0.15 + (i % 3) * 0.05));
     sac.position.set(Math.cos(a) * s * 0.4 * wMul, s * (0.18 + (i % 3) * 0.14), Math.sin(a) * s * 0.45 * lMul);
     body.add(sac);
+  }
+
+  // ---- locomotion organs (plan §18/§19): fins and membrane wings say "this one drifts", rear
+  // sacs say "this one compresses and springs", hooked forelimbs say "this one grapples".
+  const fins = Math.round(v.fins ?? 0);
+  for (let i = 0; i < fins; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const row = Math.floor(i / 2);
+    const fin = new THREE.Mesh(GEO.snout, carapace);
+    fin.scale.set(s * 0.09, s * (0.5 - row * 0.1), s * 0.05);
+    fin.rotation.set(0, 0, side * (1.15 + row * 0.15));
+    fin.position.set(side * s * (0.5 + row * 0.08) * wMul, s * 0.34, s * (0.15 - row * 0.25) * lMul);
+    body.add(fin);
+  }
+  const wings = Math.round(v.wings ?? 0);
+  for (let i = 0; i < wings; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const wing = new THREE.Mesh(GEO.snout, carapace);
+    wing.scale.set(s * 0.05, s * 1.15, s * 0.5);
+    wing.rotation.set(-0.4, 0, side * 1.45);
+    wing.position.set(side * s * 0.35 * wMul, s * 0.62, s * 0.05 * lMul);
+    body.add(wing);
+    const tip = new THREE.Mesh(GEO.core, energy);
+    tip.scale.setScalar(s * 0.07);
+    tip.position.set(side * s * (0.35 + 0.5) * wMul, s * 0.72, s * 0.05 * lMul);
+    body.add(tip);
+  }
+  const sacs = Math.round(v.sacs ?? 0);
+  for (let i = 0; i < sacs; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const row = Math.floor(i / 2);
+    const sac = new THREE.Mesh(GEO.core, energy);
+    sac.scale.set(s * 0.16, s * 0.22, s * 0.16);
+    sac.position.set(side * s * (0.3 + row * 0.06) * wMul, s * (0.42 - row * 0.06), s * (-0.55 - row * 0.18) * lMul);
+    sac.userData.dynamic = true; // kept out of the static merge so the animator can pulse it
+    sac.userData.sacPulse = 1;
+    sac.userData.baseScale = sac.scale.clone();
+    body.add(sac);
+  }
+  const claws = Math.round(v.claws ?? 0);
+  for (let i = 0; i < claws; i++) {
+    const side = i % 2 === 0 ? -1 : 1;
+    const row = Math.floor(i / 2);
+    const claw = new THREE.Mesh(GEO.claw, carapace);
+    claw.scale.set(s * 0.08, s * (0.5 - row * 0.08), s * 0.08);
+    claw.position.set(side * s * (0.4 + row * 0.08) * wMul, s * (0.3 - row * 0.05), s * (0.62 - row * 0.08) * lMul);
+    claw.rotation.set(-1.1 - row * 0.15, 0, side * 0.35);
+    body.add(claw);
   }
 
   // ---- the Hunter crest: a raised spine fin and hooked forelimbs, so a hunter is unmistakable

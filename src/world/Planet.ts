@@ -13,6 +13,10 @@ import {
 } from './ShaderGlobals';
 import { buildGrassField, type GrassField } from './GrassField';
 import { createAmbience, type Ambience } from './Ambience';
+import { deriveArchetype, type PlanetArchetype } from './PlanetArchetypes';
+import { TerrainGenerator } from './TerrainGenerator';
+import { BiomeGenerator } from './BiomeGenerator';
+import type { Landmark } from './LandmarkGenerator';
 import {
   createWindUniforms,
   createBladeMaterial,
@@ -53,13 +57,6 @@ function lonLatOf(x: number, y: number, z: number): void {
   _ll[0] = y * inv;
   _ll[1] = Math.atan2(z * inv, x * inv);
 }
-
-const COL_DEEP = new THREE.Color(0x1d1a35);
-const COL_LOW = new THREE.Color(0x2d3a56);
-const COL_MID = new THREE.Color(0x4c566f);
-const COL_RIDGE = new THREE.Color(0x848da3);
-const COL_PEAK = new THREE.Color(0xe2e7ef);
-const COL_VEIN = new THREE.Color(0x5b3a8f);
 
 /** Blades in a full-density grass field (HIGH). MEDIUM / LOW scale it by `grassDensity`. */
 const FULL_GRASS_BLADES = 54600;
@@ -402,24 +399,40 @@ export class Planet {
   private ambience: Ambience | null = null;
   /** Particle budget multiplier from the watchdog. */
   private ambienceMul = 1;
+  /** The planet's archetype (plan §11 step 1) — climate, relief parameters, palette, sky. */
+  readonly archetype: PlanetArchetype;
+  /** The height-field pipeline (plan §11). */
+  readonly terrain: TerrainGenerator;
+  /** Biome classifier + palette (plan §13). */
+  readonly biome: BiomeGenerator;
+  /** Deterministic landmarks carved into this world (plan §12/§14). */
+  get landmarks(): readonly Landmark[] {
+    return this.terrain.landmarks;
+  }
   readonly fogColor = new THREE.Color(0x171029);
   readonly fogDensity = 0.00125;
 
-  constructor(scene: THREE.Scene, quality: QualitySettings, seed: number, focusDir?: THREE.Vector3) {
+  constructor(scene: THREE.Scene, quality: QualitySettings, seed: number, focusDir?: THREE.Vector3, ring = 0) {
     this.seed = seed;
     this.quality = quality;
     if (focusDir) this.focusDir = focusDir.clone().normalize();
 
-    // ---- sky dome (nebula + star shader)
+    // ---- the world pipeline: seed (+rank ring) → archetype → terrain fields → biome
+    this.archetype = deriveArchetype(seed, ring);
+    this.terrain = new TerrainGenerator(seed, this.radius, this.archetype, ring, this.focusDir ?? undefined);
+    this.biome = new BiomeGenerator(this.archetype, this.terrain);
+    this.fogColor.setHex(this.archetype.sky.fog);
+
+    // ---- sky dome (nebula + star shader), tinted by the archetype's sky
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT,
       fragmentShader: SKY_FRAG,
       side: THREE.BackSide,
       depthWrite: false,
       uniforms: {
-        uZenith: { value: new THREE.Color(0x120b26) },
-        uHorizon: { value: new THREE.Color(0x3b2160) },
-        uNebula: { value: new THREE.Color(0x6d3ec8) },
+        uZenith: { value: new THREE.Color(this.archetype.sky.zenith) },
+        uHorizon: { value: new THREE.Color(this.archetype.sky.horizon) },
+        uNebula: { value: new THREE.Color(this.archetype.sky.nebula) },
         uTime: { value: 0 },
       },
     });
@@ -437,35 +450,38 @@ export class Planet {
     const pos = geo.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(pos.count * 3);
     const c = new THREE.Color();
+    const scratch = new THREE.Color();
     const v = new THREE.Vector3();
+    // PASS 1 — positions from the height pipeline (plan §11: the biome step needs the SHAPE first)
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i).normalize();
       const h = this.heightAtDir(v.x, v.y, v.z);
       pos.setXYZ(i, v.x * h, v.y * h, v.z * h);
-      const t = clamp((h - this.radius + 13) / 40, 0, 1);
-      if (t < 0.22) c.copy(COL_DEEP).lerp(COL_LOW, t / 0.22);
-      else if (t < 0.48) c.copy(COL_LOW).lerp(COL_MID, (t - 0.22) / 0.26);
-      else if (t < 0.74) c.copy(COL_MID).lerp(COL_RIDGE, (t - 0.48) / 0.26);
-      else c.copy(COL_RIDGE).lerp(COL_PEAK, (t - 0.74) / 0.26);
-      // lowland necrotic tint + fine mottling so large faces never look flat
-      if (t < 0.5) c.lerp(COL_VEIN, (0.5 - t) * 0.5);
-      const mottle = fbm(v.x * 9.1 + 3.3, v.y * 9.1 + 7.7, v.z * 9.1 + 1.9, 2, seed + 31) - 0.5;
-      c.offsetHSL(mottle * 0.02, 0, mottle * 0.09);
+    }
+    geo.computeVertexNormals();
+    // PASS 2 — colours from the BIOME classifier: palette ramp + slope rock + veins + landmarks
+    const nrm = geo.attributes.normal as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const inv = 1 / Math.max(1e-6, v.length());
+      const rx = v.x * inv, ry = v.y * inv, rz = v.z * inv;
+      const h = this.heightAtDir(rx, ry, rz);
+      const slope = clamp(1 - (nrm.getX(i) * rx + nrm.getY(i) * ry + nrm.getZ(i) * rz), 0, 1);
+      this.biome.colorAt(rx, ry, rz, h, slope, c, scratch);
       colors[i * 3] = c.r;
       colors[i * 3 + 1] = c.g;
       colors[i * 3 + 2] = c.b;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geo.computeVertexNormals();
 
     this.terrainMat = new THREE.ShaderMaterial({
       vertexShader: TERRAIN_VERT,
       fragmentShader: TERRAIN_FRAG,
       vertexColors: true,
       uniforms: nfUniforms({
-        uVeinColor: { value: new THREE.Color(0x8b4dff) },
-        uGrassColor: { value: new THREE.Color(0x4e8f63) },
-        uRockColor: { value: new THREE.Color(0x8c93a8) },
+        uVeinColor: { value: new THREE.Color(this.archetype.palette.vein) },
+        uGrassColor: { value: new THREE.Color(this.archetype.palette.mid) },
+        uRockColor: { value: new THREE.Color(this.archetype.palette.ridge) },
         uRadius: { value: this.radius },
       }),
     });
@@ -713,23 +729,7 @@ export class Planet {
 
   /** Terrain radius (distance from planet centre) along a unit direction. */
   heightAtDir(x: number, y: number, z: number): number {
-    const s = this.seed;
-    // continental plates (-1..1)
-    const cont = (fbm(x * 1.15 + 11.3, y * 1.15 + 4.7, z * 1.15 + 7.1, 4, s) - 0.5) * 2;
-    // highland plateaus sitting on top of the plates
-    const plateau = smoothstep(0.12, 0.4, cont);
-    // ridged mountain belts
-    const ridges = 1 - Math.abs(fbm(x * 2.7 + 5.1, y * 2.7 + 1.9, z * 2.7 + 3.3, 4, s + 7) * 2 - 1);
-    const mountains = Math.pow(ridges, 2.7) * 21 * (0.22 + Math.max(0, cont) * 0.95);
-    // rolling hills + a second finer detail layer
-    const hills = (fbm(x * 5.4 + 2.2, y * 5.4 + 9.4, z * 5.4 + 1.5, 3, s + 3) - 0.5) * 4.6;
-    const detail = (fbm(x * 13.5 + 6.6, y * 13.5 + 2.4, z * 13.5 + 8.1, 2, s + 19) - 0.5) * 1.4;
-    // canyon systems carved along the plate seams
-    const seam = 1 - Math.min(1, Math.abs(cont) * 5.5);
-    const canyon = -Math.pow(Math.max(0, seam), 2) * 7.5;
-    // deep basins
-    const basin = -Math.max(0, -cont) * 5.4;
-    return this.radius + cont * 5.4 + plateau * 2.6 + mountains + hills + detail + canyon + basin;
+    return this.terrain.sample(x, y, z);
   }
 
   heightAt(p: THREE.Vector3): number {

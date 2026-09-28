@@ -148,7 +148,7 @@ export class GalacticMap {
     this.focusSystem = null;
     this.selectedSystem = null;
     this.selectedPlanet = null;
-    this.camTarget = { x: home.gx, y: home.gy, zoom: this.fitZoom(2.6) };
+    this.camTarget = { x: home.gx, y: home.gy, zoom: this.ringViewZoom(ring) };
     this.onSelect({ level: 'galactic', galaxy: null, system: null, planet: null });
   }
 
@@ -182,9 +182,14 @@ export class GalacticMap {
       if (g) this.enterGalaxy(g, false);
       this.onSelect({ level: 'galaxy', galaxy: g, system: null, planet: null });
     } else if (this.level === 'galaxy') {
+      const left = this.focusGalaxy;
       this.level = 'galactic';
       this.focusGalaxy = null;
       this.focusSystem = null;
+      this.selectedPlanet = null;
+      // Zoom back OUT to the ring band around the galaxy we just left — staying at
+      // galaxy zoom made the map read as one giant disc (user report 2026-09-28).
+      if (left) this.camTarget = { x: left.gx, y: left.gy, zoom: this.ringViewZoom(left.ring) };
       this.onSelect({ level: 'galactic', galaxy: null, system: null, planet: null });
     }
   }
@@ -218,6 +223,18 @@ export class GalacticMap {
 
   private fitZoom(worldSpan: number): number {
     return Math.min(this.width, this.height) / (worldSpan * 1.05);
+  }
+
+  /**
+   * Zoom that frames the WHOLE ring band (plan §47). The band is a disc whose outer
+   * radius is (ring+1)·RING_WIDTH_CELLS world cells, so the old fixed `fitZoom(2.6)`
+   * filled the entire map with a single galaxy's glow — on a phone canvas it read as
+   * one giant blob (user report 2026-09-28). The clamp keeps ring 0 readable and stops
+   * the widest bands from hitting the 4× floor with the home anchor outside the frame.
+   */
+  private ringViewZoom(ring: number): number {
+    const span = Math.max(14, (ring + 1) * RING_WIDTH_CELLS * 2.5);
+    return Math.max(4, Math.min(42, this.fitZoom(span)));
   }
 
   private world2screen(x: number, y: number): { x: number; y: number } {
@@ -429,26 +446,29 @@ export class GalacticMap {
     const maxW = this.screen2world(this.width + pad, this.height + pad);
     const galaxies = galaxiesInView(this.data.universeSeed, minW.x, maxW.x, minW.y, maxW.y, MAX_VIEW_GALAXIES);
     const zoom = this.cam.zoom;
-    const spriteScale = Math.max(16, zoom * 0.9);
+    const spriteScale = Math.max(14, zoom * 0.5);
 
     for (const g of galaxies) {
       const p = this.world2screen(g.gx, g.gy);
       const isFocus = this.focusGalaxy?.galaxyId === g.galaxyId;
       const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
-      const radius = Math.max(3.5, g.radius * 0.055 * zoom);
+      // A galaxy is a STAR here (≈0.5 world cells): the old 0.055 factor drew every galaxy
+      // at full disc scale, so an overview frame became overlapping bokeh (user report).
+      const radius = Math.max(3, g.radius * 0.012 * zoom);
       const pulse = 1 + 0.06 * Math.sin(t * 2 + g.seed % 100);
-      // nebula underlay
+      // nebula underlay (kept subtle: at ring-overview zoom the sprites overlap, and the
+      // old 7×/0.16 values washed the whole canvas into one pastel blur — user report)
       if (g.nebulaColor) {
-        ctx.globalAlpha = 0.16;
+        ctx.globalAlpha = 0.1;
         const n = this.glow(g.nebulaColor, 128);
-        const ns = radius * 7 * pulse;
+        const ns = radius * 4.5 * pulse;
         ctx.drawImage(n, p.x - ns / 2, p.y - ns / 2, ns, ns);
         ctx.globalAlpha = 1;
       }
       // star glow
       const sprite = this.glow(g.starColor, 64);
-      const ss = Math.max(radius * 4.4, spriteScale);
-      ctx.globalAlpha = 0.8;
+      const ss = Math.max(radius * 3.2, spriteScale);
+      ctx.globalAlpha = 0.72;
       ctx.drawImage(sprite, p.x - ss / 2, p.y - ss / 2, ss, ss);
       ctx.globalAlpha = 1;
       // core
@@ -475,7 +495,7 @@ export class GalacticMap {
         ctx.stroke();
       }
       // name for big zoom or focus
-      if (zoom > 42 || isFocus) {
+      if (zoom > 26 || isFocus) {
         ctx.font = '600 10px Rajdhani, sans-serif';
         ctx.textAlign = 'center';
         ctx.fillStyle = 'rgba(233,226,255,0.9)';

@@ -4,6 +4,7 @@
 // Species are original designs inspired only by broad creature archetypes
 // (jelly blobs, burrowing worms, web spiders, fast crawlers, heavy brutes).
 import { Rand, clamp } from '../utils/Utils';
+import type { EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship } from './procedural/EnemyGenome';
 
 export type SpeciesId = 'slime' | 'worm' | 'spider' | 'crawler' | 'brute' | 'hunter';
 export type Tier = 'small' | 'large' | 'apex' | 'boss' | 'nexus';
@@ -222,6 +223,14 @@ export interface GenomeVisual {
   tubes?: number;
   /** Volatile glowing sacs (explosive trait). */
   glowNodes?: number;
+  /** Side flippers — FLOATING locomotion (plan §19). */
+  fins?: number;
+  /** Membrane wings — FLOATING at higher rings. */
+  wings?: number;
+  /** Rear storage organs — LEAPER compression / CHARGER build-up. */
+  sacs?: number;
+  /** Hooked forelimbs — ambushers and leapers. */
+  claws?: number;
 }
 
 export interface EnemyGenome {
@@ -255,6 +264,23 @@ export interface EnemyGenome {
   hunter: 0 | 1 | 2;
   /** Hunter-only tuning: the leap cycle. */
   hunt?: HunterProfile;
+  // ----------------------------------------------------------------------------------------
+  // THE PROCEDURAL LAYER (plan §16–§29) — written by `enemies/procedural/` and read by the
+  // animator + debug surfaces. All optional: the shipped simulation runs with or without it.
+  /** Movement class (plan §19) — drives the gait animator. */
+  locomotion?: LocomotionId;
+  /** The gait the animator plays. */
+  gait?: GaitProfile;
+  /** Generated attack descriptors: telegraphs, wind-ups, sequencing (plan §22/§23). */
+  attacks?: ProcAttack[];
+  /** Ecology role within the planet's ecosystem (plan §26). */
+  role?: EcoRole;
+  /** Where it lives — biome + locomotion, for plates and the lab. */
+  habitat?: string;
+  /** Food-chain links (plan §27). */
+  relationships?: ProcRelationship[];
+  /** Incoming-damage multiplier from the body plan (plan §18: shell = tanky). 1 = none. */
+  armor?: number;
 }
 
 /**
@@ -542,7 +568,7 @@ function pickTraits(
  * tubes, glowing sacs), so every combination stays inside the existing look and no trait can
  * produce a creature built from nothing.
  */
-function applyTraitVisual(v: GenomeVisual, traits: BehaviorTrait[]): void {
+export function applyTraitVisual(v: GenomeVisual, traits: BehaviorTrait[]): void {
   for (const t of traits) {
     switch (t) {
       case 'aggressive':

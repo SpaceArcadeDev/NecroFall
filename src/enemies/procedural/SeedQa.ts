@@ -1,0 +1,181 @@
+// NECROFALL — AUTOMATED SEED QA (plan §69). Generates thousands of planets and enemy genomes
+// and validates them headlessly: terrain NaN/range/slope, spawn + boss-arena viability, genome
+// stat sanity, illegal body/attack combinations (plan §70). Failures are collected with the
+// exact reasons so the GENERATOR gets fixed, never a hand-patched map.
+//
+// Runs in the browser (dev lab) or under the test harness — pure, no THREE, no DOM.
+import { deriveArchetype, type PlanetArchetype } from '../../world/PlanetArchetypes';
+import { TerrainGenerator } from '../../world/TerrainGenerator';
+import { generateEcology, factsFromSeed, type EcologyBestiary } from './EcologyGenerator';
+import { validateGenome } from './Compatibility';
+
+export interface QaFailure {
+  kind: 'planet' | 'genome';
+  seed: number;
+  /** Genome index (genome failures) or probe detail (planet failures). */
+  detail: string;
+  issues: string[];
+}
+
+export interface QaReport {
+  planetsChecked: number;
+  genomesChecked: number;
+  bossesChecked: number;
+  failures: QaFailure[];
+  /** Fraction of probes that returned a finite height, for the summary line. */
+  terrainFiniteRatio: number;
+  elapsedMs: number;
+}
+
+const DIR_SAMPLES = 96;
+
+/** Fibonacci-sphere probe directions (deterministic, shared by every seed). */
+const PROBES: [number, number, number][] = (() => {
+  const out: [number, number, number][] = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < DIR_SAMPLES; i++) {
+    const y = 1 - (2 * i + 1) / DIR_SAMPLES;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const a = golden * i;
+    out.push([Math.cos(a) * r, y, Math.sin(a) * r]);
+  }
+  return out;
+})();
+
+const RADIUS = 118;
+
+/** 1.32 m of surface per fine probe step (0.0112 rad) — the scale a body actually walks at. */
+const FINE_STEP = 0.0112;
+
+/** One planet: height field sanity + spawn/boss-arena viability (plan §69). */
+export function qaPlanet(seed: number, ring = 0): QaFailure | { finite: number; total: number; archetype: PlanetArchetype; terrain: TerrainGenerator } {
+  const issues: string[] = [];
+  let finite = 0;
+  let total = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  let maxFine = 0;
+  let maxCoarse = 0;
+  let prev: number | null = null;
+  let flatCells = 0;
+  const archetype = deriveArchetype(seed, ring);
+  const terrain = new TerrainGenerator(seed, RADIUS, archetype, ring);
+  for (let i = 0; i < PROBES.length; i++) {
+    const [x, y, z] = PROBES[i];
+    const h = terrain.sample(x, y, z);
+    total++;
+    if (!Number.isFinite(h)) {
+      issues.push('terrain produced NaN/Infinity');
+      break;
+    }
+    finite++;
+    min = Math.min(min, h);
+    max = Math.max(max, h);
+    if (prev !== null) maxCoarse = Math.max(maxCoarse, Math.abs(h - prev));
+    prev = h;
+    // FINE probes: what a walking body experiences. 1.32 m steps; ~74° is the steepest legal face.
+    let px = x;
+    let pz = z;
+    let ph = h;
+    for (let k = 0; k < 3; k++) {
+      px += FINE_STEP;
+      pz += FINE_STEP * 0.6;
+      const l = Math.hypot(px, y, pz) || 1;
+      const hf = terrain.sample(px / l, y / l, pz / l);
+      total++;
+      if (!Number.isFinite(hf)) { issues.push('terrain produced NaN/Infinity (fine probe)'); break; }
+      finite++;
+      maxFine = Math.max(maxFine, Math.abs(hf - ph));
+      min = Math.min(min, hf);
+      max = Math.max(max, hf);
+      ph = hf;
+      if (Math.abs(hf - h) < 0.9) flatCells++;
+    }
+  }
+  // hard clamps (the field must live inside the collision band, plan §69 "impossible slopes")
+  if (max - RADIUS > 46.5) issues.push(`terrain above the allowed band (${(max - RADIUS).toFixed(1)} m)`);
+  if (RADIUS - min > 34.5) issues.push(`terrain below the allowed band (${(RADIUS - min).toFixed(1)} m)`);
+  if (maxFine > 5.2) issues.push(`impossible slope (${maxFine.toFixed(1)} m rise over 1.3 m of ground)`);
+  if (maxCoarse > 60) issues.push(`terrain spike between sectors (${maxCoarse.toFixed(0)} m)`);
+  // spawn + tower viability: some flat-ish ground must exist
+  if (flatCells < PROBES.length * 3 * 0.05) issues.push(`no flat spawn/arena ground (${flatCells} flat fine probes)`);
+  if (issues.length) return { kind: 'planet', seed, detail: `ring ${ring} · ${archetype.biome}`, issues };
+  return { finite, total, archetype, terrain };
+}
+
+/** One planet's full ecology: stat + compatibility validation for every genome and boss. */
+export function qaEcology(seed: number, ring: number): { failures: QaFailure[]; bosses: number; genomes: number; bestiary: EcologyBestiary } {
+  const failures: QaFailure[] = [];
+  const facts = factsFromSeed(seed, ring);
+  const bestiary = generateEcology(seed, facts);
+  let bosses = 0;
+  for (const g of bestiary.genomes) {
+    const issues = validateGenome(g, { solidGround: true });
+    // procedural-layer sanity the shipped sim also relies on
+    if (!g.locomotion) issues.push('no locomotion class');
+    if (!g.gait) issues.push('no gait profile');
+    if (!g.role) issues.push('no ecology role');
+    if (g.tier === 'boss' || g.tier === 'nexus') {
+      bosses++;
+      if (!(g.attacks && g.attacks.length >= 3)) issues.push('boss with fewer than 3 attacks');
+    }
+    if (g.hunter && !g.hunt) issues.push('hunter without a hunt cycle');
+    if (g.abilities.length === 0) issues.push('no abilities');
+    if (issues.length) failures.push({ kind: 'genome', seed, detail: `#${g.idx} ${g.name} (${g.tier})`, issues });
+  }
+  return { failures, bosses, genomes: bestiary.genomes.length, bestiary };
+}
+
+/**
+ * THE QA RUN (plan §69): `planets` seeds across all 8 rings + their ecologies, plus an extra
+ * `bosses` boss genomes. Deterministic given a start seed.
+ */
+export function runSeedQa(planets: number, startSeed = 1, rings = 8): QaReport {
+  const t0 = performance.now();
+  const failures: QaFailure[] = [];
+  let finiteTotal = 0;
+  let probesTotal = 0;
+  let genomesChecked = 0;
+  let bossesChecked = 0;
+  for (let i = 0; i < planets; i++) {
+    const seed = (startSeed + i + 1) >>> 0;
+    const ring = i % rings;
+    const planetResult = qaPlanet(seed, ring);
+    if ('kind' in planetResult) {
+      failures.push(planetResult);
+    } else {
+      finiteTotal += planetResult.finite;
+      probesTotal += planetResult.total;
+    }
+    const ecology = qaEcology(seed, ring);
+    failures.push(...ecology.failures);
+    genomesChecked += ecology.genomes;
+    bossesChecked += ecology.bosses;
+    // stay responsive: the lab runs big batches on the main thread
+    if (i > 0 && i % 500 === 0) {
+      /* no-op: deliberate yield point for future async chunking */
+    }
+  }
+  return {
+    planetsChecked: planets,
+    genomesChecked,
+    bossesChecked,
+    failures,
+    terrainFiniteRatio: probesTotal ? finiteTotal / probesTotal : 1,
+    elapsedMs: performance.now() - t0,
+  };
+}
+
+export function failureReportJson(report: QaReport): string {
+  return JSON.stringify(
+    {
+      generatedAt: new Date().toISOString(),
+      planetsChecked: report.planetsChecked,
+      genomesChecked: report.genomesChecked,
+      bossesChecked: report.bossesChecked,
+      badSeeds: report.failures,
+    },
+    null,
+    2
+  );
+}

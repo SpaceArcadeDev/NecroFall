@@ -22,6 +22,16 @@ import {
 
 export { generateBestiary } from './EnemyGenomes';
 export type { EnemyGenome, Bestiary, BehaviorTrait } from './EnemyGenomes';
+// The procedural layer (plan §16–§29): grammars produce genomes, the assembler builds their
+// bodies, the animator plays their gaits. `Enemies.ts` only orchestrates.
+export { assembleEnemy } from './procedural/EnemyAssembler';
+export { generateEcology, factsFromSeed, factsFromDescriptor } from './procedural/EcologyGenerator';
+export type { PlanetFacts, EcoRole, LocomotionId, ProcAttack } from './procedural/EnemyGenome';
+import { assembleEnemy } from './procedural/EnemyAssembler';
+import { animateEnemyRig } from './procedural/EnemyAnimator';
+import { generateEcology as generateEcologyBestiary } from './procedural/EcologyGenerator';
+import { factsFromSeed } from './procedural/EcologyGenerator';
+import type { PlanetFacts } from './procedural/EnemyGenome';
 
 /**
  * The behavioural states every Necrophage can be in. A creature only ever holds one, transitions
@@ -400,7 +410,7 @@ export class Enemy {
     this.mechCast = -1;
     this.mechT = 0;
     if (this.rig) this.rig.group.removeFromParent();
-    this.rig = buildCreature(genome, 1 + genome.idx * 131 + this.id);
+    this.rig = assembleEnemy(genome, this.id);
     this.group = this.rig.group;
     // Remember the rig's base shader colours: the enraged wash is applied and removed every frame.
     this.rigBaseGlow = (this.rig.energy.uniforms.uGlow.value as THREE.Color).clone();
@@ -1265,8 +1275,10 @@ export class Enemy {
    * damage in that window.
    */
   damageTakenMul(): number {
-    if (!this.isBoss) return 1;
-    let mul = CONFIG.boss.damageTaken;
+    // The body plan owns the flat armour (plan §18: shell = tanky) — bosses stack their own.
+    const armor = this.genome.armor ?? 1;
+    if (!this.isBoss) return armor;
+    let mul = CONFIG.boss.damageTaken * armor;
     if (this.enraged) mul /= CONFIG.boss.enragedDefenseMultiplier;
     return mul;
   }
@@ -1975,37 +1987,10 @@ export class Enemy {
 
     const speed = this.velocity.length();
     const moving = clamp(speed / 7, 0, 1);
-    // The behavioural profile rides the walk cycle too: an aggressive, charging body has a faster,
-    // wider stride than a plated territorial one, so the traits read in the animation as well.
-    const prof = this.genome.behavior;
-    const swingAmt = (0.22 + moving * 0.5) * prof.animAmpMul;
-
-    for (const leg of rig.legs) {
-      const p = this.animPhase * prof.animSpeedMul + leg.phase;
-      leg.root.rotation.x = Math.sin(p) * swingAmt;
-      leg.knee.rotation.x = Math.max(0, -Math.sin(p + 0.7)) * (0.25 + moving * 0.55) * prof.animAmpMul;
-    }
-
-    // segmented bodies wriggle as a travelling wave
-    for (let i = 1; i < rig.segments.length; i++) {
-      const seg = rig.segments[i];
-      const wave = Math.sin(this.animPhase * 1.6 - i * 0.7);
-      seg.rotation.y = wave * 0.28 * (0.4 + moving);
-      seg.position.x = wave * rig.scale * 0.06;
-    }
-
-    // jelly bodies squash and stretch
-    if (rig.jelly > 0.5) {
-      const squash = 1 + Math.sin(this.animPhase * (1.4 + moving)) * (0.06 + moving * 0.12);
-      rig.body.scale.set(rig.jellyBase.x / squash, rig.jellyBase.y * squash, rig.jellyBase.z / squash);
-      rig.body.position.y = rig.scale * 0.62 + Math.sin(this.animPhase * 2) * rig.scale * 0.05;
-    } else {
-      rig.body.position.y = rig.scale * 0.62 + Math.sin(this.animPhase * 2) * rig.scale * 0.03 * (0.3 + moving);
-    }
-
-    rig.head.rotation.y = Math.sin(this.animPhase * 0.6) * 0.16;
-    rig.head.rotation.x = Math.sin(this.animPhase * 1.1) * 0.08 - moving * 0.12;
-    if (rig.tail) rig.tail.rotation.y = Math.sin(this.animPhase * 0.9) * 0.32;
+    // The gait solver owns the whole walk cycle (plan §20/§21): the locomotion class picks the
+    // style, the behaviour profile still scales it, and secondary motion (breathing, sac pulse,
+    // tail sway, head bearing) rides on top. Zero per-species animation data.
+    animateEnemyRig(rig, this.genome, this.animPhase, moving, dt);
 
     const targetAggro = this.targetId ? 1 : 0;
     this.aggro += (targetAggro - this.aggro) * 0.08;
@@ -2275,9 +2260,20 @@ export class EnemyManager {
     return removed;
   }
 
-  /** Called at match start: builds the match's own bestiary from the seed. */
+  /**
+   * Called at match start: builds the match's own bestiary from the seed. The PROCEDURAL
+   * ECOLOGY (plan §26) is the one true generator; `facts` carries the ranked planet's
+   * descriptor (ring, biome, ecology kind, landmark biases) when the caller has it, and is
+   * derived from the seed itself otherwise — all peers compute identical rosters either way.
+   */
   generate(seed: number): Bestiary {
-    this.bestiary = generateBestiary(seed);
+    this.bestiary = generateEcologyBestiary(seed, factsFromSeed(seed));
+    return this.bestiary;
+  }
+
+  /** Ranked / planet-aware generation (plan §29/§32): the ring and biome shape the roster. */
+  generateEcology(seed: number, facts?: PlanetFacts): Bestiary {
+    this.bestiary = generateEcologyBestiary(seed, facts ?? factsFromSeed(seed));
     return this.bestiary;
   }
 

@@ -59,7 +59,7 @@
   display: grid;
   place-items: center;
   padding: 0;
-  border-radius: 10px;
+  border-radius: var(--rk-corner, 12px);
   border: 1px solid var(--ui-border);
   background: var(--ui-panel);
   color: var(--ui-text-muted);
@@ -105,7 +105,7 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--rk-corner, 12px);
   border: 1px solid var(--ui-border);
   background: rgba(10, 6, 20, 0.6);
   color: var(--ui-text);
@@ -126,7 +126,7 @@
   place-items: center;
   font-size: 15px;
   font-weight: 700;
-  border-radius: 10px;
+  border-radius: var(--rk-corner, 12px);
   border: 1px solid rgba(148, 120, 220, 0.25);
   background: rgba(10, 7, 20, 0.72);
   color: var(--ui-text);
@@ -233,7 +233,7 @@
   align-items: center;
   gap: 7px;
   padding: 8px 16px;
-  border-radius: 12px;
+  border-radius: var(--rk-corner, 12px);
   border: 1px solid var(--ui-border);
   background: var(--ui-panel);
   color: var(--ui-text);
@@ -257,6 +257,9 @@
 
 /* ============================================================ layout */
 #ui .rank-page, .nf-shell .rank-page {
+  /* ONE corner radius for the whole screen — the map mini-view follows the buttons
+     (user: the 26% squircle read as way too round next to the JOIN pill) */
+  --rk-corner: 12px;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -321,7 +324,7 @@
 .rk-zoom-btn {
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--rk-corner, 12px);
   border: 1px solid rgba(148, 120, 220, 0.25);
   background: rgba(10, 7, 20, 0.72);
   color: var(--ui-text);
@@ -954,7 +957,8 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   }
   .rk-rail { grid-column: 1 / -1; grid-row: 1; margin: 0; padding: 0 0 2px; }
   .rk-ring { padding: 4px 9px; }
-  /* the small map is a SQUIRCLE: square, deeply rounded, its own fixed frame */
+  /* the small map is a rounded SQUARE whose corners follow the button family
+     (user: 26% was far too round — match the JOIN button's radius) */
   .rk-map-wrap {
     grid-column: 1;
     grid-row: 2;
@@ -963,7 +967,7 @@ body.nf-touch .rk-hover-tip { display: none !important; }
     aspect-ratio: 1 / 1;
     min-height: 0;
     margin: 0;
-    border-radius: 26%;
+    border-radius: var(--rk-corner, 12px);
   }
   .rk-breadcrumb { display: none; }         /* no room inside a squircle */
   .rk-zoom { gap: 4px; }

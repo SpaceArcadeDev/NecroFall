@@ -778,16 +778,49 @@ html.nf-onb-colony .count-badge { display: none; }
    P2P lobby: title + format chip, the [SHARE][COPY][CODE] chrome pinned top-right,
    the lit stage carrying the 3D line-up, tinted seats and the FIND MATCH / LEAVE
    action row. Nothing is embedded in the lobby entry. */
-.party-page {
+.lobby-room-page {
   position: relative; /* the code chrome pins to the page's top-right, like the lobby */
   gap: 6px;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
-.party-page .lobby-head { flex: 0 0 auto; }
-.party-page .lobby-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
-.party-page .party-codebar {
+.lobby-room-page .lobby-head { flex: 0 0 auto; }
+.lobby-room-page .lobby-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
+/* the header's tag cluster (format chip + season), hung off the CENTRED title — the
+   wordmark itself stays dead-centre on the screen (user ask 2026-09-29). */
+.lobby-room-tags {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.lobby-room-season {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(255, 209, 102, 0.08);
+  border: 1px solid rgba(255, 209, 102, 0.38);
+  color: #ffd166;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+.lobby-room-season b { color: var(--ui-text-muted); font-weight: 700; letter-spacing: 0.24em; }
+.lobby-room-season i { font-style: normal; }
+/* phones: the tags drop to their own line UNDER the wordmark instead of squeezing it */
+@media (max-width: 720px) {
+  .lobby-room-page .rk-head-title-row { flex-direction: column; gap: 4px; }
+  .lobby-room-tags { position: static; transform: none; margin-top: 2px; }
+  .lobby-room-season { font-size: 8.5px; padding: 3px 8px; }
+}
+.lobby-room-page .lobby-room-codebar {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -797,13 +830,13 @@ html.nf-onb-colony .count-badge { display: none; }
   gap: 2px;
   z-index: 4;
 }
-.party-page .lobby-panel { flex: 1 1 auto; min-height: 0; }
-.party-page .lobby-lineup { flex: 1 1 auto; min-height: 0; }
+.lobby-room-page .lobby-panel { flex: 1 1 auto; min-height: 0; }
+.lobby-room-page .lobby-lineup { flex: 1 1 auto; min-height: 0; }
 /* The rail is the HERO of this screen, exactly like the in-game lobby menu — and it must reach
    the SAME 204 px stage there: the base `.lobby-rail` floor (16vh) starved it on short frames
    (measured 184 vs the lobby's 204 at 1080x490), so the avatar rendered visibly smaller here. */
-.party-page .lobby-rail { min-height: clamp(150px, 42vh, 204px); }
-.party-page .seat-card { border-color: color-mix(in srgb, var(--seat-col, var(--ui-border)) 52%, transparent); }
+.lobby-room-page .lobby-rail { min-height: clamp(150px, 42vh, 204px); }
+.lobby-room-page .seat-card { border-color: color-mix(in srgb, var(--seat-col, var(--ui-border)) 52%, transparent); }
 /* The CLASSIC flow screens (play, setup, party) wear the in-game menu dress: no
    account chrome above them — the wordmark rises to the very top and the back
    chevron floats over the corner. */
@@ -816,8 +849,8 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 /* short screens: keep the whole party on one page — trim the luxuries first */
 @media (max-height: 820px) {
-  .party-page .lobby-title { font-size: clamp(30px, 6.4vh, 48px); }
-  .party-page .seat-state { display: none; }
+  .lobby-room-page .lobby-title { font-size: clamp(30px, 6.4vh, 48px); }
+  .lobby-room-page .seat-state { display: none; }
 }
 /* compact panels so the whole flow fits a phone frame without vertical scrolling */
 .play-page .nf-play-enter { gap: 8px; padding: 10px; }
@@ -832,7 +865,7 @@ html.nf-onb-colony .count-badge { display: none; }
    frame instead of being clipped by the page's overflow:hidden. */
 @media (max-height: 480px) {
   .play-page .menu-title,
-  .party-page .lobby-title { font-size: clamp(20px, 6.6vh, 30px); }
+  .lobby-room-page .lobby-title { font-size: clamp(20px, 6.6vh, 30px); }
   .play-page .menu-col { gap: 6px; }
   /* when the leftover space can no longer hold the whole setup, `safe center`
      top-aligns it — so it can never spill back over the mode strip */
@@ -856,10 +889,10 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-play-row input { min-height: 36px; padding: 6px 10px; }
   .nf-play-enter .muted { font-size: 11px; margin: 0; }
   /* the party panel follows the in-game landscape lobby rules */
-  .party-page .lobby-panel { padding: 8px 10px; gap: 5px; }
-  .party-page .lobby-rail { min-height: 44px; margin-bottom: 4px; }
-  .party-page .seat-card { padding: 4px 4px 5px; min-height: 48px; }
-  .party-page .lobby-actions .btn { min-height: 40px; }
+  .lobby-room-page .lobby-panel { padding: 8px 10px; gap: 5px; }
+  .lobby-room-page .lobby-rail { min-height: 44px; margin-bottom: 4px; }
+  .lobby-room-page .seat-card { padding: 4px 4px 5px; min-height: 48px; }
+  .lobby-room-page .lobby-actions .btn { min-height: 40px; }
 }
 /* The tiniest landscape frames (a 568x320 phone): another notch off the
    controls so the last action row still clears the bottom edge. */
@@ -1472,6 +1505,42 @@ html.nf-onb-colony .count-badge { display: none; }
 @keyframes nf-play-shine {
   0% { background-position: 130% 0; }
   100% { background-position: -130% 0; }
+}
+
+/* ==========================================================================
+   BOOT SPINNER (user ask 2026-09-29): the shell has NOTHING to show while the planet
+   boots / the account connects, and again while a match loads. A centred spinner
+   proves the app is alive instead of a blank frame.
+   ========================================================================== */
+.nf-boot-spin {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  z-index: 40;
+  pointer-events: none;
+}
+.nf-boot-spin.hidden { display: none; }
+.nf-boot-spin-ring {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(150, 120, 220, 0.22);
+  border-top-color: #a06bff;
+  animation: nf-spin 0.9s linear infinite;
+  filter: drop-shadow(0 0 14px rgba(150, 96, 255, 0.6));
+}
+.nf-boot-spin-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3em;
+  color: var(--ui-text-muted);
+  text-transform: uppercase;
+}
+@keyframes nf-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* the back chevron: how child screens (play, queue, profile) return home */

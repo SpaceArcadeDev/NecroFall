@@ -1,7 +1,7 @@
 // NECROFALL — the OFFICIAL setup section (plan §11/§35/§72): ONE colony row,
 // then the party row — [PARTY CODE][JOIN][CREATE PARTY] on one line — with
 // FIND MATCH on its own row below (OPEN PARTY fills the row while a party
-// exists). The party roster itself lives on the PARTY screen.
+// exists). The lobby roster itself lives on the LOBBY ROOM screen.
 import { COLONIES } from '../../core/Config';
 import { ClientCache } from '../spacetimedb/cache';
 import { ShellContext } from '../ShellContext';
@@ -31,28 +31,29 @@ export class OfficialLobby {
     const partyRow = el('div', 'nf-play-row');
     this.codeInput = el('input', 'nf-input nf-code') as HTMLInputElement;
     this.codeInput.maxLength = 8;
-    this.codeInput.placeholder = 'PARTY CODE';
+    this.codeInput.placeholder = 'LOBBY CODE';
     this.codeInput.autocapitalize = 'characters';
     this.codeInput.autocomplete = 'off';
     this.joinBtn = button('JOIN', 'btn nf-small', () => {
       const code = this.codeInput.value.trim().toUpperCase();
       if (code.length < 4) {
-        this.ctx.toast('Enter a valid party code.');
+        this.ctx.toast('Enter a valid lobby code.');
         return;
       }
-      // parties opened from the LOBBY are CLASSIC parties (the rank menu tags RANK)
-      this.ctx.setPartyMode('CLASSIC');
-      this.ctx.official.joinPartyByCode(code);
-      this.ctx.goParty(); // …and the PARTY screen gathers the roster
+      // JOIN NEVER OPENS A NEW-LOBBY PAGE (user ask 2026-09-29): the join fires, and
+      // the LOBBY ROOM opens only once the server's rows actually land — a bad code
+      // toasts instead of dropping the player on a page they did not ask for.
+      this.ctx.setLobbyFormat('CLASSIC');
+      this.ctx.joinLobbyByCode(code);
     });
-    this.primaryBtn = button('CREATE PARTY', 'btn primary nf-small', () => {
-      this.ctx.setPartyMode('CLASSIC');
+    this.primaryBtn = button('CREATE LOBBY', 'btn primary nf-small', () => {
+      this.ctx.setLobbyFormat('CLASSIC');
       if (this.inParty) {
-        this.ctx.goParty();
+        this.ctx.goLobbyRoom();
         return;
       }
       this.ctx.official.createParty();
-      this.ctx.goParty(); // CREATE PARTY opens the PARTY screen
+      this.ctx.goLobbyRoom(); // CREATE LOBBY opens the room
     });
     partyRow.append(this.codeInput, this.joinBtn, this.primaryBtn);
     this.element.appendChild(partyRow);
@@ -61,6 +62,10 @@ export class OfficialLobby {
     this.soloRow = el('div', 'nf-play-actions');
     this.findBtn = button('FIND MATCH', 'btn primary nf-small', () => this.ctx.official.findMatch());
     this.soloRow.appendChild(this.findBtn);
+    // OFFLINE stays reachable (the P2P entry that used to carry it is gone): the
+    // legacy world boots alone, with no room link at all.
+    const offline = button('PLAY SOLO / OFFLINE', 'btn nf-small', () => this.ctx.launchLegacy({}));
+    this.soloRow.appendChild(offline);
     this.element.appendChild(this.soloRow);
 
     this.update();
@@ -85,16 +90,16 @@ export class OfficialLobby {
     this.inParty = Boolean(party);
 
     if (party) {
-      // In a party: the PARTY screen owns the search — leave a full-width way back in.
+      // In a lobby: the LOBBY ROOM owns the search — leave a full-width way back in.
       this.codeInput.classList.add('hidden');
       this.joinBtn.classList.add('hidden');
-      this.primaryBtn.textContent = 'OPEN PARTY';
+      this.primaryBtn.textContent = 'OPEN LOBBY';
       this.primaryBtn.style.flex = '1 1 0';
       this.soloRow.classList.add('hidden');
     } else {
       this.codeInput.classList.remove('hidden');
       this.joinBtn.classList.remove('hidden');
-      this.primaryBtn.textContent = 'CREATE PARTY';
+      this.primaryBtn.textContent = 'CREATE LOBBY';
       this.primaryBtn.style.flex = '';
       this.soloRow.classList.remove('hidden');
     }

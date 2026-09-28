@@ -771,6 +771,10 @@
   box-shadow: 0 0 18px rgba(150, 90, 255, 0.5);
   pointer-events: none;
 }
+/* (user ask 2026-09-29) NO bottom gradient line in the LOBBY — the lit rule read as a
+   seam sliced across the roster stage. The rank header keeps its own copy of the rule. */
+.lobby-screen .lobby-head::after,
+.lobby-room-page .lobby-head::after { display: none; }
 /* the LOBBY wordmark wears the NECROFALL dress: same gradient, weight and tracking */
 .lobby-title {
   font-size: clamp(30px, 6.4vh, 54px);

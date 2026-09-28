@@ -12,8 +12,8 @@ export interface LegacyLaunchOptions {
   name?: string;
 }
 
-/** One figure on the OFFICIAL party line-up (the P2P lobby's avatar rail, in the shell). */
-export interface PartyAvatarInfo {
+/** One figure on the OFFICIAL LOBBY line-up (the P2P lobby's avatar rail, in the shell). */
+export interface LobbySeatInfo {
   id: string;
   colony: number;
   acc: string;
@@ -23,11 +23,11 @@ export interface PartyAvatarInfo {
   empty?: boolean;
 }
 
-/** The FORMAT a party belongs to — the tag its screen wears + how many seats it holds. */
-export type PartyMode = 'CLASSIC' | 'RANK' | 'P2P';
+/** The FORMAT an official lobby belongs to — the tag its screen wears + how many seats it holds. */
+export type LobbyFormat = 'CLASSIC' | 'RANK' | 'P2P';
 
-/** Seat caps per party format (OFFICIAL parties hold 3; P2P rooms hold 9). */
-export function partySeatCount(mode: PartyMode): number {
+/** Seat caps per format (OFFICIAL lobbies hold 3; P2P rooms hold 9). */
+export function lobbySeatCount(mode: LobbyFormat): number {
   return mode === 'P2P' ? 9 : 3;
 }
 
@@ -56,18 +56,20 @@ export interface ShellContext {
   goQueue(): void;
   /** The LOBBY screen (CLASSIC's home): official party or the P2P entry. */
   goLobby(): void;
-  /** The OFFICIAL PARTY screen — CREATE PARTY's home, in the in-game lobby's dress. */
-  goParty(): void;
-  /** The party screen's BACK: return to the screen that OPENED the party. */
-  goBackFromParty(): void;
-  /** Tag the party screen with its FORMAT (RANK when opened from the rank menu, else CLASSIC). */
-  setPartyMode(mode: PartyMode): void;
-  partyMode(): PartyMode;
+  /** The OFFICIAL LOBBY screen — the P2P lobby's own dress, CREATEd from the lobby/rank menus. */
+  goLobbyRoom(): void;
+  /** The lobby screen's BACK: return to the screen that OPENED it. */
+  goBackFromLobbyRoom(): void;
+  /** Tag the official lobby with its FORMAT (RANK when opened from the rank menu, else CLASSIC). */
+  setLobbyFormat(mode: LobbyFormat): void;
+  lobbyFormat(): LobbyFormat;
+  /** JOIN a lobby by its code: the room opens once the server's rows land, never before. */
+  joinLobbyByCode(code: string): void;
   /** Where the player belongs after the queue ends: their party, or the CLASSIC setup. */
   returnFromQueue(): void;
   /** Boot the existing WebRTC game (P2P lobbies and offline play live there). */
   launchLegacy(options: LegacyLaunchOptions): void;
-  /** Stage (or park, with host=null) the OFFICIAL party line-up on the shell. */
-  stagePartyAvatars(host: HTMLElement | null, members: PartyAvatarInfo[]): void;
+  /** Stage (or park, with host=null) the OFFICIAL lobby line-up on the shell. */
+  stageLobbyAvatars(host: HTMLElement | null, members: LobbySeatInfo[]): void;
   toast(message: string): void;
 }

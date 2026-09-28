@@ -3,8 +3,8 @@
 // Routes are deliberately few: the shell is a lobby, not a website.
 //   #/home            — the MOBA-style main menu
 //   #/play            — the CLASSIC / RANK format menu
-//   #/lobby           — the LOBBY screen (official party or P2P entry)
-//   #/party           — the OFFICIAL PARTY screen (its own menu page)
+//   #/lobby           — the LOBBY SETUP screen (colony row + JOIN / CREATE LOBBY)
+//   #/room            — the LOBBY ROOM itself (the P2P lobby's dress; old #/party kept as alias)
 //   #/rank            — the RANK mode: the intergalactic map (plan §48)
 //   #/graphics        — the GRAPHICS settings page (preset + frame-rate cap)
 //   #/match/<id>      — an OFFICIAL match by id: shareable, join or rejoin midway
@@ -14,7 +14,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'play' }
   | { name: 'lobby' }
-  | { name: 'party' }
+  | { name: 'room' }
   | { name: 'rank' }
   | { name: 'graphics' }
   | { name: 'match'; id: number }
@@ -25,7 +25,7 @@ export function parseRoute(): Route {
   const [head, arg] = hash.split('/');
   if (head === 'play') return { name: 'play' };
   if (head === 'lobby') return { name: 'lobby' };
-  if (head === 'party') return { name: 'party' };
+  if (head === 'room' || head === 'party') return { name: 'room' };
   if (head === 'rank') return { name: 'rank' };
   if (head === 'graphics') return { name: 'graphics' };
   if (head === 'match' && arg) {
@@ -42,8 +42,8 @@ export function routeToHash(route: Route): string {
       return '#/play';
     case 'lobby':
       return '#/lobby';
-    case 'party':
-      return '#/party';
+    case 'room':
+      return '#/room';
     case 'rank':
       return '#/rank';
     case 'graphics':

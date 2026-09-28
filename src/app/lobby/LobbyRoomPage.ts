@@ -1,19 +1,20 @@
-// NECROFALL — the OFFICIAL PARTY screen (plan §11/§72): CREATE PARTY's home.
+// NECROFALL — the OFFICIAL LOBBY ROOM (plan §11/§72): CREATE LOBBY's home.
 //
-// A menu page of its own, in the exact dress of the in-game P2P lobby: the
-// title header with the format chip, the code-bar chrome ([SHARE][COPY][CODE]
+// There is no separate "party menu" any more (user ask 2026-09-29): creating an
+// OFFICIAL lobby opens THIS screen, dressed in the exact in-game P2P lobby UI —
+// the title header with the format chip, the code-bar chrome ([SHARE][COPY][CODE]
 // + caption) pinned top-right, the lit stage carrying every member's actual
-// character above one rail of tinted seat cards, and the bottom action row
-// (FIND MATCH / LEAVE). The lobby entry only OPENS this page — the roster is
-// never embedded in another screen.
+// character above one rail of seat cards, and the bottom action row. Only the
+// WORDS and the RULES change per format: a leader runs FIND MATCH (classic or
+// ranked), everyone else waits, and the seat rail pads to the format's own cap.
 import { COLONIES } from '../../core/Config';
 import { ClientCache } from '../spacetimedb/cache';
 import { subscribePlayer } from '../spacetimedb/subscriptions';
-import { PartyAvatarInfo, partySeatCount, ShellContext } from '../ShellContext';
+import { LobbySeatInfo, lobbySeatCount, ShellContext } from '../ShellContext';
 import { button, el, clear } from '../ui/dom';
 
-/** One occupied seat of the party line-up (the empty ones are drawn as OPEN SLOT). */
-interface PartySeat {
+/** One occupied seat of the lobby line-up (the empty ones are drawn as OPEN SLOT). */
+interface LobbySeat {
   hex: string;
   leader: boolean;
   acc: string;
@@ -35,7 +36,7 @@ const ICON_SHARE =
 /** How long the page waits for party rows before declaring there is no party. */
 const GATHER_GRACE_MS = 3500;
 
-export class PartyPage {
+export class LobbyRoomPage {
   readonly element: HTMLElement;
   private modeChip: HTMLElement;
   private codebar: HTMLElement;
@@ -55,20 +56,27 @@ export class PartyPage {
   private graceTimer = 0;
 
   constructor(private ctx: ShellContext) {
-    this.element = el('div', 'nf-page party-page');
+    this.element = el('div', 'nf-page lobby-room-page');
 
-    // ---- header: the LOBBY title dress (wordmark gradient + format chip).
-    // The chip carries the match FORMAT — RANK when the party was opened from the
-    // rank menu, CLASSIC from the lobby, P2P for a peer room (user ask).
+    // ---- header (user ask 2026-09-29): a CENTRED "CREATE LOBBY" wordmark — the back
+    // chevron floats top-left like every other menu — with the FORMAT chip and the live
+    // SEASON tag hung beside it. The season shows for every format (classic, ranked).
     const head = el('div', 'lobby-head');
-    head.appendChild(el('div', 'menu-title lobby-title', 'PARTY'));
+    const titleRow = el('div', 'rk-head-title-row');
+    titleRow.appendChild(el('div', 'menu-title lobby-title', 'CREATE LOBBY'));
+    const tags = el('div', 'lobby-room-tags');
     this.modeChip = el('span', 'lobby-mode', 'CLASSIC');
-    head.appendChild(this.modeChip);
+    tags.appendChild(this.modeChip);
+    const season = el('span', 'lobby-room-season');
+    season.innerHTML = `<b>SEASON</b><i>${ClientCache.shared.rankedSeason()?.seasonId ?? 1}</i>`;
+    tags.appendChild(season);
+    titleRow.appendChild(tags);
+    head.appendChild(titleRow);
     this.element.appendChild(head);
 
     // ---- invite chrome: [SHARE][COPY][CODE] + caption, pinned to the top-right
     // (the same gesture as the in-game lobby: SHARE sends the link, COPY the code)
-    this.codebar = el('div', 'party-codebar hidden');
+    this.codebar = el('div', 'lobby-room-codebar hidden');
     const codeRow = el('div', 'lobby-coderow');
     const shareBtn = button('', 'lobby-icon', () => this.shareCode());
     shareBtn.innerHTML = ICON_SHARE;
@@ -76,8 +84,8 @@ export class PartyPage {
     shareBtn.setAttribute('aria-label', 'Send an invite link');
     const copyBtn = button('', 'lobby-icon', () => this.copyCode());
     copyBtn.innerHTML = ICON_COPY;
-    copyBtn.title = 'Copy the party code';
-    copyBtn.setAttribute('aria-label', 'Copy the party code');
+    copyBtn.title = 'Copy the lobby code';
+    copyBtn.setAttribute('aria-label', 'Copy the lobby code');
     this.codeEl = el('div', 'lobby-code', '-----');
     codeRow.append(shareBtn, copyBtn, this.codeEl);
     this.codeCap = el('div', 'lobby-codecap', '');
@@ -111,19 +119,19 @@ export class PartyPage {
     this.findBtn = button('FIND MATCH', 'btn primary', () => this.ctx.official.findMatch());
     this.leaveBtn = button('LEAVE', 'btn ghost', () => {
       this.ctx.official.leaveParty();
-      this.ctx.goBackFromParty(); // the party is gone the moment you walk out
+      this.ctx.goBackFromLobbyRoom(); // the room is gone the moment you walk out
     });
-    this.backBtn = button('BACK', 'btn primary', () => this.ctx.goBackFromParty());
+    this.backBtn = button('BACK', 'btn primary', () => this.ctx.goBackFromLobbyRoom());
     actions.append(this.leaveBtn, this.findBtn, this.backBtn);
     panel.appendChild(actions);
     this.element.appendChild(panel);
   }
 
-  /** Copy the party invite code to the clipboard (share it with friends). */
+  /** Copy the lobby invite code to the clipboard (share it with friends). */
   private copyCode(): void {
     if (!this.code) return;
     navigator.clipboard?.writeText(this.code).then(
-      () => this.ctx.toast(`Party code ${this.code} copied.`),
+      () => this.ctx.toast(`Lobby code ${this.code} copied.`),
       () => this.ctx.toast('Copy failed — select the code and copy it manually.')
     );
   }
@@ -131,14 +139,14 @@ export class PartyPage {
   /** Send an invite like the in-game lobby does: the OS share sheet, or a copied link. */
   private shareCode(): void {
     if (!this.code) return;
-    const url = `${location.origin}${location.pathname}?party=${this.code}`;
+    const url = `${location.origin}${location.pathname}?room=${this.code}`;
     const nav = navigator as Navigator & { share?: (data: { title: string; text: string; url: string }) => Promise<void> };
     if (nav.share) {
-      void nav.share({ title: 'NECROFALL', text: `Join my Necrofall party: ${this.code}`, url });
+      void nav.share({ title: 'NECROFALL', text: `Join my Necrofall lobby: ${this.code}`, url });
     } else {
       navigator.clipboard?.writeText(url).then(
         () => this.ctx.toast('Invite link copied'),
-        () => this.ctx.toast('Copy failed — share the party code manually.')
+        () => this.ctx.toast('Copy failed — share the lobby code manually.')
       );
     }
   }
@@ -147,8 +155,8 @@ export class PartyPage {
     const cache = ClientCache.shared;
     const hex = this.ctx.myHex();
     const party = hex ? cache.myParty(hex) : null;
-    const mode = this.ctx.partyMode();
-    const slots = partySeatCount(mode);
+    const mode = this.ctx.lobbyFormat();
+    const slots = lobbySeatCount(mode);
     this.modeChip.textContent = mode;
 
     if (!party) {
@@ -168,8 +176,8 @@ export class PartyPage {
       }
       const gathering = wait > 0;
       this.hint.textContent = gathering
-        ? 'GATHERING YOUR PARTY…'
-        : 'NO PARTY FOUND — it may have been disbanded.';
+        ? 'GATHERING YOUR LOBBY…'
+        : 'NO LOBBY FOUND — it may have been closed.';
       this.findBtn.classList.add('hidden');
       this.leaveBtn.classList.add('hidden');
       this.backBtn.classList.toggle('hidden', gathering);
@@ -189,7 +197,7 @@ export class PartyPage {
     // ---- invite chrome: the same code-bar language as the in-game lobby
     this.code = party.joinCode;
     this.codeEl.textContent = party.joinCode || '-----';
-    this.codeCap.textContent = `UP TO ${slots} SURVIVORS · ${members.length} IN PARTY`;
+    this.codeCap.textContent = `UP TO ${slots} SURVIVORS · ${members.length} IN LOBBY`;
     this.codebar.classList.remove('hidden');
 
     // ---- the line-up: every member's actual character on the lit lobby stage
@@ -212,7 +220,7 @@ export class PartyPage {
     if (!leader) {
       this.findBtn.disabled = true;
       this.findBtn.textContent = 'WAITING FOR LEADER…';
-      this.findBtn.title = 'Only the party leader can search for a match.';
+      this.findBtn.title = 'Only the lobby leader can search for a match.';
     } else if (!ready) {
       this.findBtn.disabled = true;
       this.findBtn.textContent = 'FINISH ONBOARDING FIRST';
@@ -220,11 +228,11 @@ export class PartyPage {
     } else {
       this.findBtn.disabled = false;
       this.findBtn.textContent = mode === 'RANK' ? 'FIND RANKED MATCH' : 'FIND MATCH';
-      this.findBtn.title = 'Queues the whole party together.';
+      this.findBtn.title = 'Queues the whole lobby together.';
     }
     this.leaveBtn.textContent = leader ? 'DISBAND / LEAVE' : 'LEAVE';
     this.hint.textContent = leader
-      ? 'You lead this party — FIND MATCH queues everyone together.'
+      ? 'You lead this lobby — FIND MATCH queues everyone together.'
       : 'Only the leader can search for a match.';
   }
 
@@ -233,11 +241,11 @@ export class PartyPage {
    * seat an OPEN SLOT with a lit platform and no figure. At most FIVE seats stand fully
    * on screen — a nine-seat P2P roster extends the track and scrolls sideways.
    */
-  private renderLineup(seats: PartySeat[], slots: number, canKick: boolean): void {
+  private renderLineup(seats: LobbySeat[], slots: number, canKick: boolean): void {
     const cache = ClientCache.shared;
     const hex = this.ctx.myHex();
     clear(this.seats);
-    const avatars: PartyAvatarInfo[] = [];
+    const avatars: LobbySeatInfo[] = [];
     for (let i = 0; i < slots; i++) {
       const seat = seats[i];
       if (!seat) {
@@ -274,10 +282,10 @@ export class PartyPage {
       if (seat.leader) chips.appendChild(el('span', 'seat-chip host', 'LEADER'));
       if (isMe) chips.appendChild(el('span', 'seat-chip you', 'YOU'));
       card.appendChild(chips);
-      card.appendChild(el('div', 'seat-state', 'IN PARTY'));
+      card.appendChild(el('div', 'seat-state', 'IN LOBBY'));
       if (canKick && !isMe) {
         const kick = button('✕', 'seat-kick', seat.kick);
-        kick.title = `Remove ${seat.name} from the party`;
+        kick.title = `Remove ${seat.name} from the lobby`;
         kick.setAttribute('aria-label', kick.title);
         card.appendChild(kick);
       }
@@ -286,7 +294,7 @@ export class PartyPage {
 
       avatars.push({ id: seat.hex, colony: col ? (p?.colony ?? 0) : 0, acc: seat.acc, me: isMe, ready: true });
     }
-    this.ctx.stagePartyAvatars(this.railHost, avatars);
+    this.ctx.stageLobbyAvatars(this.railHost, avatars);
     this.sizeTrack(slots);
   }
 

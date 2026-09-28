@@ -12,9 +12,21 @@
 .rk-head .rk-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
 .rk-season-chip { color: #ffd166; border-color: rgba(255, 209, 102, 0.42); }
 /* The wordmark row (user ask): "RANK" in the PLAY title's gradient dress with the
-   live SEASON as a tag pill right beside it, both centred in the header. */
-.rk-head-title-row { display: flex; align-items: center; justify-content: center; gap: 12px; }
+   live SEASON as a tag pill right beside it. The WORDMARK is what centres on the
+   screen — the pill is hung off its RIGHT edge (absolute) so it can never push the
+   title off-centre (user 2026-09-29: "rank title not horizontally centered"). */
+.rk-head-title-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
 .rk-season-pill {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -220,10 +232,15 @@
   transform: none;
   z-index: 82;
   flex-direction: row;
-  justify-content: center;
+  /* flex-START, not center: with overflow, centring clips BOTH ends and the first
+     pills can never be scrolled to (user 2026-09-29: "rank selection is cut off on
+     the left"). */
+  justify-content: flex-start;
   flex-wrap: nowrap;
+  gap: 8px;
   margin: 0;
   padding: 6px 10px;
+  scroll-padding-left: 12px;
   border-radius: 999px;
   background: rgba(10, 7, 20, 0.72);
   border: 1px solid rgba(148, 120, 220, 0.25);
@@ -235,6 +252,59 @@
 .rank-page.map-full .rk-rail::-webkit-scrollbar { display: none; }
 .rank-page.map-full .rk-ring { flex: none; padding: 6px 12px; }
 .rank-page.map-full .rk-ring-note { display: none; }
+/* PORTRAIT fullscreen: the pills get their own full-width row ABOVE the navigation
+   cluster (a 178px left inset would leave them a keyhole on a tall phone). */
+@media (orientation: portrait) {
+  .rank-page.map-full .rk-rail {
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    right: calc(16px + env(safe-area-inset-right, 0px));
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ============================================================ fullscreen map info */
+/* FULLSCREEN INFO OVERLAY (user ask 2026-09-29): the expanded map covers the side
+   column, so CONTROL + DISCOVERED BY follow the selection in as a compact card.
+   Hidden whenever the side column is on screen (every non-fullscreen view). */
+.rk-mapinfo { display: none; }
+.rank-page.map-full .rk-mapinfo {
+  display: block;
+  position: fixed;
+  top: calc(56px + env(safe-area-inset-top, 0px));
+  left: calc(16px + env(safe-area-inset-left, 0px));
+  right: auto;
+  bottom: auto;
+  width: min(272px, 62vw);
+  max-height: min(52vh, 360px);
+  overflow-y: auto;
+  z-index: 81;
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+.rk-mapinfo::-webkit-scrollbar { width: 5px; }
+.rk-mapinfo::-webkit-scrollbar-thumb { background: rgba(150, 120, 220, 0.4); border-radius: 3px; }
+.rk-mapinfo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 120, 220, 0.28);
+  background: rgba(10, 7, 20, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  animation: rk-card-in 0.3s ease-out both;
+}
+.rk-mapinfo-kicker { font-size: 9px; letter-spacing: 0.24em; color: var(--ui-text-muted); font-weight: 800; }
+.rk-mapinfo-title { font-size: 16px; font-weight: 800; letter-spacing: 0.1em; color: #efe9ff; }
+.rk-mapinfo .rk-control { margin-top: 0; }
+.rk-mapinfo .rk-discoverers { margin-top: 0; }
+.rk-mapinfo .rk-discoverer { font-size: 11px; padding: 2px 0; }
+.rk-mapinfo .rk-ibar { grid-template-columns: 46px 1fr 32px; font-size: 10px; }
+@media (orientation: portrait) {
+  .rank-page.map-full .rk-mapinfo { top: calc(54px + env(safe-area-inset-top, 0px)); max-height: 42vh; width: min(300px, 78vw); }
+}
 
 .rk-crest {
   position: relative;

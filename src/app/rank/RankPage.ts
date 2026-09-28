@@ -43,9 +43,12 @@ import {
   buildPlanetPanel,
   buildRootPanel,
   buildSystemPanel,
+  controlBlock,
+  discoveryBlock,
   shieldCountdownText,
   type LocationPanelHost,
 } from './LocationInfoPanel';
+import { calculateDominance } from '../../rankmap/LocationControlSummary';
 import {
   createCenterIcon,
   createFullscreenExitIcon,
@@ -66,6 +69,9 @@ export class RankPage {
   private headEl: HTMLElement;
   private stripEl: HTMLElement;
   private discoverEl: HTMLElement;
+  /** Fullscreen control + discoverers overlay (the expanded map hides the side column). */
+  private mapInfoEl: HTMLElement;
+  private mapInfoSig = '';
   private statsEl: HTMLElement;
   private boardEl: HTMLElement | null = null;
   private selection: MapSelection = { level: 'galactic', galaxy: null, system: null, planet: null, selected: null };
@@ -118,6 +124,10 @@ export class RankPage {
     this.mapWrap = el('div', 'rk-map-wrap');
     this.hoverTip = el('div', 'rk-hover-tip hidden');
     this.discoverEl = el('div', 'rk-discover hidden');
+    // ---- FULLSCREEN INFO OVERLAY (user ask 2026-09-29): the expanded map covers the
+    // side column, so who CONTROLS the place and who DISCOVERED it follows the
+    // selection into fullscreen as a compact glass card.
+    this.mapInfoEl = el('div', 'rk-mapinfo hidden');
     this.breadcrumb = el('div', 'rk-breadcrumb');
     const zoomCtl = el('div', 'rk-zoom');
     const mkZoom = (html: string, label: string, fn: () => void): HTMLButtonElement => {
@@ -153,6 +163,7 @@ export class RankPage {
     this.mapWrap.appendChild(zoomCtl);
     this.mapWrap.appendChild(this.hoverTip);
     this.mapWrap.appendChild(this.discoverEl);
+    this.mapWrap.appendChild(this.mapInfoEl);
     this.mapWrap.appendChild(mapExpand);
     main.appendChild(this.mapWrap);
 
@@ -171,14 +182,14 @@ export class RankPage {
     this.quickEl = el('div', 'rk-quick');
     this.quickJoin = el('button', 'rk-btn', 'JOIN') as HTMLButtonElement;
     this.quickJoin.type = 'button';
-    this.quickCreate = el('button', 'rk-btn', 'CREATE PARTY') as HTMLButtonElement;
+    this.quickCreate = el('button', 'rk-btn', 'CREATE LOBBY') as HTMLButtonElement;
     this.quickCreate.type = 'button';
     this.quickFind = el('button', 'rk-btn primary', 'FIND MATCH') as HTMLButtonElement;
     this.quickFind.type = 'button';
     this.quickJoinRow = el('div', 'rk-join-row hidden');
     this.quickInput = el('input', 'rk-join-input') as HTMLInputElement;
     this.quickInput.maxLength = 8;
-    this.quickInput.placeholder = 'PARTY CODE';
+    this.quickInput.placeholder = 'LOBBY CODE';
     this.quickInput.autocapitalize = 'characters';
     this.quickInput.autocomplete = 'off';
     const quickGo = el('button', 'rk-btn primary', 'GO') as HTMLButtonElement;
@@ -190,12 +201,12 @@ export class RankPage {
     quickGo.addEventListener('click', () => {
       const code = this.quickInput.value.trim().toUpperCase();
       if (code.length < 4) {
-        this.ctx.toast('Enter a valid party code.');
+        this.ctx.toast('Enter a valid lobby code.');
         return;
       }
-      this.ctx.setPartyMode('RANK');
-      this.ctx.official.joinPartyByCode(code);
-      this.ctx.goParty();
+      // same rule as the lobby setup: JOINing opens the room only once it lands
+      this.ctx.setLobbyFormat('RANK');
+      this.ctx.joinLobbyByCode(code);
     });
     this.quickInput.addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Enter') quickGo.click();
@@ -203,14 +214,14 @@ export class RankPage {
     this.quickCreate.addEventListener('click', () => {
       const hex = this.ctx.myHex();
       const party = hex ? ClientCache.shared.myParty(hex) : null;
-      // a party opened from the RANK menu is a RANK party (the party screen tags it so)
-      this.ctx.setPartyMode('RANK');
+      // a lobby opened from the RANK menu is a RANK lobby (the room tags it so)
+      this.ctx.setLobbyFormat('RANK');
       if (party) {
-        this.ctx.goParty();
+        this.ctx.goLobbyRoom();
         return;
       }
       this.ctx.official.createParty();
-      this.ctx.goParty(); // CREATE PARTY opens the PARTY screen
+      this.ctx.goLobbyRoom(); // CREATE LOBBY opens the room
     });
     this.quickFind.addEventListener('click', () => this.quickRankedSearch());
     this.quickJoinRow.append(this.quickInput, quickGo);
@@ -275,6 +286,7 @@ export class RankPage {
       this.renderSide(true);
       this.renderBreadcrumb();
       this.renderRail(); // the viewed band changes as the camera pans (sig-guarded)
+      this.renderMapInfo(); // …and so does the fullscreen info card
     }, 500);
   }
 
@@ -437,6 +449,88 @@ export class RankPage {
     this.renderSide();
     this.renderQuick();
     this.renderColony();
+    this.renderMapInfo();
+  }
+
+  // ------------------------------------------------------------ fullscreen info overlay
+
+  /**
+   * CONTROL + DISCOVERED BY for the expanded map (user 2026-09-29): the same data the
+   * side panel reads — one compact card, sig-guarded so the 500 ms tick costs nothing.
+   */
+  private renderMapInfo(): void {
+    const sel = this.selection;
+    const loc = sel.selected;
+    const planet = loc?.planet ?? sel.planet;
+    const sys = loc?.system ?? sel.system;
+    const galaxy = loc?.galaxy ?? sel.galaxy;
+    let sig = 'none';
+    if (planet) {
+      const row = this.planetRow(planet.key);
+      sig = `p:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${this.discoveriesForPlanet(planet.key).length}`;
+    } else if (sys) {
+      sig = `s:${sys.galaxyId}:${sys.systemId}:${this.rowsForGalaxy(sys.galaxyId).length}:${this.discoveriesForSystem(sys.galaxyId, sys.systemId).length}`;
+    } else if (galaxy) {
+      sig = `g:${galaxy.galaxyId}:${this.rowsForGalaxy(galaxy.galaxyId).length}:${this.discoveriesForGalaxy(galaxy.galaxyId).length}`;
+    }
+    if (sig === this.mapInfoSig) return;
+    this.mapInfoSig = sig;
+    this.mapInfoEl.innerHTML = '';
+    if (!planet && !sys && !galaxy) {
+      this.mapInfoEl.classList.add('hidden');
+      return;
+    }
+    const colours = COLONIES.map((c) => c.css);
+    const names = COLONIES.map((c) => c.name);
+    const card = el('div', 'rk-mapinfo-card');
+    if (planet) {
+      const row = this.planetRow(planet.key);
+      card.appendChild(el('div', 'rk-mapinfo-kicker', `PLANET · ${RING_CONFIGS[planet.ring]?.name ?? '?'} BAND`));
+      card.appendChild(el('div', 'rk-mapinfo-title', planet.name.toUpperCase()));
+      const summary = calculateDominance(
+        row
+          ? [
+              {
+                systemId: row.systemId,
+                state: row.state,
+                colony: row.controllingColony,
+                discovered: row.discovered,
+                controlExpiresAt: Number(row.controlExpiresAt),
+              },
+            ]
+          : [],
+        { colonyColors: colours, colonyNames: names }
+      );
+      card.appendChild(controlBlock(summary, { kicker: 'CONTROL' }));
+      card.appendChild(
+        discoveryBlock(this.discoveriesForPlanet(planet.key), {
+          fallback: row?.discovered ? 'historical' : 'none',
+          nowUs: this.serverNowUs(),
+        })
+      );
+    } else if (sys) {
+      const g = this.map.currentGalaxy ?? this.panelHost.currentGalaxyFor(sys);
+      card.appendChild(el('div', 'rk-mapinfo-kicker', `${g ? g.name.toUpperCase() : 'GALAXY'} · SOLAR SYSTEM`));
+      card.appendChild(el('div', 'rk-mapinfo-title', sys.name.toUpperCase()));
+      const summary = calculateDominance(this.rowsForGalaxy(sys.galaxyId), {
+        colonyColors: colours,
+        colonyNames: names,
+        systemId: sys.systemId,
+      });
+      card.appendChild(controlBlock(summary, { kicker: 'CONTROL' }));
+      card.appendChild(
+        discoveryBlock(this.discoveriesForSystem(sys.galaxyId, sys.systemId), { fallback: 'none', nowUs: this.serverNowUs() })
+      );
+    } else if (galaxy) {
+      const cfg = RING_CONFIGS[galaxy.ring] ?? RING_CONFIGS[0];
+      card.appendChild(el('div', 'rk-mapinfo-kicker', `${galaxy.morphology.replace(/_/g, ' ')} · ${cfg.name} BAND`));
+      card.appendChild(el('div', 'rk-mapinfo-title', galaxy.name.toUpperCase()));
+      const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names });
+      card.appendChild(controlBlock(summary, { kicker: 'TERRITORY' }));
+      card.appendChild(discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs() }));
+    }
+    this.mapInfoEl.appendChild(card);
+    this.mapInfoEl.classList.remove('hidden');
   }
 
   // ------------------------------------------------------------ header
@@ -555,7 +649,7 @@ export class RankPage {
     this.quickSig = sig;
     this.quickJoinRow.classList.add('hidden');
     this.quickJoin.classList.toggle('hidden', Boolean(party));
-    this.quickCreate.textContent = party ? 'OPEN PARTY' : 'CREATE PARTY';
+    this.quickCreate.textContent = party ? 'OPEN LOBBY' : 'CREATE LOBBY';
     this.quickFind.classList.toggle('searching', Boolean(queue?.ranked));
     this.quickFind.textContent = queue?.ranked ? 'SEARCHING…' : 'FIND MATCH';
   }
@@ -685,6 +779,7 @@ export class RankPage {
     this.renderRail();
     this.renderBreadcrumb();
     this.renderSide();
+    this.renderMapInfo();
     const loc = sel.selected;
     const planet = loc?.planet ?? sel.planet;
     if (planet) {

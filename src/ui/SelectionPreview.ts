@@ -438,8 +438,11 @@ export class SelectionPreview {
    */
   private lobbyCam = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 40);
   private lobbyAvatars: LobbyAvatarFig[] = [];
-  /** OPEN seats: a lit platform with nobody on it (party line-up, user ask). */
+  /** OPEN seats: a lit platform with nobody on it (lobby line-up, user ask). */
   private lobbyEmptyPads: { slot: number; pad: THREE.Group }[] = [];
+  /** The shared lobby lights — boosted when per-pad lights are skipped (crowded lobbies). */
+  private lobbyFill: THREE.DirectionalLight | null = null;
+  private lobbyBounce: THREE.HemisphereLight | null = null;
   private lobbyData: LobbyAvatarInfo[] = [];
   private lobbySig = '';
   private lobbyDirty = false;
@@ -929,12 +932,25 @@ export class SelectionPreview {
     this.disposeLobbyAvatars();
     if (this.lobbyData.length > 0) this.ensureLobbyLights();
     // one figure per OCCUPIED seat, one bare lit pad per OPEN seat — the row keeps its
-    // slot rhythm either way, so a partially filled party still shows its full shape
+    // slot rhythm either way, so a partially filled lobby still shows its full shape
     this.lobbyData.forEach((p, slot) => {
       if (p.empty) this.buildEmptyPad(slot);
       else this.buildLobbyFigure(p, slot);
     });
+    this.applyLobbyLighting();
     this.layoutLobby();
+  }
+
+  /**
+   * Per-pad point lights are skipped in CROWDED lobbies (more than four occupied seats):
+   * nine of those lights over ~200 avatar materials is exactly the 9-slot lag the user hit.
+   * The shared fill/bounce take over, boosted so the bodies stay legible.
+   */
+  private applyLobbyLighting(): void {
+    if (!this.lobbyFill || !this.lobbyBounce) return;
+    const crowded = this.lobbyAvatars.length > 4;
+    this.lobbyFill.intensity = crowded ? 1.95 : 1.35;
+    this.lobbyBounce.intensity = crowded ? 1.15 : 0.85;
   }
 
   /**
@@ -944,7 +960,7 @@ export class SelectionPreview {
    * backdrop is near-black and the player bodies are near-black too — the pad is what makes a
    * survivor legible instead of a silhouette.
    */
-  private buildPad(color: number, radius = 0.66, alpha = 1): THREE.Group {
+  private buildPad(color: number, radius = 0.66, alpha = 1, lit = true, poolScale = 3.7): THREE.Group {
     const pad = new THREE.Group();
     const disc = new THREE.Mesh(
       new THREE.CylinderGeometry(radius, radius * 1.15, 0.09, 28),
@@ -962,18 +978,27 @@ export class SelectionPreview {
       map: lightPoolTexture(), color, transparent: true, opacity: 0.5 * alpha,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     });
-    const pool = new THREE.Mesh(new THREE.PlaneGeometry(radius * 3.7, radius * 3.7), poolMat);
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(radius * poolScale, radius * poolScale), poolMat);
     pool.rotation.x = -Math.PI / 2;
     pool.position.y = 0.012;
-    const light = new THREE.PointLight(color, radius > 1 ? 9 : 6, radius * 4.2, 2);
-    light.position.set(0, 0.55, 0.25);
-    pad.add(disc, rim, pool, light);
+    pad.add(disc, rim, pool);
+    // A real point light per pad is what makes the near-black bodies legible — but LIGHTS
+    // are the shader's most expensive uniform loop, and a 9-seat P2P lobby would add nine
+    // of them (+ the two fill lights) over ~200 avatar materials. Open seats ride the
+    // additive rim/pool alone, and crowded lobbies (more than 4 seats) skip the per-pad
+    // lights entirely — the boosted fill light below carries them instead (user report:
+    // "creating 9 avatar slots. becoming too laggy").
+    if (lit) {
+      const light = new THREE.PointLight(color, radius > 1 ? 9 : 6, radius * 4.2, 2);
+      light.position.set(0, 0.55, 0.25);
+      pad.add(light);
+    }
     return pad;
   }
 
   /** AN OPEN SEAT (user ask): the lit platform of the line-up with nobody standing on it. */
   private buildEmptyPad(slot: number): void {
-    const pad = this.buildPad(0x8a79d8, 0.66, 0.34);
+    const pad = this.buildPad(0x8a79d8, 0.6, 0.34, false, 2.9);
     this.scene.add(pad);
     this.lobbyEmptyPads.push({ slot, pad });
   }
@@ -991,8 +1016,10 @@ export class SelectionPreview {
     const sel = selectionFromWire(p.acc) ?? { ...EMPTY_SELECTION };
     const acc = new AvatarAccessories(parts.headMount, parts.backMount, parts.pack, this.scene);
     acc.set(sel, true);
-    // the avatar's own pad — the same lit stage the customize screen stands on
-    const pad = this.buildPad(color);
+    // the avatar's own pad — the same lit stage the customize screen stands on;
+    // its POINT LIGHT only exists while the lobby is not crowded (see applyLobbyLighting)
+    const litPad = this.lobbyData.filter((x) => !x.empty).length <= 4;
+    const pad = this.buildPad(color, 0.66, 1, litPad);
     this.scene.add(pad);
     // a flat ring ON the pad: it is what tells ready from waiting at a glance
     const ringMat = new THREE.MeshBasicMaterial({
@@ -1013,6 +1040,8 @@ export class SelectionPreview {
     const fill = new THREE.DirectionalLight(0xe4dcff, 1.35);
     fill.position.set(0.4, 2.6, 7);
     const bounce = new THREE.HemisphereLight(0xc9d4ff, 0x4a3568, 0.85);
+    this.lobbyFill = fill;
+    this.lobbyBounce = bounce;
     this.scene.add(fill, bounce);
     this.lobbyLights.push(fill, bounce);
   }

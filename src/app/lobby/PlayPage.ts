@@ -1,15 +1,12 @@
 // NECROFALL — PLAY (plan §9/§35): the CLASSIC / RANK format menu in the legacy
 // two-stage flow. Picking CLASSIC shrinks the cards into a compact strip and the
-// setup drops in below — the OFFICIAL / P2P choice, the colony row, CREATE PARTY
-// + FIND MATCH (or the classic P2P entry). `#/play` renders the full cards;
-// `#/lobby` renders the same screen already picked (the shrink plays on arrival,
-// so the pick reads as one motion on either route).
-import { loadMultiplayerMode } from '../multiplayer/MultiplayerMode';
+// setup drops in below — the colony row, LOBBY CODE + JOIN, CREATE LOBBY and
+// FIND MATCH. `#/play` renders the full cards; `#/lobby` renders the same screen
+// already picked (the shrink plays on arrival, so the pick reads as one motion on
+// either route). The official LOBBY ROOM itself is the next screen (its own page).
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
-import { MultiplayerModeToggle } from './MultiplayerModeToggle';
 import { OfficialLobby } from './OfficialLobby';
-import { P2PLobby } from './P2PLobby';
 
 /** CLASSIC — crossed swords: the plain, unranked fight for the planet. */
 const ICON_SWORDS =
@@ -34,10 +31,7 @@ const ICON_LADDER =
 export class PlayPage {
   readonly element: HTMLElement;
   private classicCard: HTMLElement;
-  private toggle: MultiplayerModeToggle | null = null;
   private official: OfficialLobby | null = null;
-  private p2p: P2PLobby | null = null;
-  private note: HTMLElement | null = null;
   private picked: boolean;
 
   constructor(private ctx: ShellContext, picked = false) {
@@ -60,11 +54,11 @@ export class PlayPage {
     this.classicCard = classicCard;
     classicCard.setAttribute('role', 'button');
     classicCard.setAttribute('tabindex', '0');
-    classicCard.setAttribute('aria-label', 'Classic — the lobby: official server or peer-to-peer');
+    classicCard.setAttribute('aria-label', 'Classic — create or join an official lobby');
     classicCard.innerHTML =
       `<div class="mode-ico">${ICON_SWORDS}</div>` +
       '<div class="mode-name">CLASSIC</div>' +
-      '<div class="mode-desc">The lobby: official server matches or peer-to-peer lobbies. Up to 9 survivors, 3v3v3.</div>' +
+      '<div class="mode-desc">Create a lobby, invite survivors or join with a code — official server matches, 3v3v3.</div>' +
       '<div class="mode-tag">PLAY NOW</div>';
     const openClassic = (): void => this.openClassic();
     classicCard.addEventListener('click', openClassic);
@@ -97,24 +91,20 @@ export class PlayPage {
     if (picked) {
       const entry = el('div', 'nf-play-entry');
 
-      // The server choice: OFFICIAL (SpacetimeDB) or classic P2P lobbies.
-      this.toggle = new MultiplayerModeToggle(
-        loadMultiplayerMode(),
-        (mode) => this.applyMode(mode),
-        ctx.config.p2pEnabled
+      // (P2P lobby creation is GONE — user ask 2026-09-29: the OFFICIAL lobby IS the
+      // whole flow. The legacy P2P world is still reachable through its own in-game
+      // entry and `?lobby=CODE` invites; the shell no longer hosts one.)
+      entry.appendChild(
+        el(
+          'div',
+          'muted nf-play-note',
+          'Official matches run on the SpacetimeDB server — your account colony, server-verified results.'
+        )
       );
-      entry.appendChild(this.toggle.element);
 
-      this.note = el('div', 'muted nf-play-note', '');
-      entry.appendChild(this.note);
-
-      // ---- OFFICIAL: the colony row, CREATE PARTY + FIND MATCH, invite join
+      // ---- the colony row, LOBBY CODE + JOIN, CREATE LOBBY and FIND MATCH
       this.official = new OfficialLobby(ctx);
       entry.appendChild(this.official.element);
-
-      // ---- P2P: the classic lobby entry (name, create, join, solo)
-      this.p2p = new P2PLobby(ctx);
-      entry.appendChild(this.p2p.element);
 
       col.appendChild(entry);
 
@@ -125,7 +115,11 @@ export class PlayPage {
     }
 
     this.element.appendChild(col);
-    if (picked) this.applyMode(this.toggle?.mode ?? 'official');
+    if (picked) {
+      // The roster lives on the LOBBY ROOM screen — the shared avatar rail is parked here.
+      this.ctx.stageLobbyAvatars(null, []);
+      this.official?.update();
+    }
   }
 
   /** CLASSIC: the pick swaps to the setup screen — or answers a re-press. */
@@ -158,17 +152,10 @@ export class PlayPage {
     card.addEventListener('animationend', onEnd);
   }
 
-  private applyMode(mode: 'official' | 'p2p'): void {
-    if (!this.official || !this.p2p || !this.note) return;
-    this.official.element.classList.toggle('hidden', mode !== 'official');
-    this.p2p.element.classList.toggle('hidden', mode !== 'p2p');
-    // The roster lives on the PARTY screen — the shared avatar rail is parked here.
-    this.ctx.stagePartyAvatars(null, []);
-    if (mode === 'official') this.official.update();
-    this.note.textContent =
-      mode === 'official'
-        ? 'Official matches run on the SpacetimeDB server — your account colony, server-verified results.'
-        : 'Classic WebRTC lobbies — host migration and custom rules. Community stats only, no official rewards.';
+  private applyMode(): void {
+    // The roster lives on the LOBBY ROOM screen — the shared avatar rail is parked here.
+    this.ctx.stageLobbyAvatars(null, []);
+    this.official?.update();
   }
 
   update(): void {

@@ -33,7 +33,7 @@ import { GraphicsPage } from './settings/GraphicsPage';
 import type { ScreenName } from '../ui/UI';
 import { OrientationGate } from '../ui/Orientation';
 import { fullscreenMode } from '../ui/Fullscreen';
-import { ShellContext, LegacyLaunchOptions, PartyAvatarInfo, PartyMode } from './ShellContext';
+import { ShellContext, LegacyLaunchOptions, LobbySeatInfo, LobbyFormat } from './ShellContext';
 import { navigate, onRouteChange, parseRoute, routeToHash } from './router';
 import { CurrencyBar } from './ui/CurrencyBar';
 import { FriendRail } from './ui/FriendRail';
@@ -42,7 +42,7 @@ import { button, clear, el } from './ui/dom';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
-import { PartyPage } from './lobby/PartyPage';
+import { LobbyRoomPage } from './lobby/LobbyRoomPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
@@ -50,7 +50,7 @@ import { showRankResultOverlay } from './rank/RankResultOverlay';
 import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../rankmap/procedural/SeedHash';
 import { LOCATION_GALAXY, LOCATION_PLANET, LOCATION_SYSTEM, galaxyLocationKey, planetLocationKey, systemLocationKey } from '../rankmap/DiscoveryTypes';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'room' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -66,9 +66,15 @@ export class AppShell implements ShellContext {
   private screenHost: HTMLElement;
   private chrome: HTMLElement;
   private topBar: CurrencyBar;
-  /** The screen the PARTY page returns to (set by goParty) and the party's FORMAT tag. */
-  private partyReturnScreen: ShellScreen = 'lobby';
-  private currentPartyMode: PartyMode = 'CLASSIC';
+  /** The screen the LOBBY ROOM returns to (set by goLobbyRoom()) and its FORMAT tag. */
+  private roomReturnScreen: ShellScreen = 'lobby';
+  private currentLobbyFormat: LobbyFormat = 'CLASSIC';
+  /** A join-by-code in flight: open the room when its rows land, or toast after 6 s. */
+  private pendingRoomJoin = '';
+  private pendingRoomAt = 0;
+  /** The centred boot / loading spinner (user ask: never a blank screen). */
+  private bootSpin: HTMLElement;
+  private bootSpinLabel: HTMLElement;
   private nav: MobileBottomNav;
   private rail: FriendRail;
   private toastEl: HTMLElement;
@@ -100,8 +106,8 @@ export class AppShell implements ShellContext {
   private gameScreenWatch = 0;
   /** Last in-game screen seen — leaving the P2P LOBBY must return to the shell, not the legacy menu. */
   private lastGameScreen: ScreenName = 'menu';
-  /** `?party=CODE` invite link — consumed once the account is ready to join. */
-  private invitedPartyCode = '';
+  /** `?room=CODE` invite link (legacy `?party=CODE` still accepted) — consumed once ready. */
+  private invitedRoomCode = '';
   /** The last matchmaking queue we saw was RANKED — return there, not the lobby (plan §48). */
   private lastQueueRanked = false;
   /** Ranked-result overlays already shown (match ids). */
@@ -130,6 +136,15 @@ export class AppShell implements ShellContext {
     this.toastEl = el('div', 'nf-toasts');
     this.root.appendChild(this.toastEl);
     (document.body ?? app).appendChild(this.root);
+
+    // ---- BOOT SPINNER (user ask 2026-09-29): while the shell has NOTHING to show
+    // (the planet boots, the account connects) and while a match loads, a centred
+    // spinner proves the app is alive — never a blank frame.
+    this.bootSpin = el('div', 'nf-boot-spin');
+    this.bootSpin.appendChild(el('div', 'nf-boot-spin-ring', ''));
+    this.bootSpinLabel = el('div', 'nf-boot-spin-label', 'CONNECTING…');
+    this.bootSpin.appendChild(this.bootSpinLabel);
+    (document.body ?? app).appendChild(this.bootSpin);
 
     this.topBar = new CurrencyBar(() => this.myHex(), () => this.openProfile(this.myHex()));
     this.nav = new MobileBottomNav((key) => this.onNav(key));
@@ -167,8 +182,9 @@ export class AppShell implements ShellContext {
     });
     (document.body ?? app).appendChild(this.pill);
 
-    // `?party=CODE` invite link — the party twin of the lobby's `?lobby=CODE`.
-    this.invitedPartyCode = (new URLSearchParams(window.location.search).get('party') ?? '').trim().toUpperCase();
+    // `?room=CODE` invite link — the lobby room's twin of the P2P `?lobby=CODE`.
+    const params = new URLSearchParams(window.location.search);
+    this.invitedRoomCode = (params.get('room') ?? params.get('party') ?? '').trim().toUpperCase();
 
     this.unsubs.push(
       this.official.onGameEvent((event) => this.onProviderEvent(event)),
@@ -230,17 +246,17 @@ export class AppShell implements ShellContext {
     this.navigateTo({ name: 'lobby' });
   }
 
-  /** The OFFICIAL PARTY screen (CREATE PARTY's home) — its own menu page. */
-  goParty(): void {
-    // Remember where we CAME FROM so the party screen's BACK returns there, not to a
-    // hardcoded lobby (user ask) — rank → rank, lobby → lobby, play → play.
-    if (this.screen !== 'party' && this.screen !== 'queue') this.partyReturnScreen = this.screen;
-    this.navigateTo({ name: 'party' });
+  /** The OFFICIAL LOBBY ROOM screen (CREATE LOBBY's home) — the P2P lobby's own dress. */
+  goLobbyRoom(): void {
+    // Remember where we CAME FROM so the room's BACK returns there, not to a
+    // hardcoded lobby: rank → rank, lobby → lobby, play → play.
+    if (this.screen !== 'room' && this.screen !== 'queue') this.roomReturnScreen = this.screen;
+    this.navigateTo({ name: 'room' });
   }
 
-  /** Leave the party page for the screen that opened it (its BACK / DISBAND answer). */
-  goBackFromParty(): void {
-    switch (this.partyReturnScreen) {
+  /** Leave the lobby room for the screen that opened it (its BACK / LEAVE answer). */
+  goBackFromLobbyRoom(): void {
+    switch (this.roomReturnScreen) {
       case 'rank':
         this.goRank();
         break;
@@ -256,13 +272,25 @@ export class AppShell implements ShellContext {
     }
   }
 
-  /** The FORMAT tag the party screen wears: set by whoever opens a party. */
-  setPartyMode(mode: PartyMode): void {
-    this.currentPartyMode = mode;
+  /** The FORMAT tag the lobby room wears: set by whoever opens it. */
+  setLobbyFormat(mode: LobbyFormat): void {
+    this.currentLobbyFormat = mode;
   }
 
-  partyMode(): PartyMode {
-    return this.currentPartyMode;
+  lobbyFormat(): LobbyFormat {
+    return this.currentLobbyFormat;
+  }
+
+  /**
+   * JOIN a lobby by code (lobby setup + the rank menu's quick join). The join fires
+   * immediately and the LOBBY ROOM opens only once the server's rows land — pasting a
+   * code must never dump the player on a fresh-lobby page (user ask 2026-09-29). A
+   * bad code toasts instead (the server's own error, or the 6 s grace below).
+   */
+  joinLobbyByCode(code: string): void {
+    this.pendingRoomJoin = code.trim().toUpperCase();
+    this.pendingRoomAt = performance.now();
+    this.official.joinPartyByCode(this.pendingRoomJoin);
   }
 
   /** The RANK page — the intergalactic map (plan §48). */
@@ -303,7 +331,7 @@ export class AppShell implements ShellContext {
     this.showShell('queue');
   }
 
-  /** Where the player belongs after leaving the queue: their party, or the CLASSIC setup. */
+  /** Where the player belongs after leaving the queue: their lobby room, or the CLASSIC setup. */
   returnFromQueue(): void {
     const hex = this.myHex();
     if (this.lastQueueRanked) {
@@ -311,13 +339,13 @@ export class AppShell implements ShellContext {
       this.goRank();
       return;
     }
-    if (hex && ClientCache.shared.myParty(hex)) this.goParty();
+    if (hex && ClientCache.shared.myParty(hex)) this.goLobbyRoom();
     else this.goLobby();
   }
 
-  /** The chevron: PARTY returns to whatever opened it, the setup returns to the format menu. */
+  /** The chevron: the LOBBY ROOM returns to whatever opened it, the setup to the format menu. */
   private onBack(): void {
-    if (this.screen === 'party') this.goBackFromParty();
+    if (this.screen === 'room') this.goBackFromLobbyRoom();
     else if (this.screen === 'lobby') this.goPlay();
     else this.goHome();
   }
@@ -418,12 +446,12 @@ export class AppShell implements ShellContext {
   }
 
   /**
-   * `?party=CODE` invite (the party twin of the lobby's `?lobby=CODE`): once the
-   * account can join, fire the join, open the PARTY screen and strip the param
+   * `?room=CODE` invite (the lobby room's twin of the P2P `?lobby=CODE`): once the
+   * account can join, fire the join, open the LOBBY ROOM and strip the param
    * so a refresh never re-fires a stale invite.
    */
   private consumeInvite(): void {
-    const code = this.invitedPartyCode;
+    const code = this.invitedRoomCode;
     if (!code) return;
     const hex = this.myHex();
     const me = hex ? ClientCache.shared.me(hex) : null;
@@ -431,17 +459,18 @@ export class AppShell implements ShellContext {
     if (this.officialMatchActive || this.screen === 'loading') return; // a live match owns the screen
     const cache = ClientCache.shared;
     if (cache.activeMatchFor(hex)) return; // a mid-match rejoin wins over the invite
-    this.invitedPartyCode = '';
+    this.invitedRoomCode = '';
     const url = new URL(window.location.href);
+    url.searchParams.delete('room');
     url.searchParams.delete('party');
     window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
     if (cache.myParty(hex)) {
-      this.goParty(); // already in a party — the invite is moot, just open it
+      this.goLobbyRoom(); // already in one — the invite is moot, just open it
       return;
     }
-    this.toast(`Joining party ${code}…`);
+    this.toast(`Joining lobby ${code}…`);
     this.official.joinPartyByCode(code);
-    this.goParty(); // the PARTY screen gathers the roster as the rows land
+    this.goLobbyRoom(); // the LOBBY ROOM gathers the roster as the rows land
   }
 
   toast(message: string): void {
@@ -449,6 +478,12 @@ export class AppShell implements ShellContext {
     this.toastEl.appendChild(node);
     window.setTimeout(() => node.classList.add('out'), 3200);
     window.setTimeout(() => node.remove(), 3900);
+  }
+
+  /** Show / hide the centred boot spinner (blank shell or match load). */
+  private setBootSpinner(on: boolean, label = 'CONNECTING…'): void {
+    this.bootSpin.classList.toggle('hidden', !on);
+    if (on) this.bootSpinLabel.textContent = label;
   }
 
   // ------------------------------------------------------------ boot
@@ -573,12 +608,25 @@ export class AppShell implements ShellContext {
     this.rail.update();
     this.page?.update?.();
 
+    // A join-by-code lands asynchronously: the moment the lobby's rows exist, walk in.
+    if (this.pendingRoomJoin) {
+      const hex = this.myHex();
+      const joined = hex ? ClientCache.shared.myParty(hex) : null;
+      if (joined) {
+        this.pendingRoomJoin = '';
+        this.goLobbyRoom();
+      } else if (performance.now() - this.pendingRoomAt > 6000) {
+        this.pendingRoomJoin = '';
+        this.toast('No lobby found with that code.');
+      }
+    }
+
     // Control remaps ride the account: apply the authoritative row whenever it arrives.
     const hexNow = this.myHex();
     if (hexNow) Keybinds.hydrate(ClientCache.shared.settingsByHex(hexNow)?.keybinds ?? null);
 
-    // A pending `?party=CODE` invite fires as soon as the account can join one.
-    if (this.invitedPartyCode) this.consumeInvite();
+    // A pending `?room=CODE` invite fires as soon as the account can join one.
+    if (this.invitedRoomCode) this.consumeInvite();
 
     const me = this.myHex() ? ClientCache.shared.me(this.myHex()) : null;
     if (!this.accountReady && me) {
@@ -590,7 +638,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'profile') this.showShell('profile', route.hex);
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
-      else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'room') this.showShell('room');
       else if (route.name === 'rank') this.showShell('rank');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
@@ -609,7 +657,7 @@ export class AppShell implements ShellContext {
       if (route.name === 'profile') this.showShell('profile', route.hex);
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
-      else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'room') this.showShell('room');
       else if (route.name === 'rank') this.showShell('rank');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
@@ -625,7 +673,7 @@ export class AppShell implements ShellContext {
     if (route.name === 'profile') this.showShell('profile', route.hex);
     else if (route.name === 'play') this.showShell('play');
     else if (route.name === 'lobby') this.showShell('lobby');
-    else if (route.name === 'party') this.showShell('party');
+    else if (route.name === 'room') this.showShell('room');
     else if (route.name === 'rank') this.showShell('rank');
     else if (route.name === 'graphics') this.showShell('graphics');
     else if (route.name === 'match') this.showShell('match', String(route.id));
@@ -741,6 +789,8 @@ export class AppShell implements ShellContext {
     clear(this.screenHost);
     this.screen = screen;
     this.root.classList.remove('hidden');
+    // The boot spinner is for the LOADING screen only — any real screen hides it.
+    this.setBootSpinner(screen === 'loading', screen === 'loading' ? 'LOADING PLANET…' : 'CONNECTING…');
     // MAIN MENU HEADER (plan §38/§39): the wordmark shares the HEADER ROW with the
     // profile button — mathematically centred on the viewport. Every other screen
     // drops the title and the `on-home` layout tweaks.
@@ -750,20 +800,20 @@ export class AppShell implements ShellContext {
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
-    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'party' || screen === 'rank' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
+    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
     this.nav.element.classList.toggle('hidden', screen !== 'home');
     this.backBtn.classList.toggle('hidden', !childScreen);
     this.root.classList.toggle('no-nav', screen !== 'home');
-    // The CLASSIC flow (play, setup, party) wears the in-game menu dress: the
+    // The CLASSIC flow (play, setup, lobby room) wears the in-game menu dress: the
     // account chrome steps away (no profile button, currencies, ? or settings)
     // so the wordmark is the header, with the back chevron floating over the
     // top-left corner. The first signup/login screens drop the SAME chrome —
     // no friends rail, profile, currencies, help or settings around the card.
     //
     // The header chrome now belongs to the MAIN MENU ONLY (user ask 2026-09-28):
-    // every other screen — play, lobby, party, rank, queue, profile, graphics —
+    // every other screen — play, lobby, room, rank, queue, profile, graphics —
     // runs chrome-less, wordmark or not.
-    const bareScreen = screen === 'play' || screen === 'lobby' || screen === 'party';
+    const bareScreen = screen === 'play' || screen === 'lobby' || screen === 'room';
     const noChrome = bareScreen || screen === 'login' || screen === 'onboarding';
     const noTopBar = screen !== 'home' && screen !== 'loading' && screen !== 'boot';
     this.topBar.element.classList.toggle('hidden', noTopBar);
@@ -791,9 +841,9 @@ export class AppShell implements ShellContext {
         this.nav.setActive('play');
         this.renderLobby();
         break;
-      case 'party':
+      case 'room':
         this.nav.setActive('play');
-        this.renderParty();
+        this.renderLobbyRoom();
         break;
       case 'rank':
         this.nav.setActive('play');
@@ -1098,8 +1148,8 @@ export class AppShell implements ShellContext {
     }, 60);
   }
 
-  /** OFFICIAL party: the lobby line-up inside the shell — same rail, real characters. */
-  stagePartyAvatars(host: HTMLElement | null, members: PartyAvatarInfo[]): void {
+  /** OFFICIAL lobby: the line-up inside the shell — same rail, real characters. */
+  stageLobbyAvatars(host: HTMLElement | null, members: LobbySeatInfo[]): void {
     if (!host || members.length === 0) {
       this.game?.ui.hideShellAvatar();
       return;
@@ -1121,11 +1171,11 @@ export class AppShell implements ShellContext {
     page.update();
   }
 
-  private renderParty(): void {
+  private renderLobbyRoom(): void {
     // The line-up wears each member's outfit from the party rows — refresh ours
     // first so the page shows the current customization (no-op with no party).
     this.official.refreshPartyLoadout();
-    const page = new PartyPage(this);
+    const page = new LobbyRoomPage(this);
     this.page = page;
     this.screenHost.appendChild(page.element);
     page.update();
@@ -1451,6 +1501,7 @@ export class AppShell implements ShellContext {
   private hideShell(andReset: boolean): void {
     this.shellHidden = true;
     this.root.classList.add('hidden');
+    this.setBootSpinner(false); // the game owns the screen now — no spinner over it
     // Hand the screen back to the game: HUD, lobby screens or its own menu.
     this.game?.ui.hideShellAvatar();
     this.avatarStageHost = null;

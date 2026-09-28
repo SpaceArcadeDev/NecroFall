@@ -158,8 +158,10 @@ const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
  *  grown on screen. */
 const GALAXY_DOT_RADIUS = 18;
 /** Shared angular speed of every SPIRAL / BARRED_SPIRAL face (rad/s) — one rhythm for
- *  the whole field (user: "the spiral ones should spin at the same animation speed"). */
-const GALAXY_SPIN = 0.06;
+ *  the whole field (user: "the spiral ones should spin at the same animation speed").
+ *  2026-09-29: raised from 0.06 (a 105 s turn read as STATIC — "animations too slow")
+ *  and the direction flipped (user: "the spin should be opposite direction"). */
+const GALAXY_SPIN = 0.24;
 
 interface Hover {
   kind: 'galaxy' | 'system' | 'planet' | null;
@@ -1136,41 +1138,45 @@ export class GalacticMap {
         const isFocus = this.lock.galaxy?.galaxyId === g.galaxyId;
         const isHover = this.hover.kind === 'galaxy' && this.hover.galaxy?.galaxyId === g.galaxyId;
         const radius = this.galaxyScreenRadius(g);
-        // (user) galaxies no longer expand/contract — the field stays metrically calm;
-        // spirals SPIN instead (see the face draw below).
-        // Once you are INSIDE a galaxy (its systems layer is opening) the galaxy faces
-        // withdraw — otherwise a handful of near neighbours smear the frame into one
-        // opaque wall. What remains is the NMS view: a faint ghost of the cluster plus
-        // its stars.
+        // BREATHING (restored 2026-09-29 — the user missed the old life in the field):
+        // every face and mote breathes in brightness (and a touch of size) at its own
+        // phase, while spirals ALSO spin.
+        const pulse = 1 + 0.06 * Math.sin(t * 2 + (g.seed % 100));
+        // THE GALAXY YOU ARE ENTERING (user 2026-09-29): it GROWS with the zoom and then
+        // FADES OUT as its solar systems open — ONE sprite, one continuous move. The
+        // ghostly second copy the systems layer used to draw ("a faded galaxy overlay") is
+        // gone; neighbours withdraw on the same ramp so the frame never smears.
         const inside = this.lock.sysAlpha;
+        const withdraw = ramp01(inside, 0.25, 0.85);
         const field2 = field * bandVis * g.brightness;
         // ownership pre-filter (plan §33): far galaxies still show a coloured dot
         const owned = this.ownedIds.has(g.galaxyId);
         const terr = owned ? this.territoryForGalaxy(g.galaxyId) : null;
         // far LOD: a light mote (there can be thousands on screen — No Man's Sky look)
         if (radius <= GALAXY_DOT_RADIUS && !isFocus && !isHover) {
-          ctx.globalAlpha = 0.78 * field2 * (1 - inside * 0.5);
+          ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5);
           ctx.fillStyle = terr?.color ?? g.starColor;
           ctx.fillRect(p.x - 1.1, p.y - 1.1, 2.2, 2.2);
           ctx.globalAlpha = 1;
           continue;
         }
         // near: the galaxy wears its OWN seeded face (halo, arms, star core baked in).
-        // Size compresses past the "face" range and the face sinks into HAZE once you
-        // are deep inside the field. Alpha still scales with size so the field reads
-        // in DEPTH instead of confetti.
-        const faceR = (radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - inside * 0.35);
+        // The galaxy being ENTERED keeps growing with the zoom (no size ceiling) and the
+        // fade below is what retires it; neighbours compress past the "face" range so a
+        // crowded field cannot smear the frame.
+        const faceR = (isFocus ? radius : radius <= 70 ? radius : 70 + (radius - 70) * 0.16) * (1 - withdraw * (isFocus ? 0 : 0.35));
         const haze = radius <= 90 ? 1 : Math.max(0.15, 1 - (radius - 90) / 280);
-        const s = faceR * 3.1;
-        ctx.globalAlpha = (0.2 + Math.min(0.58, radius / 34)) * field2 * haze * (1 - inside * 0.85);
+        const s = faceR * 3.1 * pulse;
+        ctx.globalAlpha =
+          (0.2 + Math.min(0.58, radius / 34)) * pulse * field2 * haze * (1 - withdraw * (isFocus ? 1 : 0.92));
         const sprite = this.galaxySprite(g);
         if (g.morphology === 'SPIRAL' || g.morphology === 'BARRED_SPIRAL') {
-          // SPIN (user): the spiral faces rotate at ONE shared angular speed, so the whole
-          // field turns as a single system. Elliptical / irregular / ring faces stay put
-          // (nothing to turn — and no more size pulsing anywhere).
+          // SPIN (user): the spiral faces rotate at ONE shared angular speed — OPPOSITE
+          // direction to the first pass — so the whole field turns as a single system.
+          // Elliptical / irregular / ring faces stay put; everything else breathes.
           ctx.save();
           ctx.translate(p.x, p.y);
-          ctx.rotate(t * GALAXY_SPIN);
+          ctx.rotate(-t * GALAXY_SPIN);
           ctx.drawImage(sprite, -s / 2, -s / 2, s, s);
           ctx.restore();
         } else {
@@ -1188,17 +1194,17 @@ export class GalacticMap {
               const ang = (ci / n) * Math.PI * 2 + g.rotation + t * 0.04;
               const ox = Math.cos(ang) * tintR * 0.45;
               const oy = Math.sin(ang) * tintR * 0.45;
-              ctx.globalAlpha = 0.11 * field2 * (0.5 + terr.share[ci] * 0.5) * (1 - inside * 0.85);
+              ctx.globalAlpha = 0.11 * field2 * (0.5 + terr.share[ci] * 0.5) * (1 - withdraw);
               ctx.drawImage(this.glow(terr.colors[ci], 64), p.x + ox - tintR, p.y + oy - tintR, tintR * 2, tintR * 2);
             }
           } else if (terr.color) {
-            ctx.globalAlpha = 0.16 * field2 * (1 - inside * 0.85);
+            ctx.globalAlpha = 0.16 * field2 * (1 - withdraw);
             ctx.drawImage(this.glow(terr.color, 64), p.x - tintR, p.y - tintR, tintR * 2, tintR * 2);
             // GALAXY CORE GLOW (plan §17): the dominant owner's colour pools at the
             // core — brighter for the Necrophages (their red reads as an infection,
             // not a paint job). The morphology stays visible; only the light changes.
             const coreR = faceR * 0.85;
-            ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - inside * 0.85);
+            ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - withdraw);
             ctx.drawImage(this.glow(terr.color, 64), p.x - coreR, p.y - coreR, coreR * 2, coreR * 2);
           }
           ctx.globalAlpha = 1;
@@ -1375,17 +1381,9 @@ export class GalacticMap {
     const baseR = Math.max(1.4, 0.06 * SYSTEM_SCALE * zoom);
     // the front system crossfades on the same sqrt curve as the planets layer
     const pa = Math.sqrt(planetAlpha);
-    // the galaxy's own seeded face fades in behind the systems as the disc fills the
-    // view — a NEBULA HINT, not a billboard: kept faint and only slightly inflated,
-    // otherwise a 2000px sprite at 0.35 alpha washes the whole frame to milk
-    const faceAlpha = sysAlpha * 0.15 * (1 - pa * 0.6);
-    if (faceAlpha > 0.02) {
-      const centre = this.world2screen(galaxy.gx, galaxy.gy);
-      const discR = (GAL_DISC_WORLD / 2) * zoom * (1.2 + sysAlpha * 0.7);
-      ctx.globalAlpha = faceAlpha;
-      ctx.drawImage(this.galaxySprite(galaxy), centre.x - discR * 1.1, centre.y - discR * 1.1, discR * 2.2, discR * 2.2);
-      ctx.globalAlpha = 1;
-    }
+    // (the inflated second copy of the galaxy face that used to live here is GONE:
+    // the field layer already draws ONE galaxy sprite that grows and fades — the
+    // double image was exactly the ghost the user reported, 2026-09-29.)
     for (const sys of this.systemsFor(galaxy)) {
       const w = this.systemWorldPos(galaxy, sys);
       const p = this.world2screen(w.x, w.y);
@@ -2015,10 +2013,12 @@ export class GalacticMap {
   // ------------------------------------------------------------ system drag lock (plan §23–§28)
 
   /**
-   * The camera may not leave the CURRENT solar system (plan §24/§25): the soft
-   * bound keeps the whole system framed — on a viewport larger than the system
-   * the camera centres on it — with a small rubber band instead of a wall.
-   * Scripted flights are exempt (they ARE navigation, not a drag).
+   * The camera may not leave the CURRENT solar system (plan §24/§25) — but inside it
+   * the player roams FREELY (user 2026-09-29: "horizontal drag too limited"). The old
+   * bound kept the whole system inside the viewport, which collapses to LOCKED-CENTRE
+   * whenever the viewport is wider than the system (every landscape frame). The bound
+   * is now the viewport itself: the star may sit near an edge — always still on screen —
+   * so any planet can be brought anywhere you like. Scripted flights are exempt.
    */
   private clampCameraToSystem(): void {
     if (this.camTarget) return;
@@ -2027,8 +2027,11 @@ export class GalacticMap {
     const radius = this.systemClampRadius(this.focusGalaxy, this.focusSystem);
     const halfW = this.width / (2 * this.cam.zoom);
     const halfH = this.height / (2 * this.cam.zoom);
-    this.cam.x = softBound(this.cam.x, sw.x, radius, halfW);
-    this.cam.y = softBound(this.cam.y, sw.y, radius, halfH);
+    // 82% of a half-viewport: the star stays visible with a margin, the drag is free.
+    const limitX = Math.max(radius * 0.55, halfW * 0.82);
+    const limitY = Math.max(radius * 0.55, halfH * 0.82);
+    this.cam.x = softBound(this.cam.x, sw.x, limitX, 0);
+    this.cam.y = softBound(this.cam.y, sw.y, limitY, 0);
   }
 
   /**

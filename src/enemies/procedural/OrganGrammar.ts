@@ -55,6 +55,11 @@ export function rollOrgans(
   if (locomotion === 'SLITHER' || locomotion === 'CHARGER') push('JAW');
   if (locomotion === 'WALKER') push(rng.next() < 0.5 ? 'JAW' : 'CLAW');
   if (locomotion === 'STALKING') push('CLAW');
+  // a FLYER is built on its talons — and a third of them dive with a projectile organ in the chest
+  if (locomotion === 'FLYER') {
+    push('CLAW');
+    if (rng.next() < 0.35) push('PROJECTILE_SAC');
+  }
 
   // ---- role lean
   switch (role) {

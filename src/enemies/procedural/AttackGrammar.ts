@@ -16,9 +16,9 @@ import { telegraphFor } from './TelegraphGrammar';
  * SPIRAL = that ring advancing every burst, BURST = a tight four-shot cluster.
  */
 const PATTERNS: Partial<Record<AbilityId, [AttackPattern, number][]>> = {
-  spit: [['STRAIGHT', 50], ['CROSS', 12], ['SPIRAL', 14], ['RING', 10], ['FAN', 14]],
-  volley: [['FAN', 46], ['RING', 18], ['CROSS', 16], ['BURST', 12], ['SPIRAL', 8]],
-  web: [['STRAIGHT', 72], ['CROSS', 28]],
+  spit: [['STRAIGHT', 50], ['CROSS', 12], ['SPIRAL', 14], ['RING', 10], ['FAN', 14], ['PREDICTIVE', 16], ['RANDOM_BURST', 12]],
+  volley: [['FAN', 46], ['RING', 18], ['CROSS', 16], ['BURST', 12], ['SPIRAL', 8], ['ARC', 14], ['PREDICTIVE', 10]],
+  web: [['STRAIGHT', 72], ['CROSS', 28], ['ARC', 10]],
 };
 
 /** Rolls the firing pattern for one attack — deep rings unlock the exotic geometry. */
@@ -117,6 +117,8 @@ export function buildAttacks(
   const opener: Partial<Record<LocomotionId, AbilityId>> = {
     LEAPER: 'leap', HOPPER: 'leap', BURROWER: 'burrow', CHARGER: 'charge',
     STALKING: 'ambush', FLOATING: 'blink', SWARM: 'pack',
+    // a FLYER's committed move is a DIVE: the leap arc re-aimed straight down at its prey
+    FLYER: 'leap',
   };
   const openerAbility = opener[locomotion];
   if (openerAbility) {

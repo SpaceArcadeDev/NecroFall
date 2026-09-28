@@ -77,6 +77,7 @@ const NOUN_BY_LOCOMOTION: Record<LocomotionId, string[]> = {
   SLITHER: ['Coil', 'Writhe', 'Serpent', 'Lash'],
   CHARGER: ['Ravager', 'Crusher', 'Breaker', 'Ramhorn'],
   FLOATING: ['Drifter', 'Wisp', 'Hoverer', 'Lantern'],
+  FLYER: ['Vulture', 'Kite', 'Shrike', 'Screecher'],
   STALKING: ['Lurker', 'Watcher', 'Stalker', 'Prowler'],
   SWARM: ['Swarmling', 'Nibbler', 'Teemer', 'Cluster'],
 };
@@ -205,7 +206,10 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
     applyTraitVisual(visual, behavior.traits);
     visual.legPairs = clamp(Math.round(visual.legPairs ?? 0), 0, 6);
     if (limbs.legPairs === 0 && locomotion !== 'FLOATING') visual.legPairs = 0;
-    if (visual.segments !== undefined && visual.segments > 1) visual.segments = clamp(Math.round(visual.segments), 4, 10);
+    if (visual.segments !== undefined && visual.segments > 1) {
+      // a centipede's whole silhouette IS its segment count, so it may run longer than a worm
+      visual.segments = clamp(Math.round(visual.segments), 4, visual.rig === 'MYRIAPOD' ? 12 : 10);
+    }
 
     // ---- stats (mild ring pressure; complexity carries the difficulty — plan §29)
     const statsRng = sub('stats');

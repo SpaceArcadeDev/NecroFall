@@ -231,6 +231,11 @@ export class Enemy {
   /** Triangle of the rendered terrain mesh the body last stood on (`meshHeightAtDir` hint). */
   private meshHint = -1;
   airH = 0;
+  /**
+   * FLYER cruise altitude (0 for every grounded body): the wings hold the body at this height, so
+   * gravity never applies and `rideTerrain` services `airH` toward it instead of to zero.
+   */
+  flyAlt = 0;
   hp = 1;
   maxHp = 1;
   radius = 0.5;
@@ -385,6 +390,9 @@ export class Enemy {
     this.genome = genome;
     this.isBoss = genome.tier === 'boss' || genome.tier === 'nexus';
     this.small = genome.small;
+    // A FLYER cruises: the class's whole read is the altitude.
+    this.flyAlt = genome.locomotion === 'FLYER' ? clamp(1.7 * genome.scale, 1.4, 5) : 0;
+    this.airH = this.flyAlt;
     this.radius = genome.radius;
     this.xpValue = genome.xp;
     this.maxHp = genome.hp;
@@ -843,7 +851,14 @@ export class Enemy {
         } else if (this.has('leap') && this.cd('leap') <= 0) {
           this.setCd('leap', ABILITY_META.leap.cd);
           _v.copy(target.position).sub(this.position).normalize();
-          this.velocity.addScaledVector(_v, 12).addScaledVector(this.up, 13);
+          if (this.flyAlt > 0) {
+            // a FLYER's leap is a DIVE: it folds and swoops at the prey along its bearing, trading
+            // altitude for speed, then the wings lift it back to cruise.
+            this.velocity.addScaledVector(_v, 16);
+            this.airH = Math.max(0, this.flyAlt - 1.6);
+          } else {
+            this.velocity.addScaledVector(_v, 12).addScaledVector(this.up, 13);
+          }
           game.effects.burst(this.position, this.genome.accent, { count: 12, speed: 8, life: 0.35, size: 0.6, gravity: 10 });
         }
       }
@@ -1363,7 +1378,8 @@ export class Enemy {
     // the telegraph said it would, whatever the target did during the wind-up.
     const dirSpeed = clamp(travel / Math.max(0.25, h.leapTime), 2, 34);
     this.velocity.copy(_bv).multiplyScalar(dirSpeed).addScaledVector(this.up, upSpeed);
-    this.airH = 0.06;
+    // a FLYER already stands at cruise height: the dive starts from there, not from the ground
+    this.airH = Math.max(0.06, this.flyAlt);
     this.chargeT = 0;
     game.effects.ring(this.position, this.up, this.radius * 1.8, this.genome.accent, 0.4, 2.4, 0.9);
     game.effects.burst(this.position, this.genome.accent, { count: 14, speed: 9, life: 0.4, size: 0.7, gravity: 8, up: this.up, spread: 0.6 });
@@ -1917,12 +1933,21 @@ export class Enemy {
   private rideTerrain(game: Game, dt: number): void {
     _v.copy(this.position).normalize();
     const radial = this.velocity.dot(_v);
-    // AIRBORNE means a real launch (a leap or a knock-up is 12-17 m/s of outward speed) or a jump
-    // already in the air. A walking body is never lifted: its velocity always carries a little
-    // outward component as the surface curves away, and treating THAT as a take-off made climbers
-    // hover up every slope instead of following the contour — and pumped gravity through the
-    // velocity every frame, which read as the body glitching on the terrain.
-    if (this.airH > 0 || radial > 3) {
+    // FLYER: the cruise altitude is the resting `airH` — gravity is replaced by a gentle servo,
+    // so a dive or a knock-up decays back toward `flyAlt` and a body below it (spawn, post-dive)
+    // climbs at a wingbeat's pace. Steering, separation and attacks are all unchanged.
+    if (this.flyAlt > 0) {
+      this.velocity.addScaledVector(_v, -radial * Math.min(1, dt * 6));
+      const droop = ENEMY_GRAVITY * 0.3 * dt;
+      this.airH = this.airH > this.flyAlt
+        ? Math.max(this.flyAlt, this.airH - droop)
+        : Math.min(this.flyAlt, this.airH + (this.flyAlt - this.airH) * Math.min(1, dt * 2.2));
+    } else if (this.airH > 0 || radial > 3) {
+      // AIRBORNE means a real launch (a leap or a knock-up is 12-17 m/s of outward speed) or a jump
+      // already in the air. A walking body is never lifted: its velocity always carries a little
+      // outward component as the surface curves away, and treating THAT as a take-off made climbers
+      // hover up every slope instead of following the contour — and pumped gravity through the
+      // velocity every frame, which read as the body glitching on the terrain.
       this.airH = Math.min(9, this.airH + radial * dt);
       this.velocity.addScaledVector(_v, -ENEMY_GRAVITY * dt);
       if (this.airH <= 0) {
@@ -2005,18 +2030,25 @@ export class Enemy {
     // ---- ATTACK PATTERN (plan §19): the pattern is EXECUTED, not labelled. Same ability,
     // completely different geometry — a FAN is a cone, a RING is a true ring of shots
     // around the aim, a SPIRAL advances that ring every burst, a CROSS fires four axial
-    // shots, a BURST is a tight cluster.
+    // shots, a BURST is a tight cluster, PREDICTIVE leads the target, ARC spreads over and
+    // under the aim, RANDOM_BURST scatters a pack of rounds.
     const pattern = g.projPattern ?? 'STRAIGHT';
     let shots = 1;
     let tilt = 0;
     let ringPattern = false;
     let spiral = false;
+    let predictive = false;
+    let randomBurst = false;
+    let arcSpread = false;
     switch (pattern) {
       case 'FAN': shots = 3; tilt = 0.17; break;
       case 'BURST': shots = 4; tilt = 0.06; ringPattern = true; break;
       case 'CROSS': shots = 4; tilt = 0.14; ringPattern = true; break;
       case 'RING': shots = 5; tilt = 0.16; ringPattern = true; break;
       case 'SPIRAL': shots = 3; tilt = 0.16; ringPattern = true; spiral = true; break;
+      case 'PREDICTIVE': shots = 1; predictive = true; break;
+      case 'ARC': shots = 3; tilt = 0.15; arcSpread = true; break;
+      case 'RANDOM_BURST': shots = 4; tilt = 0.2; randomBurst = true; break;
       default: shots = 1; break;
     }
     if (kind === 'web' && shots > 1) shots = Math.min(2, shots);
@@ -2026,12 +2058,31 @@ export class Enemy {
       _v.copy(target.position).addScaledVector(target.up, 0.9)
         .sub(_v2.copy(this.position).addScaledVector(this.up, g.scale * 0.8))
         .normalize();
+      if (predictive) {
+        // aim where the mover WILL be when the round arrives, not where it is now
+        const flight = _bw.copy(target.position).sub(this.position).length() / Math.max(8, g.projSpeed);
+        _v.copy(target.position).addScaledVector(target.up, 0.9).addScaledVector(target.velocity, flight)
+          .sub(_v2.copy(this.position).addScaledVector(this.up, g.scale * 0.8)).normalize();
+      }
       if (shots > 1) {
         if (ringPattern) {
           // build a basis around the aim, then pick this shot's direction on the ring
           tangentBasis(_v, _sw2, _sw3);
           const phi = (i / shots) * Math.PI * 2 + (spiral ? game.clock * 1.6 : 0);
           _v.addScaledVector(_sw2, Math.cos(phi) * tilt).addScaledVector(_sw3, Math.sin(phi) * tilt).normalize();
+        } else if (arcSpread) {
+          // a fan in the VERTICAL plane: one over the head, one dead on, one into the feet,
+          // swung about the horizontal axis perpendicular to the aim
+          _sw1.crossVectors(_v, this.up);
+          if (_sw1.lengthSq() < 1e-6) tangentBasis(_v, _sw1, _sw3);
+          _sw1.normalize();
+          _v.applyAxisAngle(_sw1, (i - (shots - 1) / 2) * tilt).normalize();
+        } else if (randomBurst) {
+          // a scattered pack: a different jitter per round, so no two volleys are identical
+          tangentBasis(_v, _sw2, _sw3);
+          const j = tilt * (0.35 + Math.random());
+          _v.addScaledVector(_sw2, Math.cos(Math.random() * Math.PI * 2) * j)
+            .addScaledVector(_sw3, Math.sin(Math.random() * Math.PI * 2) * j).normalize();
         } else {
           // a fan in the plane the old volley used (rotation about the body's up)
           _v.applyAxisAngle(this.up, (i - (shots - 1) / 2) * tilt);
@@ -2511,11 +2562,11 @@ export class EnemyManager {
     e.position.copy(pos);
     e.up.copy(pos).normalize();
     e.velocity.set(0, 0, 0);
-    e.airH = 0;
+    e.airH = e.flyAlt;   // fliers spawn already aloft; everyone else starts at ground level
     // Stand on the drawn surface from the very first frame (the spawn point comes from the analytic
     // field; `rideTerrain` would snap it on the next update, one frame later).
     const surf = this.game.planet.meshHeightAtDir(e.up.x, e.up.y, e.up.z);
-    if (surf > 0) e.position.setLength(surf);
+    if (surf > 0) e.position.setLength(surf + e.airH);
     e.facing.set(0, 0, 1);
     // Always re-derive health from the genome: a pooled instance can be reused with the same genome
     // (exactly what a mitosis child does), and the old code would then compound the multiplier.

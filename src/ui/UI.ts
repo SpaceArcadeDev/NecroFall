@@ -3725,11 +3725,14 @@ export class UI {
     legendary: { hex: 0xffd666, css: '#ffd666' },
   };
 
-  showLevelUp(perks: { name: string; desc: string; tier?: PerkTier; pills?: { v: string; l: string; k: 'up' | 'down' | 'alt' }[] }[], seconds: number): void {
+  showLevelUp(perks: { name: string; desc: string; tier?: PerkTier; pills?: { v: string; l: string; k: 'up' | 'down' | 'alt' }[] }[], seconds: number, continuation = false): void {
     // A queued level re-deals into the OPEN picker: the cards may swap in place, but they must not
-    // replay the pop-in every time or a multi-level reward flashes the row once per pick.
+    // replay the pop-in every time or a multi-level reward flashes the row once per pick. A
+    // CONTINUATION (a level landing moments after the previous pick closed the panel — a DoT tick
+    // or a round still in the air) gets the same treatment: the fight never stopped, so the panel
+    // sliding back in with animated cards read as "flickering appear n disappear" (user report).
     const wasOpen = !this.levelUpModal.classList.contains('hidden');
-    this.levelUpModal.classList.toggle('swap', wasOpen);
+    this.levelUpModal.classList.toggle('swap', wasOpen || continuation);
     this.levelUpPerks.innerHTML = '';
     this.perkButtons.length = 0;
     perks.forEach((p, idx) => {

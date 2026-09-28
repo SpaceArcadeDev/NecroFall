@@ -14,7 +14,8 @@ const FALLBACK_GAITS: Record<LocomotionId, GaitProfile> = {
   BURROWER: { style: 'BURROWER', stride: 0.5, bob: 0.02, rate: 0.85, pairOffset: Math.PI, slither: 0.22, lean: 0.02, breathe: 0.05, sacPulse: 0, tailSway: 0.5, headTrack: 0.12, hover: 0 },
   SLITHER: { style: 'SLITHER', stride: 0, bob: 0.01, rate: 1.1, pairOffset: 0, slither: 0.5, lean: 0.03, breathe: 0.06, sacPulse: 0, tailSway: 0.6, headTrack: 0.14, hover: 0 },
   CHARGER: { style: 'CHARGER', stride: 0.62, bob: 0.045, rate: 1.15, pairOffset: Math.PI, slither: 0, lean: 0.16, breathe: 0.08, sacPulse: 0.9, tailSway: 0.24, headTrack: 0.3, hover: 0 },
-  FLOATING: { style: 'FLOATING', stride: 0.2, bob: 0.1, rate: 0.55, pairOffset: Math.PI, slither: 0, lean: -0.05, breathe: 0.12, sacPulse: 0.7, tailSway: 0.35, headTrack: 0.2, hover: 0.45 },
+  FLOATING: { style: 'FLOATING', stride: 0.2, bob: 0.1, rate: 0.55, pairOffset: Math.PI, slither: 0, lean: -0.05, breathe: 0.12, sacPulse: 0.7, tailSway: 0.35, headTrack: 0.2, hover: 0.45, wing: 0.3, tentacle: 0.3 },
+  FLYER: { style: 'FLYER', stride: 0.3, bob: 0.07, rate: 1.3, pairOffset: Math.PI, slither: 0, lean: -0.03, breathe: 0.07, sacPulse: 0.4, tailSway: 0.34, headTrack: 0.3, hover: 0, wing: 0.55, tentacle: 0.2 },
   STALKING: { style: 'STALKING', stride: 0.4, bob: 0.02, rate: 0.7, pairOffset: Math.PI, slither: 0, lean: -0.04, breathe: 0.03, sacPulse: 0, tailSway: 0.22, headTrack: 0.4, hover: 0 },
   SWARM: { style: 'SWARM', stride: 0.75, bob: 0.05, rate: 1.6, pairOffset: Math.PI, slither: 0, lean: 0.05, breathe: 0.05, sacPulse: 0, tailSway: 0.35, headTrack: 0.18, hover: 0 },
 };
@@ -73,6 +74,40 @@ export function animateEnemyRig(rig: CreatureRig, genome: EnemyGenome, phase: nu
   rig.head.rotation.y = Math.sin(phase * 0.6) * gait.headTrack;
   rig.head.rotation.x = Math.sin(phase * 1.1) * 0.08 - moving * 0.12;
   if (rig.tail) rig.tail.rotation.y = Math.sin(phase * 0.9) * gait.tailSway;
+
+  // ---- WINGS (AVIAN / winged drifters): a beat that deepens with effort; a glide at rest
+  if (rig.wings.length > 0) {
+    const wingAmp = (gait.wing ?? 0.3) * (0.5 + moving * 0.75) * prof.animAmpMul;
+    for (const wing of rig.wings) {
+      const flap = Math.sin(phase * (1.5 + gait.rate) + wing.phase);
+      wing.root.rotation.z = -wing.side * (0.34 + flap * wingAmp);
+      wing.root.rotation.x = Math.sin(phase * 0.9 + wing.phase) * 0.09;
+    }
+  }
+
+  // ---- NECK (avians): a stacked sway so the head leads the body instead of riding it
+  for (let i = 0; i < rig.neck.length; i++) {
+    const joint = rig.neck[i];
+    joint.rotation.y = Math.sin(phase * 0.65 - i * 0.45) * (0.07 + i * 0.035) * prof.animAmpMul;
+    joint.rotation.x = Math.sin(phase * 0.95 - i * 0.5) * 0.028;
+  }
+
+  // ---- TENTACLES (mollusk / wraith): a travelling writhe down each strand root
+  if (rig.tentacles.length > 0) {
+    const tAmp = (gait.tentacle ?? 0.22) * (0.55 + moving * 0.4) * prof.animAmpMul;
+    for (let i = 0; i < rig.tentacles.length; i++) {
+      const t = rig.tentacles[i];
+      const o = i * 1.31;
+      t.rotation.x = Math.sin(phase * 1.6 + o) * tAmp * 0.55;
+      t.rotation.z = Math.cos(phase * 1.25 + o) * tAmp * 0.55;
+    }
+  }
+
+  // ---- SHARD CROWN: the whole ring revolves; the body's own breath is what makes it rise
+  if (rig.shardRing) {
+    rig.shardRing.rotation.y = phase * 0.6 + breathT * 0.12;
+    rig.shardRing.position.y = Math.sin(breathT * 1.3) * s * 0.05;
+  }
 
   // ---- glow sacs (kept out of the static merge by `userData.dynamic`): pulse with exertion
   const sacRate = 2 + gait.sacPulse * 2.4;

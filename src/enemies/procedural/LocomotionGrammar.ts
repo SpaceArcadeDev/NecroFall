@@ -13,23 +13,27 @@ const BASE_GAITS: Record<LocomotionId, GaitProfile> = {
   BURROWER: { style: 'BURROWER', stride: 0.5, bob: 0.02, rate: 0.85, pairOffset: Math.PI, slither: 0.22, lean: 0.02, breathe: 0.05, sacPulse: 0, tailSway: 0.5, headTrack: 0.12, hover: 0 },
   SLITHER: { style: 'SLITHER', stride: 0, bob: 0.01, rate: 1.1, pairOffset: 0, slither: 0.5, lean: 0.03, breathe: 0.06, sacPulse: 0, tailSway: 0.6, headTrack: 0.14, hover: 0 },
   CHARGER: { style: 'CHARGER', stride: 0.62, bob: 0.045, rate: 1.15, pairOffset: Math.PI, slither: 0, lean: 0.16, breathe: 0.08, sacPulse: 0.9, tailSway: 0.24, headTrack: 0.3, hover: 0 },
-  FLOATING: { style: 'FLOATING', stride: 0.2, bob: 0.1, rate: 0.55, pairOffset: Math.PI, slither: 0, lean: -0.05, breathe: 0.12, sacPulse: 0.7, tailSway: 0.35, headTrack: 0.2, hover: 0.45 },
+  FLOATING: { style: 'FLOATING', stride: 0.2, bob: 0.1, rate: 0.55, pairOffset: Math.PI, slither: 0, lean: -0.05, breathe: 0.12, sacPulse: 0.7, tailSway: 0.35, headTrack: 0.2, hover: 0.45, wing: 0.3, tentacle: 0.3 },
+  // A FLYER holds its altitude in the SIM (airH), so the gait keeps no visual hover — the whole
+  // rig is already up there. The wing flap and the slow bank are what sell the flight.
+  FLYER: { style: 'FLYER', stride: 0.3, bob: 0.07, rate: 1.3, pairOffset: Math.PI, slither: 0, lean: -0.03, breathe: 0.07, sacPulse: 0.4, tailSway: 0.34, headTrack: 0.3, hover: 0, wing: 0.55, tentacle: 0.2 },
   STALKING: { style: 'STALKING', stride: 0.4, bob: 0.02, rate: 0.7, pairOffset: Math.PI, slither: 0, lean: -0.04, breathe: 0.03, sacPulse: 0, tailSway: 0.22, headTrack: 0.4, hover: 0 },
   SWARM: { style: 'SWARM', stride: 0.75, bob: 0.05, rate: 1.6, pairOffset: Math.PI, slither: 0, lean: 0.05, breathe: 0.05, sacPulse: 0, tailSway: 0.35, headTrack: 0.18, hover: 0 },
 };
 
 /** Which classes a role may roll at a given ring (plan §29 locomotion unlock table). */
 export function locomotionPool(ring: number, isBoss: boolean): LocomotionId[] {
-  const pool: LocomotionId[] = ['WALKER', 'CRAWLER'];
+  // FLYER is part of the BASE set: wings are a silhouette, not a power tier — the deep-ring
+  // unlocks stay reserved for the genuinely exotic classes below.
+  const pool: LocomotionId[] = ['WALKER', 'CRAWLER', 'FLYER'];
   if (ring >= 0) pool.push('CHARGER');
   if (ring >= 1) pool.push('SWARM', 'STALKING');
   if (ring >= 2) pool.push('LEAPER', 'HOPPER');
   if (ring >= 3) pool.push('SLITHER');
-  if (ring >= 4) pool.push('BURROWER');
-  if (ring >= 5) pool.push('FLOATING');
+  if (ring >= 4) pool.push('BURROWER', 'FLOATING');
   if (isBoss) {
-    // bosses never skim — a boss that floats reads as evasive; keep them grounded but exotic
-    return pool.filter((p) => p !== 'FLOATING' && p !== 'SWARM');
+    // bosses never skim — a boss that floats or flies reads as evasive; keep them grounded but exotic
+    return pool.filter((p) => p !== 'FLOATING' && p !== 'SWARM' && p !== 'FLYER');
   }
   return pool;
 }
@@ -66,6 +70,7 @@ export function locomotionSpeedMul(locomotion: LocomotionId): number {
     case 'BURROWER': return 0.92;
     case 'STALKING': return 0.82;
     case 'FLOATING': return 0.9;
+    case 'FLYER': return 1.14;
   }
 }
 

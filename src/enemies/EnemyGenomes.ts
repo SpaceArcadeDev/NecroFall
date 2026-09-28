@@ -225,12 +225,26 @@ export interface GenomeVisual {
   glowNodes?: number;
   /** Side flippers — FLOATING locomotion (plan §19). */
   fins?: number;
-  /** Membrane wings — FLOATING at higher rings. */
+  /** Membrane wings — FLOATING at higher rings; the AVIAN rig's whole silhouette. Animated. */
   wings?: number;
   /** Rear storage organs — LEAPER compression / CHARGER build-up. */
   sacs?: number;
   /** Hooked forelimbs — ambushers and leapers. */
   claws?: number;
+  /**
+   * STRUCTURAL RIG (the models): which body ARCHITECTURE the assembler builds. The shipped three
+   * (legged chassis, jelly sac, segmented worm) grow four more — an avian (wings + long neck +
+   * talons), a myriapod (segment chain with a leg pair per segment), a wraith (a hovering core
+   * ringed by orbiting shards) and a mollusk (a bulbed shell trailing writhing tentacles). Absent →
+   * inferred from `segments`/`jelly`, exactly like the original three-way branch.
+   */
+  rig?: 'CHASSIS' | 'JELLY' | 'WORM' | 'AVIAN' | 'MYRIAPOD' | 'WRAITH' | 'MOLLUSK';
+  /** Radial tentacles writhing around the body (MOLLUSK / WRAITH). Animated. */
+  tentacles?: number;
+  /** Orbiting shards around the body (WRAITH) — a revolving crown of crystal. Animated. */
+  shards?: number;
+  /** Feather plumes: tail fans and crests (AVIAN sensors). */
+  plumes?: number;
 }
 
 export interface EnemyGenome {

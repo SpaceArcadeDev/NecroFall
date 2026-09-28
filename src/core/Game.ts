@@ -310,6 +310,19 @@ export class Game {
   private pendingLevelUp: PendingLevelUp | null = null;
   private pendingPickup: PendingPickup | null = null;
   private queuedLevels = 0;
+  /**
+   * When the picker last closed after a pick. A level-up that lands inside `PICKER_GRACE` of this
+   * is a CONTINUATION of the same burst (a DoT tick or a round still in the air finishing the
+   * fight), not a fresh choice: it reopens with the cards swapping in place and no stinger, so the
+   * panel cannot flash its pop-in animation every time one kill triggers two levels.
+   */
+  private levelUpClosedAt = -Infinity;
+  /**
+   * Seconds left before the picker's post-pick close actually runs. The panel lingers a beat after
+   * the last pick so a kill landing a few frames later swaps its cards in place instead of making
+   * the panel blink out and back in — the "necromutation UI flickering" report.
+   */
+  private pendingLevelHideT = 0;
 
   /** Room session: the code in the URL, this tab's player identity and the local save of a run. */
   private session = new SessionStore();
@@ -454,6 +467,13 @@ export class Game {
   private rafGapMin = 64;
   private rafGapMinT = 0;
   private static readonly RAF_MIN_WINDOW = 3000;
+  /**
+   * How long after the picker closes a new level-up still counts as the same burst (continuation).
+   * Covers DoT ticks and rounds already in the air finishing the fight right after a pick.
+   */
+  private static readonly PICKER_GRACE = 1.5;
+  /** How long the picker lingers after its last pick before it actually closes (a burst window). */
+  private static readonly PICKER_LINGER = 0.15;
   private lastRawTick = 0;
   private lastInteractionAt = performance.now();
   /** Seconds of warm-up during which the DPR ladder ignores samples (boot / match-start jank). */
@@ -2011,7 +2031,7 @@ export class Game {
     // eslint-disable-next-line no-console
     console.log(
       `[NECROFALL] planet ${this.planet.archetype.biome}${rankedPlanet ? ` (ring ${rankRing})` : ''} · planet seed ${planetSeed} · bestiary seed ${seed}\n` +
-      bestiary.genomes.map(g => `  #${g.idx} ${g.name} [${g.tier}${g.role ? `/${g.role}` : ''}${g.locomotion ? `/${g.locomotion}` : ''}] hp ${Math.round(g.hp)} spd ${g.speed.toFixed(1)} — ${g.attacks?.map(a => a.name).join(', ') || g.abilities.map(a => ABILITY_META[a].name).join(', ') || 'no abilities'}`).join('\n')
+      bestiary.genomes.map(g => `  #${g.idx} ${g.name} [${g.tier}${g.role ? `/${g.role}` : ''}${g.locomotion ? `/${g.locomotion}` : ''}${g.visual.rig ? `/${g.visual.rig}` : ''}] hp ${Math.round(g.hp)} spd ${g.speed.toFixed(1)} — ${g.attacks?.map(a => a.name).join(', ') || g.abilities.map(a => ABILITY_META[a].name).join(', ') || 'no abilities'}`).join('\n')
     );
     this.ui.banner(`${bestiary.genomes[bestiary.bossIdx].name.toUpperCase()} AWAKENS`, 2600);
     this.combat.clear();
@@ -2374,6 +2394,7 @@ export class Game {
     this.ui.hidePickup();
     this.pendingLevelUp = null;
     this.pendingPickup = null;
+    this.pendingLevelHideT = 0;
     // OFFICIAL: a LOCAL conclusion must not let the still-RUNNING server row pull this player
     // back in while the authoritative finish lands, and a Nexus capture (`winner` set) is
     // reported so the server ends the match for EVERY seat at once — no waiting out the clock
@@ -3017,6 +3038,7 @@ export class Game {
         this.input.setEnabled(false);
         this.ui.hideLevelUp();
         this.ui.hidePickup();
+        this.pendingLevelHideT = 0;
         const tiles = (msg.tiles ?? []) as { label: string; owner: number }[];
         this.showResults(msg.winner === null ? null : Number(msg.winner), tiles, msg.reason ? String(msg.reason) : undefined);
         this.audio.sfx('defeat');
@@ -3310,6 +3332,9 @@ export class Game {
     } else {
       this.net.sendToHost({ t: 'pickres', pid: this.net.myId, pk: pending.pickupId, choice });
     }
+    // A level-up that was granted while the offer owned the screen (or an XP race on a client)
+    // must not be stranded now that nothing is pending: open the picker for it.
+    this.maybeOpenQueued();
   }
 
   // ------------------------------------------------------------ damage routing
@@ -3844,8 +3869,16 @@ export class Game {
     // a menu owns the screen (the auto-attack itself is already blocked by the frozen state).
     this.combat.clearOwner(p.id);
     this.pendingLevelUp = { player: p, perks, time: CONFIG.levelUpSelectTime };
-    this.ui.showLevelUp(perks.map(perk => ({ name: perk.name, desc: perk.desc, pills: perk.pills, tier: perk.tier })), CONFIG.levelUpSelectTime);
-    this.audio.sfx('levelup');
+    /**
+     * A level-up arriving moments after the previous pick is the same fight still resolving — the
+     * panel reopens as a continuation: the cards SWAP in place instead of replaying their entrance
+     * animation (see UI.showLevelUp's `continuation`), and the stinger does not re-fire. Without
+     * this a multi-kill wave made the picker blink out and pop back in between picks.
+     */
+    this.pendingLevelHideT = 0;   // a queued offer landed while the close was still pending
+    const continuation = this.now - this.levelUpClosedAt < Game.PICKER_GRACE;
+    this.ui.showLevelUp(perks.map(perk => ({ name: perk.name, desc: perk.desc, pills: perk.pills, tier: perk.tier })), CONFIG.levelUpSelectTime, continuation);
+    if (!continuation) this.audio.sfx('levelup');
   }
 
   private pickPerk(index: number): void {
@@ -3859,9 +3892,16 @@ export class Game {
     // A queued level re-deals IMMEDIATELY: hiding the picker only to show it again in the same
     // frame replayed the card pop-in and read as flickering (user report). The panel stays up and
     // the cards swap in place — UI.showLevelUp skips the entrance animation when it is re-dealing
-    // into an already-open modal.
+    // into an already-open modal. When nothing is queued the close LINGERS a beat instead of
+    // running now: a kill landing a few frames later (the same burst, a DoT tick) then swaps the
+    // cards in place and the panel never blinks at all.
     const chained = this.queuedLevels > 0 || pending.player.pendingLevels > 0;
-    if (!chained) this.ui.hideLevelUp();
+    this.levelUpClosedAt = this.now;   // the burst window starts at the PICK, not at the close
+    if (chained) {
+      this.pendingLevelHideT = 0;
+    } else {
+      this.pendingLevelHideT = Game.PICKER_LINGER;
+    }
     // A picked perk is part of the run: never lose it to a refresh a second later.
     this.saveT = 0;
     this.mutationBurst(pending.player);
@@ -4362,6 +4402,11 @@ export class Game {
         // auto pick the first card (the row was already shuffled, so this is an arbitrary one)
         this.pickPerk(0);
       }
+    } else if (this.pendingLevelHideT > 0) {
+      // The picker lingers after its last pick (see PICKER_LINGER): anything that arrives inside
+      // the window swaps cards in place; nothing arrives and it closes, calmly.
+      this.pendingLevelHideT -= dt;
+      if (this.pendingLevelHideT <= 0) this.ui.hideLevelUp();
     }
     if (this.pendingPickup) {
       this.pendingPickup.time -= dt;

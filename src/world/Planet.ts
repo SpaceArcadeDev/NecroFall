@@ -374,6 +374,9 @@ export class Planet {
   private sunAxis = new THREE.Vector3(0, 0, 1);
   /** Region that receives most of the scenery (the battlefield). */
   private focusDir: THREE.Vector3 | null = null;
+  /** Actual terrain relief of THIS planet (filled while baking vertices) — see `buildDecorations`. */
+  private reliefMin = Infinity;
+  private reliefMax = -Infinity;
   private terrainMat: THREE.ShaderMaterial;
   private skyMat: THREE.ShaderMaterial;
   /**
@@ -393,6 +396,8 @@ export class Planet {
   private windTime = 0;
   /** Dense static grass, grown around the tower zones once the match is laid out. */
   private grass: GrassField | null = null;
+  /** A second dense field over seeded WILD meadows, so the far side of the planet is not bare. */
+  private wildGrass: GrassField | null = null;
   private grassMat: THREE.ShaderMaterial | null = null;
   private grassGeo: THREE.BufferGeometry | null = null;
   /** Drifting motes + ground glints. */
@@ -457,6 +462,8 @@ export class Planet {
       v.fromBufferAttribute(pos, i).normalize();
       const h = this.heightAtDir(v.x, v.y, v.z);
       pos.setXYZ(i, v.x * h, v.y * h, v.z * h);
+      if (h < this.reliefMin) this.reliefMin = h;
+      if (h > this.reliefMax) this.reliefMax = h;
     }
     geo.computeVertexNormals();
     // PASS 2 — colours from the BIOME classifier: palette ramp + slope rock + veins + landmarks
@@ -657,6 +664,7 @@ export class Planet {
   growGrass(zones: THREE.Vector3[]): void {
     if (!this.grassMat || !this.grassGeo || zones.length === 0) return;
     this.grass?.dispose();
+    this.wildGrass?.dispose();
     // Density is its OWN preset axis (`grassDensity` 1 / 0.6 / 0.3), not a second reading of
     // `decorations`: the field is one instanced draw but tens of thousands of wind-shaded blades,
     // so it is the first thing a phone needs less of. A full field is 54,600 blades (the old
@@ -670,12 +678,50 @@ export class Planet {
       radius: 38,
     });
     this.group.add(this.grass.mesh);
-    this.buildAmbience(zones);
+    // ---- wild meadows: the SAME dense field, grown over seeded patches spread around the WHOLE
+    // planet (the tower zones above only cover the battlefield). Their own budget — the tower
+    // patches keep their exact density — sized off the same grassDensity axis.
+    const wildZones = this.wildGrassZones(zones);
+    if (wildZones.length > 0) {
+      const wildTotal = Math.round(total * 0.45);
+      const wildPerZone = Math.round(clamp(wildTotal / wildZones.length, 400, 12000));
+      this.wildGrass = buildGrassField(this, this.grassMat, this.grassGeo, {
+        seed: this.seed ^ 0x5747,
+        zones: wildZones,
+        bladesPerZone: wildPerZone,
+        radius: 30,
+      });
+      this.group.add(this.wildGrass.mesh);
+    }
+    this.buildAmbience([...zones, ...wildZones]);
   }
 
-  /** Live blade count of the static grass field (debug readout). */
+  /**
+   * Seeded meadow centres for the wild grass field: uniformly spread over the sphere, kept clear
+   * of the battlefield cap (already thick with grass) and of every tower patch, and spaced apart
+   * from each other so the planet gets several distinct meadows instead of one clump.
+   */
+  private wildGrassZones(towerZones: THREE.Vector3[]): THREE.Vector3[] {
+    const COUNT = 7;
+    const MIN_SEP = Math.cos(0.62);      // ~70 m of arc between meadow centres
+    const TOO_CLOSE = Math.cos(0.32);    // never on top of a tower patch
+    const towers = towerZones.map(z => z.clone().normalize());
+    const out: THREE.Vector3[] = [];
+    let guard = 0;
+    while (out.length < COUNT && guard++ < COUNT * 80) {
+      const dir = randomUnitVector(new THREE.Vector3());
+      // leave the battlefield cap to its tower patches (same 1.05 rad cap the props focus on)
+      if (this.focusDir && dir.dot(this.focusDir) > Math.cos(1.05)) continue;
+      if (towers.some(t => t.dot(dir) > TOO_CLOSE)) continue;
+      if (out.some(o => o.dot(dir) > MIN_SEP)) continue;
+      out.push(dir);
+    }
+    return out;
+  }
+
+  /** Live blade count of the static grass fields (debug readout). */
   get grassBlades(): number {
-    return this.grass ? this.grass.blades : 0;
+    return (this.grass ? this.grass.blades : 0) + (this.wildGrass ? this.wildGrass.blades : 0);
   }
 
   /** The shared wind state, so gameplay code can read or nudge it. */
@@ -716,6 +762,8 @@ export class Planet {
     this.group.clear();
     this.grass?.dispose();
     this.grass = null;
+    this.wildGrass?.dispose();
+    this.wildGrass = null;
     this.ambience?.dispose();
     this.ambience = null;
     // the rendered-surface lookup holds nothing on the GPU, but drop the (multi-MB) buffers
@@ -998,8 +1046,17 @@ export class Planet {
     const up = new THREE.Vector3();
     const tmpColor = new THREE.Color();
 
-    /** normalized biome value: 0 = deepest basin, 1 = highest peak */
-    const biome = (h: number): number => clamp((h - this.radius + 13) / 40, 0, 1);
+    /**
+     * Normalized biome value: 0 = this planet's deepest ground, 1 = its highest peak. The bands
+     * used to be ABSOLUTE (`(h - radius + 13) / 40`), so a low-relief archetype could never reach
+     * the peak band and dropped every spike, crystal and forest on the whole planet — the "most
+     * of the planet is missing rocks/spikes/trees" report. Each prop class now lives on its own
+     * band of the ACTUAL relief, so every seed grows the full spread of scenery.
+     */
+    const minH = Number.isFinite(this.reliefMin) ? this.reliefMin : this.radius - 8;
+    const maxH = Number.isFinite(this.reliefMax) ? this.reliefMax : this.radius + 20;
+    const span = Math.max(6, maxH - minH);
+    const biome = (h: number): number => clamp((h - minH) / span, 0, 1);
 
     // Every prop now shares the game's custom lighting so instanced scenery matches the terrain.
     const rockMat = createPropMaterial({ facet: 0.85, noise: 0.5, fresnel: 0.1 });
@@ -1016,15 +1073,18 @@ export class Planet {
     // dark roots, so a full screen of grass still reads as *this* planet instead of pale mint.
     const fieldGrassMat = createFieldGrassMaterial(wind, 0x2c5238, 0x86cc92);
     const bladeGeo = bladeGeometry();
-    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, Math.max(1, Math.floor(total * 2.2)));
-    const peaks = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 4, 5), rockMat, Math.max(1, Math.floor(total * 0.3)));
-    const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, Math.max(1, Math.floor(total * 0.5)));
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 1, 5), trunkMat, Math.max(1, Math.floor(total * 1.0)));
-    const canopies = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), canopyMat, Math.max(1, Math.floor(total * 1.0)));
-    // Far-field scatter: reads at distance and across the whole battlefield.
-    const blades = new THREE.InstancedMesh(bladeGeo, bladeMat, Math.max(1, Math.floor(total * 12)));
-    const flowers = new THREE.InstancedMesh(flowerGeometry(), flowerMat, Math.max(1, Math.floor(total * 5)));
-    const plants = new THREE.InstancedMesh(plantGeometry(), plantMat, Math.max(1, Math.floor(total * 2.4)));
+    // Instance counts: the focus bias below keeps the battlefield at its old density (0.45 × 1.6 ≈
+    // the old 0.75 share of the same budget) while the REST of the planet gets ~3.5× the props —
+    // the "most of the planet is empty" report. The extra instances are one instanced draw each.
+    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, Math.max(1, Math.floor(total * 3.5)));
+    const peaks = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 4, 5), rockMat, Math.max(1, Math.floor(total * 0.5)));
+    const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, Math.max(1, Math.floor(total * 0.8)));
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 1, 5), trunkMat, Math.max(1, Math.floor(total * 1.6)));
+    const canopies = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), canopyMat, Math.max(1, Math.floor(total * 1.6)));
+    // Far-field scatter: reads at distance and across the whole planet.
+    const blades = new THREE.InstancedMesh(bladeGeo, bladeMat, Math.max(1, Math.floor(total * 19)));
+    const flowers = new THREE.InstancedMesh(flowerGeometry(), flowerMat, Math.max(1, Math.floor(total * 8)));
+    const plants = new THREE.InstancedMesh(plantGeometry(), plantMat, Math.max(1, Math.floor(total * 3.8)));
     const bladeSway = createSwayScatter(blades.count);
     const flowerSway = createSwayScatter(flowers.count);
     const plantSway = createSwayScatter(plants.count);
@@ -1062,8 +1122,14 @@ export class Planet {
       lush?: boolean;
       /** How tightly a cluster bunches up (tangent distance, in radians of the sphere). */
       clusterSpread?: number;
-      /** Radius (in radians) of the focus-biased disc for the 75% of props that aim at the battlefield. */
+      /** Radius (in radians) of the focus-biased disc for props that aim at the battlefield. */
       focusRadius?: number;
+      /**
+       * Share of this prop type aimed at the battlefield cap (the rest goes planet-wide). The cap
+       * is ~25% of the sphere, so 0.45 puts roughly 2.9× uniform density in the battlefield and
+       * ~1.2× everywhere else — items everywhere, with the contested region still the liveliest.
+       */
+      focusChance?: number;
     }
 
     /** Scatters a prop type in clusters, filtered by slope and biome band. */
@@ -1079,8 +1145,9 @@ export class Planet {
       let guard = 0;
       const focus = this.focusDir;
       while (placed < count && guard++ < count * 40) {
-        // 3 in 4 props land inside the contested region so the battlefield stays detailed
-        if (focus && rand.chance(0.75)) {
+        // A bias — not a monopoly — toward the contested region: the battlefield stays the most
+        // detailed area, but most of every prop type still lands across the whole planet.
+        if (focus && rand.chance(o.focusChance ?? 0.45)) {
           tangentBasis(focus, _t1, _t2);
           const a = rand.range(0, Math.PI * 2);
           const r = Math.sqrt(rand.range(0, 1)) * (o.focusRadius ?? 1.05);

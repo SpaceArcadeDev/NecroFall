@@ -18,6 +18,8 @@ const GEO = {
   plate: new THREE.CylinderGeometry(1, 0.66, 1, 9),
   core: new THREE.IcosahedronGeometry(1, 1),
   crown: new THREE.TorusGeometry(1, 0.14, 6, 14),
+  /** Flat wide blade for wing membranes (a squashed cone reads from both sides). */
+  blade: new THREE.ConeGeometry(1, 1, 6),
 };
 
 const _m4 = new THREE.Matrix4();
@@ -155,6 +157,13 @@ export interface CreatureLeg {
   phase: number;
 }
 
+/** One flapping wing (AVIAN / winged floating bodies): the root pivots at the shoulder. */
+export interface CreatureWing {
+  root: THREE.Group;
+  side: number;
+  phase: number;
+}
+
 export interface CreatureRig {
   group: THREE.Group;
   legs: CreatureLeg[];
@@ -172,6 +181,14 @@ export interface CreatureRig {
   scale: number;
   jelly: number;
   jellyBase: THREE.Vector3;
+  /** Wings, flapped every frame (empty for legless/ground rigs without wings). */
+  wings: CreatureWing[];
+  /** Tentacle strands (MOLLUSK / WRAITH), writhed from the root. */
+  tentacles: THREE.Group[];
+  /** Orbiting shard crown (WRAITH / CRYSTAL_ARMOR): the whole ring revolves. */
+  shardRing: THREE.Group | null;
+  /** Stacked neck joints (AVIAN): the head rides the last one. */
+  neck: THREE.Group[];
 }
 
 function makeCarapace(shellHex: number, accentHex: number, glowStrength: number, membrane: number): THREE.ShaderMaterial {
@@ -208,6 +225,60 @@ function makeEnergy(glowHex: number, pulse: number): THREE.ShaderMaterial {
       uIcePhase: { value: 0 },
     }),
   });
+}
+
+/**
+ * One hip → upper → knee → lower → claw leg, collapsed into a SINGLE merged mesh (legs are the
+ * biggest draw-call item on a many-legged body). Shared by the chassis and the avian talons.
+ */
+function buildLeg(s: number, side: number, thickness: number, length: number, carapace: THREE.Material): { root: THREE.Group; knee: THREE.Group } {
+  const root = new THREE.Group();
+  const upperLen = length * 0.6;
+  const lowerLen = length * 0.6;
+  root.rotation.z = side * 0.55;
+
+  const upper = new THREE.Mesh(GEO.leg, carapace);
+  upper.scale.set(thickness, upperLen, thickness);
+  upper.position.y = -upperLen * 0.5;
+  root.add(upper);
+
+  const knee = new THREE.Group();
+  knee.position.y = -upperLen;
+  knee.rotation.z = side * -0.75;
+  root.add(knee);
+
+  const lower = new THREE.Mesh(GEO.leg, carapace);
+  lower.scale.set(thickness * 0.8, lowerLen, thickness * 0.8);
+  lower.position.y = -lowerLen * 0.5;
+  knee.add(lower);
+
+  // the claw shares the carapace material so it merges with the lower leg: one draw per leg
+  const claw = new THREE.Mesh(GEO.claw, carapace);
+  claw.scale.setScalar(thickness * 1.1);
+  claw.position.y = -lowerLen;
+  claw.rotation.x = Math.PI;
+  knee.add(claw);
+
+  knee.updateMatrix();
+  const parts: THREE.BufferGeometry[] = [];
+  const bake = (mesh: THREE.Mesh, extra: THREE.Matrix4 | null): void => {
+    mesh.updateMatrix();
+    const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+    if (extra) g.applyMatrix4(_m4.multiplyMatrices(extra, mesh.matrix));
+    else g.applyMatrix4(mesh.matrix);
+    parts.push(g);
+  };
+  bake(upper, null);
+  bake(lower, knee.matrix);
+  bake(claw, knee.matrix);
+  const legGeo = mergeGeometries(parts, false);
+  for (const g of parts) g.dispose();
+  if (legGeo) {
+    root.remove(upper);
+    knee.clear();
+    root.add(new THREE.Mesh(legGeo, carapace));
+  }
+  return { root, knee };
 }
 
 /**
@@ -300,12 +371,55 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
 
   const segments: THREE.Mesh[] = [];
   const legs: CreatureLeg[] = [];
+  const wingsList: CreatureWing[] = [];
+  const tentacles: THREE.Group[] = [];
+  const neck: THREE.Group[] = [];
+  let shardRing: THREE.Group | null = null;
   let head = new THREE.Group();
   let core: THREE.Mesh | null = null;
   let tail: THREE.Group | null = null;
   const coreBase = s * 0.22;
 
-  if (v.segments > 2) {
+  /**
+   * A strand of shrinking links, merged into ONE mesh per strand (the animator rotates the whole
+   * root — a travelling wave per link would cost a draw call per link). Used by the mollusk's
+   * tentacle skirt and the wraith's hanging tendrils.
+   */
+  const addTentacles = (count: number, anchorY: number, radius: number, droop: number): void => {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + 0.4;
+      const root = new THREE.Group();
+      root.position.set(Math.cos(a) * radius * wMul * s, anchorY, Math.sin(a) * radius * lMul * s);
+      root.rotation.z = -Math.cos(a) * 0.3;
+      root.rotation.x = Math.sin(a) * 0.3;
+      const parts: THREE.BufferGeometry[] = [];
+      let parentY = 0;
+      let len = s * (0.55 + droop);
+      for (let k = 0; k < 3; k++) {
+        const link = new THREE.Mesh(GEO.leg, carapace);
+        const l = len * (1 - k * 0.22);
+        link.scale.set(s * (0.075 - k * 0.016), l, s * (0.075 - k * 0.016));
+        link.position.y = parentY - l * 0.5;
+        link.updateMatrix();
+        const g = link.geometry.index ? link.geometry.toNonIndexed() : link.geometry.clone();
+        g.applyMatrix4(link.matrix);
+        parts.push(g);
+        parentY -= l + Math.max(0.01, s * 0.02);
+        len *= 0.85;
+      }
+      const strandGeo = mergeGeometries(parts, false);
+      for (const g of parts) g.dispose();
+      if (strandGeo) root.add(new THREE.Mesh(strandGeo, carapace));
+      body.add(root);
+      tentacles.push(root);
+    }
+  };
+
+  /** Which structural ARCHITECTURE to assemble. Absent on hand-authored genomes → infer from the
+   *  original two signals (segment chain, jelly sac) exactly like the old three-way branch did. */
+  const rig = v.rig ?? (v.segments > 2 ? 'WORM' : v.jelly > 0.5 ? 'JELLY' : 'CHASSIS');
+
+  if (rig === 'WORM') {
     // ---------------- segmented burrower (worm): a chain of body rings
     const count = Math.round(v.segments);
     let parent: THREE.Object3D = body;
@@ -352,7 +466,7 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
       core.position.set(0, s * 0.1, -s * 0.4);
       body.add(core);
     }
-  } else if (v.jelly > 0.5) {
+  } else if (rig === 'JELLY') {
     // ---------------- jelly blob (slime): wobbling translucent sac + inner nuclei
     const sac = new THREE.Mesh(GEO.shell, carapace);
     sac.scale.set(s * 0.85 * wMul, s * 0.78 * hMul, s * 0.9 * lMul);
@@ -390,6 +504,229 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
     core = new THREE.Mesh(GEO.core, energy);
     core.scale.setScalar(coreBase);
     body.add(core);
+  } else if (rig === 'AVIAN') {
+    // ---------------- avian (vulture-like): hunched chest, jointed neck, hooked beak, talons
+    const chest = new THREE.Mesh(GEO.shell, carapace);
+    chest.scale.set(s * 0.62 * wMul, s * 0.72 * hMul, s * 0.92 * lMul);
+    chest.rotation.x = -0.16;
+    body.add(chest);
+    const abdomen = new THREE.Mesh(GEO.shell, carapace);
+    abdomen.scale.set(s * 0.5 * wMul, s * 0.5 * hMul, s * 0.72 * lMul);
+    abdomen.position.set(0, -s * 0.08, -s * 0.72 * lMul);
+    body.add(abdomen);
+    segments.push(chest, abdomen);
+
+    // neck: three joints curling up and forward; the head rides the last one
+    let neckParent: THREE.Object3D = body;
+    for (let i = 0; i < 3; i++) {
+      const joint = new THREE.Group();
+      const segLen = s * (0.34 - i * 0.06);
+      const link = new THREE.Mesh(GEO.leg, carapace);
+      link.scale.set(s * (0.15 - i * 0.02), segLen, s * (0.15 - i * 0.02));
+      link.position.y = segLen * 0.5;
+      joint.add(link);
+      if (i === 0) {
+        joint.position.set(0, s * 0.5 * hMul, s * 0.52 * lMul);
+        joint.rotation.x = -0.72;
+      } else {
+        joint.position.y = s * (0.34 - (i - 1) * 0.06);
+        joint.rotation.x = i === 1 ? 0.66 : 0.5;
+      }
+      neckParent.add(joint);
+      neckParent = joint;
+      neck.push(joint);
+    }
+
+    head = new THREE.Group();
+    head.position.y = s * 0.26;
+    const skull = new THREE.Mesh(GEO.head, carapace);
+    skull.scale.set(s * 0.3 * wMul, s * 0.3, s * 0.34);
+    head.add(skull);
+    // hooked beak: upper cone with a down-turned tip + a clutch of barb-teeth
+    const beak = new THREE.Mesh(GEO.snout, carapace);
+    beak.scale.set(s * 0.13, s * 0.52, s * 0.15);
+    beak.rotation.x = Math.PI / 2 + 0.42;
+    beak.position.set(0, -s * 0.02, s * 0.42);
+    head.add(beak);
+    const hook = new THREE.Mesh(GEO.claw, carapace);
+    hook.scale.set(s * 0.085, s * 0.24, s * 0.085);
+    hook.rotation.x = Math.PI + 0.3;
+    hook.position.set(0, -s * 0.2, s * 0.62);
+    head.add(hook);
+    for (let i = 0; i < Math.max(2, v.mandibles); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const tooth = new THREE.Mesh(GEO.claw, energy);
+      tooth.scale.setScalar(s * 0.1);
+      tooth.position.set(side * s * 0.12, -s * 0.12, s * 0.4 + Math.floor(i / 2) * s * 0.08);
+      tooth.rotation.set(-1.1, 0, side * 0.35);
+      head.add(tooth);
+    }
+    for (let i = 0; i < Math.max(2, v.eyes); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const eye = new THREE.Mesh(GEO.eye, energy);
+      eye.scale.setScalar(s * 0.075);
+      eye.position.set(side * s * (0.2 + Math.floor(i / 2) * 0.07), s * 0.05 + (i % 2) * s * 0.08, s * 0.3);
+      head.add(eye);
+    }
+    neckParent.add(head);
+
+    // talons: the walking legs, tucked under the chest
+    for (let i = 0; i < Math.max(1, Math.round(v.legPairs)) * 2; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const row = Math.floor(i / 2);
+      const { root, knee } = buildLeg(s, side, s * Math.max(0.09, v.legThickness), s * Math.max(0.85, v.legLength), carapace);
+      root.position.set(side * s * 0.34 * wMul, -s * 0.18, s * (0.24 - row * 0.52) * lMul);
+      root.rotation.x = -0.22;
+      body.add(root);
+      legs.push({ root, knee, side, phase: row * 0.85 + (side > 0 ? Math.PI : 0) });
+    }
+  } else if (rig === 'MYRIAPOD') {
+    // ---------------- myriapod (centipede-like): long chain, a leg pair on EVERY segment
+    const count = Math.max(4, Math.round(v.segments));
+    let parent: THREE.Object3D = body;
+    for (let i = 0; i < count; i++) {
+      const k = i / (count - 1);
+      const ring = new THREE.Mesh(i === 0 ? GEO.shell : GEO.plate, carapace);
+      const rw = s * (0.5 - k * 0.27) * wMul;
+      ring.scale.set(rw, rw * (0.95 - k * 0.25), s * (0.42 - k * 0.1) * lMul);
+      ring.position.z = i === 0 ? 0 : -s * (0.44 - k * 0.05) * lMul;
+      parent.add(ring);
+      segments.push(ring);
+      if (i > 0) {
+        // the signature: a small leg pair swept off each segment, registered with the gait
+        const legLen = Math.max(s * 0.3, s * (0.62 - k * 0.3));
+        for (const side of [-1, 1]) {
+          const { root, knee } = buildLeg(s, side, s * 0.045, legLen, carapace);
+          root.position.set(side * rw * 0.9, -rw * 0.25, 0);
+          ring.add(root);
+          legs.push({ root, knee, side, phase: i * 1.05 + (side > 0 ? Math.PI : 0) });
+        }
+        // each following ring hangs off the previous one so the chain can wriggle
+        parent = ring;
+      }
+    }
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, s * 0.08, s * 0.55 * lMul);
+    const skull = new THREE.Mesh(GEO.head, carapace);
+    skull.scale.set(s * 0.36 * wMul, s * 0.26, s * 0.4);
+    headGroup.add(skull);
+    const bite = new THREE.Mesh(GEO.core, energy);
+    bite.scale.setScalar(s * 0.12);
+    bite.position.z = s * 0.3;
+    headGroup.add(bite);
+    for (let i = 0; i < Math.max(3, v.mandibles); i++) {
+      const a = (i / Math.max(3, v.mandibles)) * Math.PI * 2;
+      const tooth = new THREE.Mesh(GEO.claw, energy);
+      tooth.scale.setScalar(s * 0.12);
+      tooth.position.set(Math.cos(a) * s * 0.2, Math.sin(a) * s * 0.14, s * 0.32);
+      tooth.rotation.set(Math.PI * 0.5, 0, -a);
+      headGroup.add(tooth);
+    }
+    for (let i = 0; i < Math.max(2, v.eyes); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const eye = new THREE.Mesh(GEO.eye, energy);
+      eye.scale.setScalar(s * 0.06);
+      eye.position.set(side * s * 0.2, s * 0.14, s * 0.24);
+      headGroup.add(eye);
+    }
+    // antennae: two long swept quills, the 'this one tastes the air' read
+    for (const side of [-1, 1]) {
+      const ant = new THREE.Mesh(GEO.spike, energy);
+      ant.scale.set(s * 0.035, s * 0.72, s * 0.035);
+      ant.position.set(side * s * 0.12, s * 0.16, s * 0.3);
+      ant.rotation.set(-1.85, 0, side * 0.45);
+      headGroup.add(ant);
+    }
+    body.add(headGroup);
+    head = headGroup;
+    if (v.core) {
+      core = new THREE.Mesh(GEO.core, energy);
+      core.scale.setScalar(coreBase);
+      core.position.set(0, s * 0.1, -s * 0.9);
+      body.add(core);
+    }
+  } else if (rig === 'WRAITH') {
+    // ---------------- wraith: a hovering core inside a torn shroud, trailed by tendrils
+    const coreShell = new THREE.Mesh(GEO.shell, carapace);
+    coreShell.scale.set(s * 0.55 * wMul, s * 0.74 * hMul, s * 0.55 * lMul);
+    body.add(coreShell);
+    segments.push(coreShell);
+    const shroud = new THREE.Mesh(GEO.plate, carapace);
+    shroud.scale.set(s * 0.88 * wMul, s * 0.58, s * 0.88 * lMul);
+    shroud.position.y = -s * 0.42;
+    body.add(shroud);
+    // ragged hem: spikes pointing down all around the shroud rim
+    const hem = Math.max(5, v.spikes);
+    for (let i = 0; i < hem; i++) {
+      const a = (i / hem) * Math.PI * 2 + 0.2;
+      const rag = new THREE.Mesh(GEO.spike, carapace);
+      rag.scale.set(s * 0.07, s * (0.3 + (i % 3) * 0.12), s * 0.07);
+      rag.position.set(Math.cos(a) * s * 0.62 * wMul, -s * 0.62, Math.sin(a) * s * 0.62 * lMul);
+      rag.rotation.x = Math.PI;
+      body.add(rag);
+    }
+    core = new THREE.Mesh(GEO.core, energy);
+    core.scale.setScalar(coreBase * 1.4);
+    body.add(core);
+    // tendrils hanging from the shroud (the whole strand writhes from its root)
+    addTentacles(Math.max(3, Math.round(v.tentacles ?? 3)), -s * 0.5, 0.5, 0.35);
+    head = new THREE.Group();
+    head.position.set(0, s * 0.44, s * 0.16 * lMul);
+    const mask = new THREE.Mesh(GEO.head, carapace);
+    mask.scale.set(s * 0.24 * wMul, s * 0.32, s * 0.2);
+    head.add(mask);
+    const thirdEye = new THREE.Mesh(GEO.core, energy);
+    thirdEye.scale.setScalar(s * 0.1);
+    thirdEye.position.set(0, s * 0.05, s * 0.18);
+    head.add(thirdEye);
+    for (let i = 0; i < Math.max(2, v.eyes); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const eye = new THREE.Mesh(GEO.eye, energy);
+      eye.scale.setScalar(s * 0.055);
+      eye.position.set(side * s * 0.14, s * 0.08, s * 0.16);
+      head.add(eye);
+    }
+    body.add(head);
+  } else if (rig === 'MOLLUSK') {
+    // ---------------- mollusk: a bulbed shell on a skirt of writhing tentacles
+    const bell = new THREE.Mesh(GEO.shell, carapace);
+    bell.scale.set(s * 0.8 * wMul, s * 0.76 * hMul, s * 0.85 * lMul);
+    body.add(bell);
+    segments.push(bell);
+    const hood = new THREE.Mesh(GEO.plate, carapace);
+    hood.scale.set(s * 0.58 * wMul, s * 0.5, s * 0.58 * lMul);
+    hood.position.y = s * 0.38 * hMul;
+    hood.rotation.x = 0.18;
+    body.add(hood);
+    core = new THREE.Mesh(GEO.core, energy);
+    core.scale.setScalar(coreBase);
+    core.position.set(0, -s * 0.08, 0);
+    body.add(core);
+    // eye stalks poking out under the hood
+    for (const side of [-1, 1]) {
+      const stalk = new THREE.Mesh(GEO.leg, carapace);
+      stalk.scale.set(s * 0.05, s * 0.5, s * 0.05);
+      stalk.position.set(side * s * 0.3 * wMul, s * 0.34, s * 0.42 * lMul);
+      stalk.rotation.set(-0.5, 0, side * 0.25);
+      body.add(stalk);
+      const eye = new THREE.Mesh(GEO.eye, energy);
+      eye.scale.setScalar(s * 0.08);
+      eye.position.set(side * s * 0.42 * wMul, s * 0.56, s * 0.52 * lMul);
+      body.add(eye);
+    }
+    head = new THREE.Group();
+    head.position.set(0, -s * 0.02, s * 0.4 * lMul);
+    for (let i = 0; i < Math.max(3, v.mandibles); i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const hook = new THREE.Mesh(GEO.claw, energy);
+      hook.scale.setScalar(s * 0.12);
+      hook.position.set(side * s * (0.08 + Math.floor(i / 2) * 0.1), -s * 0.16, s * 0.12);
+      hook.rotation.set(-0.8, 0, side * 0.4);
+      head.add(hook);
+    }
+    body.add(head);
+    // tentacle skirt: the locomotion AND the mouth — strands hang all around the bell
+    addTentacles(Math.max(4, Math.round(v.tentacles ?? 6)), -s * 0.22, 0.6, 0.05);
   } else {
     // ---------------- legged chassis (spider / crawler / brute)
     const thorax = new THREE.Mesh(GEO.shell, carapace);
@@ -479,62 +816,14 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
       body.add(core);
     }
 
-    // legs: hip -> (upper) -> knee -> (lower + claw)
+    // legs: hip -> (upper) -> knee -> (lower + claw), one merged mesh per leg (see buildLeg)
     for (let i = 0; i < v.legPairs * 2; i++) {
       const side = i % 2 === 0 ? -1 : 1;
       const row = Math.floor(i / 2);
-      const root = new THREE.Group();
       const z = (row - (v.legPairs - 1) / 2) * s * 0.62 * lMul;
-      const thickness = s * v.legThickness;
-      const upperLen = s * v.legLength * 0.6;
-      const lowerLen = s * v.legLength * 0.6;
+      const { root, knee } = buildLeg(s, side, s * v.legThickness, s * v.legLength, carapace);
       root.position.set(side * s * 0.42 * wMul, -s * 0.08, z);
-      root.rotation.z = side * 0.55;
-
-      const upper = new THREE.Mesh(GEO.leg, carapace);
-      upper.scale.set(thickness, upperLen, thickness);
-      upper.position.y = -upperLen * 0.5;
-      root.add(upper);
-
-      const knee = new THREE.Group();
-      knee.position.y = -upperLen;
-      knee.rotation.z = side * -0.75;
-      root.add(knee);
-
-      const lower = new THREE.Mesh(GEO.leg, carapace);
-      lower.scale.set(thickness * 0.8, lowerLen, thickness * 0.8);
-      lower.position.y = -lowerLen * 0.5;
-      knee.add(lower);
-
-      // the claw shares the carapace material so it merges with the lower leg: one draw per knee
-      const claw = new THREE.Mesh(GEO.claw, carapace);
-      claw.scale.setScalar(thickness * 1.1);
-      claw.position.y = -lowerLen;
-      claw.rotation.x = Math.PI;
-      knee.add(claw);
-
       body.add(root);
-      // Collapse the whole leg (hip + knee + claw) into ONE mesh: legs are the biggest draw-call
-      // item on a spider (8 of them), and the hip swing reads as a walk cycle on its own.
-      knee.updateMatrix();
-      const parts: THREE.BufferGeometry[] = [];
-      const bake = (mesh: THREE.Mesh, extra: THREE.Matrix4 | null): void => {
-        mesh.updateMatrix();
-        const g = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
-        if (extra) g.applyMatrix4(_m4.multiplyMatrices(extra, mesh.matrix));
-        else g.applyMatrix4(mesh.matrix);
-        parts.push(g);
-      };
-      bake(upper, null);
-      bake(lower, knee.matrix);
-      bake(claw, knee.matrix);
-      const legGeo = mergeGeometries(parts, false);
-      for (const g of parts) g.dispose();
-      if (legGeo) {
-        root.remove(upper);
-        knee.clear();
-        root.add(new THREE.Mesh(legGeo, carapace));
-      }
       legs.push({ root, knee, side, phase: row * 0.85 + (side > 0 ? Math.PI : 0) });
     }
   }
@@ -581,16 +870,56 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
   }
   const wings = Math.round(v.wings ?? 0);
   for (let i = 0; i < wings; i++) {
+    // One ANIMATED wing per blade: the shoulder root is what the animator flaps, and the wing
+    // itself is a fan of membrane blades with a glowing tip. This is the whole silhouette of an
+    // AVIAN (vulture-like) body and the float gear of a winged drifter.
     const side = i % 2 === 0 ? -1 : 1;
-    const wing = new THREE.Mesh(GEO.snout, carapace);
-    wing.scale.set(s * 0.05, s * 1.15, s * 0.5);
-    wing.rotation.set(-0.4, 0, side * 1.45);
-    wing.position.set(side * s * 0.35 * wMul, s * 0.62, s * 0.05 * lMul);
-    body.add(wing);
+    const row = Math.floor(i / 2);
+    const root = new THREE.Group();
+    root.position.set(side * s * (0.4 + row * 0.06) * wMul, s * (0.52 - row * 0.16) * hMul, s * (0.16 - row * 0.44) * lMul);
+    for (let b = 0; b < 3; b++) {
+      const blade = new THREE.Mesh(GEO.blade, carapace);
+      const len = s * (1.4 - b * 0.32);
+      blade.scale.set(len * 0.3, len, s * 0.05);
+      blade.rotation.z = -side * (Math.PI / 2 + 0.28 - b * 0.14);
+      blade.rotation.y = side * (0.2 - b * 0.14);
+      blade.position.set(side * len * 0.42, 0, -s * (0.06 + b * 0.3));
+      root.add(blade);
+    }
     const tip = new THREE.Mesh(GEO.core, energy);
-    tip.scale.setScalar(s * 0.07);
-    tip.position.set(side * s * (0.35 + 0.5) * wMul, s * 0.72, s * 0.05 * lMul);
-    body.add(tip);
+    tip.scale.setScalar(s * 0.08);
+    tip.position.set(side * s * 0.82, 0, -s * 0.5);
+    root.add(tip);
+    body.add(root);
+    wingsList.push({ root, side, phase: row * 1.7 + (side > 0 ? 0.9 : 0) });
+  }
+  // ---- PLUMES: a fan of long quills off the rear — the avian tail / display crest
+  const plumes = Math.round(v.plumes ?? 0);
+  for (let i = 0; i < plumes; i++) {
+    const a = plumes > 1 ? (i / (plumes - 1) - 0.5) * 0.95 : 0;
+    const plume = new THREE.Mesh(GEO.spike, i % 3 === 0 ? energy : carapace);
+    const len = s * (0.9 - Math.abs(a) * 0.35);
+    plume.scale.set(s * 0.05, len, s * 0.05);
+    plume.position.set(Math.sin(a) * s * 0.3 * wMul, s * 0.32, -s * (0.9 + Math.abs(a) * 0.3) * lMul);
+    plume.rotation.set(-2.15, a, 0);
+    body.add(plume);
+  }
+  // ---- SHARDS: a revolving crown of crystal — the wraith's orbit, and CRYSTAL_ARMOR's plates.
+  // The whole RING turns (one rotation per frame), so the shards stay inside the static merge.
+  const shards = Math.round(v.shards ?? 0);
+  if (shards > 0) {
+    shardRing = new THREE.Group();
+    for (let i = 0; i < shards; i++) {
+      const a = (i / shards) * Math.PI * 2 + 0.3;
+      const shard = new THREE.Mesh(GEO.snout, i % 2 === 0 ? energy : carapace);
+      const len = s * (0.45 + (i % 3) * 0.13);
+      shard.scale.set(s * 0.09, len, s * 0.09);
+      shard.position.set(Math.cos(a) * s * 0.74 * wMul, s * (0.08 + (i % 2) * 0.18), Math.sin(a) * s * 0.74 * lMul);
+      shard.rotation.z = -Math.cos(a) * 0.9;
+      shard.rotation.x = Math.sin(a) * 0.9;
+      shardRing.add(shard);
+    }
+    body.add(shardRing);
   }
   const sacs = Math.round(v.sacs ?? 0);
   for (let i = 0; i < sacs; i++) {
@@ -666,5 +995,9 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
     scale: s,
     jelly: v.jelly,
     jellyBase: body.scale.clone(),
+    wings: wingsList,
+    tentacles,
+    shardRing,
+    neck,
   };
 }

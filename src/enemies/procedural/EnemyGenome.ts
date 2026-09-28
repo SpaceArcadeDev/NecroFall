@@ -16,6 +16,7 @@ export type LocomotionId =
   | 'SLITHER'   // a travelling body wave through the segments
   | 'CHARGER'   // slow wind-up, straight-line acceleration
   | 'FLOATING'  // low-gravity drift
+  | 'FLYER'     // winged cruise: holds altitude, dives to strike
   | 'STALKING'  // slow, stops often, observes
   | 'SWARM';    // flock-like steering, quick small steps
 
@@ -44,6 +45,10 @@ export interface GaitProfile {
   headTrack: number;
   /** Hover height above the ground for FLOATING bodies. */
   hover: number;
+  /** Wing-flap amplitude (radians-ish) for winged bodies (AVIAN / FLYER). 0 = no flap. */
+  wing?: number;
+  /** Tentacle writhe amplitude for MOLLUSK / WRAITH bodies. 0 = stiff. */
+  tentacle?: number;
 }
 
 // ------------------------------------------------------------ attacks + telegraphs (plan §22/§23)

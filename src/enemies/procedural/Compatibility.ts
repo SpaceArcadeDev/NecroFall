@@ -32,7 +32,7 @@ export function validateGenome(g: EnemyGenome, ctx: CompatContext = { solidGroun
     issues.push('burrow without a burrowing body (needs BURROWER locomotion, segments or claws)');
   }
   // ---- LEAP requires locomotion support
-  if (has('leap') && !(loco === 'LEAPER' || loco === 'HOPPER' || (v.legPairs ?? 0) > 0)) {
+  if (has('leap') && !(loco === 'LEAPER' || loco === 'HOPPER' || loco === 'FLYER' || (v.legPairs ?? 0) > 0)) {
     issues.push('leap without leaping support');
   }
   // ---- RANGED requires a ranged organ on the body
@@ -42,8 +42,12 @@ export function validateGenome(g: EnemyGenome, ctx: CompatContext = { solidGroun
   if (has('detonate') && !((v.glowNodes ?? 0) > 0 || g.traits.indexOf('explosive') >= 0)) {
     issues.push('detonate without an explosive organ');
   }
-  // ---- CHARGE + FLOATING dont mix; floating bodies do not ram
-  if (has('charge') && loco === 'FLOATING') issues.push('ground charge on a floating body');
+  // ---- CHARGE + FLOATING/FLYER dont mix; airborne bodies do not ram
+  if (has('charge') && (loco === 'FLOATING' || loco === 'FLYER')) issues.push('ground charge on a flying body');
+  // ---- a winged rig without wings (or a segment chain too short to read) is a broken model
+  if (v.rig === 'AVIAN' && !((v.wings ?? 0) > 0)) issues.push('avian body without wings');
+  if (v.rig === 'MYRIAPOD' && !((v.segments ?? 1) >= 4)) issues.push('myriapod body with too few segments');
+  if ((v.rig === 'MOLLUSK' || v.rig === 'WRAITH') && !((v.tentacles ?? 0) > 0)) issues.push('tentacled rig without tentacles');
   // ---- SLITHER and legged gaits are contradictory
   if (loco === 'SLITHER' && (v.legPairs ?? 0) > 2) issues.push('slither with more than one leg pair');
   // ---- ground-only attacks need solid ground (plan §70's underwater example, generalised)

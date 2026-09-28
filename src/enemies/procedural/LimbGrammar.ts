@@ -83,6 +83,14 @@ export function rollLimbs(rng: Rand, locomotion: LocomotionId, body: BodyPlan, r
       fins = rng.int(2, 4);
       wings = ring >= 3 && rng.next() < 0.5 ? 2 : 0;
       break;
+    case 'FLYER':
+      // talons (a single pair, tucked in flight) + the membrane wings the class is built on
+      legPairs = 1;
+      legLength = rng.range(0.8, 1.1);
+      legThickness = heavy ? 0.15 : 0.1;
+      wings = ring >= 3 && rng.next() < 0.4 ? 4 : 2;
+      claws = 2;
+      break;
     case 'STALKING':
       legPairs = 4;
       legLength = rng.range(1.25, 1.6);
@@ -104,8 +112,21 @@ export function rollLimbs(rng: Rand, locomotion: LocomotionId, body: BodyPlan, r
     ...(sacs ? { sacs } : {}),
     ...(claws ? { claws } : {}),
   };
-  if (tailSegments > 0) visual.tail = true;
-  // segmented bodies always keep a tail chain
+  if (tailSegments > 0) visual.tail = true;  // segmented bodies always keep a tail chain
   if ((body.visual.segments ?? 1) > 1) visual.tail = visual.tail ?? true;
+  // The new architectures own their locomotion hardware: a MYRIAPOD carries a leg pair on every
+  // segment (built by the rig from `segments`, not from `legPairs`), a WRAITH drifts on its shard
+  // ring and a MOLLUSK crawls on its tentacle skirt — none of them uses the chassis leg builder.
+  if (body.core === 'MYRIAPOD') {
+    legPairs = 0;
+    legLength = 0.5;
+    legThickness = 0.08;
+    tailSegments = Math.max(tailSegments, 5);
+    visual.legPairs = 0;
+    visual.legLength = 0.5;
+  } else if (body.core === 'ETHEREAL' || body.core === 'MOLLUSK') {
+    legPairs = 0;
+    visual.legPairs = 0;
+  }
   return { legPairs, legLength, legThickness, fins, wings, sacs, claws, tailSegments, visual };
 }

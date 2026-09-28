@@ -57,8 +57,9 @@ export function genomeSignatures(g: import('../EnemyGenomes').EnemyGenome): Geno
   const v = g.visual;
   const q = (n: number | undefined): number => Math.round((n ?? 0) * 2); // bucketed so near-same parts collapse
   const body = [
-    g.locomotion ?? '?', v.legPairs, q(v.legLength), q(v.legThickness), q(v.bodyLength), q(v.bodyWidth), q(v.bodyHeight),
-    v.plates, v.spikes, v.horns, v.mandibles, v.tubes ?? 0, v.wings ?? 0, v.fins ?? 0, v.sacs ?? 0, v.glowNodes ?? 0, v.segments, v.jelly > 0.5 ? 'jelly' : 'frame',
+    g.locomotion ?? '?', v.rig ?? '-', v.legPairs, q(v.legLength), q(v.legThickness), q(v.bodyLength), q(v.bodyWidth), q(v.bodyHeight),
+    v.plates, v.spikes, v.horns, v.mandibles, v.tubes ?? 0, v.wings ?? 0, v.fins ?? 0, v.sacs ?? 0, v.glowNodes ?? 0,
+    v.tentacles ?? 0, v.shards ?? 0, v.plumes ?? 0, v.segments, v.jelly > 0.5 ? 'jelly' : 'frame',
   ].join('|');
   const attack = (g.attacks ?? [])
     .map((a) => `${a.ability}:${a.pattern}`)

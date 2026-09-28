@@ -176,6 +176,10 @@ export interface QueueEntryRow {
   queuedAt: bigint;
   status: number;
   candidateMatchId?: number | null;
+  /** RANKED search (plan §5) — solo, tied to one planet. */
+  ranked: boolean;
+  /** `ring:galaxyId:systemId:planetId` for ranked searches, '' otherwise. */
+  planetKey: string;
 }
 
 export interface CandidateRow {
@@ -183,6 +187,8 @@ export interface CandidateRow {
   createdAt: bigint;
   deadline: bigint;
   status: number;
+  ranked: boolean;
+  planetKey: string;
 }
 
 export interface CandidatePlayerRow {
@@ -205,6 +211,12 @@ export interface MatchRow {
   durationSeconds: number;
   serverTick: bigint;
   playerCount: number;
+  /** RANKED match — awards stars and claims the planet (plan §37). */
+  ranked: boolean;
+  /** The ranked planet this match was fought on (`ring:g:s:p`), '' for classic. */
+  planetKey: string;
+  /** Rank ring of the planet (0..7), 255 for classic. */
+  rankRing: number;
 }
 
 export interface MatchPlayerRow {
@@ -266,6 +278,82 @@ export interface MatchServerUsageRow {
   events: bigint;
   estimatedEgressBytes: bigint;
   storageBytes: bigint;
+}
+
+// ------------------------------------------------------------ ranked mode (plan §33–§57)
+
+/** An ACTIVE ranked season — the root of the deterministic universe. */
+export interface RankedSeasonRow {
+  seasonId: number;
+  universeSeed: bigint;
+  startedAt: Timestamp;
+  endsAt?: Timestamp | null;
+  active: boolean;
+}
+
+/** A persistent planet (identity + ownership only — terrain is regenerated). */
+export interface RankedPlanetRow {
+  planetKey: string;
+  seasonId: number;
+  ring: number;
+  galaxyId: number;
+  systemId: number;
+  planetId: number;
+  seed: bigint;
+  state: number;
+  controllingColony: number;
+  controlStartedAt: bigint;
+  controlExpiresAt: bigint;
+  discovered: boolean;
+  firstDiscoveredAt: bigint;
+  lastMatchId: number;
+  generatedRank: number;
+}
+
+/** First-discoverer record (first 5 only — plan §35). */
+export interface PlanetDiscoveryRow {
+  id: number;
+  planetKey: string;
+  identity: Identity;
+  playerName: string;
+  discoveredAt: bigint;
+  discoveryOrder: number;
+}
+
+/** A planet locked by a filling/playing ranked match (plan §36). */
+export interface RankedPlanetReservationRow {
+  planetKey: string;
+  matchId: number;
+  reservedAt: bigint;
+  expiresAt: bigint;
+}
+
+/** Ownership stint (plan §77) — "this planet changed hands N times". */
+export interface PlanetControlHistoryRow {
+  id: number;
+  planetKey: string;
+  colony: number;
+  matchId: number;
+  startedAt: bigint;
+  endedAt: bigint;
+}
+
+/** One rank movement (plan §57/§80) — the post-match screen reads the newest row. */
+export interface RankHistoryRow {
+  id: number;
+  identity: Identity;
+  seasonId: number;
+  oldTier: number;
+  oldDivision: number;
+  oldStars: number;
+  newTier: number;
+  newDivision: number;
+  newStars: number;
+  cause: number;
+  matchId: number;
+  planetKey: string;
+  delta: number;
+  createdAt: Timestamp;
 }
 
 /** Row field for `player.identity` used as a map key. */

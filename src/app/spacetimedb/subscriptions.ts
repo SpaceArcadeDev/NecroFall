@@ -92,6 +92,8 @@ export function subscribeAccount(hex: string): void {
     `SELECT * FROM player_presence WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_settings WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM follow WHERE follower = ${hexLiteral(hex)}`,
+    // Rank movements (plan §57/§80): the post-match overlay reads the newest row.
+    `SELECT * FROM rank_history WHERE identity = ${hexLiteral(hex)}`,
   ]);
 }
 
@@ -149,4 +151,38 @@ export function subscribeMatch(matchId: number): void {
 
 export function releaseMatch(matchId: number): void {
   releaseScope(`match:${matchId}`);
+}
+
+// ------------------------------------------------------------ ranked map (plan §61)
+
+/**
+ * The RANK page's world (plan §61 — never subscribe the whole universe):
+ * the season seed, the top leaderboard, every ACTIVE reservation (a tiny
+ * transient table) and the caller's own rank history. Galaxies and planets
+ * are subscribed on demand as the player explores.
+ */
+export function subscribeRank(): void {
+  subscribeScope('rank', [
+    'SELECT * FROM ranked_season',
+    'SELECT * FROM ranked_planet_reservation',
+    'SELECT * FROM ranked_top',
+  ]);
+}
+
+export function releaseRank(): void {
+  releaseScope('rank');
+}
+
+/** One galaxy's persistent planet rows (only discovered/controlled planets have any). */
+export function subscribeRankGalaxy(galaxyId: number): void {
+  ensureScope(`rank-galaxy:${galaxyId}`, [`SELECT * FROM ranked_planet WHERE galaxy_id = ${galaxyId}`]);
+}
+
+/** One planet's discovery + ownership history (the detail panel). */
+export function subscribePlanetDetail(planetKey: string): void {
+  if (!planetKey || !/^[0-9:]+$/.test(planetKey)) return;
+  ensureScope(`rank-planet:${planetKey}`, [
+    `SELECT * FROM planet_discovery WHERE planet_key = '${planetKey}'`,
+    `SELECT * FROM planet_control_history WHERE planet_key = '${planetKey}'`,
+  ]);
 }

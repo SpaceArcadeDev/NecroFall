@@ -47,6 +47,10 @@ export const queue_entry = table(
     /** QUEUE_QUEUED / QUEUE_CANDIDATE / QUEUE_CONFIRMED */
     status: t.u8(),
     candidate_match_id: t.option(t.u32()),
+    /** RANKED queue (plan §5/§53): ranked candidates only mix with ranked entries. */
+    ranked: t.bool().default(false),
+    /** The planet the player queued for (`ring:g:s:p`) — '' for classic queues. */
+    planet_key: t.string().default(''),
   }
 );
 
@@ -60,6 +64,9 @@ export const candidate_match = table(
     deadline: t.u64(),
     /** CANDIDATE_FILLING / CANDIDATE_CONFIRMING / CANDIDATE_STARTED */
     status: t.u8(),
+    /** Ranked candidate: only ranked queue entries on the same planet may fill it. */
+    ranked: t.bool().default(false),
+    planet_key: t.string().default(''),
   }
 );
 

@@ -10,11 +10,10 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  matchId: __t.u32().primaryKey().name("match_id"),
-  createdAt: __t.u64().name("created_at"),
-  deadline: __t.u64(),
-  status: __t.u8(),
-  ranked: __t.bool(),
-  planetKey: __t.string().name("planet_key"),
-});
+import {
+  ColonyStatsResult,
+} from "./types";
+
+export const params = {
+};
+export const returnType = ColonyStatsResult

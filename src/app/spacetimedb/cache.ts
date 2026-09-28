@@ -15,6 +15,8 @@ import {
   MatchServerUsageRow,
   PartyMemberRow,
   PartyRow,
+  PlanetControlHistoryRow,
+  PlanetDiscoveryRow,
   PlayerInventoryRow,
   PlayerLoadoutRow,
   PlayerPresenceRow,
@@ -24,6 +26,10 @@ import {
   PlayerWalletRow,
   ProfileViewRow,
   QueueEntryRow,
+  RankedPlanetRow,
+  RankedPlanetReservationRow,
+  RankedSeasonRow,
+  RankHistoryRow,
 } from './rows';
 
 type Row = { [key: string]: unknown };
@@ -43,9 +49,15 @@ const TABLES = [
   'match',
   'matchPlayer',
   'matchHistory',
+  'rankedSeason',
+  'rankedPlanet',
+  'planetDiscovery',
+  'rankedPlanetReservation',
+  'planetControlHistory',
+  'rankHistory',
 ] as const;
 
-const VIEWS = ['myQueueEntry', 'myCandidate', 'myCandidatePlayers', 'myMatchUsage'] as const;
+const VIEWS = ['myQueueEntry', 'myCandidate', 'myCandidatePlayers', 'myMatchUsage', 'rankedTop'] as const;
 
 export class ClientCache {
   static readonly shared = new ClientCache();
@@ -217,6 +229,56 @@ export class ClientCache {
     return this.list<MatchPlayerRow>('matchPlayer')
       .filter(r => r.matchId === matchId)
       .sort((a, b) => a.id - b.id);
+  }
+
+  // ------------------------------------------------------------ ranked (plan §33–§57)
+
+  /** The ACTIVE season (or the newest one) — source of the universe seed. */
+  rankedSeason(): RankedSeasonRow | null {
+    const rows = this.list<RankedSeasonRow>('rankedSeason');
+    return rows.find(r => r.active) ?? rows[0] ?? null;
+  }
+
+  /** Every persistent planet row of one galaxy (discovered / controlled only). */
+  rankedPlanetsForGalaxy(galaxyId: number): RankedPlanetRow[] {
+    return this.list<RankedPlanetRow>('rankedPlanet').filter(r => r.galaxyId === galaxyId);
+  }
+
+  rankedPlanet(key: string): RankedPlanetRow | null {
+    return this.list<RankedPlanetRow>('rankedPlanet').find(r => r.planetKey === key) ?? null;
+  }
+
+  /** Keys locked by a filling/playing ranked match (plan §36). */
+  reservedPlanetKeys(): Set<string> {
+    const out = new Set<string>();
+    for (const r of this.list<RankedPlanetReservationRow>('rankedPlanetReservation')) out.add(r.planetKey);
+    return out;
+  }
+
+  /** First discoverers of a planet, in order (plan §35). */
+  planetDiscoveries(key: string): PlanetDiscoveryRow[] {
+    return this.list<PlanetDiscoveryRow>('planetDiscovery')
+      .filter(r => r.planetKey === key)
+      .sort((a, b) => a.discoveryOrder - b.discoveryOrder);
+  }
+
+  /** Ownership stints of a planet, newest first (plan §77). */
+  planetControlHistory(key: string): PlanetControlHistoryRow[] {
+    return this.list<PlanetControlHistoryRow>('planetControlHistory')
+      .filter(r => r.planetKey === key)
+      .sort((a, b) => (a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0));
+  }
+
+  /** The caller's rank movements, newest first (plan §57). */
+  myRankHistory(hex: string): RankHistoryRow[] {
+    return this.list<RankHistoryRow>('rankHistory')
+      .filter(r => hexOf(r.identity) === hex)
+      .sort((a, b) => b.id - a.id);
+  }
+
+  /** The KING OF GODS leaderboard (plan §78) — top ranked survivors. */
+  rankedTop(): PlayerRow[] {
+    return this.list<PlayerRow>('rankedTop');
   }
 
   /** Every resident seat belonging to `hex` (the matchmaking scope subscribes only these). */

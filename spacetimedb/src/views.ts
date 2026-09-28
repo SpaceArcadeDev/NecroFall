@@ -7,6 +7,7 @@ import { t } from 'spacetimedb/server';
 import { spacetimedb } from './schema';
 import { candidate_match, match_candidate_player, queue_entry } from './schema/matchmaking';
 import { match_player, match_server_usage } from './schema/match';
+import { player } from './schema/player';
 
 /** The caller's own queue entry (or none). */
 export const my_queue_entry = spacetimedb.view(
@@ -57,5 +58,28 @@ export const my_match_usage = spacetimedb.view(
     if (!latest) return [];
     const row = ctx.db.match_server_usage.match_id.find(latest);
     return row ? [row] : [];
+  }
+);
+
+/**
+ * KING OF GODS leaderboard (plan §78): the top 50 ranked survivors, sorted by
+ * stars with deterministic tie-breakers (wins → fewer matches → identity hex).
+ * Only players who have actually played ranked matches appear. This is the one
+ * place the whole roster is read — on demand, never as a live subscription
+ * source beyond the rank page.
+ */
+export const ranked_top = spacetimedb.view(
+  { name: 'ranked_top', public: true },
+  t.array(player.rowType),
+  (ctx) => {
+    const ranked = [...ctx.db.player.iter()].filter((p: any) => p.rank_status === 1 && p.player_name);
+    ranked.sort(
+      (a: any, b: any) =>
+        b.rank_points - a.rank_points ||
+        b.wins - a.wins ||
+        a.matches_played - b.matches_played ||
+        a.identity.toHexString().localeCompare(b.identity.toHexString())
+    );
+    return ranked.slice(0, 50);
   }
 );

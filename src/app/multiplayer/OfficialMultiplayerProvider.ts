@@ -28,6 +28,7 @@ import {
   leaveMatch as leaveMatchReducer,
   joinMatch as joinMatchReducer,
   reportNexusCapture,
+  findRankedMatch as findRankedMatchReducer,
 } from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
@@ -198,6 +199,11 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
 
   findMatch(): void {
     findMatch();
+  }
+
+  /** FIND RANKED MATCH — queue solo for one planet (plan §5/§53). */
+  findRankedMatch(ring: number, galaxyId: number, systemId: number, planetId: number): void {
+    findRankedMatchReducer(ring, galaxyId, systemId, planetId);
   }
 
   cancelFindMatch(): void {

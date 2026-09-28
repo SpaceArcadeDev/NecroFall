@@ -25,6 +25,12 @@ export const match = table(
      * somebody reports in; once the grace is over the sim concludes the match (user ask 2026-09-28).
      */
     empty_since: t.option(t.timestamp()).default(undefined),
+    /** RANKED matches award stars and claim the planet (plan §37/§60). */
+    ranked: t.bool().default(false),
+    /** The ranked planet this match is fought on (`ring:g:s:p`), '' for classic. */
+    planet_key: t.string().default(''),
+    /** Rank ring of the planet — drives difficulty parameters (plan §6/§29). */
+    rank_ring: t.u8().default(255),
   }
 );
 

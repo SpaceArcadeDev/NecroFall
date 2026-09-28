@@ -29,6 +29,10 @@ export interface ShellContext {
   openProfile(hex: string): void;
   goHome(): void;
   goPlay(): void;
+  /** The RANK page — the intergalactic map (plan §48). */
+  goRank(): void;
+  /** Jump back into the queue screen (the ranked panel's "VIEW SEARCH"). */
+  goQueue(): void;
   /** The LOBBY screen (CLASSIC's home): official party or the P2P entry. */
   goLobby(): void;
   /** The OFFICIAL PARTY screen — CREATE PARTY's home, in the in-game lobby's dress. */

@@ -11,13 +11,10 @@ import {
 } from "spacetimedb";
 
 export default __t.row({
-  identity: __t.identity().primaryKey(),
-  partyId: __t.option(__t.u32()).name("party_id"),
-  colony: __t.u8(),
-  skillRating: __t.u32().name("skill_rating"),
-  queuedAt: __t.u64().name("queued_at"),
-  status: __t.u8(),
-  candidateMatchId: __t.option(__t.u32()).name("candidate_match_id"),
-  ranked: __t.bool(),
+  id: __t.u32().primaryKey(),
   planetKey: __t.string().name("planet_key"),
+  identity: __t.identity(),
+  playerName: __t.string().name("player_name"),
+  discoveredAt: __t.u64().name("discovered_at"),
+  discoveryOrder: __t.u8().name("discovery_order"),
 });

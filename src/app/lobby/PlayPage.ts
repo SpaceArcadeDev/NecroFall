@@ -74,26 +74,20 @@ export class PlayPage {
     });
     modes.appendChild(classicCard);
 
-    const rankCard = el('div', 'mode-card locked');
+    const rankCard = el('div', 'mode-card rank-mode-card');
     rankCard.setAttribute('role', 'button');
     rankCard.setAttribute('tabindex', '0');
-    rankCard.setAttribute('aria-disabled', 'true');
-    rankCard.setAttribute('aria-label', 'Rank — coming soon');
+    rankCard.setAttribute('aria-label', 'Rank — the intergalactic map');
     rankCard.innerHTML =
       `<div class="mode-ico">${ICON_LADDER}</div>` +
       '<div class="mode-name">RANK</div>' +
-      '<div class="mode-desc">Climb the ladder against matched opponents.</div>' +
-      '<div class="mode-badge">COMING SOON</div>';
-    const rankNudge = (): void => {
-      rankCard.classList.remove('shake');
-      void rankCard.offsetWidth;
-      rankCard.classList.add('shake');
-      this.ctx.toast('Ranked matches are coming soon.');
-    };
-    rankCard.addEventListener('click', rankNudge);
+      '<div class="mode-desc">Climb the ladder — liberate planets in your rank ring.</div>' +
+      '<div class="mode-tag">ENTER MAP</div>';
+    const openRank = (): void => this.ctx.goRank();
+    rankCard.addEventListener('click', openRank);
     rankCard.addEventListener('keydown', (e) => {
       const k = e as KeyboardEvent;
-      if ((k.key === 'Enter' || k.key === ' ') && !k.repeat) rankNudge();
+      if ((k.key === 'Enter' || k.key === ' ') && !k.repeat) openRank();
     });
     modes.appendChild(rankCard);
     col.appendChild(modes);

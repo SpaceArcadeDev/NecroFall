@@ -90,3 +90,15 @@ export const REWARD_SOFT_LOSS = 15;
 export const REWARD_SOFT_KILL = 5;
 export const REWARD_SOFT_OBJECTIVE = 20;
 export const REWARD_PREMIUM_WIN = 2;
+
+// ------------------------------------------------------------ ranked mode (plan §33–§57)
+/** Season 1's universe seed — the root of every galaxy/planet (plan §56). */
+export const SEASON_ONE_UNIVERSE_SEED = 918273645n;
+/** A ranked planet is locked while its match fills/plays (plan §36). */
+export const PLANET_RESERVATION_US = 5n * 60n * 1_000_000n;
+/** While a ranked match is LIVE the reservation covers the whole fight. */
+export const PLANET_MATCH_RESERVATION_US = 60n * 60n * 1_000_000n;
+/** Planetary shield lifetime after a liberation (plan §38 — 72 hours). */
+export const PLANET_CONTROL_US = 72n * 60n * 60n * 1_000_000n;
+/** Keep only the first N discoverers per planet (plan §35). */
+export const MAX_PLANET_DISCOVERERS = 5;

@@ -59,6 +59,42 @@ export const cancelFindMatch = (): void => callReducer('cancelFindMatch');
 export const confirmMatch = (): void => callReducer('confirmMatch');
 export const declineMatch = (): void => callReducer('declineMatch');
 
+// ------------------------------------------------------------ ranked (plan §59)
+
+/** FIND RANKED MATCH — queue for one planet; the server validates ring + availability. */
+export const findRankedMatch = (ring: number, galaxyId: number, systemId: number, planetId: number): void =>
+  callReducer('findRankedMatch', { ring, galaxyId, systemId, planetId });
+
+/** DISCOVER PLANET — first contact, recorded among the first 5 discoverers (plan §35). */
+export const discoverPlanet = (ring: number, galaxyId: number, systemId: number, planetId: number): void =>
+  callReducer('discoverPlanet', { ring, galaxyId, systemId, planetId });
+
+/** Season-wide colony power stats (procedure — computed on demand, plan §76). */
+export interface ColonyStatsRow {
+  colony: number;
+  planets: number;
+  systems: number;
+  expiring: number;
+}
+export interface ColonyStatsResult {
+  /** Codegen camelCases object fields: `total_planets` arrives as `totalPlanets`. */
+  totalPlanets: number;
+  totalSystems: number;
+  colonies: ColonyStatsRow[];
+}
+export async function colonyStats(): Promise<ColonyStatsResult | null> {
+  const conn = SpacetimeConnection.shared.current;
+  const fn = conn?.procedures?.colonyStats;
+  if (!fn) return null;
+  try {
+    const res = (await fn()) as ColonyStatsResult | undefined;
+    return res ?? null;
+  } catch (err) {
+    console.warn('[NECROFALL] colonyStats failed', err);
+    return null;
+  }
+}
+
 // ------------------------------------------------------------ official match
 export interface SubmitInputArgs {
   moveX: number;

@@ -37,6 +37,10 @@ import {
 } from '../constants';
 import { requireOnboarded, requirePlayer } from '../auth/authorization';
 import { cleanupFinishedMatches } from '../game/rewards';
+import { maybeReleasePlanet, refreshPlanetReservation } from '../ranked/planets';
+import { parsePlanetKey, planetSeed } from '../ranked/seed';
+import { ensureActiveSeason, universeSeed32 } from '../ranked/planets';
+import { sweepRanked } from '../ranked/planets';
 
 /** One scan per second ages every window; the real granularity lives in constants. */
 const SCAN_INTERVAL_US = 1_000_000n;
@@ -92,6 +96,8 @@ export const find_match = spacetimedb.reducer((ctx) => {
       queued_at: now,
       status: QUEUE_QUEUED,
       candidate_match_id: undefined,
+      ranked: false,
+      planet_key: '',
     });
   }
 
@@ -150,6 +156,10 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
     //    scanner's single biggest cost. Once a minute is plenty for a 10 min retention
     //    (ticks are 1 s apart, so this window catches exactly one tick per minute).
     if (now % 60_000_000n < 1_000_000n) cleanupFinishedMatches(ctx, now);
+
+    // 4) Ranked-world housekeeping: expired reservations die and shields that
+    //    fell return their planets to the Necrophages (plan §38/§52).
+    sweepRanked(ctx, now);
   }
 );
 
@@ -159,17 +169,23 @@ export function maybeCreateCandidate(ctx: any, now: bigint): void {
   const waiting = [...ctx.db.queue_entry.iter()].filter(q => q.status === QUEUE_QUEUED);
   if (waiting.length < MATCH_MIN_PLAYERS) return;
 
+  // The candidate inherits its MODE from the longest-waiting entry (plan §5):
+  // ranked candidates only ever fill with ranked entries for the same planet.
+  waiting.sort((a, b) => (a.queued_at < b.queued_at ? -1 : a.queued_at > b.queued_at ? 1 : 0));
+  const seed = waiting[0];
   const candidate = ctx.db.candidate_match.insert({
     match_id: 0,
     created_at: now,
     deadline: now + FILL_WINDOW_US,
     status: CANDIDATE_FILLING,
+    ranked: Boolean(seed.ranked),
+    planet_key: seed.ranked ? seed.planet_key ?? '' : '',
   });
   fillCandidate(ctx, candidate, now);
 }
 
 /** Internal: pull eligible groups from the queue into a FILLING candidate. */
-function fillOpenCandidates(ctx: any, now: bigint): void {
+export function fillOpenCandidates(ctx: any, now: bigint): void {
   for (const candidate of [...ctx.db.candidate_match.iter()]) {
     if (candidate.status === CANDIDATE_FILLING) fillCandidate(ctx, candidate, now);
   }
@@ -189,8 +205,12 @@ function fillCandidate(ctx: any, candidate: any, _now: bigint): void {
     total++;
   }
 
-  // Group the queue: party rows collapse into atomic groups.
-  const queued = [...ctx.db.queue_entry.iter()].filter(q => q.status === QUEUE_QUEUED);
+  // Group the queue: party rows collapse into atomic groups. RANKED entries only
+  // ever fill a ranked candidate for the SAME planet (plan §5/§53) — mode and
+  // planet are hard filters, not preferences.
+  const queued = [...ctx.db.queue_entry.iter()].filter(
+    q => q.status === QUEUE_QUEUED && Boolean(q.ranked) === Boolean(candidate.ranked) && (!candidate.ranked || (q.planet_key ?? '') === candidate.planet_key)
+  );
   const groups: { key: string; entries: any[] }[] = [];
   const partyGroups = new Map<number, any[]>();
   for (const q of queued) {
@@ -282,11 +302,13 @@ export function finalizeCandidate(ctx: any, candidateId: number): void {
     if (q) ctx.db.queue_entry.identity.update({ ...q, status: QUEUE_QUEUED, candidate_match_id: undefined });
     ctx.db.match_candidate_player.id.delete(s.id);
   }
+  maybeReleasePlanet(ctx, candidate.planet_key ?? '');
   ctx.db.candidate_match.match_id.delete(candidateId);
 }
 
 /** Internal: abandon a candidate entirely (players with CONFIRMED state requeue). */
 export function releaseCandidate(ctx: any, candidateId: number, requeueConfirmed: boolean): void {
+  const candidate = ctx.db.candidate_match.match_id.find(candidateId);
   for (const s of [...ctx.db.match_candidate_player.match_id.filter(candidateId)]) {
     const q = ctx.db.queue_entry.identity.find(s.identity);
     if (q) {
@@ -298,6 +320,7 @@ export function releaseCandidate(ctx: any, candidateId: number, requeueConfirmed
     }
     ctx.db.match_candidate_player.id.delete(s.id);
   }
+  if (candidate) maybeReleasePlanet(ctx, candidate.planet_key ?? '');
   ctx.db.candidate_match.match_id.delete(candidateId);
 }
 
@@ -317,6 +340,8 @@ export function removeFromQueue(ctx: any, identity: any, now: bigint): void {
     }
   }
   if (q) ctx.db.queue_entry.identity.delete(identity);
+  // A ranked search that ends frees its planet lock unless somebody else holds it.
+  if (q && q.ranked && q.planet_key) maybeReleasePlanet(ctx, q.planet_key);
   void now;
 }
 
@@ -327,7 +352,17 @@ export function removeFromQueue(ctx: any, identity: any, now: bigint): void {
  */
 export function createMatch(ctx: any, candidateId: number, seats: any[]): void {
   const now = ctx.timestamp;
-  const seed = Math.floor(ctx.random() * 0xffffffff) >>> 0;
+  const micros = now.microsSinceUnixEpoch as bigint;
+  const candidate = ctx.db.candidate_match.match_id.find(candidateId);
+  const ranked = Boolean(candidate?.ranked);
+  const key = ranked ? candidate.planet_key ?? '' : '';
+  const parsed = key ? parsePlanetKey(key) : null;
+  // A RANKED match plays the PLANET (plan §32): map_seed is the deterministic
+  // planet seed, so every client builds the identical world — classic matches
+  // keep their random seed.
+  const seed = parsed
+    ? planetSeed(universeSeed32(ensureActiveSeason(ctx)), parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId)
+    : Math.floor(ctx.random() * 0xffffffff) >>> 0;
   const m = ctx.db.match.insert({
     match_id: 0,
     status: MATCH_RUNNING,
@@ -339,7 +374,12 @@ export function createMatch(ctx: any, candidateId: number, seats: any[]): void {
     duration_seconds: 0,
     server_tick: 0n,
     player_count: seats.length,
+    empty_since: undefined,
+    ranked,
+    planet_key: key,
+    rank_ring: parsed ? parsed.ring : 255,
   });
+  if (key) refreshPlanetReservation(ctx, key, m.match_id, micros);
 
   for (const seat of seats) {
     const account = ctx.db.player.identity.find(seat.identity);
@@ -405,7 +445,6 @@ export function createMatch(ctx: any, candidateId: number, seats: any[]): void {
   });
   void candidateId;
 }
-
 /**
  * Arm the global 1 Hz scan. IDEMPOTENT, and re-checked whenever a player
  * queues: an interrupted module update can leave the schedule table empty —

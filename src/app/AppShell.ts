@@ -44,8 +44,11 @@ import { LobbyPage } from './lobby/LobbyPage';
 import { PartyPage } from './lobby/PartyPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
+import { RankPage } from './rank/RankPage';
+import { showRankResultOverlay } from './rank/RankResultOverlay';
+import { DEFAULT_UNIVERSE_SEED } from '../rankmap/procedural/SeedHash';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'rank' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -94,6 +97,10 @@ export class AppShell implements ShellContext {
   private lastGameScreen: ScreenName = 'menu';
   /** `?party=CODE` invite link — consumed once the account is ready to join. */
   private invitedPartyCode = '';
+  /** The last matchmaking queue we saw was RANKED — return there, not the lobby (plan §48). */
+  private lastQueueRanked = false;
+  /** Ranked-result overlays already shown (match ids). */
+  private rankResultsShown = new Set<number>();
   /**
    * The boot watchdog (user report: "blank screen with the rotating planet, no UI"): a wedged
    * token refresh or a connect that never answers must NEVER leave the shell invisible. If no
@@ -105,6 +112,8 @@ export class AppShell implements ShellContext {
 
   constructor(private app: HTMLElement) {
     this.auth = APP_CONFIG.authConfigured ? new SpacetimeAuthProvider() : new NullAuthProvider();
+    // Console/debug handle (the game exposes `window.necrofall` the same way).
+    (window as unknown as Record<string, unknown>).nfShell = this;
 
     this.root = el('div', 'nf-shell hidden');
     this.chrome = el('div', 'nf-chrome');
@@ -219,9 +228,25 @@ export class AppShell implements ShellContext {
     this.navigateTo({ name: 'party' });
   }
 
+  /** The RANK page — the intergalactic map (plan §48). */
+  goRank(): void {
+    this.navigateTo({ name: 'rank' });
+  }
+
+  /** Jump back into the queue screen (the ranked panel's "SEARCHING…" button). */
+  goQueue(): void {
+    if (this.officialMatchActive || this.shellHidden) return;
+    this.showShell('queue');
+  }
+
   /** Where the player belongs after leaving the queue: their party, or the CLASSIC setup. */
   returnFromQueue(): void {
     const hex = this.myHex();
+    if (this.lastQueueRanked) {
+      this.lastQueueRanked = false;
+      this.goRank();
+      return;
+    }
     if (hex && ClientCache.shared.myParty(hex)) this.goParty();
     else this.goLobby();
   }
@@ -502,6 +527,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'rank') this.showShell('rank');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
       if (!APP_CONFIG.authConfigured) {
@@ -533,6 +559,7 @@ export class AppShell implements ShellContext {
     else if (route.name === 'play') this.showShell('play');
     else if (route.name === 'lobby') this.showShell('lobby');
     else if (route.name === 'party') this.showShell('party');
+    else if (route.name === 'rank') this.showShell('rank');
     else if (route.name === 'match') this.showShell('match', String(route.id));
     else if (this.screen !== 'queue' && this.screen !== 'onboarding' && this.screen !== 'loading') this.showShell('home');
   }
@@ -544,13 +571,49 @@ export class AppShell implements ShellContext {
       if (status === 'idle') {
         if (this.screen === 'queue') this.returnFromQueue();
       } else if (this.screen !== 'queue' && this.screen !== 'loading' && !this.shellHidden) {
+        // Remember the MODE: a ranked search must return to the map, not the lobby.
+        this.lastQueueRanked = Boolean(ClientCache.shared.myQueue()?.ranked);
         this.showShell('queue');
       }
     } else if (e.type === 'match-start') {
       this.beginLoading();
+    } else if (e.type === 'match-end') {
+      // Ranked matches get the RANK RESULT overlay once the game's own end
+      // screen has landed (plan §80) — stars, ladder move and planet fate.
+      this.scheduleRankResult(e.matchId);
     } else if (e.type === 'error') {
       this.toast(e.message || 'Multiplayer error.');
     }
+  }
+
+  /** Show the RANKED result overlay for a finished match (skip if not mine/not ranked). */
+  private scheduleRankResult(matchId: number): void {
+    if (this.rankResultsShown.has(matchId)) return;
+    this.rankResultsShown.add(matchId);
+    const m = ClientCache.shared.match(matchId);
+    if (!m || !m.ranked) return;
+    window.setTimeout(() => {
+      const history = ClientCache.shared.myRankHistory(this.myHex()).find((h) => h.matchId === matchId);
+      if (!history) return; // I left the match — no stars, no overlay
+      const me = ClientCache.shared.playerByHex(this.myHex());
+      const season = ClientCache.shared.rankedSeason();
+      const universeSeed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+      showRankResultOverlay({
+        matchId,
+        delta: history.delta,
+        oldTier: history.oldTier,
+        oldDivision: history.oldDivision,
+        newStars: Number(me?.rankPoints ?? history.newStars),
+        winnerColony: m.winnerColony ?? null,
+        myColony: me?.colony ?? 255,
+        planetKey: m.planetKey || history.planetKey,
+        universeSeed,
+        onViewMap: () => {
+          this.rankResultsShown.add(matchId);
+          this.goRank();
+        },
+      });
+    }, 2600);
   }
 
   // ------------------------------------------------------------ screens
@@ -581,7 +644,7 @@ export class AppShell implements ShellContext {
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
-    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'party' || screen === 'queue' || screen === 'profile';
+    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'party' || screen === 'rank' || screen === 'queue' || screen === 'profile';
     this.nav.element.classList.toggle('hidden', screen !== 'home');
     this.backBtn.classList.toggle('hidden', !childScreen);
     this.root.classList.toggle('no-nav', screen !== 'home');
@@ -620,6 +683,10 @@ export class AppShell implements ShellContext {
       case 'party':
         this.nav.setActive('play');
         this.renderParty();
+        break;
+      case 'rank':
+        this.nav.setActive('play');
+        this.renderRank();
         break;
       case 'match':
         this.nav.setActive('play');
@@ -936,6 +1003,12 @@ export class AppShell implements ShellContext {
     this.page = page;
     this.screenHost.appendChild(page.element);
     page.update();
+  }
+
+  private renderRank(): void {
+    const page = new RankPage(this);
+    this.page = page;
+    this.screenHost.appendChild(page.element);
   }
 
   /**

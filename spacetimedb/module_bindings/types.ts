@@ -20,8 +20,27 @@ export const CandidateMatch = __t.object("CandidateMatch", {
   createdAt: __t.u64(),
   deadline: __t.u64(),
   status: __t.u8(),
+  ranked: __t.bool(),
+  planetKey: __t.string(),
 });
 export type CandidateMatch = __Infer<typeof CandidateMatch>;
+
+export const ColonyStats = __t.object("ColonyStats", {
+  colony: __t.u8(),
+  planets: __t.u32(),
+  systems: __t.u32(),
+  expiring: __t.u32(),
+});
+export type ColonyStats = __Infer<typeof ColonyStats>;
+
+export const ColonyStatsResult = __t.object("ColonyStatsResult", {
+  totalPlanets: __t.u32(),
+  totalSystems: __t.u32(),
+  get colonies() {
+    return __t.array(ColonyStats);
+  },
+});
+export type ColonyStatsResult = __Infer<typeof ColonyStatsResult>;
 
 export const Follow = __t.object("Follow", {
   id: __t.u32(),
@@ -43,6 +62,9 @@ export const Match = __t.object("Match", {
   serverTick: __t.u64(),
   playerCount: __t.u32(),
   emptySince: __t.option(__t.timestamp()),
+  ranked: __t.bool(),
+  planetKey: __t.string(),
+  rankRing: __t.u8(),
 });
 export type Match = __Infer<typeof Match>;
 
@@ -228,6 +250,26 @@ export const PartyMember = __t.object("PartyMember", {
 });
 export type PartyMember = __Infer<typeof PartyMember>;
 
+export const PlanetControlHistory = __t.object("PlanetControlHistory", {
+  id: __t.u32(),
+  planetKey: __t.string(),
+  colony: __t.u8(),
+  matchId: __t.u32(),
+  startedAt: __t.u64(),
+  endedAt: __t.u64(),
+});
+export type PlanetControlHistory = __Infer<typeof PlanetControlHistory>;
+
+export const PlanetDiscovery = __t.object("PlanetDiscovery", {
+  id: __t.u32(),
+  planetKey: __t.string(),
+  identity: __t.identity(),
+  playerName: __t.string(),
+  discoveredAt: __t.u64(),
+  discoveryOrder: __t.u8(),
+});
+export type PlanetDiscovery = __Infer<typeof PlanetDiscovery>;
+
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   playerName: __t.string(),
@@ -336,6 +378,65 @@ export const QueueEntry = __t.object("QueueEntry", {
   queuedAt: __t.u64(),
   status: __t.u8(),
   candidateMatchId: __t.option(__t.u32()),
+  ranked: __t.bool(),
+  planetKey: __t.string(),
 });
 export type QueueEntry = __Infer<typeof QueueEntry>;
+
+export const RankHistory = __t.object("RankHistory", {
+  id: __t.u32(),
+  identity: __t.identity(),
+  seasonId: __t.u32(),
+  oldTier: __t.u8(),
+  oldDivision: __t.u8(),
+  oldStars: __t.u32(),
+  newTier: __t.u8(),
+  newDivision: __t.u8(),
+  newStars: __t.u32(),
+  cause: __t.u8(),
+  matchId: __t.u32(),
+  planetKey: __t.string(),
+  delta: __t.i32(),
+  createdAt: __t.timestamp(),
+});
+export type RankHistory = __Infer<typeof RankHistory>;
+
+export const RankedPlanet = __t.object("RankedPlanet", {
+  planetKey: __t.string(),
+  seasonId: __t.u32(),
+  ring: __t.u8(),
+  galaxyId: __t.u32(),
+  systemId: __t.u32(),
+  planetId: __t.u32(),
+  seed: __t.u64(),
+  state: __t.u8(),
+  controllingColony: __t.u8(),
+  controlStartedAt: __t.u64(),
+  controlExpiresAt: __t.u64(),
+  discovered: __t.bool(),
+  firstDiscoveredAt: __t.u64(),
+  lastMatchId: __t.u32(),
+  generatedRank: __t.u32(),
+});
+export type RankedPlanet = __Infer<typeof RankedPlanet>;
+
+export const RankedPlanetReservation = __t.object("RankedPlanetReservation", {
+  planetKey: __t.string(),
+  matchId: __t.u32(),
+  reservedAt: __t.u64(),
+  expiresAt: __t.u64(),
+});
+export type RankedPlanetReservation = __Infer<typeof RankedPlanetReservation>;
+
+export const RankedSeason = __t.object("RankedSeason", {
+  seasonId: __t.u32(),
+  universeSeed: __t.u64(),
+  startedAt: __t.timestamp(),
+  endsAt: __t.option(__t.timestamp()),
+  active: __t.bool(),
+});
+export type RankedSeason = __Infer<typeof RankedSeason>;
+
+export const RankedTop = __t.object("RankedTop", {});
+export type RankedTop = __Infer<typeof RankedTop>;
 

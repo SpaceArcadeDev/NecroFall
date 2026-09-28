@@ -22,4 +22,7 @@ export default __t.row({
   serverTick: __t.u64().name("server_tick"),
   playerCount: __t.u32().name("player_count"),
   emptySince: __t.option(__t.timestamp()).name("empty_since"),
+  ranked: __t.bool(),
+  planetKey: __t.string().name("planet_key"),
+  rankRing: __t.u8().name("rank_ring"),
 });

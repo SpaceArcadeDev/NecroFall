@@ -6,6 +6,7 @@ export class QueueStatus {
   readonly element: HTMLElement;
   private clock: HTMLElement;
   private message: HTMLElement;
+  private target: HTMLElement;
   private started = 0;
 
   constructor(private onCancel: () => void) {
@@ -13,6 +14,9 @@ export class QueueStatus {
     this.element.appendChild(el('div', 'nf-queue-title', 'FINDING MATCH'));
     this.clock = el('div', 'nf-queue-clock', '0:00');
     this.element.appendChild(this.clock);
+    // RANKED searches show which world they are fighting for (plan §5/§53).
+    this.target = el('div', 'nf-queue-target hidden', '');
+    this.element.appendChild(this.target);
     this.message = el('div', 'nf-queue-message', 'Searching for players…');
     this.element.appendChild(this.message);
     const cancel = el('button', 'nf-btn ghost', 'CANCEL') as HTMLButtonElement;
@@ -32,5 +36,11 @@ export class QueueStatus {
 
   setMessage(text: string): void {
     this.message.textContent = text;
+  }
+
+  /** The ranked target world ('' hides the line). */
+  setTarget(name: string): void {
+    this.target.classList.toggle('hidden', !name);
+    if (name) this.target.innerHTML = `<span>TARGETING</span>${name}`;
   }
 }

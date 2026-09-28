@@ -9,6 +9,8 @@ import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
 import { MatchFoundModal } from './MatchFoundModal';
 import { QueueStatus } from './QueueStatus';
+import { parsePlanetKey, DEFAULT_UNIVERSE_SEED } from '../../rankmap/procedural/SeedHash';
+import { planetAt } from '../../rankmap/procedural/PlanetGenerator';
 
 export class MatchmakingPage {
   readonly element: HTMLElement;
@@ -54,12 +56,36 @@ export class MatchmakingPage {
     const info = this.ctx.official.currentCandidateInfo();
     if (!info) {
       this.modal.hide();
-      // Still queued? Show which colony we are searching with.
+      // Still queued? Show which colony we are searching with, and — for a RANKED search —
+      // the world the match will be fought on (plan §5/§53).
       const me = ClientCache.shared.playerByHex(this.ctx.myHex());
       const colony = me && me.colony < 3 ? COLONIES[me.colony]?.name ?? '' : '';
       this.queueStatus.setMessage(colony ? `Searching as ${colony}…` : 'Searching for players…');
+      const queue = ClientCache.shared.myQueue();
+      let target = '';
+      if (queue?.ranked && queue.planetKey) {
+        const parsed = parsePlanetKey(queue.planetKey);
+        if (parsed) {
+          const season = ClientCache.shared.rankedSeason();
+          const seed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+          target = planetAt(seed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId).name.toUpperCase();
+        }
+      }
+      this.queueStatus.setTarget(target);
+      this.modal.setTarget(target);
       return;
     }
+    const q = ClientCache.shared.myQueue();
+    let modalTarget = '';
+    if (q?.ranked && q.planetKey) {
+      const parsed = parsePlanetKey(q.planetKey);
+      if (parsed) {
+        const season = ClientCache.shared.rankedSeason();
+        const seed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+        modalTarget = planetAt(seed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId).name.toUpperCase();
+      }
+    }
+    this.modal.setTarget(modalTarget);
     this.modal.show();
     if (info.filling) this.modal.updateFilling(info.deadlineSeconds);
     else this.modal.updateConfirming(info.deadlineSeconds, info.seats, info.myConfirmed, info.allConfirmed);

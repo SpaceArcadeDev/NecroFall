@@ -12,12 +12,16 @@ export class MatchFoundModal {
   private fillClock: HTMLElement;
   private fillBar: HTMLElement;
   private title: HTMLElement;
+  private target: HTMLElement;
 
   constructor(onConfirm: () => void, onDecline: () => void) {
     this.element = el('div', 'nf-modal hidden');
     const card = el('div', 'nf-modal-card');
     this.title = el('h2', 'nf-modal-title', 'MATCH FOUND');
     card.appendChild(this.title);
+    // RANKED matches fight over a WORLD — name it right on the card (plan §32/§49).
+    this.target = el('div', 'nf-queue-target hidden', '');
+    card.appendChild(this.target);
 
     this.fillNote = el('p', 'nf-muted', 'Additional players may join — filling the colonies…');
     card.appendChild(this.fillNote);
@@ -39,6 +43,12 @@ export class MatchFoundModal {
 
   hide(): void {
     this.element.classList.add('hidden');
+  }
+
+  /** The ranked target world ('' hides the line). */
+  setTarget(name: string): void {
+    this.target.classList.toggle('hidden', !name);
+    if (name) this.target.innerHTML = `<span>TARGETING</span>${name}`;
   }
 
   /** Fill window: 5 seconds of "searching", no confirmation yet. */

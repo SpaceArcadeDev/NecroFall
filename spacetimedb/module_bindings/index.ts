@@ -40,8 +40,10 @@ import ClaimAdminReducer from "./claim_admin_reducer";
 import ConfirmMatchReducer from "./confirm_match_reducer";
 import CreatePartyReducer from "./create_party_reducer";
 import DeclineMatchReducer from "./decline_match_reducer";
+import DiscoverPlanetReducer from "./discover_planet_reducer";
 import EquipItemReducer from "./equip_item_reducer";
 import FindMatchReducer from "./find_match_reducer";
+import FindRankedMatchReducer from "./find_ranked_match_reducer";
 import FollowPlayerReducer from "./follow_player_reducer";
 import GrantCurrencyAdminReducer from "./grant_currency_admin_reducer";
 import GrantItemAdminReducer from "./grant_item_admin_reducer";
@@ -67,6 +69,7 @@ import SyncPoseReducer from "./sync_pose_reducer";
 import UnfollowPlayerReducer from "./unfollow_player_reducer";
 
 // Import all procedure arg schemas
+import * as ColonyStatsProcedure from "./colony_stats_procedure";
 import * as SearchPlayersProcedure from "./search_players_procedure";
 
 // Import all table schema definitions
@@ -83,6 +86,8 @@ import MyMatchUsageRow from "./my_match_usage_table";
 import MyQueueEntryRow from "./my_queue_entry_table";
 import PartyRow from "./party_table";
 import PartyMemberRow from "./party_member_table";
+import PlanetControlHistoryRow from "./planet_control_history_table";
+import PlanetDiscoveryRow from "./planet_discovery_table";
 import PlayerRow from "./player_table";
 import PlayerInventoryRow from "./player_inventory_table";
 import PlayerLoadoutRow from "./player_loadout_table";
@@ -91,6 +96,11 @@ import PlayerSettingsRow from "./player_settings_table";
 import PlayerStatsRow from "./player_stats_table";
 import PlayerWalletRow from "./player_wallet_table";
 import ProfileViewRow from "./profile_view_table";
+import RankHistoryRow from "./rank_history_table";
+import RankedPlanetRow from "./ranked_planet_table";
+import RankedPlanetReservationRow from "./ranked_planet_reservation_table";
+import RankedSeasonRow from "./ranked_season_table";
+import RankedTopRow from "./ranked_top_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -226,6 +236,34 @@ const tablesSchema = __schema({
       { name: 'party_member_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PartyMemberRow),
+  planetControlHistory: __table({
+    name: 'planet_control_history',
+    indexes: [
+      { accessor: 'id', name: 'planet_control_history_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'planet_key', name: 'planet_control_history_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'planet_control_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PlanetControlHistoryRow),
+  planetDiscovery: __table({
+    name: 'planet_discovery',
+    indexes: [
+      { accessor: 'id', name: 'planet_discovery_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'planet_key', name: 'planet_discovery_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'planet_discovery_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PlanetDiscoveryRow),
   player: __table({
     name: 'player',
     indexes: [
@@ -333,6 +371,56 @@ const tablesSchema = __schema({
       { name: 'profile_view_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, ProfileViewRow),
+  rankHistory: __table({
+    name: 'rank_history',
+    indexes: [
+      { accessor: 'id', name: 'rank_history_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'identity', name: 'rank_history_identity_idx_btree', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+    ],
+    constraints: [
+      { name: 'rank_history_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, RankHistoryRow),
+  rankedPlanet: __table({
+    name: 'ranked_planet',
+    indexes: [
+      { accessor: 'galaxy_id', name: 'ranked_planet_galaxy_id_idx_btree', algorithm: 'btree', columns: [
+        'galaxyId',
+      ] },
+      { accessor: 'planet_key', name: 'ranked_planet_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'ranked_planet_planet_key_key', constraint: 'unique', columns: ['planetKey'] },
+    ],
+  }, RankedPlanetRow),
+  rankedPlanetReservation: __table({
+    name: 'ranked_planet_reservation',
+    indexes: [
+      { accessor: 'planet_key', name: 'ranked_planet_reservation_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'ranked_planet_reservation_planet_key_key', constraint: 'unique', columns: ['planetKey'] },
+    ],
+  }, RankedPlanetReservationRow),
+  rankedSeason: __table({
+    name: 'ranked_season',
+    indexes: [
+      { accessor: 'season_id', name: 'ranked_season_season_id_idx_btree', algorithm: 'btree', columns: [
+        'seasonId',
+      ] },
+    ],
+    constraints: [
+      { name: 'ranked_season_season_id_key', constraint: 'unique', columns: ['seasonId'] },
+    ],
+  }, RankedSeasonRow),
   myCandidate: __table({
     name: 'my_candidate',
     indexes: [
@@ -361,6 +449,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyQueueEntryRow),
+  rankedTop: __table({
+    name: 'ranked_top',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, RankedTopRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -371,8 +466,10 @@ const reducersSchema = __reducers(
   __reducerSchema("confirm_match", ConfirmMatchReducer),
   __reducerSchema("create_party", CreatePartyReducer),
   __reducerSchema("decline_match", DeclineMatchReducer),
+  __reducerSchema("discover_planet", DiscoverPlanetReducer),
   __reducerSchema("equip_item", EquipItemReducer),
   __reducerSchema("find_match", FindMatchReducer),
+  __reducerSchema("find_ranked_match", FindRankedMatchReducer),
   __reducerSchema("follow_player", FollowPlayerReducer),
   __reducerSchema("grant_currency_admin", GrantCurrencyAdminReducer),
   __reducerSchema("grant_item_admin", GrantItemAdminReducer),
@@ -400,6 +497,7 @@ const reducersSchema = __reducers(
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
+  __procedureSchema("colony_stats", ColonyStatsProcedure.params, ColonyStatsProcedure.returnType),
   __procedureSchema("search_players", SearchPlayersProcedure.params, SearchPlayersProcedure.returnType),
 );
 
@@ -417,6 +515,10 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "match_player": Omit<typeof tablesSchema.schemaType.tables["matchPlayer"], "accessorName"> & { readonly accessorName: "match_player" };
     /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
     readonly "party_member": Omit<typeof tablesSchema.schemaType.tables["partyMember"], "accessorName"> & { readonly accessorName: "party_member" };
+    /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */
+    readonly "planet_control_history": Omit<typeof tablesSchema.schemaType.tables["planetControlHistory"], "accessorName"> & { readonly accessorName: "planet_control_history" };
+    /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
+    readonly "planet_discovery": Omit<typeof tablesSchema.schemaType.tables["planetDiscovery"], "accessorName"> & { readonly accessorName: "planet_discovery" };
     /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
     readonly "player_inventory": Omit<typeof tablesSchema.schemaType.tables["playerInventory"], "accessorName"> & { readonly accessorName: "player_inventory" };
     /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */
@@ -431,6 +533,14 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "player_wallet": Omit<typeof tablesSchema.schemaType.tables["playerWallet"], "accessorName"> & { readonly accessorName: "player_wallet" };
     /** @deprecated Use `profileView` instead. This alias will be removed in the next major version. */
     readonly "profile_view": Omit<typeof tablesSchema.schemaType.tables["profileView"], "accessorName"> & { readonly accessorName: "profile_view" };
+    /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
+    readonly "rank_history": Omit<typeof tablesSchema.schemaType.tables["rankHistory"], "accessorName"> & { readonly accessorName: "rank_history" };
+    /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
+    readonly "ranked_planet": Omit<typeof tablesSchema.schemaType.tables["rankedPlanet"], "accessorName"> & { readonly accessorName: "ranked_planet" };
+    /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
+    readonly "ranked_planet_reservation": Omit<typeof tablesSchema.schemaType.tables["rankedPlanetReservation"], "accessorName"> & { readonly accessorName: "ranked_planet_reservation" };
+    /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
+    readonly "ranked_season": Omit<typeof tablesSchema.schemaType.tables["rankedSeason"], "accessorName"> & { readonly accessorName: "ranked_season" };
     /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
     readonly "my_candidate": Omit<typeof tablesSchema.schemaType.tables["myCandidate"], "accessorName"> & { readonly accessorName: "my_candidate" };
     /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
@@ -439,6 +549,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "my_match_usage": Omit<typeof tablesSchema.schemaType.tables["myMatchUsage"], "accessorName"> & { readonly accessorName: "my_match_usage" };
     /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
     readonly "my_queue_entry": Omit<typeof tablesSchema.schemaType.tables["myQueueEntry"], "accessorName"> & { readonly accessorName: "my_queue_entry" };
+    /** @deprecated Use `rankedTop` instead. This alias will be removed in the next major version. */
+    readonly "ranked_top": Omit<typeof tablesSchema.schemaType.tables["rankedTop"], "accessorName"> & { readonly accessorName: "ranked_top" };
   };
 };
 
@@ -463,6 +575,8 @@ const tableAccessorAliases = {
   "match_objective": "matchObjective",
   "match_player": "matchPlayer",
   "party_member": "partyMember",
+  "planet_control_history": "planetControlHistory",
+  "planet_discovery": "planetDiscovery",
   "player_inventory": "playerInventory",
   "player_loadout": "playerLoadout",
   "player_presence": "playerPresence",
@@ -470,10 +584,15 @@ const tableAccessorAliases = {
   "player_stats": "playerStats",
   "player_wallet": "playerWallet",
   "profile_view": "profileView",
+  "rank_history": "rankHistory",
+  "ranked_planet": "rankedPlanet",
+  "ranked_planet_reservation": "rankedPlanetReservation",
+  "ranked_season": "rankedSeason",
   "my_candidate": "myCandidate",
   "my_candidate_players": "myCandidatePlayers",
   "my_match_usage": "myMatchUsage",
   "my_queue_entry": "myQueueEntry",
+  "ranked_top": "rankedTop",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -506,6 +625,10 @@ export type DbView = __DbViewBase & {
   readonly "match_player": __DbViewBase["matchPlayer"];
   /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
   readonly "party_member": __DbViewBase["partyMember"];
+  /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */
+  readonly "planet_control_history": __DbViewBase["planetControlHistory"];
+  /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
+  readonly "planet_discovery": __DbViewBase["planetDiscovery"];
   /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
   readonly "player_inventory": __DbViewBase["playerInventory"];
   /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */
@@ -520,6 +643,14 @@ export type DbView = __DbViewBase & {
   readonly "player_wallet": __DbViewBase["playerWallet"];
   /** @deprecated Use `profileView` instead. This alias will be removed in the next major version. */
   readonly "profile_view": __DbViewBase["profileView"];
+  /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
+  readonly "rank_history": __DbViewBase["rankHistory"];
+  /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
+  readonly "ranked_planet": __DbViewBase["rankedPlanet"];
+  /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
+  readonly "ranked_planet_reservation": __DbViewBase["rankedPlanetReservation"];
+  /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
+  readonly "ranked_season": __DbViewBase["rankedSeason"];
   /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
   readonly "my_candidate": __DbViewBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
@@ -528,6 +659,8 @@ export type DbView = __DbViewBase & {
   readonly "my_match_usage": __DbViewBase["myMatchUsage"];
   /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
   readonly "my_queue_entry": __DbViewBase["myQueueEntry"];
+  /** @deprecated Use `rankedTop` instead. This alias will be removed in the next major version. */
+  readonly "ranked_top": __DbViewBase["rankedTop"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
@@ -544,6 +677,10 @@ export type Tables = __TablesBase & {
   readonly "match_player": __TablesBase["matchPlayer"];
   /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
   readonly "party_member": __TablesBase["partyMember"];
+  /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */
+  readonly "planet_control_history": __TablesBase["planetControlHistory"];
+  /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
+  readonly "planet_discovery": __TablesBase["planetDiscovery"];
   /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
   readonly "player_inventory": __TablesBase["playerInventory"];
   /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */
@@ -558,6 +695,14 @@ export type Tables = __TablesBase & {
   readonly "player_wallet": __TablesBase["playerWallet"];
   /** @deprecated Use `profileView` instead. This alias will be removed in the next major version. */
   readonly "profile_view": __TablesBase["profileView"];
+  /** @deprecated Use `rankHistory` instead. This alias will be removed in the next major version. */
+  readonly "rank_history": __TablesBase["rankHistory"];
+  /** @deprecated Use `rankedPlanet` instead. This alias will be removed in the next major version. */
+  readonly "ranked_planet": __TablesBase["rankedPlanet"];
+  /** @deprecated Use `rankedPlanetReservation` instead. This alias will be removed in the next major version. */
+  readonly "ranked_planet_reservation": __TablesBase["rankedPlanetReservation"];
+  /** @deprecated Use `rankedSeason` instead. This alias will be removed in the next major version. */
+  readonly "ranked_season": __TablesBase["rankedSeason"];
   /** @deprecated Use `myCandidate` instead. This alias will be removed in the next major version. */
   readonly "my_candidate": __TablesBase["myCandidate"];
   /** @deprecated Use `myCandidatePlayers` instead. This alias will be removed in the next major version. */
@@ -566,6 +711,8 @@ export type Tables = __TablesBase & {
   readonly "my_match_usage": __TablesBase["myMatchUsage"];
   /** @deprecated Use `myQueueEntry` instead. This alias will be removed in the next major version. */
   readonly "my_queue_entry": __TablesBase["myQueueEntry"];
+  /** @deprecated Use `rankedTop` instead. This alias will be removed in the next major version. */
+  readonly "ranked_top": __TablesBase["rankedTop"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

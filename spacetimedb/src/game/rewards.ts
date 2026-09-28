@@ -19,6 +19,10 @@ import {
   REWARD_SOFT_OBJECTIVE,
   REWARD_SOFT_WIN,
 } from '../constants';
+import { rank_history } from '../schema/ranked';
+import { applyRankResult, getRankFromStars, RANK_RESULT_DRAW, RANK_RESULT_LOSS, RANK_RESULT_WIN } from '../ranked/rank';
+import { claimPlanetControl, ensureActiveSeason, releasePlanetAfterMatch } from '../ranked/planets';
+import { RANK_CAUSE_DRAW, RANK_CAUSE_LOSS, RANK_CAUSE_WIN } from '../schema/ranked';
 
 /** Temporary live rows are purged this long after a match ends (plan §46). */
 const LIVE_RETENTION_US = 10n * 60n * 1_000_000n;
@@ -114,8 +118,42 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
     if (account) {
       const xp = account.xp + BigInt(xpEarned);
       const level = Math.max(1, 1 + Number(xp / 1000n));
+      // ---- RANKED result (plan §2/§60): the SERVER hashes out the star change here and
+      // NOWHERE else. WIN +1 · DRAW 0 · LOSS −1 (Bronze losses are free, Liberator's
+      // 0-star floor is protected — see ranked/rank.ts).
+      let rankFields: Record<string, unknown> = {};
+      if (m.ranked) {
+        const season = ensureActiveSeason(ctx);
+        const oldInfo = getRankFromStars(account.rank_points);
+        const result = won ? RANK_RESULT_WIN : winnerColony === null ? RANK_RESULT_DRAW : RANK_RESULT_LOSS;
+        const applied = applyRankResult(account.rank_points, result);
+        const newInfo = getRankFromStars(applied.stars);
+        rankFields = {
+          rank_points: applied.stars,
+          current_rank: newInfo.tier,
+          rank_status: 1,
+          season_id: season.season_id,
+        };
+        ctx.db.rank_history.insert({
+          id: 0,
+          identity: p.identity,
+          season_id: season.season_id,
+          old_tier: oldInfo.tier,
+          old_division: oldInfo.division,
+          old_stars: oldInfo.stars,
+          new_tier: newInfo.tier,
+          new_division: newInfo.division,
+          new_stars: newInfo.stars,
+          cause: won ? RANK_CAUSE_WIN : winnerColony === null ? RANK_CAUSE_DRAW : RANK_CAUSE_LOSS,
+          match_id: matchId,
+          planet_key: m.planet_key ?? '',
+          delta: applied.delta,
+          created_at: now,
+        });
+      }
       ctx.db.player.identity.update({
         ...account,
+        ...rankFields,
         xp,
         level,
         wins: account.wins + (won ? 1 : 0),
@@ -190,6 +228,13 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
     winner_colony: winnerColony ?? undefined,
     duration_seconds: durationSeconds,
   });
+
+  // ---- PLANET CONTROL (plan §37/§60): a WON ranked match raises the winner's
+  // planetary shield for 72 hours; a draw/abandon frees the planet again.
+  if (m.ranked && m.planet_key) {
+    if (winnerColony !== null) claimPlanetControl(ctx, m.planet_key, winnerColony, matchId, nowUs);
+    else releasePlanetAfterMatch(ctx, m.planet_key);
+  }
 
   // ---- stop the simulation + purge live state (plan §46)
   for (const row of [...ctx.db.match_tick.match_id.filter(matchId)]) {

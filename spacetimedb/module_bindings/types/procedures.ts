@@ -6,8 +6,11 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all procedure arg schemas
+import * as ColonyStatsProcedure from "../colony_stats_procedure";
 import * as SearchPlayersProcedure from "../search_players_procedure";
 
+export type ColonyStatsArgs = __Infer<typeof ColonyStatsProcedure.params>;
+export type ColonyStatsResult = __Infer<typeof ColonyStatsProcedure.returnType>;
 export type SearchPlayersArgs = __Infer<typeof SearchPlayersProcedure.params>;
 export type SearchPlayersResult = __Infer<typeof SearchPlayersProcedure.returnType>;
 

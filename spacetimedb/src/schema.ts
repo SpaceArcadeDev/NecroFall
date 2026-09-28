@@ -7,6 +7,7 @@ import { follow, profile_view } from './schema/social';
 import { candidate_match, match_candidate_player, matchmaking_scan, party, party_member, queue_entry } from './schema/matchmaking';
 import { match, match_history, match_input, match_player, match_server_usage } from './schema/match';
 import { match_entity, match_event, match_objective, match_tick } from './schema/game';
+import { planet_control_history, planet_discovery, rank_history, ranked_planet, ranked_planet_reservation, ranked_season } from './schema/ranked';
 
 export const spacetimedb = schema({
   // player
@@ -39,6 +40,13 @@ export const spacetimedb = schema({
   match_entity,
   match_objective,
   match_event,
+  // ranked mode (plan §33–§57)
+  ranked_season,
+  ranked_planet,
+  planet_discovery,
+  ranked_planet_reservation,
+  planet_control_history,
+  rank_history,
 });
 
 export {
@@ -58,6 +66,8 @@ export {
   matchmaking_scan,
   party,
   party_member,
+  planet_control_history,
+  planet_discovery,
   player,
   player_inventory,
   player_loadout,
@@ -67,4 +77,8 @@ export {
   player_wallet,
   profile_view,
   queue_entry,
+  rank_history,
+  ranked_planet,
+  ranked_planet_reservation,
+  ranked_season,
 };

@@ -10,6 +10,7 @@
 // Build/publish: see spacetimedb/README.md.
 import { spacetimedb } from './schema';
 import { armMatchmakingScan } from './matchmaking/queue';
+import { ensureActiveSeason } from './ranked/planets';
 
 // ---- lifecycle
 export { on_client_connected, on_client_disconnected } from './auth/connect';
@@ -45,8 +46,12 @@ export { record_profile_view } from './social/profileViews';
 // On-demand directory lookup (procedure — no whole-table subscription, plan §64).
 export { search_players } from './social/search';
 
+// ---- ranked mode (plan §33–§60)
+export { discover_planet, colony_stats } from './ranked/planets';
+export { find_ranked_match } from './ranked/matchmaking';
+
 // ---- views (plan §22/§23)
-export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage } from './views';
+export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage, ranked_top } from './views';
 
 /**
  * Arm the global 1 Hz matchmaking scanner exactly once, when the database is
@@ -54,6 +59,7 @@ export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage } fr
  */
 export const init = spacetimedb.init((ctx) => {
   armMatchmakingScan(ctx);
+  ensureActiveSeason(ctx);
 });
 
 export default spacetimedb;

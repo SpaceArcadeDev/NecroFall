@@ -74,6 +74,13 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private matchEndEmitted = false;
   /** Matches this session already FINISHED — they must never pull the player back in. */
   private endedMatchIds = new Set<number>();
+  /**
+   * CONFIRM clicked locally: the colony summary flips to its ✓ instantly instead of waiting for
+   * the server round trip. In a SOLO candidate the server finalizes the match in the SAME reducer
+   * call, so no confirmed state ever renders on its own — without this the ✓ was unreachable
+   * (user review). Server truth clears it the moment the confirmed seat row arrives.
+   */
+  private optimisticConfirmed = false;
 
   // pose diffing state (all in local seconds / world units)
   private lastPos = { x: 0, y: 0, z: 0, t: 0 };
@@ -160,14 +167,19 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   }
 
   cancelFindMatch(): void {
+    this.optimisticConfirmed = false;
     cancelFindMatch();
   }
 
   confirmMatch(): void {
+    // Optimistic ✓ — see `optimisticConfirmed`. Emit immediately so the summary flips this frame.
+    this.optimisticConfirmed = true;
     confirmMatch();
+    this.onCacheChanged();
   }
 
   declineMatch(): void {
+    this.optimisticConfirmed = false;
     declineMatch();
   }
 
@@ -423,6 +435,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private emitCandidate(cache: ClientCache): void {
     const candidate = cache.myCandidate();
     if (!candidate) {
+      this.optimisticConfirmed = false;
       if (this.lastCandidateSignature) {
         this.lastCandidateSignature = '';
       }
@@ -430,15 +443,17 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     }
     const seats = cache.myCandidatePlayers();
     const mySeat = seats.find(s => hexOf(s.identity) === this.myHex);
+    if (mySeat?.confirmed) this.optimisticConfirmed = false; // the server caught up — truth takes over
+    const mine = Boolean(mySeat?.confirmed) || this.optimisticConfirmed;
     const deadlineSeconds = Math.max(0, (Number(candidate.deadline) - this.serverNowUs()) / 1e6);
-    const signature = `${candidate.matchId}:${deadlineSeconds.toFixed(0)}:${seats.map(s => `${hexOf(s.identity) === this.myHex ? 'me' : s.colony}${s.confirmed ? '+' : '-'}`).join(',')}`;
+    const signature = `${candidate.matchId}:${deadlineSeconds.toFixed(0)}:${seats.map(s => `${hexOf(s.identity) === this.myHex ? (mine ? 'me+' : 'me-') : s.colony + (s.confirmed ? '+' : '-')}`).join(',')}`;
     if (signature === this.lastCandidateSignature) return;
     this.lastCandidateSignature = signature;
     this.emit({
       type: 'candidate',
       deadlineSeconds,
-      myConfirmed: Boolean(mySeat?.confirmed),
-      seats: seats.map(s => ({ colony: s.colony, confirmed: s.confirmed, me: hexOf(s.identity) === this.myHex })),
+      myConfirmed: mine,
+      seats: seats.map(s => ({ colony: s.colony, confirmed: hexOf(s.identity) === this.myHex ? mine : s.confirmed, me: hexOf(s.identity) === this.myHex })),
     });
   }
 

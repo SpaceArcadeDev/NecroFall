@@ -426,14 +426,12 @@ html.nf-onb-colony .count-badge { display: none; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: -6px;
+  /* The wordmark IS the page's header row now: it owns the first row of the pane's content
+     (12px of pane padding above it) and there is deliberately NO negative pull. The pane CLIPS
+     anything above its top edge, so the old -6/-10px chase after the chrome kept reading as
+     "cut off at the top" (user report) — 0 can never clip on any viewport. */
+  margin-top: 0;
   z-index: 1;
-}
-/* Wide screens: the head sits tight under the chrome (the main pane CLIPS anything above its top
-   edge, so a deeper pull cuts the wordmark off — -10px lands the title right at the header line
-   without ever clipping). */
-@media (min-width: 760px) {
-  .nf-home-head { margin-top: -10px; }
 }
 /* The wordmark is the HEADER here, not the hero — kept small at the top centre so the avatar
    gets the space and the character can never be pushed below the fold on short screens. */

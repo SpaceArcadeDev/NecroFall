@@ -1,18 +1,18 @@
-// NECROFALL — development-only frame monitor (plan §0, enabled with `?debugPerf=1`).
+// NECROFALL — development-only frame monitor (plan §0, enabled with `?debug=true`).
 //
 // Zero cost when off: every entry point early-returns unless the page was opened with
-// `?debugPerf=1`. When on, it times the update and render blocks of the main loop and logs a
-// compact line every 60 processed frames with the numbers the thermal work is judged by:
-// frame/update/render ms, fps, draw calls, triangles/points/lines, live geometries/textures,
-// pixel ratio and the canvas buffer size. "DO NOT leave verbose logging enabled in production" —
-// hence the query-flag gate rather than a build-time toggle.
+// `?debug=true` (`?debug=1` also works). When on, it times the update and render blocks of the
+// main loop and logs a compact line every 60 processed frames with the numbers the thermal work
+// is judged by: frame/update/render ms, fps, draw calls, triangles/points/lines, live
+// geometries/textures, pixel ratio and the canvas buffer size. "DO NOT leave verbose logging
+// enabled in production" — hence the query-flag gate rather than a build-time toggle.
 //
 // Deliberately separate from the F1 overlay: F1 is a developer readout on screen, this logs to
 // the console, so a phone (or a remote-debug session) can be watched without pressing keys.
 import { Vector2, type WebGLRenderer } from 'three';
 
 export class PerformanceMonitor {
-  /** Set by `init()` when `?debugPerf=1` is present. Everything below is a no-op otherwise. */
+  /** Set by `init()` when `?debug=true` is present. Everything below is a no-op otherwise. */
   static enabled = false;
 
   private static frameStart = 0;
@@ -29,7 +29,8 @@ export class PerformanceMonitor {
 
   static init(): void {
     try {
-      PerformanceMonitor.enabled = new URLSearchParams(window.location.search).get('debugPerf') === '1';
+      const flag = new URLSearchParams(window.location.search).get('debug');
+      PerformanceMonitor.enabled = flag === 'true' || flag === '1';
     } catch {
       PerformanceMonitor.enabled = false;
     }

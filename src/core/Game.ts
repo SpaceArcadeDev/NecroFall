@@ -3670,6 +3670,11 @@ export class Game {
     const exclude = new Set(p.perks.map(perk => perk.id));
     const perks = rollPerks(this.rng, 3, exclude);
     if (perks.length === 0) {
+      // Every perk in the pool is owned: there is nothing left to offer. CONSUME the level instead
+      // of leaving it pending — a wedged counter kept `maybeOpenQueued` fed and the picker could
+      // re-enter in a loop (the "mutation UI flickers" family of reports).
+      p.pendingLevels = 0;
+      if (p.isLocal) this.queuedLevels = 0;
       p.heal(p.maxHp);
       return;
     }
@@ -3700,7 +3705,12 @@ export class Game {
     pending.player.frozen = false;
     pending.player.invulnUntil = this.now + 0.6;
     this.pendingLevelUp = null;
-    this.ui.hideLevelUp();
+    // A queued level re-deals IMMEDIATELY: hiding the picker only to show it again in the same
+    // frame replayed the card pop-in and read as flickering (user report). The panel stays up and
+    // the cards swap in place — UI.showLevelUp skips the entrance animation when it is re-dealing
+    // into an already-open modal.
+    const chained = this.queuedLevels > 0 || pending.player.pendingLevels > 0;
+    if (!chained) this.ui.hideLevelUp();
     // A picked perk is part of the run: never lose it to a refresh a second later.
     this.saveT = 0;
     this.mutationBurst(pending.player);
@@ -4498,8 +4508,22 @@ export class Game {
     d.prompt = prompt;
     d.promptKey = promptKey;
     d.conn = this.connectionText();
-    // The Esc menu shows this so friends can drop into a match that is already running.
-    d.roomCode = this.net.online && this.net.code && this.net.code !== 'SOLO' ? this.net.code : '';
+    // The Esc menu shows this so friends can drop into a match that is already running. An
+    // OFFICIAL match is not hosted by anyone — there is no room code to share, so the same row
+    // shows the server match's id and its join link instead ("it says offline game" report:
+    // an official match is ALWAYS server-synced and must never read as offline).
+    const officialId = this.officialMatch ? this.officialMatch.match.matchId : 0;
+    if (officialId > 0) {
+      d.roomCode = '';
+      d.roomLabel = `MATCH #${officialId}`;
+      d.roomHint = 'Official server match — synced live via SpacetimeDB. Share the link.';
+      d.roomCopy = `${location.origin}${location.pathname}#/match/${officialId}`;
+    } else {
+      d.roomCode = this.net.online && this.net.code && this.net.code !== 'SOLO' ? this.net.code : '';
+      d.roomLabel = '';
+      d.roomHint = '';
+      d.roomCopy = '';
+    }
 
     let nt = 0;
     for (const t of this.towers.towers) {

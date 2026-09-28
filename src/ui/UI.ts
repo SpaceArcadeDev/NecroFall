@@ -122,6 +122,11 @@ export interface HudData {
   conn: string;
   /** Room code of the running match (empty offline) — shown in the Esc menu so friends can join. */
   roomCode: string;
+  /** Official server matches have no room code: the share row shows these instead (match id label,
+      the hint line, and the full join URL the COPY button puts on the clipboard). */
+  roomLabel?: string;
+  roomHint?: string;
+  roomCopy?: string;
   towers: {
     kind: string;
     owner: number;
@@ -613,6 +618,8 @@ export class UI {
   private pauseAbilities!: HTMLElement;
   private pauseRoomCode!: HTMLElement;
   private pauseRoomHint!: HTMLElement;
+  /** What the COPY button puts on the clipboard: the room code, or an official match's join URL. */
+  private pauseRoomCopyValue = '';
   /** Structural signature of the Esc panel: it is rebuilt ONLY when this changes. */
   private pauseSig = '';
   /** The `[data-w]` value slots inside the built panel (hp, cooldowns, …), patched per frame. */
@@ -737,7 +744,9 @@ export class UI {
     this.shellBorrowedPreview = true;
     if (!this.preview) this.preview = new SelectionPreview();
     this.preview.setMode('lobby', host);
-    this.preview.setLobbyAvatars([{ id: 'shell-me', colony, ready: true, me: true, acc: accWire }]);
+    // soloFill: the home stages ONE champion, so it gets the tighter "fill the stage" framing —
+    // the party/in-game line-ups keep the standard rail framing.
+    this.preview.setLobbyAvatars([{ id: 'shell-me', colony, ready: true, me: true, acc: accWire }], true);
     this.preview.setFocus(0);
   }
 
@@ -3320,10 +3329,10 @@ export class UI {
     prow.appendChild(this.pauseRoomCode);
     prow.appendChild(
       button('COPY', 'btn small', () => {
-        const code = this.pauseRoomCode.textContent ?? '';
+        const code = this.pauseRoomCopyValue || (this.pauseRoomCode.textContent ?? '');
         if (!code || code === '—') return;
         void navigator.clipboard?.writeText(code);
-        this.toast('Room code copied', 1400);
+        this.toast(this.pauseRoomCopyValue.includes('#/match/') ? 'Match link copied' : 'Room code copied', 1400);
       })
     );
     proom.appendChild(prow);
@@ -3473,16 +3482,21 @@ export class UI {
 
   /** Live snapshot of the player's run, rendered into the Esc panel every frame. */
   private renderPausePanel(d: HudData): void {
-    // Room code first: it is the one line that matters to the friends waiting to drop in.
+    // Room code first: it is the one line that matters to the friends waiting to drop in. An
+    // official server match has no room at all — it shows its match id and join link instead
+    // (HudData.roomLabel/roomHint/roomCopy, filled by Game.updateHud).
     const code = d.roomCode || '';
-    const label = code || '—';
+    const label = d.roomLabel || code || '—';
     if (this.pauseRoomCode.textContent !== label) this.pauseRoomCode.textContent = label;
-    const hint = code
-      ? 'Share it — anybody can join mid-match from the PLAY menu.'
-      : 'Offline match — no room code to share.';
+    this.pauseRoomCopyValue = d.roomCopy || code;
+    const hint = d.roomHint
+      || (code
+        ? 'Share it — anybody can join mid-match from the PLAY menu.'
+        : 'Offline match — no room code to share.');
     if (this.pauseRoomHint.textContent !== hint) this.pauseRoomHint.textContent = hint;
-    this.pauseRoomHint.classList.toggle('offline', !code);
-    this.pauseRoomCode.classList.toggle('offline', !code);
+    const shareable = Boolean(this.pauseRoomCopyValue);
+    this.pauseRoomHint.classList.toggle('offline', !shareable);
+    this.pauseRoomCode.classList.toggle('offline', !shareable);
 
     // The panel is BUILT once and then patched, never re-parsed: the old code assigned the three
     // sections' `innerHTML` on every frame the menu was left open, which flickered (the sections
@@ -3652,6 +3666,10 @@ export class UI {
   };
 
   showLevelUp(perks: { name: string; desc: string; tier?: PerkTier; pills?: { v: string; l: string; k: 'up' | 'down' | 'alt' }[] }[], seconds: number): void {
+    // A queued level re-deals into the OPEN picker: the cards may swap in place, but they must not
+    // replay the pop-in every time or a multi-level reward flashes the row once per pick.
+    const wasOpen = !this.levelUpModal.classList.contains('hidden');
+    this.levelUpModal.classList.toggle('swap', wasOpen);
     this.levelUpPerks.innerHTML = '';
     this.perkButtons.length = 0;
     perks.forEach((p, idx) => {
@@ -3695,6 +3713,8 @@ export class UI {
 
   hideLevelUp(): void {
     this.levelUpModal.classList.add('hidden');
+    // The next open is a fresh deal, so its cards DO animate in.
+    this.levelUpModal.classList.remove('swap');
   }
 
   showPickup(

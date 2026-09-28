@@ -2362,6 +2362,10 @@ body {
      instead of `both`: once it lands, the final state must not keep overriding the hover lift. */
   animation: nf-pop-in 0.5s ease-out backwards;
 }
+/* Chained level-ups re-deal INTO the open picker (Game.pickPerk keeps it up): the cards must swap
+   in place WITHOUT replaying the pop-in, or a multi-level reward flashes the three cards once per
+   pick — the "mutation UI flickers appear/disappear" report. */
+.modal.levelup.swap .perk { animation: none; }
 /* the numbers: one pill per stat, colour = meaning (see the pill rules below) */
 .perk-pills {
   display: flex;

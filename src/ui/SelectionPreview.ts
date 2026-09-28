@@ -430,6 +430,13 @@ export class SelectionPreview {
   private lobbyData: LobbyAvatarInfo[] = [];
   private lobbySig = '';
   private lobbyDirty = false;
+  /**
+   * Shell home: ONE champion staged alone. The standard line-up frustum (min 3.0 world tall) is
+   * sized for a row of figures in a shallow rail, so a lone avatar only filled ~55% of the stage
+   * (user review: "the avatar should be bigger, scaled to fit"). With this set, a single-figure
+   * line-up gets a tighter frustum and the body fills ~75% of whatever stage it is given.
+   */
+  private lobbySoloFill = false;
   /** Lobby-only lights, added with the line-up and removed with it (other modes stay as they were). */
   private lobbyLights: THREE.Object3D[] = [];
   /** Lobby turntable: the player drags the rail to turn the whole line-up (pets follow their own). */
@@ -517,10 +524,12 @@ export class SelectionPreview {
   /**
    * LOBBY mode: the current roster. The line-up rebuilds itself only when the SET of seats or
    * their outfits change; a ready toggle just repaints the ring, so nobody's avatar (or pet) is
-   * yanked out from under the lobby while people are readying up.
+   * yanked out from under the lobby while people are readying up. `soloFill` is the shell home's
+   * one-figure framing — see `lobbySoloFill`.
    */
-  setLobbyAvatars(list: LobbyAvatarInfo[]): void {
+  setLobbyAvatars(list: LobbyAvatarInfo[], soloFill = false): void {
     this.lobbyData = list.map(p => ({ ...p }));
+    this.lobbySoloFill = soloFill;
     this.lobbyDirty = true;
   }
 
@@ -974,8 +983,11 @@ export class SelectionPreview {
   private layoutLobby(): void {
     const n = this.lobbyAvatars.length;
     const aspect = Math.max(0.3, this.width / Math.max(1, this.height));
+    const solo = n === 1 && this.lobbySoloFill;
     const SLOT = 1.85;                                  // world width budget per player
-    const minH = 3.0;                                   // never crop a standing avatar
+    // A lone champion in the shell home gets the tighter framing (see lobbySoloFill); a line-up
+    // always gets the 3.0 guard that never crops a standing avatar.
+    const minH = solo ? 2.2 : 3.0;                      // never crop a standing avatar
     const visH = Math.max(minH, (SLOT * n) / aspect);
     const visW = visH * aspect;
     const cam = this.lobbyCam;
@@ -985,8 +997,9 @@ export class SelectionPreview {
     cam.bottom = -visH / 2;
     // Feet a fixed slice above the bottom edge whatever the line-up's size, and the camera sits a
     // little HIGH and aims a little low: the pads under the avatars are what stop the near-black
-    // bodies dissolving into the backdrop, and a dead-level view would show them edge-on.
-    const groundY = -0.35;
+    // bodies dissolving into the backdrop, and a dead-level view would show them edge-on. Solo home
+    // raises the ground slice so the tight frustum still centres the body instead of cropping it.
+    const groundY = solo ? -0.2 : -0.35;
     const midY = groundY + visH / 2;
     cam.position.set(0, midY + 1.5, 7.6);
     cam.lookAt(0, midY - 0.08, 0);

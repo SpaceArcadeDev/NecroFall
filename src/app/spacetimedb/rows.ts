@@ -93,6 +93,15 @@ export interface PlayerStatsRow {
   p2pWins: number;
 }
 
+/** One result row of the `searchPlayers` procedure — the compact public projection. */
+export interface PlayerSearchHitRow {
+  identity: Identity;
+  playerName: string;
+  playerCode: string;
+  colony: number;
+  level: number;
+}
+
 export interface PlayerWalletRow {
   identity: Identity;
   softCurrency: bigint;

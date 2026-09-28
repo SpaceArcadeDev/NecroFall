@@ -57,7 +57,9 @@ export const report_match_stats = spacetimedb.reducer(
 /** Best-effort usage counters, sampled ~1/s so the summary can be tuned (plan §28/§29). */
 export function noteTickUsage(ctx: any, matchId: number, movedPlayers: number, hadInput: number): void {
   const micros = nowMicros(ctx);
-  if (micros % 1_000_000n >= 200_000n) return; // roughly once per second
+  // Ticks are 100 ms apart, so a 100 ms window catches exactly ONE tick per second
+  // (the old 200 ms window wrote the usage row twice a second).
+  if (micros % 1_000_000n >= 100_000n) return;
   const usage = ctx.db.match_server_usage.match_id.find(matchId);
   if (!usage) return;
   ctx.db.match_server_usage.match_id.update({

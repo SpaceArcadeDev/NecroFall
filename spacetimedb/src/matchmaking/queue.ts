@@ -146,7 +146,10 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
 
     // 3) Light housekeeping: purge live state of matches that ended a while ago
     //    (plan §46 retention policy) — permanent results stay, temp rows do not.
-    cleanupFinishedMatches(ctx, now);
+    //    The sweep walks EVERY match row ever played; doing it at 1 Hz was this
+    //    scanner's single biggest cost. Once a minute is plenty for a 10 min retention
+    //    (ticks are 1 s apart, so this window catches exactly one tick per minute).
+    if (now % 60_000_000n < 1_000_000n) cleanupFinishedMatches(ctx, now);
   }
 );
 

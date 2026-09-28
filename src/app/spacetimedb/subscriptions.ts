@@ -38,6 +38,16 @@ function applyScope(name: string): void {
   }
 }
 
+/**
+ * Subscribe a scope UNLESS an identical one is already live. Panels call the
+ * per-player helpers on every data tick; without this guard each render would
+ * release/re-create subscriptions (and the SDK would replay every row).
+ */
+export function ensureScope(name: string, queries: string[]): void {
+  if (scopeHandles.has(name)) return;
+  subscribeScope(name, queries);
+}
+
 export function releaseScope(name: string, forget = true): void {
   const handle = scopeHandles.get(name);
   if (handle) {
@@ -69,8 +79,12 @@ SpacetimeConnection.shared.onConnect(() => resubscribeAllScopes());
 /** The account's own world: player, wallet, inventory, loadout, stats, presence, follow graph, own queue views. */
 export function subscribeAccount(hex: string): void {
   subscribeScope('account', [
-    // The whole roster: player search by name or friend code reads this (plan §64).
-    'SELECT * FROM player',
+    // OWN row only. The whole-roster subscription is GONE: it made every client
+    // sequentially scan `player` (SpacetimeDB advisor: 209 subscription scans) and
+    // replicated every account row update to everyone. Name/friend-code search now
+    // runs through the `searchPlayers` procedure, and other players' rows arrive
+    // through the per-hex `subscribePlayer` scopes below.
+    `SELECT * FROM player WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_wallet WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_inventory WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_loadout WHERE identity = ${hexLiteral(hex)}`,
@@ -96,7 +110,7 @@ export function subscribeMatchmaking(hex: string): void {
 
 /** One player's summary + presence (friend rail, viewer avatars, party members). */
 export function subscribePlayer(hex: string): void {
-  subscribeScope(`player:${hex}`, [
+  ensureScope(`player:${hex}`, [
     `SELECT * FROM player WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_presence WHERE identity = ${hexLiteral(hex)}`,
   ]);
@@ -104,7 +118,7 @@ export function subscribePlayer(hex: string): void {
 
 /** A full profile page: the target's public data, stats, history and the follow edges both ways. */
 export function subscribeProfile(hex: string): void {
-  subscribeScope(`profile:${hex}`, [
+  ensureScope(`profile:${hex}`, [
     `SELECT * FROM player WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_stats WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_presence WHERE identity = ${hexLiteral(hex)}`,
@@ -122,7 +136,7 @@ export function releaseProfile(hex: string): void {
 
 /** The running match: the row, every seat and its events. */
 export function subscribeMatch(matchId: number): void {
-  subscribeScope(`match:${matchId}`, [
+  ensureScope(`match:${matchId}`, [
     `SELECT * FROM match WHERE match_id = ${matchId}`,
     `SELECT * FROM match_player WHERE match_id = ${matchId}`,
     `SELECT * FROM match_event WHERE match_id = ${matchId}`,

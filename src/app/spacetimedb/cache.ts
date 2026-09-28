@@ -134,11 +134,6 @@ export class ClientCache {
     return this.list<PlayerRow>('player').find(r => hexOf(r.identity) === hex) ?? null;
   }
 
-  /** Every known player row (the roster subscription) — name / friend-code search reads this. */
-  allPlayers(): PlayerRow[] {
-    return this.list<PlayerRow>('player');
-  }
-
   statsByHex(hex: string): PlayerStatsRow | null {
     return this.list<PlayerStatsRow>('playerStats').find(r => hexOf(r.identity) === hex) ?? null;
   }

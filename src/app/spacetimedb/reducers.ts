@@ -4,7 +4,7 @@
 // reducer invocation (plan §39) and failures only log — the authoritative
 // reply arrives through the subscribed rows.
 import { SpacetimeConnection } from './connection';
-import { Identity } from './rows';
+import { Identity, PlayerSearchHitRow } from './rows';
 
 export function callReducer(name: string, args?: unknown): void {
   const conn = SpacetimeConnection.shared.current;
@@ -87,6 +87,21 @@ export const syncPose = (args: SyncPoseArgs): void => callReducer('syncPose', ar
 
 export const reportMatchStats = (kills: number, deaths: number, objectives: number, damage: number): void =>
   callReducer('reportMatchStats', { kills, deaths, objectives, damage });
+
+// ------------------------------------------------------------ procedures (on-demand reads)
+
+/**
+ * Survivor search (plan §8/§64). A PROCEDURE: nothing is subscribed, the server
+ * ranks by friend code / name and returns a compact projection. Returns null when
+ * the connection or the bindings are unavailable (offline shell).
+ */
+export async function searchPlayers(term: string): Promise<PlayerSearchHitRow[] | null> {
+  const conn = SpacetimeConnection.shared.current;
+  const fn = conn?.procedures?.searchPlayers;
+  if (!fn) return null;
+  const rows = await fn({ term });
+  return Array.isArray(rows) ? (rows as PlayerSearchHitRow[]) : [];
+}
 
 // ------------------------------------------------------------ community (P2P)
 export const submitPeerResult = (won: boolean, kills: number, deaths: number, durationSeconds: number): void =>

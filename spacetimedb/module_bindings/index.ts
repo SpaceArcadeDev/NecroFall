@@ -65,6 +65,7 @@ import SyncPoseReducer from "./sync_pose_reducer";
 import UnfollowPlayerReducer from "./unfollow_player_reducer";
 
 // Import all procedure arg schemas
+import * as SearchPlayersProcedure from "./search_players_procedure";
 
 // Import all table schema definitions
 import FollowRow from "./follow_table";
@@ -232,6 +233,9 @@ const tablesSchema = __schema({
       { accessor: 'normalized_name', name: 'player_normalized_name_idx_btree', algorithm: 'btree', columns: [
         'normalizedName',
       ] },
+      { accessor: 'player_code', name: 'player_player_code_idx_btree', algorithm: 'btree', columns: [
+        'playerCode',
+      ] },
     ],
     constraints: [
       { name: 'player_identity_key', constraint: 'unique', columns: ['identity'] },
@@ -392,6 +396,7 @@ const reducersSchema = __reducers(
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
 const proceduresSchema = __procedures(
+  __procedureSchema("search_players", SearchPlayersProcedure.params, SearchPlayersProcedure.returnType),
 );
 
 type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "tables"> & {

@@ -1,17 +1,24 @@
-// NECROFALL — find-survivors sheet (plan §8/§64): search the roster by player
-// name OR the short friend code, then jump straight to that profile. The roster
-// (whole `player` table) is subscribed with the account scope, so results are
-// live — a player who renames or onboards shows up without a refresh.
+// NECROFALL — find-survivors sheet (plan §8/§64): search by player name OR the
+// short friend code, then jump straight to that profile. The lookup is a server
+// PROCEDURE (`searchPlayers`): nothing is replicated, the whole-table `player`
+// subscription is gone, and the server ranks + caps the results (code exact →
+// code prefix → name exact → name prefix → substring).
 import { COLONIES } from '../../core/Config';
-import { ClientCache } from '../spacetimedb/cache';
-import { hexOf, PlayerRow } from '../spacetimedb/rows';
+import { searchPlayers } from '../spacetimedb/reducers';
+import { PlayerSearchHitRow } from '../spacetimedb/rows';
 import { button, clear, el } from '../ui/dom';
+
+/** Keystrokes are debounced into one procedure call — the server is the index. */
+const DEBOUNCE_MS = 180;
 
 export class PlayerSearch {
   private overlay: HTMLElement;
   private input: HTMLInputElement;
   private results: HTMLElement;
-  private unsub: (() => void) | null = null;
+  /** Latest server results; only the response matching the newest query is applied. */
+  private hits: PlayerSearchHitRow[] = [];
+  private timer = 0;
+  private reqToken = 0;
 
   constructor(private myHex: () => string, private openProfile: (hex: string) => void) {
     this.overlay = el('div', 'nf-modal hidden');
@@ -27,7 +34,7 @@ export class PlayerSearch {
     this.input = el('input', 'nf-input') as HTMLInputElement;
     this.input.placeholder = 'Player name or friend code';
     this.input.maxLength = 24;
-    this.input.addEventListener('input', () => this.render());
+    this.input.addEventListener('input', () => this.onInput());
     this.input.addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Escape') this.close();
     });
@@ -50,55 +57,70 @@ export class PlayerSearch {
     if (!this.overlay.isConnected) host.appendChild(this.overlay);
     this.overlay.classList.remove('hidden');
     this.input.value = '';
-    if (!this.unsub) this.unsub = ClientCache.shared.onChange(() => this.render());
-    this.render();
+    this.hits = [];
+    this.showMessage('Start typing a name or a friend code.');
     this.input.focus();
   }
 
   close(): void {
     this.overlay.classList.add('hidden');
-    this.unsub?.();
-    this.unsub = null;
-  }
-
-  /** Ranked matches: exact code, code prefix, exact name, name prefix, then substring. */
-  private matches(query: string): PlayerRow[] {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return [];
-    const mine = this.myHex();
-    const scored: { p: PlayerRow; s: number }[] = [];
-    for (const p of ClientCache.shared.allPlayers()) {
-      if (!p.playerName || !p.playerName.trim()) continue; // not onboarded yet
-      if (hexOf(p.identity) === mine) continue;
-      const code = (p.playerCode || '').toLowerCase();
-      const name = p.playerName.toLowerCase();
-      let s = -1;
-      if (code === needle) s = 0;
-      else if (code.startsWith(needle)) s = 1;
-      else if (name === needle) s = 2;
-      else if (name.startsWith(needle)) s = 3;
-      else if (name.includes(needle)) s = 4;
-      if (s >= 0) scored.push({ p, s });
+    this.reqToken++; // ignore any in-flight response
+    if (this.timer) {
+      window.clearTimeout(this.timer);
+      this.timer = 0;
     }
-    return scored
-      .sort((a, b) => a.s - b.s || a.p.playerName.localeCompare(b.p.playerName))
-      .slice(0, 24)
-      .map(x => x.p);
   }
 
-  private render(): void {
-    clear(this.results);
-    if (!this.input.value.trim()) {
-      this.results.appendChild(el('p', 'nf-muted', 'Start typing a name or a friend code.'));
+  /** Debounce keystrokes; the server ranks and caps the result list. */
+  private onInput(): void {
+    if (this.timer) window.clearTimeout(this.timer);
+    const query = this.input.value.trim();
+    if (!query) {
+      this.reqToken++;
+      this.hits = [];
+      this.showMessage('Start typing a name or a friend code.');
       return;
     }
-    const rows = this.matches(this.input.value);
-    if (rows.length === 0) {
+    this.timer = window.setTimeout(() => {
+      this.timer = 0;
+      void this.runSearch(query);
+    }, DEBOUNCE_MS);
+  }
+
+  private async runSearch(query: string): Promise<void> {
+    const token = ++this.reqToken;
+    let hits: PlayerSearchHitRow[] | null = null;
+    try {
+      hits = await searchPlayers(query);
+    } catch (err) {
+      console.warn('[NECROFALL] player search failed', err);
+    }
+    if (token !== this.reqToken || this.overlay.classList.contains('hidden')) return;
+    if (hits === null) {
+      this.hits = [];
+      this.showMessage('Search is unavailable offline.');
+      return;
+    }
+    this.hits = hits;
+    this.renderResults();
+  }
+
+  private showMessage(text: string): void {
+    clear(this.results);
+    this.results.appendChild(el('p', 'nf-muted', text));
+  }
+
+  /** Results arrive already ranked + capped by the server (`searchPlayers`). */
+  private renderResults(): void {
+    clear(this.results);
+    if (this.hits.length === 0) {
       this.results.appendChild(el('p', 'nf-muted', 'No survivors found.'));
       return;
     }
-    for (const p of rows) {
-      const hex = hexOf(p.identity);
+    const mine = this.myHex();
+    for (const p of this.hits) {
+      const hex = p.identity.toHexString();
+      if (hex === mine) continue; // the server already skips self — belt and braces
       const row = button('', 'nf-search-row', () => this.openProfile(hex));
       row.appendChild(el('span', 'nf-search-avatar', (p.playerName[0] || '?').toUpperCase()));
       const col = el('span', 'nf-search-col');

@@ -42,6 +42,8 @@ export { report_match_stats } from './game/rewards';
 // ---- social (plan §5/§6)
 export { follow_player, unfollow_player } from './social/follow';
 export { record_profile_view } from './social/profileViews';
+// On-demand directory lookup (procedure — no whole-table subscription, plan §64).
+export { search_players } from './social/search';
 
 // ---- views (plan §22/§23)
 export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage } from './views';

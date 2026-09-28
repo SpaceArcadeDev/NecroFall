@@ -3,6 +3,7 @@
 // Friends are MUTUAL follows — computed from the two follow subscriptions, so
 // there is no friend table to drift out of sync. Online status rides presence.
 import { ClientCache } from '../spacetimedb/cache';
+import { subscribePlayer } from '../spacetimedb/subscriptions';
 import { el, clear } from '../ui/dom';
 import { ProfileCard, presenceLabel } from '../ui/ProfileCard';
 import { hexOf } from '../spacetimedb/rows';
@@ -25,6 +26,9 @@ export class FriendList {
     if (!me) return;
 
     const friends = cache.friends(me);
+    // Names + presence for the cards ride per-player scopes; the whole-roster
+    // subscription was removed (it made every client scan the `player` table).
+    for (const hex of friends) subscribePlayer(hex);
     // Show online friends first (in match > online > offline), then by name.
     const rank = (hex: string): number => {
       const status = cache.presenceByHex(hex)?.status ?? 0;

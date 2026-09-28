@@ -38,6 +38,9 @@ const POSE_MIN_GAP_US = 400_000n;
 const INPUT_STALE_US = 1_000_000n;
 /** A pose claim older than this stops participating in validation. */
 const POSE_FRESH_US = 5_000_000n;
+/** The plausible world band (surface terrain → colony decks ~72 above it). */
+const WORLD_LO_RADIUS = PLANET_RADIUS - 60;
+const WORLD_HI_RADIUS = PLANET_RADIUS + 120;
 
 function nowMicros(ctx: any): bigint {
   return ctx.timestamp.microsSinceUnixEpoch as bigint;
@@ -128,7 +131,7 @@ export const sync_pose = spacetimedb.reducer(
   (ctx, { x, y, z, fx, fy, fz }) => {
     if (![x, y, z, fx, fy, fz].every(Number.isFinite)) throw new SenderError('Invalid pose.');
     const radius = Math.hypot(x, y, z);
-    if (radius < PLANET_RADIUS - 60 || radius > PLANET_RADIUS + 120) return; // obviously off-world
+    if (radius < WORLD_LO_RADIUS || radius > WORLD_HI_RADIUS) return; // obviously off-world
 
     let target: any | undefined;
     for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
@@ -189,11 +192,18 @@ function simulateMatch(ctx: any, m: any): void {
   const now = ctx.timestamp;
   const nowUs = nowMicros(ctx);
   const players = [...ctx.db.match_player.match_id.filter(m.match_id)];
+  // ONE indexed pass over the match's inputs (instead of a per-player btree lookup
+  // plus linear scan): the tick is the hottest reducer in the database (plan §40).
+  const inputs = new Map<string, any>();
+  for (const row of ctx.db.match_input.match_id.filter(m.match_id)) {
+    inputs.set(row.identity.toHexString(), row);
+  }
   let moved = 0;
   let highestTickInput = 0n;
 
   for (const p of players) {
-    const input = seekInput(ctx, m.match_id, p.identity);
+    if (p.left) continue; // tombstone seat — leave_match never revives it, so never simulate it
+    const input = inputs.get(p.identity.toHexString());
     if (!input) continue;
 
     const stale = nowUs - input.last_input_at > INPUT_STALE_US;
@@ -250,11 +260,9 @@ function simulateMatch(ctx: any, m: any): void {
     // band. The world is surface+altitude: terrain sits near PLANET_RADIUS and colony
     // decks tower ~72 units above it, so re-scaling everything onto the base sphere
     // would drag deck-standing players down through their own platform.
-    const lo = PLANET_RADIUS - 60;
-    const hi = PLANET_RADIUS + 120;
     const radius = Math.hypot(x, y, z) || PLANET_RADIUS;
-    if (radius < lo || radius > hi) {
-      const k = (radius < lo ? lo : hi) / radius;
+    if (radius < WORLD_LO_RADIUS || radius > WORLD_HI_RADIUS) {
+      const k = (radius < WORLD_LO_RADIUS ? WORLD_LO_RADIUS : WORLD_HI_RADIUS) / radius;
       x *= k; y *= k; z *= k;
     }
 

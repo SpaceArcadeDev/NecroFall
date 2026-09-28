@@ -44,8 +44,10 @@ export const player = table(
     last_online_at: t.timestamp(),
     banned: t.bool(),
     /** Short shareable friend code (6 chars, no lookalikes) — how players find each other (plan §64).
+        Indexed for exact-code lookups; added after the roster subscription was removed so no
+        query ever sequentially scans this table (SpacetimeDB advisor warning).
         Appended LAST: additive schema changes must keep existing column order. */
-    player_code: t.string().default(''),
+    player_code: t.string().default('').index('btree'),
   }
 );
 

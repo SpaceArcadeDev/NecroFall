@@ -281,6 +281,15 @@ export const PlayerPresence = __t.object("PlayerPresence", {
 });
 export type PlayerPresence = __Infer<typeof PlayerPresence>;
 
+export const PlayerSearchHit = __t.object("PlayerSearchHit", {
+  identity: __t.identity(),
+  playerName: __t.string(),
+  playerCode: __t.string(),
+  colony: __t.u8(),
+  level: __t.u32(),
+});
+export type PlayerSearchHit = __Infer<typeof PlayerSearchHit>;
+
 export const PlayerSettings = __t.object("PlayerSettings", {
   identity: __t.identity(),
   keybinds: __t.string(),

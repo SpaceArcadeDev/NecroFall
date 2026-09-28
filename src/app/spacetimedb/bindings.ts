@@ -37,6 +37,8 @@ export interface SpacetimeConnectionLike {
   isActive: boolean;
   db: Record<string, SpacetimeTableHandle | undefined>;
   reducers: Record<string, ((args?: unknown) => Promise<void>) | undefined>;
+  /** Client-callable server procedures (read-on-demand round trips — e.g. searchPlayers). */
+  procedures?: Record<string, ((args?: unknown) => Promise<unknown>) | undefined>;
   subscriptionBuilder(): SpacetimeSubscriptionBuilder;
   disconnect(): void;
 }

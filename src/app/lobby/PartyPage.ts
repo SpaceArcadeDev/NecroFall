@@ -8,6 +8,7 @@
 // never embedded in another screen.
 import { COLONIES } from '../../core/Config';
 import { ClientCache } from '../spacetimedb/cache';
+import { subscribePlayer } from '../spacetimedb/subscriptions';
 import { PartyAvatarInfo, ShellContext } from '../ShellContext';
 import { button, el, clear } from '../ui/dom';
 
@@ -174,6 +175,7 @@ export class PartyPage {
     const avatars: PartyAvatarInfo[] = [];
     for (const m of members) {
       const memberHex = m.identity.toHexString();
+      subscribePlayer(memberHex); // seat cards read the member's account row (idempotent)
       const p = cache.playerByHex(memberHex);
       const isLeader = party.leader.toHexString() === memberHex;
       const isMe = memberHex === hex;

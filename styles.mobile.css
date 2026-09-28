@@ -424,10 +424,10 @@ body.nf-touch .screen .panel { max-height: none; overflow: visible; }
 body.nf-touch .screen-back { width: 52px; height: 52px; }
 /* rows and chips are tap targets too on a phone */
 body.nf-touch .hud-settings { width: clamp(40px, 8.5vh, 48px); height: clamp(40px, 8.5vh, 48px); }
-/* the two HUD info pills (Necrotech class + mutation name) keep ONE look on a phone: same size,
-   both bold, label centred — the mutation chip just gets more padding to stay a long-press target */
-body.nf-touch .nt-row > .tag { font-size: 11px; min-height: 26px; }
-body.nf-touch .nt-row .tag.mut { padding: 7px 12px; }
+/* the two HUD info pills (Necrotech class + mutation name) shrink on a phone: the arena needs
+   the pixels, the text is reference, not a control (user ask 2026-09-28) */
+body.nf-touch .nt-row > .tag { font-size: 9.5px; min-height: 20px; padding: 2px 9px; letter-spacing: 0.12em; }
+body.nf-touch .nt-row .tag.mut { padding: 3px 10px; }
 body.nf-touch .screen.has-back { padding-top: calc(60px + env(safe-area-inset-top)); }
 
 /* ---- main menu / play screen on a phone */

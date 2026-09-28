@@ -429,11 +429,11 @@ html.nf-onb-colony .count-badge { display: none; }
   margin-top: -6px;
   z-index: 1;
 }
-/* Wide screens: the head rides UP into the chrome's free centre — the wordmark reads as the
-   header itself and the stage gains the reclaimed space. Narrow screens keep their distance
-   (the profile chip and the currency pills crowd the centre there). */
+/* Wide screens: the head sits tight under the chrome (the main pane CLIPS anything above its top
+   edge, so a deeper pull cuts the wordmark off — -10px lands the title right at the header line
+   without ever clipping). */
 @media (min-width: 760px) {
-  .nf-home-head { margin-top: clamp(-48px, -6.5vh, -14px); }
+  .nf-home-head { margin-top: -10px; }
 }
 /* The wordmark is the HEADER here, not the hero — kept small at the top centre so the avatar
    gets the space and the character can never be pushed below the fold on short screens. */
@@ -627,6 +627,23 @@ html.nf-onb-colony .count-badge { display: none; }
   .play-page .nf-play-note { display: none; }
 }
 
+/* ------------------------------------------------ JOIN BY MATCH ID (#/match/<id>) */
+/* The shareable door into a live official match: pick a colony, drop in mid-arc. */
+.match-join-page { align-items: center; justify-content: safe center; text-align: center; gap: 8px; }
+.nf-matchjoin-title { margin-top: 0; }
+.nf-matchjoin-body { display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(460px, 94vw); }
+.nf-matchjoin-colonies { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.nf-colony-btn {
+  min-width: 128px;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--nf-colony, #8fd7ff) 55%, transparent);
+  color: color-mix(in srgb, var(--nf-colony, #8fd7ff) 85%, #fff);
+}
+.nf-colony-btn.on {
+  background: color-mix(in srgb, var(--nf-colony, #8fd7ff) 24%, transparent);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--nf-colony, #8fd7ff) 45%, transparent);
+}
+
 /* ------------------------------------------------ PARTY (the official lobby screen) */
 /* CREATE PARTY lands on a menu page of its own, dressed exactly like the in-game
    P2P lobby: title + format chip, the [SHARE][COPY][CODE] chrome pinned top-right,
@@ -653,8 +670,10 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 .party-page .lobby-panel { flex: 1 1 auto; min-height: 0; }
 .party-page .lobby-lineup { flex: 1 1 auto; min-height: 0; }
-/* The rail keeps the IN-GAME lobby's own sizing (styles.ui.css): flex-grow up to
-   204px — the line-up is the hero of this screen, exactly like the lobby menu. */
+/* The rail is the HERO of this screen, exactly like the in-game lobby menu — and it must reach
+   the SAME 204 px stage there: the base `.lobby-rail` floor (16vh) starved it on short frames
+   (measured 184 vs the lobby's 204 at 1080x490), so the avatar rendered visibly smaller here. */
+.party-page .lobby-rail { min-height: clamp(150px, 42vh, 204px); }
 .party-page .seat-card { border-color: color-mix(in srgb, var(--seat-col, var(--ui-border)) 52%, transparent); }
 /* The CLASSIC flow screens (play, setup, party) wear the in-game menu dress: no
    account chrome above them — the wordmark rises to the very top and the back
@@ -864,7 +883,14 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-confirm-slot.dim { opacity: 0.35; }
 .nf-confirm-slot.live { border-color: rgba(255, 255, 255, 0.4); color: var(--ui-text); }
 .nf-confirm-slot.me { border-color: #ffffff; color: #ffffff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.3); }
-.nf-confirm-slot.on { border-color: var(--ui-accent-2); color: var(--ui-accent-2); box-shadow: 0 0 16px color-mix(in srgb, var(--ui-accent-2) 55%, transparent); }
+/* confirmed: the grey '?' fills in as a GREEN CIRCULAR CHECKMARK */
+.nf-confirm-slot.on {
+  background: radial-gradient(circle at 35% 30%, #5bffa4, #149e63 78%);
+  border-color: #d6ffe9;
+  color: #042b1c;
+  font-weight: 900;
+  box-shadow: 0 0 16px rgba(76, 244, 144, 0.6);
+}
 @keyframes nf-pulse { from { transform: scale(1); } to { transform: scale(1.12); } }
 .nf-confirm-btn {
   width: 100%;

@@ -26,6 +26,7 @@ import {
   leaveParty,
   setPartyLoadout,
   leaveMatch as leaveMatchReducer,
+  joinMatch as joinMatchReducer,
 } from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
@@ -71,6 +72,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private matchId = 0;
   private payload: OfficialMatchPayload | null = null;
   private matchEndEmitted = false;
+  /** Matches this session already FINISHED — they must never pull the player back in. */
+  private endedMatchIds = new Set<number>();
 
   // pose diffing state (all in local seconds / world units)
   private lastPos = { x: 0, y: 0, z: 0, t: 0 };
@@ -448,6 +451,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     for (const seat of mySeats) {
       // A seat abandoned via LEAVE MATCH (this session or an earlier one) never pulls us back in.
       if (seat.left || seat.matchId === this.leftMatchId) continue;
+      // A match that already FINISHED this session is final: the end screen must stay put.
+      if (this.endedMatchIds.has(seat.matchId)) continue;
       const m = cache.match(seat.matchId);
       if (!m) {
         // The `match` row is NOT part of the matchmaking scope — pull the match
@@ -456,11 +461,27 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
         subscribeMatch(seat.matchId);
         continue;
       }
-      if (m.status === 1) {
+      // ONLY a live, running match: the status alone leaves a race window while a finish
+      // transaction propagates, so the ended stamp and a decided winner are checked too.
+      if (m.status === 1 && !m.endedAt && m.winnerColony == null) {
         this.beginMatch(cache, m.matchId, m.mapSeed, m.durationSeconds);
         return;
       }
     }
+  }
+
+  /** Pull a match row into the cache so the #/match/<id> join page can render it. */
+  watchMatch(matchId: number): void {
+    if (matchId > 0) subscribeMatch(matchId);
+  }
+
+  /**
+   * JOIN / REJOIN a running match by id (the shareable URL). The reducer revives or creates the
+   * seat; the seat's arrival drives the ordinary match-start path from there.
+   */
+  joinMatchById(matchId: number, colony: number, necrotech = 0): void {
+    if (this.matchId && this.matchId !== matchId) this.resetMatch();
+    joinMatchReducer(matchId, colony, necrotech);
   }
 
   private beginMatch(cache: ClientCache, matchId: number, seed: number, elapsed: number): void {
@@ -547,6 +568,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     const m = cache.match(this.matchId);
     if (!m || m.status !== 2) return;
     this.matchEndEmitted = true;
+    // Latch the id: no cache churn may re-enter a concluded match.
+    this.endedMatchIds.add(this.matchId);
     const winner = m.winnerColony ?? null;
     // The server usage summary rides along (plan §28): the results screen prints it for debug.
     const usage = cache.myMatchUsage();

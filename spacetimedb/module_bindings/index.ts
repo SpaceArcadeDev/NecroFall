@@ -45,6 +45,7 @@ import FindMatchReducer from "./find_match_reducer";
 import FollowPlayerReducer from "./follow_player_reducer";
 import GrantCurrencyAdminReducer from "./grant_currency_admin_reducer";
 import GrantItemAdminReducer from "./grant_item_admin_reducer";
+import JoinMatchReducer from "./join_match_reducer";
 import JoinPartyReducer from "./join_party_reducer";
 import JoinPartyByCodeReducer from "./join_party_by_code_reducer";
 import KickFromPartyReducer from "./kick_from_party_reducer";
@@ -374,6 +375,7 @@ const reducersSchema = __reducers(
   __reducerSchema("follow_player", FollowPlayerReducer),
   __reducerSchema("grant_currency_admin", GrantCurrencyAdminReducer),
   __reducerSchema("grant_item_admin", GrantItemAdminReducer),
+  __reducerSchema("join_match", JoinMatchReducer),
   __reducerSchema("join_party", JoinPartyReducer),
   __reducerSchema("join_party_by_code", JoinPartyByCodeReducer),
   __reducerSchema("kick_from_party", KickFromPartyReducer),

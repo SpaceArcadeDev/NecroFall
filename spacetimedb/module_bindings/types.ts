@@ -42,6 +42,7 @@ export const Match = __t.object("Match", {
   durationSeconds: __t.u32(),
   serverTick: __t.u64(),
   playerCount: __t.u32(),
+  emptySince: __t.option(__t.timestamp()),
 });
 export type Match = __Infer<typeof Match>;
 

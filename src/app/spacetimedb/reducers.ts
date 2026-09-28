@@ -74,6 +74,9 @@ export const submitInput = (args: SubmitInputArgs): void => callReducer('submitI
 
 /** LEAVE MATCH — abandon the live seat; the row becomes a tombstone (plan §27/§71). */
 export const leaveMatch = (): void => callReducer('leaveMatch');
+/** JOIN / REJOIN a running official match by id (the id from the URL — user ask 2026-09-28). */
+export const joinMatch = (matchId: number, colony: number, necrotech: number): void =>
+  callReducer('joinMatch', { matchId, colony, necrotech });
 
 export interface SyncPoseArgs {
   x: number;

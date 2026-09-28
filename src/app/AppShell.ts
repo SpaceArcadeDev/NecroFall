@@ -45,7 +45,7 @@ import { PartyPage } from './lobby/PartyPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'party' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -153,10 +153,22 @@ export class AppShell implements ShellContext {
       SpacetimeConnection.shared.onConnect(() => this.onConnected())
     );
 
-    // Reducer validation failures (SenderError from the module) become toasts.
+    // Reducer validation failures (SenderError from the module) become toasts — with one
+    // exception: "You are already in a match" is not a dead end but a fact (this identity
+    // still holds a live seat). Hand the player their match page instead of a wall, where
+    // they can rejoin or watch it conclude.
     const onReducerError = (ev: Event): void => {
       const detail = (ev as CustomEvent<{ name?: string; message?: string }>).detail;
-      if (detail?.message) this.toast(detail.message);
+      if (!detail?.message) return;
+      if (/already in a match/i.test(detail.message)) {
+        const live = ClientCache.shared.activeMatchFor(this.myHex());
+        if (live) {
+          this.toast(`You're still in match #${live.matchId} — opening it…`);
+          navigate({ name: 'match', id: live.matchId });
+          return;
+        }
+      }
+      this.toast(detail.message);
     };
     window.addEventListener('nf:reducer-error', onReducerError);
     this.unsubs.push(() => window.removeEventListener('nf:reducer-error', onReducerError));
@@ -435,6 +447,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
       if (!APP_CONFIG.authConfigured) {
         this.toast('Guest account — saved to this browser.');
@@ -451,6 +464,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'play') this.showShell('play');
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'party') this.showShell('party');
+      else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
       this.toast(`Welcome, ${me.playerName}.`);
     }
@@ -464,6 +478,7 @@ export class AppShell implements ShellContext {
     else if (route.name === 'play') this.showShell('play');
     else if (route.name === 'lobby') this.showShell('lobby');
     else if (route.name === 'party') this.showShell('party');
+    else if (route.name === 'match') this.showShell('match', String(route.id));
     else if (this.screen !== 'queue' && this.screen !== 'onboarding' && this.screen !== 'loading') this.showShell('home');
   }
 
@@ -550,6 +565,10 @@ export class AppShell implements ShellContext {
       case 'party':
         this.nav.setActive('play');
         this.renderParty();
+        break;
+      case 'match':
+        this.nav.setActive('play');
+        this.renderMatchJoin(Number(arg ?? 0));
         break;
       case 'queue':
         this.nav.setActive('play');
@@ -864,6 +883,73 @@ export class AppShell implements ShellContext {
     page.update();
   }
 
+  /**
+   * #/match/<id> — join (or rejoin) an official match by its shareable id. A live seat of mine
+   * rejoins on its own the moment the provider sees it; this page exists for FRESH joins: pick a
+   * colony and drop in mid-match (the server validates the caps).
+   */
+  private renderMatchJoin(id: number): void {
+    const wrap = el('div', 'nf-page match-join-page');
+    wrap.appendChild(el('div', 'menu-title nf-matchjoin-title', id > 0 ? `MATCH #${id}` : 'MATCH'));
+    const body = el('div', 'nf-matchjoin-body');
+    wrap.appendChild(body);
+    this.screenHost.appendChild(wrap);
+    if (id > 0) this.official.watchMatch(id);
+
+    let picked = -1;
+    let joining = false;
+    const draw = (): void => {
+      if (joining) return;
+      clear(body);
+      const m = id > 0 ? ClientCache.shared.match(id) : null;
+      if (id <= 0) {
+        body.appendChild(el('p', 'menu-sub', 'No match id in the link.'));
+      } else if (!m) {
+        body.appendChild(el('p', 'menu-sub', 'Looking up the match…'));
+      } else if (m.status !== 1 || m.endedAt) {
+        body.appendChild(el('p', 'menu-sub', 'THAT MATCH HAS ALREADY ENDED'));
+      } else {
+        const players = ClientCache.shared.matchPlayers(id);
+        body.appendChild(el('p', 'menu-sub', `${players.length} survivor${players.length === 1 ? '' : 's'} in the arena — drop in and take the planet`));
+        const row = el('div', 'nf-matchjoin-colonies');
+        COLONIES.forEach((col, idx) => {
+          const b = el('button', `btn nf-colony-btn${picked === idx ? ' on' : ''}`, col.name) as HTMLButtonElement;
+          b.type = 'button';
+          b.style.setProperty('--nf-colony', col.css);
+          b.addEventListener('click', () => {
+            picked = idx;
+            draw();
+          });
+          row.appendChild(b);
+        });
+        body.appendChild(row);
+        const join = el('button', 'btn primary nf-wide-btn', picked < 0 ? 'PICK A COLONY' : 'JOIN MATCH') as HTMLButtonElement;
+        join.type = 'button';
+        join.disabled = picked < 0;
+        join.addEventListener('click', () => {
+          joining = true;
+          join.disabled = true;
+          join.textContent = 'JOINING…';
+          this.official.joinMatchById(id, picked, 0);
+        });
+        body.appendChild(join);
+        body.appendChild(el('p', 'nf-login-note', 'The arena is live — you will drop in exactly where it stands.'));
+      }
+      const back = el('button', 'btn ghost nf-wide-btn', 'BACK TO MAIN MENU') as HTMLButtonElement;
+      back.type = 'button';
+      back.addEventListener('click', () => this.goHome());
+      body.appendChild(back);
+    };
+    draw();
+    const timer = window.setInterval(() => {
+      if (!wrap.isConnected) {
+        window.clearInterval(timer);
+        return;
+      }
+      draw();
+    }, 700);
+  }
+
   private renderQueue(): void {
     const page = new MatchmakingPage(this);
     this.page = { onHide: () => page.dispose(), update: () => undefined };
@@ -1017,6 +1103,8 @@ export class AppShell implements ShellContext {
         this.officialMatchActive = false;
         this.official.resetMatch();
         MultiplayerSession.end();
+        // The match is over: its id leaves the URL (a stale #/match would try to rejoin a corpse).
+        window.history.replaceState({}, document.title, '#/home');
         this.showShell('home');
       }
       this.pill.classList.add('hidden');
@@ -1047,8 +1135,11 @@ export class AppShell implements ShellContext {
       const rosterReady = Boolean(payload && payload.players.length > 0 && present >= Math.max(1, expected));
       const timedOut = waited > 4000;
       if (rosterReady || (timedOut && payload)) {
-        if (payload) this.bootOfficialGame(payload);
-        else if (timedOut) this.toast('Match found, but no server state arrived — returning to lobby.');
+        if (payload) {
+          // OFFICIAL MATCHES CARRY THEIR ID IN THE URL — shareable, and a reload rejoins it.
+          window.history.replaceState({}, document.title, `#/match/${payload.matchId}`);
+          this.bootOfficialGame(payload);
+        } else if (timedOut) this.toast('Match found, but no server state arrived — returning to lobby.');
         return;
       }
       window.setTimeout(tryBoot, 250);

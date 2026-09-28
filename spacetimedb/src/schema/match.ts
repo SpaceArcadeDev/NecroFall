@@ -20,6 +20,11 @@ export const match = table(
     duration_seconds: t.u32(),
     server_tick: t.u64(),
     player_count: t.u32(),
+    /**
+     * When the match last had ZERO connected players (the 30 s rejoin grace). Cleared the moment
+     * somebody reports in; once the grace is over the sim concludes the match (user ask 2026-09-28).
+     */
+    empty_since: t.option(t.timestamp()).default(undefined),
   }
 );
 

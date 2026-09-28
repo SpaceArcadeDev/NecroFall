@@ -5,6 +5,7 @@
 //   #/play            — the CLASSIC / RANK format menu
 //   #/lobby           — the LOBBY screen (official party or P2P entry)
 //   #/party           — the OFFICIAL PARTY screen (its own menu page)
+//   #/match/<id>      — an OFFICIAL match by id: shareable, join or rejoin midway
 //   #/profile/<hex>   — a player profile
 // Login, onboarding, matchmaking and the loading screen are STATE, not routes.
 export type Route =
@@ -12,6 +13,7 @@ export type Route =
   | { name: 'play' }
   | { name: 'lobby' }
   | { name: 'party' }
+  | { name: 'match'; id: number }
   | { name: 'profile'; hex: string };
 
 export function parseRoute(): Route {
@@ -20,6 +22,10 @@ export function parseRoute(): Route {
   if (head === 'play') return { name: 'play' };
   if (head === 'lobby') return { name: 'lobby' };
   if (head === 'party') return { name: 'party' };
+  if (head === 'match' && arg) {
+    const id = Number(arg);
+    if (Number.isFinite(id) && id > 0) return { name: 'match', id: Math.floor(id) };
+  }
   if (head === 'profile' && arg) return { name: 'profile', hex: arg.toLowerCase() };
   return { name: 'home' };
 }
@@ -32,6 +38,8 @@ export function routeToHash(route: Route): string {
       return '#/lobby';
     case 'party':
       return '#/party';
+    case 'match':
+      return `#/match/${route.id}`;
     case 'profile':
       return `#/profile/${route.hex}`;
     default:

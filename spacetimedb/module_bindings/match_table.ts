@@ -21,4 +21,5 @@ export default __t.row({
   durationSeconds: __t.u32().name("duration_seconds"),
   serverTick: __t.u64().name("server_tick"),
   playerCount: __t.u32().name("player_count"),
+  emptySince: __t.option(__t.timestamp()).name("empty_since"),
 });

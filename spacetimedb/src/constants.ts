@@ -33,6 +33,12 @@ export const CANDIDATE_STARTED = 2;
 export const MATCH_STARTING = 0;
 export const MATCH_RUNNING = 1;
 export const MATCH_FINISHED = 2;
+/**
+ * How long a RUNNING match survives with ZERO connected players (user ask 2026-09-28): a dropped
+ * client (reload, network blip) has this long to come back with `join_match` and continue where
+ * it left off. Only a full window with nobody back concludes the match (`NECROPHAGES WIN`).
+ */
+export const MATCH_EMPTY_GRACE_US = 30_000_000n;
 
 // ------------------------------------------------------------ party
 export const PARTY_OPEN = 0;

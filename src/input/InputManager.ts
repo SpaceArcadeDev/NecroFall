@@ -26,6 +26,14 @@ export class InputManager {
    * "press, drag, let go" gesture. Keyboard Q / E cast instantly.
    */
   aimHold: 'skill' | 'ult' | null = null;
+  /**
+   * Physical-button latches, independent of `aimHold`. `aimHold` is deliberately cleared by a
+   * window blur (a notification, a focus steal, a devtools click) — but the button is still DOWN
+   * and its release must still cast. Without these, "hold right click to aim the ult, release…
+   * nothing happens" was exactly the desktop bug that got reported.
+   */
+  private lmbDown = false;
+  private rmbDown = false;
 
   private ndc = new THREE.Vector2(0, 0);
   private mouseSeen = false;
@@ -103,21 +111,33 @@ export class InputManager {
     on(el, 'mousedown', (e: MouseEvent) => {
       if (!this.enabled) return;
       // press and hold to aim (the ground marker follows the cursor), release to cast
-      if (e.button === 0) this.aimHold = 'skill';
-      else if (e.button === 2) this.aimHold = 'ult';
+      if (e.button === 0) {
+        this.lmbDown = true;
+        this.aimHold = 'skill';
+      } else if (e.button === 2) {
+        this.rmbDown = true;
+        this.aimHold = 'ult';
+      }
       e.preventDefault();
     });
     on(window, 'mouseup', (e: MouseEvent) => {
       if (!this.enabled) {
         this.aimHold = null;
+        this.lmbDown = this.rmbDown = false;
         return;
       }
       const held = this.aimHold;
       this.aimHold = null;
-      if (held === 'skill' && e.button === 0) this.qSkill = true;
-      else if (held === 'ult' && e.button === 2) this.qUlt = true;
+      // The RELEASE owns the cast: `aimHold` may have been wiped mid-hold (a blur, a focus steal),
+      // so the button latches decide — not the aim bookkeeping.
+      if (e.button === 0 && (held === 'skill' || this.lmbDown)) this.qSkill = true;
+      else if (e.button === 2 && (held === 'ult' || this.rmbDown)) this.qUlt = true;
+      if (e.button === 0) this.lmbDown = false;
+      if (e.button === 2) this.rmbDown = false;
     });
     on(window, 'blur', () => {
+      // The AIM TELL stops (we cannot know where the cursor is), but the button latches stay:
+      // if the release still arrives, it must cast.
       this.aimHold = null;
     });
     on(window, 'contextmenu', (e: MouseEvent) => {
@@ -140,6 +160,8 @@ export class InputManager {
       this.moveX = 0;
       this.moveY = 0;
       this.aimHold = null;
+      // A menu eats the held buttons too: the next release must not cast into the world.
+      this.lmbDown = this.rmbDown = false;
       this.keys.clear();
       this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = false;
     }
@@ -200,6 +222,8 @@ export class InputManager {
    */
   clearActions(): void {
     this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = false;
+    this.aimHold = null;
+    this.lmbDown = this.rmbDown = false;
   }
 
   /**

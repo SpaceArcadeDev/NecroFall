@@ -17,9 +17,12 @@ import { match_input, match_player, match } from '../schema/match';
 import { match_event, match_tick } from '../schema/game';
 import { player_presence } from '../schema/player';
 import {
+  COLONY_CAP,
   EVENT_PLAYER_SPAWNED,
+  MATCH_EMPTY_GRACE_US,
   MATCH_FINISHED,
   MATCH_MAX_DURATION_US,
+  MATCH_MAX_PLAYERS,
   MATCH_RUNNING,
   MAX_MOVE_SPEED,
   MOVE_TOLERANCE,
@@ -290,22 +293,23 @@ function simulateMatch(ctx: any, m: any): void {
     if (input.seq > highestTickInput) highestTickInput = input.seq;
   }
 
-  // Match clock + periodic (not per-tick) row write when nothing moved.
+  // Match clock. The tick counter is persisted into the row EVERY tick: the empty-match
+  // grace below hangs off it, and the old "write only while someone moves" shortcut froze
+  // the counter the moment the field went quiet — an abandoned match then never reached its
+  // grace check and stayed RUNNING forever. That is exactly how match #12 got stuck: seat
+  // disconnected, server_tick frozen at 62, and every later "Find Match" wrongly said
+  // "You are already in a match" (bug report 2026-09-28). One row update per 100 ms is
+  // nothing next to the players' own writes.
   const startedMicros = m.started_at ? (m.started_at.microsSinceUnixEpoch as bigint) : nowUs;
   const elapsedUs = nowUs - startedMicros;
   const durationSeconds = Number(elapsedUs / 1_000_000n);
   const serverTick = m.server_tick + 1n;
-  const heartbeat = moved > 0 || serverTick % 10n === 0n;
-  if (heartbeat) {
-    ctx.db.match.match_id.update({
-      ...m,
-      server_tick: serverTick,
-      duration_seconds: durationSeconds,
-    });
-  } else {
-    // Still advance the in-memory copy for the checks below.
-    m.server_tick = serverTick;
-  }
+  ctx.db.match.match_id.update({
+    ...m,
+    server_tick: serverTick,
+    duration_seconds: durationSeconds,
+  });
+  m.server_tick = serverTick;
 
   noteTickUsage(ctx, m.match_id, moved, Number(highestTickInput > 0n ? 1 : 0));
 
@@ -314,19 +318,100 @@ function simulateMatch(ctx: any, m: any): void {
     finishMatchInternal(ctx, m.match_id, null, 'TIME LIMIT');
     return;
   }
-  if (serverTick % 10n === 0n) {
-    const connected = players.filter(p => p.connected && !p.left).length;
-    if (connected === 0) finishMatchInternal(ctx, m.match_id, null, 'ALL LEFT');
+
+  // ---- rejoin grace. Evaluated EVERY tick (one filter over ≤ 9 players): under the old
+  // %10 cadence a single missed heartbeat postponed it, and on a frozen clock it could be
+  // postponed forever — the exact bug above.
+  const connected = players.filter(p => p.connected && !p.left).length;
+  if (connected === 0) {
+    // NOBODY is reporting: hold the match for the rejoin grace so a dropped client can come
+    // back (join_match revives its seat) and continue where it left off. Only a full window
+    // with zero returners concludes it — the necrophages take the abandoned planet.
+    const since = m.empty_since ? (m.empty_since.microsSinceUnixEpoch as bigint) : 0n;
+    if (since === 0n) {
+      ctx.db.match.match_id.update({ ...m, empty_since: now });
+    } else if (nowUs - since >= MATCH_EMPTY_GRACE_US) {
+      finishMatchInternal(ctx, m.match_id, null, 'ABANDONED — THE NECROPHAGES WIN');
+      return;
+    }
+  } else if (m.empty_since) {
+    // Somebody came back inside the window: the match simply continues.
+    ctx.db.match.match_id.update({ ...m, empty_since: undefined });
   }
 }
 
-void player_presence;
+/**
+ * JOIN / REJOIN a running official match by id (user ask 2026-09-28): the id travels in the URL, so
+ * anyone holding it can drop in midway — and a seat that only DISCONNECTED (never left) revives
+ * exactly where it was, colony, stats and loadout intact. A seat abandoned with LEAVE MATCH is a
+ * tombstone and stays one.
+ */
+export const join_match = spacetimedb.reducer(
+  { match_id: t.u32(), colony: t.u8(), necrotech: t.u32() },
+  (ctx, { match_id, colony, necrotech }) => {
+    const m = ctx.db.match.match_id.find(match_id);
+    if (!m) throw new SenderError('No match with that id.');
+    if (m.status !== MATCH_RUNNING) throw new SenderError('That match is no longer running.');
+    const now = ctx.timestamp;
+
+    // Rejoin: a seat of mine that never left takes the call and keeps everything it had.
+    for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
+      if (s.match_id !== match_id) continue;
+      if (s.left) throw new SenderError('You left this match — queue again to play.');
+      if (!s.connected) ctx.db.match_player.id.update({ ...s, connected: true, updated_at: now });
+      const presence = ctx.db.player_presence.identity.find(ctx.sender);
+      if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_IN_MATCH, last_seen: now });
+      return;
+    }
+
+    // Fresh mid-join seat.
+    if (colony > 2) throw new SenderError('Pick a colony to join.');
+    const seats = [...ctx.db.match_player.match_id.filter(match_id)].filter((p: any) => !p.left);
+    if (seats.length >= MATCH_MAX_PLAYERS) throw new SenderError('The match is full.');
+    if (seats.filter((p: any) => p.colony === colony).length >= COLONY_CAP) throw new SenderError('That colony is full.');
+    const account = ctx.db.player.identity.find(ctx.sender);
+    ctx.db.match_player.insert({
+      id: 0,
+      match_id,
+      identity: ctx.sender,
+      name: account?.player_name ?? 'Survivor',
+      colony,
+      kills: 0,
+      deaths: 0,
+      damage: 0,
+      objectives: 0,
+      necrotech,
+      confirmed: true,
+      connected: true,
+      x: 0,
+      y: PLANET_RADIUS,
+      z: 0,
+      fx: 0,
+      fy: 1,
+      fz: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      hp: 100,
+      max_hp: 100,
+      alive: true,
+      has_pose: false,
+      stats_reported_at: 0n,
+      updated_at: now,
+      left: false,
+    });
+    ctx.db.match.match_id.update({ ...m, player_count: m.player_count + 1 });
+    const presence = ctx.db.player_presence.identity.find(ctx.sender);
+    if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_IN_MATCH, last_seen: now });
+  }
+);
 
 /**
  * LEAVE MATCH (plan §27/§71) — abandon my live seat. The row stays as a tombstone: the sim
  * skips it (exactly like a disconnect), it stops counting for "you are already in a match",
- * and `finishMatchInternal` earns it no rewards or history. If it was the last live seat the
- * match is over for everyone.
+ * and `finishMatchInternal` earns it no rewards or history. The match itself is NOT concluded
+ * here: the tick's rejoin grace decides (30 s with zero connected players = necrophages win),
+ * so a friend who only dropped can still come back.
  */
 export const leave_match = spacetimedb.reducer((ctx) => {
   let seat: any | undefined;
@@ -340,6 +425,4 @@ export const leave_match = spacetimedb.reducer((ctx) => {
   }
   if (!seat) return; // nothing to leave — idempotent
   ctx.db.match_player.id.update({ ...seat, left: true, connected: false, updated_at: ctx.timestamp });
-  const remaining = [...ctx.db.match_player.match_id.filter(seat.match_id)].filter((p: any) => p.connected && !p.left).length;
-  if (remaining === 0) finishMatchInternal(ctx, seat.match_id, null, 'ALL LEFT');
 });

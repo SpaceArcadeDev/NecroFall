@@ -502,6 +502,13 @@ export class Player {
   ultCd = 0;
   skillCdMax = 6;
   ultCdMax = 40;
+  /**
+   * SKILL CHARGES (RIFT's Blink Strike carries 3). The skill casts while any charge remains; `skillCd`
+   * is the per-charge recharge clock — when it completes, ONE charge returns and the clock restarts
+   * until the pool is full, so three blinks come back one at a time instead of all at once.
+   */
+  skillCharges = 1;
+  skillChargeMax = 1;
   attackCd = 0;
   targetId = 0;
   targetIsPlayer = false;
@@ -1025,9 +1032,19 @@ export class Player {
     this.mods = m;
 
     const prevMax = this.maxHp;
-    this.maxHp = Math.round(CONFIG.player.maxHp * m.hpMul);
+    // HEALTH SCALING: the level pool is part of the base, so levelling keeps a survivor's health
+    // growing alongside the damage multipliers the perks hand out (see CONFIG.player.hpPerLevel and
+    // the PvP window in CONFIG.pvp).
+    this.maxHp = Math.round((CONFIG.player.maxHp + CONFIG.player.hpPerLevel * (this.level - 1)) * m.hpMul);
     if (this.maxHp > prevMax) this.hp += this.maxHp - prevMax;
     this.hp = clamp(this.hp, 0, this.maxHp);
+
+    // skill charges: the max rides the SKILL def (so a fusion that inherits Blink keeps its 3),
+    // and only a POOL GROWTH tops the charges up — a mid-fight swap must not gift free casts
+    const prevChargeMax = this.skillChargeMax;
+    this.skillChargeMax = Math.max(1, Math.round(this.necrotech.skill.charges ?? 1));
+    if (this.skillChargeMax > prevChargeMax) this.skillCharges += this.skillChargeMax - prevChargeMax;
+    this.skillCharges = clamp(this.skillCharges, 0, this.skillChargeMax);
 
     this.autoDamage = this.necrotech.stats.damage * m.dmgMul;
     this.autoRange = this.necrotech.stats.range * m.rangeMul;
@@ -1093,6 +1110,7 @@ export class Player {
     this.lavaT = 0;
     this.skillCd = 0;
     this.ultCd = 0;
+    this.skillCharges = this.skillChargeMax;
     this.attackCd = 0;
     this.slam = null;
     this.whipSpinT = 0;
@@ -1125,6 +1143,24 @@ export class Player {
   }
 
   /**
+   * RECALL arrival: re-seat the body on its colony deck WITHOUT the death reset — health, cooldowns
+   * and buffs stay exactly as they were (a recall is a reposition, not a free heal), but every bit
+   * of carried motion (dash momentum, a dive, a riding Blitz) dies with the channel.
+   */
+  recallTo(pos: THREE.Vector3): void {
+    this.position.copy(pos);
+    this.up.copy(pos).normalize();
+    this.velocity.set(0, 0, 0);
+    this.momentum = 0;
+    this.dashTimer = 0;
+    this.slam = null;
+    if (this.blitzT > 0) this.endBlitz(false);
+    // A short arrival grace only — not the full spawn immunity: long enough that stepping back
+    // into the fight is deliberate, short enough that it cannot be banked.
+    this.invulnUntil = Math.max(this.invulnUntil, this.game.now + 0.6);
+  }
+
+  /**
    * The match authority says this player is down (the `kill` message): death WITHOUT a damage
    * roll — no invulnerability check, no shield, no minimum. Used when the host has already
    * registered the kill but this copy never felt the blow (an i-frame or a shield gap), so both
@@ -1139,6 +1175,8 @@ export class Player {
 
   takeDamage(amount: number, srcId: string | null, kind: string): void {
     if (!this.alive || this.isInvulnerable()) return;
+    // A recall is a committed, vulnerable channel: the first real hit breaks it.
+    this.game.cancelRecall(this, 'interrupted');
     let dmg = Math.max(1, amount * this.mods.takenMul);
     // the Necrotic Ward soaks damage before health and starts recharging
     if (this.shield > 0) {
@@ -1248,6 +1286,8 @@ export class Player {
       this.level++;
       this.xpNeed = Math.round(100 * Math.pow(1.28, this.level - 1));
       this.pendingLevels++;
+      // the level itself grows the pool (CONFIG.player.hpPerLevel) — recompute also heals by the gain
+      this.recompute();
       this.game.audio.sfx('levelup');
       this.game.onPlayerLevelUp(this);
     }
@@ -1533,7 +1573,7 @@ export class Player {
       this.slam = null;
       this.velocity.multiplyScalar(Math.max(0, 1 - dt * 5));
       this.integrate(dt);
-      this.skillCd = Math.max(0, this.skillCd - dt);
+      this.tickSkillCharges(dt);
       this.ultCd = Math.max(0, this.ultCd - dt);
       this.tickBuffs(dt);
       return;
@@ -1563,7 +1603,7 @@ export class Player {
         g.effects.trail(this.position, this.necrotechColor, 0.85, 0.24);
       }
       if (u >= 1) this.slam = null;
-      this.skillCd = Math.max(0, this.skillCd - dt);
+      this.tickSkillCharges(dt);
       this.ultCd = Math.max(0, this.ultCd - dt);
       this.tickDots(dt);
       this.tickBuffs(dt);
@@ -1756,7 +1796,7 @@ export class Player {
     // combat (a blitz ball cannot shoot or cast — it just runs things over)
     if (!this.blitzing) this.updateAutoAttack(dt);
     this.updateMadmen(dt);
-    this.skillCd = Math.max(0, this.skillCd - dt);
+    this.tickSkillCharges(dt);
     this.ultCd = Math.max(0, this.ultCd - dt);
     if (!this.blitzing) {
       if (g.input.consumeSkill()) g.abilities.castSkill(this);
@@ -1771,10 +1811,21 @@ export class Player {
     this.tickBuffs(dt);
   }
 
+  /**
+   * The Skill's recharge clock plus charge refills. `skillCd` is the PER-CHARGE clock (see the field
+   * docs): when it completes, ONE charge returns — and while the pool is still short the clock
+   * restarts immediately, so three blinks come back one at a time instead of all at once.
+   */
+  private tickSkillCharges(dt: number): void {
+    this.skillCd = Math.max(0, this.skillCd - dt);
+    if (this.skillCd > 0 || this.skillCharges >= this.skillChargeMax) return;
+    this.skillCharges++;
+    if (this.skillCharges < this.skillChargeMax) this.skillCd = this.skillCdMax;
+  }
+
   /** Burn / toxin ticks. Only the owner of the player runs these. */
   private tickDots(dt: number): void {
-    if (this.dots.length === 0) return;
-    let total = 0;
+    if (this.dots.length === 0) return;    let total = 0;
     for (let i = this.dots.length - 1; i >= 0; i--) {
       const d = this.dots[i];
       d.t -= dt;
@@ -1791,6 +1842,7 @@ export class Player {
   /** DoT damage bypasses the per-hit minimum so a tick of a fraction still stings fairly. */
   private applyDotDamage(amount: number, dt: number): void {
     if (!this.alive || this.isInvulnerable() || amount <= 0) return;
+    this.game.cancelRecall(this, 'interrupted');
     let dmg = amount * this.mods.takenMul;
     if (this.shield > 0) {
       const soaked = Math.min(this.shield, dmg);

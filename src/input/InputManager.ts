@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { GameCamera } from '../camera/GameCamera';
 import type { Planet } from '../world/Planet';
 import { IS_TOUCH } from '../core/Config';
-import { clamp } from '../utils/Utils';
+import { clamp, nowSec } from '../utils/Utils';
 import { Keybinds } from './Keybinds';
 
 const _dir = new THREE.Vector3();
@@ -54,6 +54,14 @@ export class InputManager {
   private wheelAccum = 0;
   private qMenu = false;
 
+  /**
+   * When the player last gave a DIRECTIONAL or ACTION input — movement, a jump / dash / ability
+   * press, a cast release. The RECALL button is gated on this being `idleTime` old: aim-only mouse
+   * movement deliberately does NOT count (on desktop the cursor never stops), while arrow-key
+   * aiming, the touch aim pad and the virtual joystick do.
+   */
+  private lastActivityAt = nowSec();
+
   private disposers: (() => void)[] = [];
 
   constructor(private el: HTMLElement) {
@@ -78,6 +86,7 @@ export class InputManager {
       }
       if (this.keys.has(code)) return;
       this.keys.add(code);
+      this.markActivity();
       if (action === 'jump') this.qJump = true;
       else if (action === 'dash') this.qDash = true;
       else if (action === 'beacon') this.qBeacon = true;
@@ -114,9 +123,11 @@ export class InputManager {
       if (e.button === 0) {
         this.lmbDown = true;
         this.aimHold = 'skill';
+        this.markActivity();
       } else if (e.button === 2) {
         this.rmbDown = true;
         this.aimHold = 'ult';
+        this.markActivity();
       }
       e.preventDefault();
     });
@@ -130,8 +141,8 @@ export class InputManager {
       this.aimHold = null;
       // The RELEASE owns the cast: `aimHold` may have been wiped mid-hold (a blur, a focus steal),
       // so the button latches decide — not the aim bookkeeping.
-      if (e.button === 0 && (held === 'skill' || this.lmbDown)) this.qSkill = true;
-      else if (e.button === 2 && (held === 'ult' || this.rmbDown)) this.qUlt = true;
+      if (e.button === 0 && (held === 'skill' || this.lmbDown)) { this.qSkill = true; this.markActivity(); }
+      else if (e.button === 2 && (held === 'ult' || this.rmbDown)) { this.qUlt = true; this.markActivity(); }
       if (e.button === 0) this.lmbDown = false;
       if (e.button === 2) this.rmbDown = false;
     });
@@ -156,6 +167,9 @@ export class InputManager {
 
   setEnabled(v: boolean): void {
     this.enabled = v;
+    // Coming back from a menu (or dying) starts the idle clock fresh: a recall must be EARNED
+    // in-game, never banked by sitting in a paused menu.
+    if (v) this.markActivity();
     if (!v) {
       this.moveX = 0;
       this.moveY = 0;
@@ -170,24 +184,33 @@ export class InputManager {
   /** Mobile: the skill / ult buttons report their drag as an aim hold. */
   setAiming(kind: 'skill' | 'ult' | null): void {
     this.aimHold = kind;
+    if (kind) this.markActivity();
   }
+
+  /** Marks a fresh directional / action input (see `lastActivityAt`). */
+  markActivity(): void { this.lastActivityAt = nowSec(); }
+
+  /** Seconds since the last directional or action input — the RECALL idle gate reads this. */
+  get idleFor(): number { return nowSec() - this.lastActivityAt; }
 
   // ---- mobile plumbing -------------------------------------------------
   setJoystick(x: number, y: number, active: boolean): void {
     this.joyX = x;
     this.joyY = y;
     this.joyActive = active;
+    if (active && x * x + y * y > 0.02) this.markActivity();
   }
   setTouchAim(x: number, y: number, active: boolean): void {
     this.touchAimX = x;
     this.touchAimY = y;
     this.touchAimActive = active;
+    if (active && x * x + y * y > 0.02) this.markActivity();
   }
-  queueJump(): void { this.qJump = true; }
-  queueDash(): void { this.qDash = true; }
-  queueSkill(): void { this.qSkill = true; }
-  queueUlt(): void { this.qUlt = true; }
-  queueBeacon(): void { this.qBeacon = true; }
+  queueJump(): void { this.qJump = true; this.markActivity(); }
+  queueDash(): void { this.qDash = true; this.markActivity(); }
+  queueSkill(): void { this.qSkill = true; this.markActivity(); }
+  queueUlt(): void { this.qUlt = true; this.markActivity(); }
+  queueBeacon(): void { this.qBeacon = true; this.markActivity(); }
 
   // ---- consumed edges ---------------------------------------------------
   consumeJump(): boolean { const v = this.qJump; this.qJump = false; return v && this.enabled; }
@@ -256,6 +279,9 @@ export class InputManager {
       this.moveX = x;
       this.moveY = y;
     }
+
+    // Holding a direction is activity even when nothing was pressed this frame.
+    if (this.moveX * this.moveX + this.moveY * this.moveY > 0.02) this.markActivity();
 
     // aim direction — arrow keys steer it directly (screen-up is forward), and take priority
     // over the pointer so the skill always goes where the arrows point.

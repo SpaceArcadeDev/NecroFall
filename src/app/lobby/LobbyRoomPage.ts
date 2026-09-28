@@ -58,12 +58,14 @@ export class LobbyRoomPage {
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page lobby-room-page');
 
-    // ---- header (user ask 2026-09-29): a CENTRED "CREATE LOBBY" wordmark — the back
+    // ---- header (user ask 2026-09-29): a CENTRED "LOBBY" wordmark — the back
     // chevron floats top-left like every other menu — with the FORMAT chip and the live
     // SEASON tag hung beside it. The season shows for every format (classic, ranked).
+    // (The title reads LOBBY, exactly like the in-game P2P lobby screen — user ask
+    // 2026-09-29: this screen IS that lobby, only on the official server.)
     const head = el('div', 'lobby-head');
     const titleRow = el('div', 'rk-head-title-row');
-    titleRow.appendChild(el('div', 'menu-title lobby-title', 'CREATE LOBBY'));
+    titleRow.appendChild(el('div', 'menu-title lobby-title', 'LOBBY'));
     const tags = el('div', 'lobby-room-tags');
     this.modeChip = el('span', 'lobby-mode', 'CLASSIC');
     tags.appendChild(this.modeChip);

@@ -428,6 +428,8 @@ body.nf-touch .hud-settings { width: clamp(40px, 8.5vh, 48px); height: clamp(40p
    the pixels, the text is reference, not a control (user ask 2026-09-28) */
 body.nf-touch .nt-row > .tag { font-size: 9.5px; min-height: 20px; padding: 2px 9px; letter-spacing: 0.12em; }
 body.nf-touch .nt-row .tag.mut { padding: 3px 10px; }
+/* the RECALL chip is a real thumb target on touch, unlike its decorative neighbours */
+body.nf-touch .recall-btn { min-height: 26px; padding: 4px 12px; font-size: 10px; }
 body.nf-touch .screen.has-back { padding-top: calc(60px + env(safe-area-inset-top)); }
 
 /* ---- main menu / play screen on a phone */
@@ -460,11 +462,15 @@ body.nf-touch .room-row .btn { flex: 0 0 auto; }
 /* ---- colony / necrotech selection on a phone: compact cards, smaller champion stage.
    `:not(.acc-preview)` is load-bearing — the customize screen's avatar shares the `.sel-preview`
    class but is sized by its OWN column; this rule (higher specificity) used to blow it up to 620px
-   inside a 395px column, so the avatar's base spilled across the catalog and swallowed its taps. */
+   inside a 395px column, so the avatar's base spilled across the catalog and swallowed its taps.
+   `:not(.lobby-rail)` is the same story for the LOBBY line-up (user report 2026-09-29: "the pads
+   are too much to the left"): the rail shares `.sel-preview` but must span the FULL width of the
+   seat track — forced to 620px it compressed the avatar row while the seat cards below kept their
+   own width, so every avatar and every open-seat pad drifted left of its card. */
 body.nf-touch .sel-head { margin-bottom: 8px; }
 body.nf-touch .sel-title { font-size: clamp(19px, 4.6vw, 28px); }
 body.nf-touch .sel-timer { font-size: 24px; }
-body.nf-touch .sel-preview:not(.acc-preview) {
+body.nf-touch .sel-preview:not(.acc-preview):not(.lobby-rail) {
   height: clamp(118px, 30vh, 190px);
   width: min(620px, 96vw);
   margin-bottom: 8px;

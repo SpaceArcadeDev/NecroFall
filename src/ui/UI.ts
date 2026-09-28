@@ -60,6 +60,11 @@ export interface UICallbacks {
   returnToMenu(): void;
   perkPick(index: number): void;
   pickupChoice(choice: 'keep' | 'swap' | 'mutate'): void;
+  /**
+   * The RECALL button (right end of the bottom Necrotech row). The Game owns every rule — the
+   * button only reports the press; `HudData.recallReady` says whether it is currently legal.
+   */
+  recall(): void;
   toggleReady(): void;
   resume(): void;
   leaveMatch(): void;
@@ -90,6 +95,9 @@ export interface HudData {
   skillDesc: string;
   skillCd: number;
   skillMax: number;
+  /** Blink Strike-style charges left on the Skill, and their pool size (1 for most classes). */
+  skillCharges: number;
+  skillChargeMax: number;
   ultName: string;
   ultDesc: string;
   ultCd: number;
@@ -105,6 +113,14 @@ export interface HudData {
   autoTargets: number;
   /** True while the local player is inside one of their own shielded Beacons. */
   beaconReady: boolean;
+  /** RECALL: the idle gate has passed and the channel can start (the button lights up). */
+  recallReady: boolean;
+  /** A recall channel is running right now (the progress bar is up). */
+  recallActive: boolean;
+  /** 0..1 of the channel completed. */
+  recallFrac: number;
+  /** Seconds left in the channel. */
+  recallSeconds: number;
   colonyIdx: number;
   necrotechName: string;
   necrotechColor: string;
@@ -559,6 +575,11 @@ export class UI {
   private towerPlates = new Map<number, { el: HTMLElement; nm: HTMLElement; pct: HTMLElement; fill: HTMLElement; cd: HTMLElement }>();
   private minimap!: HTMLCanvasElement;
   private ntTag!: HTMLElement;
+  /** The RECALL button (idle-gated return-to-base) and its channel progress bar. */
+  private recallBtn!: HTMLButtonElement;
+  private recallTxt!: HTMLElement;
+  private recallBar!: HTMLElement;
+  private recallFill!: HTMLElement;
   /** The mutation chip: it carries the mutation's NAME (the cap lives in its tooltip). */
   private mutTag!: HTMLElement;
   /** Fields the mutation chip's tooltip reads — refreshed by `updateHud`. */
@@ -2218,12 +2239,28 @@ export class UI {
     ntRow.appendChild(this.mutTag);
     this.ntTag = el('span', 'tag nt-name', 'NECROTECH');
     ntRow.appendChild(this.ntTag);
+    // RECALL — the right end of the Necrotech row, the last thing before the ability stack. Icon + 
+    // text so it reads at a glance; it stays dim until the player has been truly idle long enough
+    // (HudData.recallReady), and it carries the channel countdown while the recall is running.
+    this.recallBtn = button('', 'recall-btn', () => this.cbs.recall());
+    this.recallBtn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
+      'stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M12 4v9"></path><path d="m7.5 9.5 4.5 4.5 4.5-4.5"></path><path d="M5 19h14"></path></svg>';
+    this.recallTxt = el('span', 'rc-txt', 'RECALL');
+    this.recallBtn.appendChild(this.recallTxt);
+    ntRow.appendChild(this.recallBtn);
     // The buff strip (the COLONY OVERDRIVE countdown) sits ABOVE the mutation / Necrotech line: it
     // is a timed state of the whole colony, not part of the loadout headline — and as the last item
     // in that row it wrapped UNDER the very text it is meant to announce.
     this.buffTags = el('div', 'nt-row buff-row');
     bottom.appendChild(this.buffTags);
     bottom.appendChild(ntRow);
+    // The recall channel bar: a thin line directly above the chip row, shown only mid-channel.
+    this.recallBar = el('div', 'recall-bar hidden');
+    this.recallFill = el('i');
+    this.recallBar.appendChild(this.recallFill);
+    bottom.insertBefore(this.recallBar, ntRow);
     h.appendChild(bottom);
 
     this.zoneBar = el('div', 'zone-bar hidden');
@@ -2423,8 +2460,15 @@ export class UI {
     setStyle(this.ultIcon, 'color', d.necrotechColor);
     const skillFrac = d.skillMax > 0 ? clamp01(d.skillCd / d.skillMax) : 0;
     setVar(this.skillMask, '--cd', `${(1 - skillFrac) * 100}%`);
-    setText(this.skillCdTxt, d.skillCd > 0.15 ? d.skillCd.toFixed(1) : '');
-    setClass(this.skillBtn, 'ready', d.skillCd <= 0);
+    // A charge-carrying skill (RIFT's 3× Blink Strike) shows its REMAINING CASTS while any stand,
+    // and only falls back to the recharge seconds once the pool is empty.
+    const charged = d.skillChargeMax > 1;
+    const skillReady = charged ? d.skillCharges > 0 : d.skillCd <= 0;
+    setText(this.skillCdTxt, charged
+      ? (d.skillCharges > 0 ? `${d.skillCharges}` : d.skillCd.toFixed(1))
+      : (d.skillCd > 0.15 ? d.skillCd.toFixed(1) : ''));
+    setClass(this.skillBtn, 'ready', skillReady);
+    setClass(this.skillBtn, 'charged', charged && d.skillCharges > 1);
     const ultFrac = d.ultMax > 0 ? clamp01(d.ultCd / d.ultMax) : 0;
     setVar(this.ultMask, '--cd', `${(1 - ultFrac) * 100}%`);
     setText(this.ultCdTxt, d.ultCd > 0.15 ? Math.ceil(d.ultCd).toString() : '');
@@ -2442,9 +2486,11 @@ export class UI {
       this.mUltIco.style.color = d.necrotechColor;
     }
     if (this.mSkillCd) {
-      setText(this.mSkillCd, d.skillCd > 0.15 ? d.skillCd.toFixed(1) : '');
-      setClass(this.mSkillBtn ?? null, 'cooling', d.skillCd > 0.15);
-      setClass(this.mSkillBtn ?? null, 'ready', d.skillCd <= 0);
+      setText(this.mSkillCd, charged
+        ? (d.skillCharges > 0 ? `${d.skillCharges}` : d.skillCd.toFixed(1))
+        : (d.skillCd > 0.15 ? d.skillCd.toFixed(1) : ''));
+      setClass(this.mSkillBtn ?? null, 'cooling', charged ? d.skillCharges <= 0 : d.skillCd > 0.15);
+      setClass(this.mSkillBtn ?? null, 'ready', skillReady);
     }
     if (this.mUltCd) {
       setText(this.mUltCd, d.ultCd > 0.15 ? Math.ceil(d.ultCd).toString() : '');
@@ -2487,6 +2533,13 @@ export class UI {
 
     // ---- Esc panel live stats (only while it is open)
     if (this.pauseOpen) this.renderPausePanel(d);
+
+    // ---- RECALL: dim until the idle gate passes, lit when ready, counting down while channeling
+    setClass(this.recallBtn, 'ready', d.recallReady);
+    setClass(this.recallBtn, 'channel', d.recallActive);
+    setText(this.recallTxt, d.recallActive ? `${Math.ceil(d.recallSeconds)}s` : 'RECALL');
+    setClass(this.recallBar, 'hidden', !d.recallActive);
+    if (d.recallActive) setStyle(this.recallFill, 'width', `${clamp01(d.recallFrac) * 100}%`);
 
     // ---- capture bar
     if (d.zone) {

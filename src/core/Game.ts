@@ -415,6 +415,8 @@ export class Game {
   private hudScratch: HudData = {
     remaining: 0, matchTime: CONFIG.matchTime, hp: 0, maxHp: CONFIG.player.maxHp, level: 1,
     xp: 0, xpNeed: 100, skillName: '—', skillDesc: '', skillCd: 0, skillMax: 1,
+    skillCharges: 0, skillChargeMax: 1,
+    recallReady: false, recallActive: false, recallFrac: 0, recallSeconds: 0,
     ultName: '—', ultDesc: '', ultCd: 0, ultMax: 1, dashCharges: 0, dashMax: 3, dashRecharge: 0,
     dashRechargeNeed: CONFIG.player.dashRecharge, jumpsLeft: 0, jumpsMax: CONFIG.player.baseJumps,
     autoTargets: 1,
@@ -425,6 +427,15 @@ export class Game {
     buffs: this.hudBuffs, prompt: '', promptKey: '', conn: '', roomCode: '',
     towers: this.hudTowers, counts: this.hudCounts, zone: null, perks: this.hudPerks, tasks: this.hudTasks,
   };
+  /**
+   * The local player's RECALL channel (null = none). Recall is a vulnerable channel: the idle gate
+   * (`input.idleFor >= CONFIG.recall.idleTime` of no directional/action input) unlocks the button,
+   * the channel runs `channelTime` seconds of standing still, and the FIRST fresh input, hit or
+   * death breaks it — see `requestRecall` / `cancelRecall` / `updateRecall`.
+   */
+  private recall: { p: Player; t: number; total: number } | null = null;
+  /** FX clock of the running channel (a rising ring every third of a second). */
+  private recallFxT = 0;
   private miniPlayers: MiniData['players'] = [];
   private miniTowers: MiniData['towers'] = [];
   private miniEnemies: MiniData['enemies'] = [];
@@ -484,6 +495,12 @@ export class Game {
   private slowSamples = 0;
   private goodSamples = 0;
   private rescueLevel = 0;
+  /** Seconds without a slow sample — the clock the rescue decay walks back down on. */
+  private rescueIdleT = 0;
+  /** Age of the last decay (only counted once a decay has armed it) — the "regret" window. */
+  private rescueDecayT = 0;
+  /** Lowest level the decay may walk back to: a level re-applied after decaying is pinned. */
+  private rescueFloor = 0;
   /** Live crowd budget — the watchdog lowers it under load and raises it back when frames recover. */
   enemyBudget = 0;
   /** Worst frame time seen recently (diagnostics). */
@@ -548,6 +565,7 @@ export class Game {
       returnToMenu: () => this.returnToMenu(),
       perkPick: idx => this.pickPerk(idx),
       pickupChoice: choice => this.resolvePickup(choice),
+      recall: () => this.requestRecall(),
       toggleReady: () => this.toggleReady(),
       resume: () => this.togglePauseMenu(),
       leaveMatch: () => this.leaveMatch(),
@@ -1076,14 +1094,9 @@ export class Game {
     this.dprCooldown = 0;
     this.dprWarmup = 4;
     this.applyRenderScale();
-    this.rescueLevel = 0;
-    this.slowSamples = 0;
-    this.goodSamples = 0;
+    this.resetRescue();
     this.enemyBudget = next.maxEnemies;
     this.enemies.cullTo(this.enemyBudget);
-    this.effects.setBudget(1);
-    this.planet.setAmbienceBudget(1);
-    this.planet.setDecorationsVisible(true);
 
     // Menu world: rebuild it so the terrain detail / decoration change is visible right away.
     // In a match the rebuild already happens per match inside `beginPlaying`.
@@ -1933,6 +1946,8 @@ export class Game {
   private beginColonyPhase(): void {
     this.phase = 'colony';
     this.phaseTimer = CONFIG.colonySelectTime;
+    // a recall channel from the previous round dies with it
+    this.recall = null;
     for (const r of this.roster.values()) {
       r.colony = -1;
       r.nt = -1;
@@ -1968,15 +1983,15 @@ export class Game {
     this.matchElapsed = elapsed;
     // fresh performance budget for the match
     this.enemyBudget = this.settings.maxEnemies;
-    this.rescueLevel = 0;
     this.dprStep = 0;
     this.dprBadT = 0;
     this.dprGoodT = 0;
     this.dprCooldown = 0;
     this.dprWarmup = 4;
     this.applyRenderScale();
-    this.slowSamples = 0;
-    this.goodSamples = 0;
+    // A fresh match starts from a clean rescue slate — the previous match's trim (particle and
+    // ambience budgets, hidden scenery) must never bleed into the new world.
+    this.resetRescue();
     this.worstMs = 0;
     this.frameErrors = 0;
     this.buildPlayers(assignments);
@@ -2377,10 +2392,97 @@ export class Game {
     return p.necrotechColor ?? COLONIES[Math.max(0, p.colony)].color;
   }
 
+  /**
+   * RECALL — the universal escape hatch (UI button, right end of the Necrotech tag row). It is a
+   * DELIBERATE three-step contract, so it can never be a mid-fight panic button: hold direction and
+   * action input still for `CONFIG.recall.idleTime` (the button lights up), press it, then keep
+   * standing defenceless for `CONFIG.recall.channelTime` — any fresh input, any hit, any death
+   * breaks the channel.
+   */
+  requestRecall(): void {
+    const p = this.localPlayer;
+    if (!p || this.recall || this.phase !== 'playing' || this.paused) return;
+    // dead, mid-picker, or riding a Blitz cube: not recallable (the corpse respawns normally)
+    if (!p.alive || p.frozen || p.blitzT > 0) return;
+    // the idle gate — the button is dim until this passes (see UI.updateHud `recallReady`)
+    if (this.input.idleFor < CONFIG.recall.idleTime) return;
+    this.recall = { p, t: CONFIG.recall.channelTime, total: CONFIG.recall.channelTime };
+    this.recallFxT = 0;
+    this.effects.ring(p.position, p.up, 1.6, 0x8fd7ff, 0.55, 2.6, 0.8);
+    this.audio.sfx('ui');
+  }
+
+  /**
+   * Ends a running recall. Called by the input/damage watch in `updateRecall` and directly from
+   * `Player.takeDamage` / `applyDotDamage` — taking a hit breaks the channel. Returns true when a
+   * recall was actually cut short.
+   */
+  cancelRecall(p: Player, why: 'input' | 'damage' | 'interrupted' | 'death' = 'input'): boolean {
+    const r = this.recall;
+    if (!r || r.p !== p) return false;
+    this.recall = null;
+    // A broken channel pops in red at the point it had reached: readable as "that failed" without
+    // a wall of text (the banner is reserved for hits, which are the surprising case).
+    this.effects.ring(p.position, p.up, 1.8, 0xff6b6b, 0.4, 3.0, 0.7);
+    if (p.isLocal && (why === 'damage' || why === 'interrupted')) this.ui.banner('RECALL INTERRUPTED', 1100);
+    return true;
+  }
+
+  /** Per-frame recall channel: the countdown, the lift FX, and the input watch that breaks it. */
+  private updateRecall(dt: number): void {
+    const r = this.recall;
+    if (!r || this.paused) return;
+    const p = r.p;
+    if (!p.alive) { this.cancelRecall(p, 'death'); return; }
+    // `idleFor` was past `idleTime` when the button was pressed, so it reading near zero again
+    // means the player moved (or queued an action) AFTER committing: hold still while you channel.
+    if (p.frozen || this.input.idleFor < 0.12) { this.cancelRecall(p, 'input'); return; }
+    r.t -= dt;
+    this.recallFxT -= dt;
+    if (this.recallFxT <= 0) {
+      this.recallFxT = 0.33;
+      // the column of light pulling the body home: a ring rising off the ground every third of a second
+      this.effects.ring(p.position, p.up, 0.9, 0x8fd7ff, 0.5, 2.2, 0.65);
+    }
+    if (r.t > 0) return;
+    // COMPLETE — land on the colony's fortress deck, the same spot a respawn uses. Deliberately
+    // NOT `spawnAt`: no free heal, no cooldown wipe (see Player.recallTo).
+    const dest = this.spawnPointFor(p.colony, p.id);
+    _v3.copy(p.position);
+    this.recall = null;
+    p.recallTo(dest);
+    this.recallFx(p.id, _v3, p.position);
+    if (p.colony >= 0) this.bases.flashSpawn(p.colony);
+    this.audio.sfx('respawn', 0.8);
+    const evMsg = {
+      t: 'ev', id: 'recall', src: p.id,
+      fx: _v3.x, fy: _v3.y, fz: _v3.z,
+      tx: p.position.x, ty: p.position.y, tz: p.position.z,
+    };
+    if (this.isHost) this.net.broadcast(evMsg);
+    else this.net.sendToHost(evMsg);
+  }
+
+  /**
+   * The two-ended recall flash: a departure pop where the body left, an arrival pillar where it
+   * lands. Runs for the local completion and for every remote `ev: recall` event.
+   */
+  private recallFx(srcId: string, from: THREE.Vector3, to: THREE.Vector3): void {
+    const p = this.players.get(srcId);
+    const color = p ? this.playerColor(p) : 0x8fd7ff;
+    const upFrom = _v.copy(from).normalize();
+    const upTo = _v2.copy(to).normalize();
+    this.effects.ring(from, upFrom, 1.4, color, 0.45, 3.0, 0.8);
+    this.effects.burst(from, color, { count: 18, speed: 9, life: 0.5, size: 0.5, gravity: 0 });
+    this.effects.ring(to, upTo, 1.6, color, 0.55, 2.4, 0.9);
+    this.effects.burst(to, color, { count: 26, speed: 11, life: 0.6, size: 0.6, gravity: 0 });
+    if (p?.isLocal) this.cam.snap();
+  }
   endMatch(winner: number | null, reason?: string, fromServer = false): void {
     if (this.phase === 'ended') return;
     this.phase = 'ended';
     this.lateSelect = null;
+    this.recall = null;
     this.paused = false;
     this.ui.hidePauseMenu();
     this.ui.hideRespawn();
@@ -2911,6 +3013,17 @@ export class Game {
         if (id === 'shielddown') {
           // The state change itself rides the next snapshot; this is just the audio cue.
           if (this.localPlayer) this.audio.sfx('shieldDown', 0.8);
+          return;
+        }
+        if (id === 'recall') {
+          // A remote recall: the body itself arrives with the next pose update, this draws the two
+          // ends of the jump — who left where, and who just appeared back at their base.
+          this.recallFx(
+            String(msg.src),
+            _v.set(Number(msg.fx) || 0, Number(msg.fy) || 0, Number(msg.fz) || 0),
+            _v2.set(Number(msg.tx) || 0, Number(msg.ty) || 0, Number(msg.tz) || 0)
+          );
+          if (this.isHost && from !== this.net.myId) this.net.broadcast(msg, from);
           return;
         }
         // regular ability / burst event
@@ -3518,6 +3631,16 @@ export class Game {
     if (!srcId && this.inSafeZone(target.position, 0)) return;
     const src = srcId ? this.players.get(srcId) : null;
     if (src && src !== target && src.colony === target.colony) return; // no friendly fire
+    // PvP pacing (CONFIG.pvp.damageTaken — see the balance note there): every PLAYER-sourced hit is
+    // scaled exactly once, here, at the single funnel autos, skills, ults and Necrotech Burst all
+    // pass through. `src` is null for the entire horde, so enemy damage is untouched; client-cast
+    // hits arrive via `phit`, which calls `hostPlayerDamage` directly, so they are not re-scaled.
+    if (src && src !== target) {
+      amount *= CONFIG.pvp.damageTaken;
+      // A burn / toxin that rides the same hit ticks on the VICTIM's client from this dps, so it is
+      // scaled with the hit — otherwise the DoT smuggled the full un-scaled damage past the cap.
+      if (status?.dot) status = { ...status, dot: { ...status.dot, dps: status.dot.dps * CONFIG.pvp.damageTaken } };
+    }
     if (this.isHost) {
       this.hostPlayerDamage(target, amount, srcId, kind, status);
       return;
@@ -4147,51 +4270,95 @@ export class Game {
       this.goodSamples = 0;
       return;
     }
-    const SLOW_FPS = 28;
-    const GOOD_FPS = 50;
-    if (fps < SLOW_FPS) {
+    // Match start, preset changes and pacing-target changes produce a burst of slow windows while
+    // shaders compile and rate ramps settle. `updateRenderScale` runs immediately before this and
+    // owns that warm-up clock; without sharing it, the first seconds of a match on a slow device
+    // could trim the world before a single fair frame had been measured.
+    if (this.dprWarmup > 0) {
+      this.slowSamples = 0;
+      this.goodSamples = 0;
+      return;
+    }
+
+    // Thresholds are RELATIVE to the pace target, exactly like the DPR ladder's: a match paced at
+    // 60 fps must not be judged against raw numbers, and a machine merely approaching its cap is
+    // not in trouble. Uncapped phases keep the original absolute values.
+    const target = this.frameTargetFps();
+    const bad = target > 0 ? target * PERF.rescueBadMul : PERF.rescueBadFps;
+    const good = target > 0 ? target * PERF.rescueGoodMul : PERF.rescueGoodFps;
+
+    if (fps < bad) {
       this.slowSamples++;
       this.goodSamples = 0;
-    } else if (fps > GOOD_FPS) {
-      this.goodSamples++;
-      this.slowSamples = 0;
+      this.rescueIdleT = 0;
     } else {
+      if (fps >= good) this.goodSamples++;
+      else this.goodSamples = 0;
       this.slowSamples = 0;
-      this.goodSamples = 0;
+      this.rescueIdleT += 0.5;
     }
+    if (this.rescueDecayT > 0) this.rescueDecayT += 0.5;
 
     // Resolution is owned by the DPR ladder (one controller, its own hysteresis, called from
     // `update` for EVERY phase); the rescue levels below never touch the pixel ratio.
     if (this.slowSamples >= 2 && this.rescueLevel < 3) {
       this.slowSamples = 0;
       this.rescueLevel++;
+      // A level re-applied within the regret window of a decay is one this device provably needs:
+      // pin the floor at it so the decay can never take it away again this match (no flicker).
+      if (this.rescueDecayT > 0 && this.rescueDecayT < PERF.rescueRegret) {
+        this.rescueFloor = Math.max(this.rescueFloor, this.rescueLevel);
+        this.rescueDecayT = 0;
+      }
+      this.rescueIdleT = 0;
       this.enemyBudget = Math.max(24, Math.round(this.enemyBudget * 0.7));
       const culled = this.enemies.cullTo(this.enemyBudget);
-      if (this.rescueLevel === 1) {
-        this.effects.setBudget(0.65);
-        this.planet.setAmbienceBudget(0.6);
-      }
-      if (this.rescueLevel === 2) {
-        this.planet.setDecorationsVisible(false);
-        this.planet.setAmbienceBudget(0.35);
-      }
-      if (this.rescueLevel === 3) this.effects.setBudget(0.4);
+      this.applyRescueLevel();
       this.ui.toast(`PERFORMANCE RESCUE ${this.rescueLevel}/3 — ${culled} distant Necrophages culled`, 3200);
       return;
     }
 
-    if (this.goodSamples >= 10 && this.rescueLevel > 0) {
+    // Climb back on ten good windows (5 s) — OR, once a level has simply stopped being needed for
+    // `PERF.rescueDecay` seconds, on its own. That second path is the fix for "the scenery never
+    // came back": the old rule demanded five straight seconds ABOVE the good line, so a phone
+    // sitting between the two thresholds (a throttling phone on LOW) could never recover and kept
+    // the trimmed world — no rocks, spikes, grass or trees — for the rest of the match.
+    const decayed = this.rescueLevel > this.rescueFloor && this.rescueIdleT >= PERF.rescueDecay;
+    if (this.rescueLevel > 0 && (this.goodSamples >= 10 || decayed)) {
       this.goodSamples = 0;
       this.rescueLevel--;
+      if (decayed) {
+        this.rescueDecayT = 0.5;   // arm the regret window
+        this.rescueIdleT = 0;
+      }
       this.enemyBudget = Math.min(this.settings.maxEnemies, Math.round(this.enemyBudget * 1.4));
-      if (this.rescueLevel <= 1) {
-        this.effects.setBudget(this.rescueLevel === 0 ? 1 : 0.65);
-        this.planet.setAmbienceBudget(this.rescueLevel === 0 ? 1 : 0.6);
-      }
-      if (this.rescueLevel <= 1) {
-        this.planet.setDecorationsVisible(true);
-      }
+      this.applyRescueLevel();
     }
+  }
+
+  /**
+   * Applies every knob of the current rescue level from ONE table. The old inline version drifted
+   * (the 3 → 2 step left the particle budget at level 3's value) and the mapping lived in three
+   * separate branches a decay could never safely reuse.
+   */
+  private applyRescueLevel(): void {
+    const level = Math.min(this.rescueLevel, 3);
+    this.effects.setBudget([1, 0.65, 0.65, 0.4][level]);
+    this.planet.setAmbienceBudget([1, 0.6, 0.35, 0.35][level]);
+    // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
+    // the one players actually see, which is why every path back up must restore it.
+    this.planet.setDecorationsVisible(this.rescueLevel < 2);
+  }
+
+  /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */
+  private resetRescue(): void {
+    this.rescueLevel = 0;
+    this.slowSamples = 0;
+    this.goodSamples = 0;
+    this.rescueIdleT = 0;
+    this.rescueDecayT = 0;
+    this.rescueFloor = 0;
+    this.applyRescueLevel();
   }
 
   private update(dt: number): void {
@@ -4300,6 +4467,7 @@ export class Game {
       this.combat.update(dt);
       this.abilities.update(dt);
       this.updatePickups(dt);
+      this.updateRecall(dt);
 
       for (const buff of this.colonyBuffs) {
         if (buff.time > 0) buff.time = Math.max(0, buff.time - dt);
@@ -4658,6 +4826,8 @@ export class Game {
     d.skillDesc = p?.necrotech.skill.desc ?? '';
     d.skillCd = p?.skillCd ?? 0;
     d.skillMax = p?.skillCdMax ?? 1;
+    d.skillCharges = p?.skillCharges ?? 0;
+    d.skillChargeMax = p?.skillChargeMax ?? 1;
     d.ultName = p?.necrotech.ult.name ?? '—';
     d.ultDesc = p?.necrotech.ult.desc ?? '';
     d.ultCd = p?.ultCd ?? 0;
@@ -4670,6 +4840,15 @@ export class Game {
     d.jumpsMax = p?.jumpsTotal ?? CONFIG.player.baseJumps;
     d.autoTargets = p?.autoTargets ?? 1;
     d.beaconReady = beaconReady;
+    // RECALL: the button only lights once the player has been truly still long enough, and the
+    // channel bar reads its countdown straight off the running recall.
+    const rc = this.recall;
+    d.recallActive = !!rc && this.phase === 'playing';
+    d.recallReady = !d.recallActive && this.phase === 'playing' && !this.paused
+      && !!p && p.alive && !p.frozen && p.blitzT <= 0
+      && this.input.idleFor >= CONFIG.recall.idleTime;
+    d.recallSeconds = rc ? Math.max(0, rc.t) : 0;
+    d.recallFrac = rc ? clamp(1 - rc.t / rc.total, 0, 1) : 0;
     d.colonyIdx = p?.colony ?? 0;
     d.necrotechName = p?.necrotechName ?? '—';
     const ntColor = p?.necrotechColor ?? 0x9a6bff;

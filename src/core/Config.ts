@@ -256,6 +256,29 @@ export const CONFIG = {
     zoomMax: 1.75,
     zoomStep: 0.1,
   },
+  /**
+   * PVP BALANCE (2026-09 user report: "during PVP, players die too fast almost instantly").
+   * Every point of player-vs-player damage — autos, skills, ultimates and the Necrotech Burst —
+   * passes through `damageTaken`. The base stat pass above keeps class DPS inside one band, and
+   * `player.hpPerLevel` keeps the health pool growing; this scalar widens the exchange window so a
+   * burst combo cannot delete a full-health target before a single reaction: at 0.5 a fresh duel
+   * sits near 6-7 s of sustained fire and a levelled duel near 8-9 s, with skills roughly halving
+   * that when they all connect (test harness: `ttk` in Player). Enemy damage is deliberately NOT
+   * scaled — the horde is tuned against the un-scaled numbers.
+   */
+  pvp: {
+    /** Multiplier on all player-vs-player damage. */
+    damageTaken: 0.5,
+  },
+  /**
+   * RECALL — the idle-gated trip back to your colony's floating base. After this long without any
+   * directional or action input the HUD button lights up; committing channels for `channelTime`
+   * seconds (any input, damage or death cancels) and then puts the survivor on their base deck.
+   */
+  recall: {
+    idleTime: 5,
+    channelTime: 3,
+  },
   player: {
     radius: 0.55,
     height: 1.9,
@@ -285,6 +308,13 @@ export const CONFIG = {
     dashCharges: 3,
     dashRecharge: 3.4,
     maxHp: 130,
+    /**
+     * Health granted per Necromutation level, on top of the base pool (flat, before `hpMul`
+     * modifiers). Levelling used to only offer perk choices while damage sources kept multiplying,
+     * so a late-game duel collapsed into 2-3 second kills. With this, a level-25 survivor carries
+     * ~2.3x the base pool and PvP time-to-kill stays inside the `pvp` window below.
+     */
+    hpPerLevel: 7,
     regenDelay: 2.5,
     regenRate: 30,
     respawnTime: 4.5,
@@ -561,6 +591,29 @@ export const PERF = {
   dprLadder: [1, 0.8, 0.68, 0.6],
   badFps: 55,
   goodFps: 58,
+  /**
+   * Content-rescue thresholds (the watchdog's own ladder: crowd cull → scenery trim → effects
+   * trim). Like the DPR ladder, they are RELATIVE to the render-pacing target — a 60 fps-capped
+   * match measured against raw 60 fps numbers misreads a healthy capped device. At a 60 target:
+   * bad ≈ 28 fps, good ≈ 39 fps. Uncapped phases (desktop matches) keep absolute numbers.
+   */
+  rescueBadMul: 0.47,
+  rescueGoodMul: 0.65,
+  rescueBadFps: 28,
+  rescueGoodFps: 50,
+  /**
+   * Seconds without ANY slow window before a rescue level decays back on its own. The old rule
+   * demanded 5 straight seconds ABOVE the good line, so a phone sitting between the two
+   * thresholds (≈28-39 fps — exactly a hot phone on the LOW preset) could never climb out once
+   * the scenery had been trimmed, and played the rest of the match with rocks / grass / trees
+   * missing. The decay turns every rescue step into a self-healing trim.
+   */
+  rescueDecay: 20,
+  /**
+   * A level that is re-applied within this many seconds of decaying away is a level the device
+   * provably needs: the decay floor is pinned at it, so the scenery cannot flicker on and off.
+   */
+  rescueRegret: 12,
   /** Seconds of sustained bad frames before the scale steps DOWN. */
   downAfter: 1.5,
   /** Seconds of sustained good frames before the scale steps back UP. */

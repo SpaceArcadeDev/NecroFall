@@ -86,8 +86,12 @@ export class AbilitySystem {
   // ------------------------------------------------------------ entry points
 
   castSkill(p: Player): void {
-    if (p.skillCd > 0 || !p.alive || p.frozen) return;
-    p.skillCd = p.skillCdMax;
+    // CHARGES (Blink Strike carries 3): the skill fires while any charge stands, and the recharge
+    // clock is started by the first cast — one charge returns per completed clock (see
+    // Player.tickSkillCharges). A skill without charges keeps the classic 1-charge behaviour.
+    if (!p.alive || p.frozen || p.skillCharges <= 0) return;
+    p.skillCharges--;
+    if (p.skillCd <= 0) p.skillCd = p.skillCdMax;
     this.beginCast(p, p.necrotech.skill.id, 'skill');
   }
 
@@ -1033,6 +1037,10 @@ export class AbilitySystem {
           caster.position.copy(end);
           caster.up.copy(end).normalize();
           caster.velocity.multiplyScalar(0.4);
+          // UNTOUCHABLE mid-strike (user ask): a real invulnerability window, not just damage
+          // reduction — blink through the burst. `inv` rides the state stream (PlayerNet.inv), so
+          // the host's authoritative copy sees the i-frames too.
+          caster.invulnUntil = Math.max(caster.invulnUntil, g.now + 0.55);
           caster.addBuff('takenMul', 0.75, 0.6, 'Blink');
           if (caster.isLocal) g.cam.snap();
         }
@@ -1443,11 +1451,11 @@ export class AbilitySystem {
         // Quakefall: the LANDING is the attack. The wave walks out to exactly the radius the damage
         // covers (see Effects.wave) and the knockback is what clears the ground that was just won —
         // a leap into a pack is now an entrance, not a mistake.
-        // The radius is deliberately generous (6.2 m base, +1.1 m per extra stack): this fires on
-        // EVERY leap landing, so it has to visibly clear a pack, not just tickle it — and the knock
-        // is the payoff (26 m/s radial + a 6.5 m/s pop, so bodies bowl away from the landing spot).
+        // The radius is deliberately generous (9 m base, +1.4 m per extra stack — widened from
+        // 6.2 / 1.1 per the 2026-09 request): this fires on EVERY leap landing, so it has to
+        // visibly clear a pack, and the knock is the payoff.
         const stacks = Math.max(1, caster.mods.landShock);
-        const radius = 6.2 + 1.1 * (stacks - 1);
+        const radius = 9 + 1.4 * (stacks - 1);
         if (fx) {
           g.effects.disk(caster.position, caster.up, radius, 0x8a5a2b, 0.42, 1.05, 0.3);
           g.effects.ring(caster.position, caster.up, 0.9, col, 0.5, 3.4, 0.95);

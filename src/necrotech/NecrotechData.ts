@@ -90,7 +90,7 @@ export interface NecrotechDef {
   passiveName: string;
   passiveDesc: string;
   mods: Partial<Mods>;
-  skill: { id: string; name: string; cd: number; desc: string; aim: AbilityAim };
+  skill: { id: string; name: string; cd: number; desc: string; aim: AbilityAim; /** Extra casts before the cooldown locks the skill (RIFT's Blink Strike = 3). */ charges?: number };
   ult: { id: string; name: string; cd: number; desc: string; aim: AbilityAim };
   /** Not selectable at spawn: only obtainable from a mid-match Necrotech drop. */
   dropOnly?: boolean;
@@ -114,6 +114,14 @@ export interface NecrotechDef {
 }
 
 export const NECROTECHS: NecrotechDef[] = [
+  // ------------------------------------------------------------------------------------------
+  // BALANCE BUDGET (2026-09 rework). `damage x rate` including the class's own passive mods is
+  // the class's single-target DPS; the band below is 24-38 with each class placed by ITS EFFECTS:
+  // RAVAGER tops out as the pure single-target glass kit, while chain (VOLT), burn + spread
+  // (PYRE), pierce + mobility (RIFT), poison (VENOM), crowd shields + arc (WHIPLASH) and the
+  // tanks' effective-HP multipliers (BREAKER 1.28x, BULWARK 1.2x) buy their lower raw numbers.
+  // PvP-specific trimming lives in CONFIG.pvp — these numbers are the PvE face.
+  // ------------------------------------------------------------------------------------------
   {
     idx: 0,
     name: 'RAVAGER',
@@ -121,7 +129,7 @@ export const NECROTECHS: NecrotechDef[] = [
     color: 0xff8a3d,
     desc: 'Raw weapon damage. Sustained automatic fire that punishes anything caught in the open.',
     stats: {
-      damage: 16, rate: 2.4, range: 12.5, projSpeed: 68, style: 'bolt', count: 1,
+      damage: 13, rate: 2.4, range: 12.5, projSpeed: 68, style: 'bolt', count: 1,
       color: 0xff8a3d, status: null, statusPower: 0, elong: 1.5,
     },
     passiveName: 'Gunslinger',
@@ -145,7 +153,7 @@ export const NECROTECHS: NecrotechDef[] = [
     color: 0x7fd4ff,
     desc: 'Arc weaponry. Fires electricity, not bullets — every bolt leaps on to the next target.',
     stats: {
-      damage: 10, rate: 2.2, range: 12.5, projSpeed: 92, style: 'chain', count: 1,
+      damage: 13, rate: 2.2, range: 12.5, projSpeed: 92, style: 'chain', count: 1,
       color: 0x7fd4ff, status: null, statusPower: 0, chain: 1, chainDecay: 0.5, elong: 2.2,
     },
     passiveName: 'Conduction',
@@ -169,7 +177,7 @@ export const NECROTECHS: NecrotechDef[] = [
     color: 0xff5b3d,
     desc: 'Flame spread. A continuous flamethrower that sets everything it touches alight.',
     stats: {
-      damage: 4.2, rate: 6.5, range: 9.5, projSpeed: 34, style: 'flame', count: 1,
+      damage: 4.6, rate: 6.5, range: 9.5, projSpeed: 34, style: 'flame', count: 1,
       color: 0xff5b3d, status: 'burn', statusPower: 5, elong: 1, life: 0.34, spreadBurn: 6,
     },
     passiveName: 'Immolate',
@@ -193,7 +201,7 @@ export const NECROTECHS: NecrotechDef[] = [
     color: 0xc08bff,
     desc: 'Spatial movement. Fires phase lasers that cut straight through a rank of enemies.',
     stats: {
-      damage: 11, rate: 2.2, range: 13.5, projSpeed: 150, style: 'laser', count: 1,
+      damage: 12.5, rate: 2.2, range: 13.5, projSpeed: 150, style: 'laser', count: 1,
       color: 0xc08bff, status: null, statusPower: 0, elong: 3.2,
     },
     passiveName: 'Phase Shift',
@@ -201,9 +209,9 @@ export const NECROTECHS: NecrotechDef[] = [
     mods: { dashRechargeMul: 1.38, spdMul: 1.1 },
     autoPierce: 2,
     skill: {
-      id: 'blink', name: 'Blink Strike', cd: 5.5,
+      id: 'blink', name: 'Blink Strike', cd: 5.5, charges: 3,
       aim: { kind: 'dash', range: 1, width: 0.1 },
-      desc: 'AIM a direction — teleport out to the edge of your ring in a flash, cutting EVERYTHING along the path for 220% damage.',
+      desc: 'AIM a direction — teleport out to the edge of your ring in a flash, cutting EVERYTHING along the path for 220% damage. 3 charges, and you are UNTOUCHABLE mid-strike.',
     },
     ult: {
       id: 'blackhole', name: 'Black Hole', cd: 46,
@@ -218,7 +226,7 @@ export const NECROTECHS: NecrotechDef[] = [
     color: 0x9dff6b,
     desc: 'Poison. Green toxic rounds that melt groups and smear venom across the ground.',
     stats: {
-      damage: 7.5, rate: 2.6, range: 12, projSpeed: 44, style: 'bolt', count: 1,
+      damage: 9, rate: 2.6, range: 12, projSpeed: 44, style: 'bolt', count: 1,
       color: 0x9dff6b, status: 'poison', statusPower: 7, elong: 1.2, spreadVenom: 3.4,
     },
     passiveName: 'Contagion',
@@ -251,7 +259,7 @@ export const DROP_NECROTECHS: NecrotechDef[] = [
     dropOnly: true,
     desc: 'Tanky knockback. Fires compressed air fists that launch whatever they touch.',
     stats: {
-      damage: 15, rate: 1.8, range: 11, projSpeed: 46, style: 'fist', count: 1,
+      damage: 16.5, rate: 1.8, range: 11, projSpeed: 46, style: 'fist', count: 1,
       color: 0xffd166, status: null, statusPower: 0, elong: 2.1,
     },
     passiveName: 'Plated',
@@ -277,7 +285,7 @@ export const DROP_NECROTECHS: NecrotechDef[] = [
     dropOnly: true,
     desc: 'Heavy plating and seismic weapons. Slow but unstoppable.',
     stats: {
-      damage: 17, rate: 1.6, range: 11, projSpeed: 44, style: 'heavy', count: 1,
+      damage: 17.5, rate: 1.6, range: 11, projSpeed: 44, style: 'heavy', count: 1,
       color: 0x9fe8b0, status: null, statusPower: 0, elong: 1.8,
     },
     passiveName: 'Plated',
@@ -303,7 +311,7 @@ export const DROP_NECROTECHS: NecrotechDef[] = [
     dropOnly: true,
     desc: 'Ice stun. Fires cryo shards that lock whole packs in place.',
     stats: {
-      damage: 9, rate: 2.4, range: 12.5, projSpeed: 62, style: 'shard', count: 1,
+      damage: 10, rate: 2.4, range: 12.5, projSpeed: 96, style: 'shard', count: 1,
       color: 0xa8e6ff, status: 'slow', statusPower: 0.4, elong: 3.4, cryo: true,
     },
     passiveName: 'Chill',
@@ -328,7 +336,7 @@ export const DROP_NECROTECHS: NecrotechDef[] = [
     dropOnly: true,
     desc: 'Execution weapons. Finish what others started.',
     stats: {
-      damage: 15, rate: 1.8, range: 11, projSpeed: 50, style: 'heavy', count: 1,
+      damage: 15.5, rate: 1.8, range: 11, projSpeed: 60, style: 'heavy', count: 1,
       color: 0xff6b9d, status: null, statusPower: 0, elong: 1.8,
     },
     passiveName: 'Harvest',
@@ -379,7 +387,7 @@ export const DROP_NECROTECHS: NecrotechDef[] = [
     dropOnly: true,
     desc: 'Chain whips. No projectiles at all — every strike is a lash swept across the front arc.',
     stats: {
-      damage: 13, rate: 1.6, range: 8.5, projSpeed: 0, style: 'whip', count: 1,
+      damage: 15.5, rate: 1.6, range: 8.5, projSpeed: 0, style: 'whip', count: 1,
       color: 0xffb0d0, status: null, statusPower: 0, whipArc: 0.7, shieldPerFoe: 4,
     },
     passiveName: 'Madmen',

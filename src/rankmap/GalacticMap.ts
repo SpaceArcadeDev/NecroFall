@@ -1400,14 +1400,14 @@ export class GalacticMap {
           }
           ctx.globalAlpha = 1;
         }
-        // POI marker (plan §55) — user 2026-09-29 v2: "the icons still pop instead of
-        // fading in and out with the galaxies". The alpha rides the galaxy's OWN
-        // on-screen size — the exact band the face crossfades in on
-        // (GALAXY_DOT_RADIUS*0.45 → *1.25) — and deliberately IGNORES the focus/hover
-        // face boost and any zoom threshold: no state flip (hover, soft lock, wheel)
-        // can switch the glyph on or off; it only ever ramps with the size the galaxy
-        // is actually drawn at, so it fades in AND out with the body, never pops.
-        const poiT = ramp01(radius, GALAXY_DOT_RADIUS * 0.45, GALAXY_DOT_RADIUS * 1.25);
+        // POI marker (plan §55) — user 2026-09-29 v3: "the poi icon fade should follow
+        // the galaxy name fade... it should fade out faster" (icons read as clutter
+        // through the mid fade). The glyph now rides the EXACT band of the galaxy NAME
+        // (radius 16 → 28 — see `nameA` below): it appears once the face is well
+        // formed and retires early while zooming out. It still ignores the focus/hover
+        // face boost and any zoom threshold, so no state flip (hover, soft lock,
+        // wheel) can switch the glyph on or off.
+        const poiT = ramp01(radius, 16, 28);
         if (g.poi !== 'NORMAL' && poiT > 0.02) {
           const poiA = Math.min(0.9, 0.8 * pulse * field2 * haze * (1 - withdraw * 0.88) * poiT);
           if (poiA > 0.015) {

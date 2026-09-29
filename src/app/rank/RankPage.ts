@@ -497,6 +497,11 @@ export class RankPage {
     const planet = loc?.planet ?? sel.planet;
     const sys = loc?.system ?? sel.system;
     const galaxy = loc?.galaxy ?? sel.galaxy;
+    // the account row is read HERE (once) and folded into the signature below — a card
+    // built before the account loads used to keep its missing YOUR COLONY tag until
+    // the selection changed (user 2026-09-29: "why doesnt it always say YOUR COLONY...
+    // seems like a bug").
+    const mc = this.me();
     // MINIMAL (user 2026-09-29): control headline + at most THREE discoverers.
     const MAX_ROWS = 3;
     let sig = 'none';
@@ -508,6 +513,7 @@ export class RankPage {
     } else if (galaxy) {
       sig = `g:${galaxy.galaxyId}:${this.rowsForGalaxy(galaxy.galaxyId).length}:${this.discoveriesForGalaxy(galaxy.galaxyId).length}`;
     }
+    sig += `:col${mc?.colony ?? -1}`;
     if (sig === this.mapInfoSig) return;
     this.mapInfoSig = sig;
     this.mapInfoEl.innerHTML = '';
@@ -583,8 +589,8 @@ export class RankPage {
     // MY TERRITORY marker (user ask 2026-09-29; user v2: the overlay shows only what
     // APPLIES to the selection — the galaxy's own POI line above — and the generic
     // icon key is gone; this one row stays as the plain "YOUR COLONY" tag for the
-    // colony-coloured rings/pennant on the map).
-    const mc = this.me();
+    // colony-coloured rings/pennant on the map). `mc` was read at the top of THIS
+    // render and is part of the signature, so the tag can never stay missing.
     if (mc && mc.colony < 3) {
       const line = el('div', 'rk-mapinfo-colony');
       line.innerHTML = `<b style="color:${COLONIES[mc.colony].css}">${COLONIES[mc.colony].symbol}</b><span>YOUR COLONY</span>`;

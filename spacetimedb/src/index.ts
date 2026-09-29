@@ -48,6 +48,7 @@ export {
   report_nexus_capture,
   report_necrophage_victory,
 } from './game/simulation';
+export { send_match_msg } from './game/relay';
 export { report_match_stats } from './game/rewards';
 
 // ---- social (plan §5/§6)

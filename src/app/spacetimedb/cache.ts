@@ -10,6 +10,7 @@ import {
   FollowRow,
   hexOf,
   MatchHistoryRow,
+  MatchMsgRow,
   MatchPlayerRow,
   MatchRow,
   MatchServerUsageRow,
@@ -51,6 +52,8 @@ const TABLES = [
   'match',
   'matchPlayer',
   'matchHistory',
+  // The official relay wire (2026-09-29) — in-flight P2P messages of the current match.
+  'matchMsg',
   'rankedSeason',
   'rankedPlanet',
   'planetDiscovery',
@@ -243,6 +246,15 @@ export class ClientCache {
     return this.list<MatchPlayerRow>('matchPlayer')
       .filter(r => r.matchId === matchId)
       .sort((a, b) => a.id - b.id);
+  }
+
+  /**
+   * Relayed messages of one match (subscription order — commit order on the live stream).
+   * Deliberately unsorted: the table is a hot 12+ Hz stream, and the only consumer sorts
+   * just the FEW rows it has not seen yet.
+   */
+  matchMessages(matchId: number): MatchMsgRow[] {
+    return this.list<MatchMsgRow>('matchMsg').filter(r => r.matchId === matchId);
   }
 
   // ------------------------------------------------------------ ranked (plan §33–§57)

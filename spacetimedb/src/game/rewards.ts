@@ -247,6 +247,7 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
   for (const row of [...ctx.db.match_input.match_id.filter(matchId)]) ctx.db.match_input.id.delete(row.id);
   for (const row of [...ctx.db.match_entity.match_id.filter(matchId)]) ctx.db.match_entity.id.delete(row.id);
   for (const row of [...ctx.db.match_objective.match_id.filter(matchId)]) ctx.db.match_objective.id.delete(row.id);
+  for (const row of [...ctx.db.match_msg.match_id.filter(matchId)]) ctx.db.match_msg.id.delete(row.id);
 }
 
 /**
@@ -261,8 +262,10 @@ export function cleanupFinishedMatches(ctx: any, now: bigint): void {
     if (now - ended < LIVE_RETENTION_US) continue;
     const players = [...ctx.db.match_player.match_id.filter(m.match_id)];
     const events = [...ctx.db.match_event.match_id.filter(m.match_id)];
-    if (players.length === 0 && events.length === 0) continue; // already swept
+    const relayed = [...ctx.db.match_msg.match_id.filter(m.match_id)];
+    if (players.length === 0 && events.length === 0 && relayed.length === 0) continue; // already swept
     for (const p of players) ctx.db.match_player.id.delete(p.id);
     for (const e of events) ctx.db.match_event.id.delete(e.id);
+    for (const r of relayed) ctx.db.match_msg.id.delete(r.id);
   }
 }

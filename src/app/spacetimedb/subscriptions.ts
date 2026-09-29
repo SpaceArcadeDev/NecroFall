@@ -152,6 +152,8 @@ export function subscribeMatch(matchId: number): void {
     `SELECT * FROM match WHERE match_id = ${matchId}`,
     `SELECT * FROM match_player WHERE match_id = ${matchId}`,
     `SELECT * FROM match_event WHERE match_id = ${matchId}`,
+    // The official relay wire (2026-09-29): the P2P message stream of this match.
+    `SELECT * FROM match_msg WHERE match_id = ${matchId}`,
   ]);
 }
 

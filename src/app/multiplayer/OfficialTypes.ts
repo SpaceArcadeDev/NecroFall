@@ -10,6 +10,8 @@ export interface OfficialGamePlayerInfo {
   name: string;
   colony: number;
   necrotech: number;
+  /** The seat was abandoned (LEAVE MATCH) — the game drops it like a P2P `bye`. */
+  left?: boolean;
 }
 
 export interface OfficialMatchPayload {
@@ -20,6 +22,12 @@ export interface OfficialMatchPayload {
   /** The local player's game-side id. */
   meId: string;
   players: OfficialGamePlayerInfo[];
+  /**
+   * The match AUTHORITY (2026-09-29): the seat that runs the world exactly like a P2P host
+   * and broadcasts through the relay. Lowest connected non-left seat id; it may move during
+   * the match (the provider pushes every change through `setAuthority`).
+   */
+  authorityId?: string;
   /** RANKED match facts (plan §32): which planet is being fought over. */
   ranked?: boolean;
   /** `ring:galaxyId:systemId:planetId` of the ranked planet. */
@@ -28,6 +36,17 @@ export interface OfficialMatchPayload {
   rankRing?: number;
   /** The season's universe seed — regenerates the planet descriptor client-side (plan §32). */
   universeSeed?: number;
+}
+
+/**
+ * A relayed P2P message (2026-09-29): `t` is the message kind, every other field the body.
+ * The payload crosses SpacetimeDB as JSON; receivers feed `{ t, ...body }` into the very
+ * same `onNetMessage` handlers the P2P transport uses. `ex` (set by the relay broadcaster)
+ * names the game id that must NOT apply the message — the `broadcast(msg, exceptId)` rule.
+ */
+export interface OfficialNetMessage {
+  t: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -59,8 +78,19 @@ export interface OfficialMatchResult {
 }
 
 export interface OfficialGameApi {
-  /** Feed one remote player's pose (already translated onto server time). */
-  applyRemote(id: string, msg: OfficialStateMessage): void;
+  /**
+   * Feed one relayed message from another seat. The game routes it through the same
+   * `onNetMessage` switch P2P uses — poses (`st`), world snapshots (`s`), hits, pickups,
+   * ability events, kills... all arrive here.
+   */
+  applyNetMessage(fromId: string, msg: OfficialNetMessage): void;
+  /**
+   * The authority seat changed (or was determined for the first time). The game adopts the
+   * P2P host/client role it implies and re-targets its relay sends.
+   */
+  setAuthority(authorityId: string): void;
+  /** Seats joined/left/renamed — keep the game roster in sync (names, colonies, classes). */
+  setRoster(players: OfficialGamePlayerInfo[]): void;
   /** The server finished the match — show the authoritative result. */
   matchEnded(result: OfficialMatchResult): void;
 }
@@ -71,7 +101,11 @@ export interface OfficialGameBridge {
    * throttles this into change-driven reducer calls (plan §18/§39/§77).
    */
   sendLocalState(msg: OfficialStateMessage): void;
-  /** The game is ready: hand it the remote-pose sink. */
+  /** Relay ONE P2P message to one seat (game id) — the `sendToHost` / `sendTo` side. */
+  sendNetTo(toId: string, msg: OfficialNetMessage): void;
+  /** Relay one P2P message to every seat except `exceptId` — the host's broadcast side. */
+  broadcastNet(msg: OfficialNetMessage, exceptId?: string): void;
+  /** The game is ready: hand it the remote-message sink. */
   attachGame(api: OfficialGameApi): void;
   /** The player pressed LEAVE MATCH: abandon the seat server-side (never auto-rejoin). */
   leaveMatch(): void;

@@ -80,3 +80,51 @@ export const match_event = table(
     at: t.timestamp(),
   }
 );
+
+/**
+ * THE RELAY (2026-09-29) — the P2P message wire, carried by SpacetimeDB.
+ *
+ * The official match runs the SAME authority protocol as a P2P room: one seat (the lowest
+ * connected match_player id, deterministic for everyone) is the match authority and behaves
+ * exactly like a P2P host — it simulates the world and broadcasts the same snapshots/events;
+ * the other seats behave like P2P clients (full pose+stats reports at ~15 Hz into the
+ * authority, one-shot asks for hits/pickups/abilities). Every message is a row here instead
+ * of a DataChannel frame, and receivers feed rows into the very same `onNetMessage`
+ * handlers, so both modes share one gameplay protocol.
+ *
+ * Sliding window, not storage: the 10 Hz match tick sweeps rows older than a few seconds,
+ * so the table only ever holds in-flight traffic (plan §46 spirit). ``to_hex`` '' = broadcast.
+ */
+export const match_msg = table(
+  { name: 'match_msg', public: true },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    match_id: t.u32().index('btree'),
+    /** Sender identity hex — receivers rebuild the game-side id from it. */
+    from_hex: t.string(),
+    /** Target identity hex; '' = every seat (the authority's broadcast). */
+    to_hex: t.string(),
+    /** P2P message kind — the NetMessage `t` field (`st`, `s`, `ehits`, ...). */
+    kind: t.string(),
+    /** Sender-monotonic counter (diagnostics). */
+    seq: t.u64(),
+    /** JSON body of the message (every field except `t`). Capped by the reducer. */
+    payload: t.string(),
+    at: t.timestamp(),
+  }
+);
+
+/**
+ * Per-sender relay rate limiter (private). Fixed one-second window per identity; the row
+ * outlives the match (one row per account, tiny) so reconnects cannot reset a budget.
+ */
+export const match_msg_rate = table(
+  { name: 'match_msg_rate' },
+  {
+    identity: t.identity().primaryKey(),
+    /** Micros since epoch when the current 1 s window opened. */
+    window_start: t.u64(),
+    /** Messages accepted inside the current window. */
+    count: t.u32(),
+  }
+);

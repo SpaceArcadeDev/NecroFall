@@ -149,6 +149,25 @@ export const MatchInput = __t.object("MatchInput", {
 });
 export type MatchInput = __Infer<typeof MatchInput>;
 
+export const MatchMsg = __t.object("MatchMsg", {
+  id: __t.u64(),
+  matchId: __t.u32(),
+  fromHex: __t.string(),
+  toHex: __t.string(),
+  kind: __t.string(),
+  seq: __t.u64(),
+  payload: __t.string(),
+  at: __t.timestamp(),
+});
+export type MatchMsg = __Infer<typeof MatchMsg>;
+
+export const MatchMsgRate = __t.object("MatchMsgRate", {
+  identity: __t.identity(),
+  windowStart: __t.u64(),
+  count: __t.u32(),
+});
+export type MatchMsgRate = __Infer<typeof MatchMsgRate>;
+
 export const MatchObjective = __t.object("MatchObjective", {
   id: __t.u32(),
   matchId: __t.u32(),

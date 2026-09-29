@@ -6,7 +6,7 @@ import { admin_identity, player, player_inventory, player_loadout, player_presen
 import { follow, profile_view } from './schema/social';
 import { candidate_match, match_candidate_player, matchmaking_scan, party, party_member, queue_entry } from './schema/matchmaking';
 import { match, match_history, match_input, match_player, match_server_usage } from './schema/match';
-import { match_entity, match_event, match_objective, match_tick } from './schema/game';
+import { match_entity, match_event, match_msg, match_msg_rate, match_objective, match_tick } from './schema/game';
 import { planet_control_history, planet_discovery, rank_history, ranked_location_discovery, ranked_planet, ranked_planet_reservation, ranked_season } from './schema/ranked';
 import { server_clock } from './schema/clock';
 
@@ -41,6 +41,9 @@ export const spacetimedb = schema({
   match_entity,
   match_objective,
   match_event,
+  // the P2P-over-SpacetimeDB relay (2026-09-29)
+  match_msg,
+  match_msg_rate,
   // ranked mode (plan §33–§57)
   ranked_season,
   ranked_planet,
@@ -63,6 +66,8 @@ export {
   match_event,
   match_history,
   match_input,
+  match_msg,
+  match_msg_rate,
   match_objective,
   match_player,
   match_server_usage,

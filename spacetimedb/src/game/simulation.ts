@@ -14,7 +14,7 @@
 import { SenderError, t } from 'spacetimedb/server';
 import { spacetimedb } from '../schema';
 import { match_input, match_player, match } from '../schema/match';
-import { match_event, match_tick } from '../schema/game';
+import { match_event, match_msg, match_tick } from '../schema/game';
 import { player_presence } from '../schema/player';
 import {
   COLONY_CAP,
@@ -42,6 +42,13 @@ const POSE_MIN_GAP_US = 400_000n;
 const INPUT_STALE_US = 1_000_000n;
 /** A pose claim older than this stops participating in validation. */
 const POSE_FRESH_US = 5_000_000n;
+/**
+ * How long relayed P2P messages stay in `match_msg` before the tick sweeps them. Long
+ * enough for a mid-match joiner's initial subscription to deliver the in-flight burst a
+ * client needs to catch up (the next 12 Hz snapshot covers it), short enough that the
+ * table is a sliding window rather than storage (plan §46).
+ */
+const RELAY_RETENTION_US = 6_000_000n;
 /** The plausible world band (surface terrain → colony decks ~72 above it). */
 const WORLD_LO_RADIUS = PLANET_RADIUS - 60;
 const WORLD_HI_RADIUS = PLANET_RADIUS + 120;
@@ -313,6 +320,14 @@ function simulateMatch(ctx: any, m: any): void {
   m.server_tick = serverTick;
 
   noteTickUsage(ctx, m.match_id, moved, Number(highestTickInput > 0n ? 1 : 0));
+
+  // ---- relay sweep (2026-09-29): `match_msg` is in-flight traffic, not storage. Six
+  // seconds is several times the longest realistic delivery window; anything older has
+  // either been applied everywhere or belongs to a receiver that is gone.
+  const relayCutoffUs = nowUs - RELAY_RETENTION_US;
+  for (const row of [...ctx.db.match_msg.match_id.filter(m.match_id)]) {
+    if ((row.at.microsSinceUnixEpoch as bigint) < relayCutoffUs) ctx.db.match_msg.id.delete(row.id);
+  }
 
   // ---- end conditions (safety nets until objectives own the finish line)
   if (elapsedUs >= MATCH_MAX_DURATION_US) {

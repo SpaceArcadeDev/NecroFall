@@ -6,7 +6,7 @@
 import { SpacetimeConnection } from './connection';
 import { Identity, PlayerSearchHitRow } from './rows';
 
-export function callReducer(name: string, args?: unknown): void {
+export function callReducer(name: string, args?: unknown, quiet = false): void {
   const conn = SpacetimeConnection.shared.current;
   const fn = conn?.reducers?.[name];
   if (!fn) {
@@ -19,6 +19,9 @@ export function callReducer(name: string, args?: unknown): void {
       console.warn(`[NECROFALL] reducer "${name}" failed: ${message}`);
       // The shell listens for this and turns validation failures into a toast —
       // module reducers throw SenderError so `message` is user-readable.
+      // `quiet` is for internal plumbing (the match relay): its traffic races match
+      // end/authority handover by design, and a toast per late packet would be noise.
+      if (quiet) return;
       try {
         window.dispatchEvent(new CustomEvent('nf:reducer-error', { detail: { name, message } }));
       } catch {
@@ -155,6 +158,21 @@ export interface SyncPoseArgs {
   fz: number;
 }
 export const syncPose = (args: SyncPoseArgs): void => callReducer('syncPose', args);
+
+/**
+ * SEND MATCH MESSAGE (2026-09-29) — one P2P wire frame through the official relay. Quiet:
+ * its traffic races match end and authority handovers by design (the server drops what it
+ * can no longer place), and a toast per late packet would be noise, not information.
+ */
+export interface SendMatchMsgArgs {
+  matchId: number;
+  /** Target identity hex; '' = broadcast to every seat. */
+  toHex: string;
+  kind: string;
+  seq: bigint;
+  payload: string;
+}
+export const sendMatchMsg = (args: SendMatchMsgArgs): void => callReducer('sendMatchMsg', args, true);
 
 export const reportMatchStats = (kills: number, deaths: number, objectives: number, damage: number): void =>
   callReducer('reportMatchStats', { kills, deaths, objectives, damage });

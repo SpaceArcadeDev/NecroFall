@@ -45,8 +45,10 @@ import { NetworkManager, NetMessage } from '../networking/Networking';
 // Type-only: the official multiplayer seam. No SpacetimeDB code is bundled into the game.
 import type {
   OfficialGameBridge,
+  OfficialGamePlayerInfo,
   OfficialMatchPayload,
   OfficialMatchResult,
+  OfficialNetMessage,
   OfficialStateMessage,
 } from '../app/multiplayer/OfficialTypes';
 import { ClockSync } from '../networking/ClockSync';
@@ -386,6 +388,11 @@ export class Game {
   /** Minimum gap between two pickup grabs a client asks the host for. */
   private pickupAskT = 0;
   private stateT = 0;
+  /** Official matches: cadence of the server-record feed (submit_input/sync_pose, throttled). */
+  private stateT2 = 0;
+  /** Official client: signature + time of the last relayed pose, so idle players go quiet. */
+  private relaySig = '';
+  private relaySentAt = 0;
   private enemyHitBatch: { eid: number; amt: number; src: string; aoe: number }[] = [];
   private killBatch: number[] = [];
   private bossScratch: Enemy[] = [];
@@ -1221,9 +1228,17 @@ export class Game {
 
   /**
    * Boot straight into a server-created OFFICIAL match: seed, elapsed clock and every seat's
-   * colony come from the SpacetimeDB rows. The local client still runs the world simulation (the
-   * server owns the match lifecycle, the roster, the clock and the results), and remote players
-   * are driven by server poses through the exact same interpolation pipeline as P2P.
+   * colony come from the SpacetimeDB rows.
+   *
+   * THE PROTOCOL (2026-09-29 rework): an official match runs the SAME authority protocol as a
+   * P2P room — one seat is the match AUTHORITY and behaves exactly like a P2P host (it runs the
+   * world sim and broadcasts `s` snapshots + one-shot events), every other seat behaves exactly
+   * like a P2P client (15 Hz pose+stats reports into the authority, single asks for hits, drops
+   * and casts). Only the wire differs: `net.relay` routes every P2P send through the
+   * SpacetimeDB relay (`match_msg` rows) instead of DataChannels, and incoming rows are fed
+   * into the same `onNetMessage` switch — so beacons, the Nexus, enemies, pickups, hits,
+   * statuses, kills and everyone's health/level/mutations sync exactly the way they do in P2P.
+   * The server still owns the match lifecycle, the roster, the clock and the results.
    */
   private beginOfficialMatch(): void {
     const official = this.officialMatch;
@@ -1231,11 +1246,14 @@ export class Game {
     const { match, bridge } = official;
     this.officialUsage = null;
 
-    // A local authority with no peers: the P2P transport stays idle, the world
-    // still simulates, and every pose report is routed to the bridge instead.
+    // The P2P transport stays idle; every gameplay send is routed through the relay instead.
     this.net.setIdentity(match.meId);
     this.net.goSolo();
-    this.isHost = true;
+    this.net.relay = {
+      send: (toId, msg) => bridge.sendNetTo(toId, msg as OfficialNetMessage),
+      broadcast: (msg, exceptId) => bridge.broadcastNet(msg as OfficialNetMessage, exceptId),
+    };
+    this.applyOfficialAuthority(match.authorityId || match.meId);
 
     this.roster.clear();
     this.players.clear();
@@ -1256,7 +1274,9 @@ export class Game {
     this.hostOrder = [match.meId, ...match.players.map(p => p.id).filter(id => id !== match.meId)];
 
     bridge.attachGame({
-      applyRemote: (id, msg) => this.applyOfficialRemote(id, msg),
+      applyNetMessage: (id, msg) => this.applyOfficialNetMessage(id, msg),
+      setAuthority: id => this.applyOfficialAuthority(id),
+      setRoster: players => this.applyOfficialRoster(players),
       matchEnded: result => this.officialMatchEnded(result),
     });
 
@@ -1267,6 +1287,101 @@ export class Game {
     this.officialElapsedBase = match.elapsed;
     this.officialBootAt = nowSec();
     this.beginOfficialNecrotechPhase();
+  }
+
+  /** The current relay authority's game id ('' until the provider names one). */
+  private officialAuthorityId = '';
+
+  /**
+   * Adopt the P2P role the authority implies: authority = host (simulates + broadcasts),
+   * anyone else = client (reports to the authority). Runs on every provider push, so a
+   * mid-match authority move (the old authority dropped) flips the roles exactly like a P2P
+   * host migration: clocks reset, the new authority starts snapshotting immediately.
+   */
+  private applyOfficialAuthority(id: string): void {
+    if (!this.officialMatch) return;
+    const authority = id || this.net.myId;
+    const amAuthority = authority === this.net.myId;
+    const changed = this.officialAuthorityId !== '' && (this.officialAuthorityId !== authority || this.isHost !== amAuthority);
+    this.officialAuthorityId = authority;
+    this.isHost = amAuthority;
+    this.net.isHost = amAuthority;
+    this.net.hostId = authority;
+    if (changed) {
+      this.resetClocks();
+      this.snapshotT = 0; // became the authority: push a full snapshot at once
+      this.relaySig = ''; // became a client: the next pose goes out immediately
+      if (this.phase === 'playing') {
+        if (amAuthority) {
+          this.ui.banner('YOU ARE NOW THE AUTHORITY', 2600);
+          this.ui.toast('The other survivor dropped — you carry this match now.', 4200);
+        } else {
+          this.ui.banner('AUTHORITY MOVED — MATCH CONTINUES', 2400);
+        }
+      }
+    }
+  }
+
+  /**
+   * Keep the game roster in step with the match_player rows: names, colonies and classes for
+   * everyone (a mid-match joiner gets its real name on every screen), and a seat that LEFT is
+   * dropped exactly like a P2P `bye` — body, roster entry and pending pickups.
+   */
+  private applyOfficialRoster(players: OfficialGamePlayerInfo[]): void {
+    const seen = new Set<string>();
+    for (const p of players) {
+      seen.add(p.id);
+      if (p.left) continue; // handled below — never (re)add a tombstone
+      const r = this.roster.get(p.id);
+      if (r) {
+        r.name = p.name;
+        r.colony = p.colony;
+        if (p.id !== this.net.myId && p.necrotech >= 0) r.nt = p.necrotech;
+        r.isHost = p.id === this.officialAuthorityId;
+      } else {
+        this.roster.set(p.id, {
+          id: p.id,
+          name: p.name,
+          ready: true,
+          colony: p.colony,
+          nt: p.id === this.net.myId ? -1 : p.necrotech,
+          isHost: p.id === this.officialAuthorityId,
+          me: p.id === this.net.myId,
+        });
+      }
+      const body = this.players.get(p.id);
+      if (body) body.name = p.name; // head plates and the kill feed read this
+    }
+    for (const p of players) {
+      if (!p.left) continue;
+      if (p.id === this.net.myId) continue; // my own tombstone is the shell's business
+      const entry = this.roster.get(p.id);
+      if (entry && this.phase === 'playing') {
+        this.ui.killFeed(`${entry.name} left the planet`, COLONIES[Math.max(0, entry.colony)].css);
+      }
+      for (const pk of this.pickups) {
+        if (pk.claimedBy === p.id) {
+          pk.taken = false;
+          pk.claimedBy = '';
+        }
+      }
+      this.roster.delete(p.id);
+      const body = this.players.get(p.id);
+      if (body) {
+        body.dispose();
+        this.players.delete(p.id);
+      }
+      this.peerSync.delete(p.id);
+    }
+  }
+
+  /**
+   * A relayed P2P message from another seat. It rides the SAME `onNetMessage` paths a P2P
+   * packet does — poses, snapshots, hits, drops, casts, kills — so the game cannot tell the
+   * two worlds apart, which is exactly the point (plan §10).
+   */
+  applyOfficialNetMessage(id: string, msg: OfficialNetMessage): void {
+    this.onNetMessage(id, msg as NetMessage);
   }
 
   /** The official match's starter-class pick — the P2P SELECT NECROTECH screen, locally authoritative. */
@@ -1332,15 +1447,6 @@ export class Game {
     const room = (code ?? '').trim().toUpperCase();
     if (room.length < 4) return;
     void this.joinLobby(room, (name ?? '').trim() || this.ui.playerName);
-  }
-
-  /**
-   * A server pose for a remote player. It rides the SAME `st` path as a P2P
-   * client report, including the clock mapping — the game cannot tell the two
-   * worlds apart, which is exactly the point (plan §10).
-   */
-  applyOfficialRemote(id: string, msg: OfficialStateMessage): void {
-    this.onNetMessage(id, msg as NetMessage);
   }
 
   /** The official server finished the match: show its authoritative result. */
@@ -2166,7 +2272,9 @@ export class Game {
       this.audio.sfx('ui');
       return;
     }
-    if (this.isHost) {
+    if (this.isHost || this.officialMatch) {
+      // OFFICIAL: the starter pick is a LOCAL phase (the server match is already live), so it
+      // is applied to our own roster entry directly on every seat, authority or not.
       this.hostSetSelection(this.net.myId, { nt: idx });
     } else {
       this.net.sendToHost({ t: 'sel', nt: idx });
@@ -4501,7 +4609,10 @@ export class Game {
     if (wheel !== 0 && this.phase === 'playing') this.cam.zoomBy(wheel);
 
     // phase timers (host authoritative) -------------------------------
-    if (this.isHost) {
+    // OFFICIAL clients run their OWN necrotech countdown: the starter picker is a local phase
+    // (the server match is already live), so every seat must finalize it locally — the
+    // authority broadcasts nothing for it.
+    if (this.isHost || (this.officialMatch && this.phase === 'necrotech')) {
       if (this.phase === 'colony') {
         this.phaseTimer -= dt;
         // The countdown always runs its full length — nobody picking, or everyone
@@ -4612,16 +4723,55 @@ export class Game {
     // timeline that network delay does not distort.
     const now = nowSec();
     if (this.officialMatch) {
-      // OFFICIAL: the bridge decides how rarely this becomes a reducer call
-      // (change-driven + heartbeat — plan §18/§39/§77). Never per frame.
-      this.stateT -= dt;
-      if (this.stateT <= 0 && this.localPlayer) {
-        this.stateT = 1 / CONFIG.netTickPlayers;
-        this.officialMatch.bridge.sendLocalState({
-          t: 'st',
-          time: now,
-          state: this.localPlayer.toNet(now) as unknown as Record<string, unknown>,
-        });
+      // OFFICIAL (2026-09-29): the transport is the SpacetimeDB relay but the ROLES are P2P's.
+      // The authority broadcasts the same `s` snapshot a P2P host does (through `net.broadcast`
+      // → relay); clients stream their full pose+stats (`toNet` — hp, level, mutations, shields
+      // included) into the authority at CONFIG.netTickOfficialPose, skipping unchanged frames
+      // and falling back to a 1 Hz heartbeat. `sendLocalState` keeps feeding the server's own
+      // record (input validation + the seat's liveness) at its throttled cadence.
+      if (this.isHost) {
+        this.snapshotT -= dt;
+        if (this.snapshotT <= 0) {
+          this.snapshotT = 1 / CONFIG.netTickSnapshot;
+          const players: PlayerNet[] = [];
+          for (const p of this.players.values()) players.push(p.toNet(now));
+          this.net.broadcast({
+            t: 's',
+            time: now,
+            el: Math.round(this.matchElapsed * 100) / 100,
+            pl: players,
+            en: this.enemies.serialize(),
+            tw: this.towers.serialize(),
+            pk: this.pickups.map(pk => ({ id: pk.id, x: pk.mesh.position.x, y: pk.mesh.position.y, z: pk.mesh.position.z, nt: pk.nt, rare: pk.rare ? 1 : 0, tk: pk.taken ? 1 : 0 })),
+          });
+        }
+      } else {
+        this.stateT -= dt;
+        if (this.stateT <= 0 && this.localPlayer) {
+          this.stateT = 1 / CONFIG.netTickOfficialPose;
+          const state = this.localPlayer.toNet(now);
+          // Sends when anything the other side renders CHANGED — pose, hp, level, mutations,
+          // shields, frozen/blitz — plus a 1 Hz idle heartbeat. That is what keeps hp/level/
+          // mutation live on every other screen the frame they change.
+          const sig = `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
+          if (sig !== this.relaySig || now - this.relaySentAt > 1) {
+            this.relaySig = sig;
+            this.relaySentAt = now;
+            this.net.sendToHost({ t: 'st', time: now, state });
+          }
+        }
+      }
+      // Server-side record / liveness feed (the bridge throttles `submitInput` + `syncPose`).
+      if (this.localPlayer) {
+        this.stateT2 -= dt;
+        if (this.stateT2 <= 0) {
+          this.stateT2 = 1 / CONFIG.netTickPlayers;
+          this.officialMatch.bridge.sendLocalState({
+            t: 'st',
+            time: now,
+            state: this.localPlayer.toNet(now) as unknown as Record<string, unknown>,
+          });
+        }
       }
       return;
     }

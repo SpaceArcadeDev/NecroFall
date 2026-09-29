@@ -58,6 +58,7 @@ import RecordProfileViewReducer from "./record_profile_view_reducer";
 import ReportMatchStatsReducer from "./report_match_stats_reducer";
 import ReportNecrophageVictoryReducer from "./report_necrophage_victory_reducer";
 import ReportNexusCaptureReducer from "./report_nexus_capture_reducer";
+import SendMatchMsgReducer from "./send_match_msg_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetBanAdminReducer from "./set_ban_admin_reducer";
 import SetBioReducer from "./set_bio_reducer";
@@ -82,6 +83,7 @@ import MatchRow from "./match_table";
 import MatchEntityRow from "./match_entity_table";
 import MatchEventRow from "./match_event_table";
 import MatchHistoryRow from "./match_history_table";
+import MatchMsgRow from "./match_msg_table";
 import MatchObjectiveRow from "./match_objective_table";
 import MatchPlayerRow from "./match_player_table";
 import MyCandidateRow from "./my_candidate_table";
@@ -182,6 +184,20 @@ const tablesSchema = __schema({
       { name: 'match_history_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, MatchHistoryRow),
+  matchMsg: __table({
+    name: 'match_msg',
+    indexes: [
+      { accessor: 'id', name: 'match_msg_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'match_id', name: 'match_msg_match_id_idx_btree', algorithm: 'btree', columns: [
+        'matchId',
+      ] },
+    ],
+    constraints: [
+      { name: 'match_msg_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, MatchMsgRow),
   matchObjective: __table({
     name: 'match_objective',
     indexes: [
@@ -521,6 +537,7 @@ const reducersSchema = __reducers(
   __reducerSchema("report_match_stats", ReportMatchStatsReducer),
   __reducerSchema("report_necrophage_victory", ReportNecrophageVictoryReducer),
   __reducerSchema("report_nexus_capture", ReportNexusCaptureReducer),
+  __reducerSchema("send_match_msg", SendMatchMsgReducer),
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_ban_admin", SetBanAdminReducer),
   __reducerSchema("set_bio", SetBioReducer),
@@ -550,6 +567,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "match_event": Omit<typeof tablesSchema.schemaType.tables["matchEvent"], "accessorName"> & { readonly accessorName: "match_event" };
     /** @deprecated Use `matchHistory` instead. This alias will be removed in the next major version. */
     readonly "match_history": Omit<typeof tablesSchema.schemaType.tables["matchHistory"], "accessorName"> & { readonly accessorName: "match_history" };
+    /** @deprecated Use `matchMsg` instead. This alias will be removed in the next major version. */
+    readonly "match_msg": Omit<typeof tablesSchema.schemaType.tables["matchMsg"], "accessorName"> & { readonly accessorName: "match_msg" };
     /** @deprecated Use `matchObjective` instead. This alias will be removed in the next major version. */
     readonly "match_objective": Omit<typeof tablesSchema.schemaType.tables["matchObjective"], "accessorName"> & { readonly accessorName: "match_objective" };
     /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */
@@ -617,6 +636,7 @@ const tableAccessorAliases = {
   "match_entity": "matchEntity",
   "match_event": "matchEvent",
   "match_history": "matchHistory",
+  "match_msg": "matchMsg",
   "match_objective": "matchObjective",
   "match_player": "matchPlayer",
   "party_member": "partyMember",
@@ -666,6 +686,8 @@ export type DbView = __DbViewBase & {
   readonly "match_event": __DbViewBase["matchEvent"];
   /** @deprecated Use `matchHistory` instead. This alias will be removed in the next major version. */
   readonly "match_history": __DbViewBase["matchHistory"];
+  /** @deprecated Use `matchMsg` instead. This alias will be removed in the next major version. */
+  readonly "match_msg": __DbViewBase["matchMsg"];
   /** @deprecated Use `matchObjective` instead. This alias will be removed in the next major version. */
   readonly "match_objective": __DbViewBase["matchObjective"];
   /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */
@@ -722,6 +744,8 @@ export type Tables = __TablesBase & {
   readonly "match_event": __TablesBase["matchEvent"];
   /** @deprecated Use `matchHistory` instead. This alias will be removed in the next major version. */
   readonly "match_history": __TablesBase["matchHistory"];
+  /** @deprecated Use `matchMsg` instead. This alias will be removed in the next major version. */
+  readonly "match_msg": __TablesBase["matchMsg"];
   /** @deprecated Use `matchObjective` instead. This alias will be removed in the next major version. */
   readonly "match_objective": __TablesBase["matchObjective"];
   /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */

@@ -13,6 +13,17 @@ import type { SavedRun } from './Session';
 
 export type NetMessage = { t: string } & Record<string, any>;
 
+/**
+ * The OFFICIAL transport (2026-09-29): when set, every P2P send is routed through the
+ * SpacetimeDB relay instead of WebRTC DataChannels. The topology is identical — clients
+ * still `sendToHost`, the authority still `broadcast`s — so the whole gameplay protocol
+ * runs unchanged; only the wire differs. `toId` is a GAME id ("og-…"), not a peer id.
+ */
+export interface NetRelay {
+  send(toId: string, msg: NetMessage): void;
+  broadcast(msg: NetMessage, exceptId?: string): void;
+}
+
 export interface NetCallbacks {
   onOpen(): void;
   /**
@@ -95,6 +106,8 @@ export class NetworkManager {
    * the newly elected host may never have seen this player, and the save is what puts it back.
    */
   lastRun: SavedRun | null = null;
+  /** Official (SpacetimeDB) transport — see `NetRelay`. Null = plain P2P / solo. */
+  relay: NetRelay | null = null;
   /** Why the last join attempt failed: `unavailable` = no room with that code, `timeout` = silence. */
   joinError: 'unavailable' | 'timeout' | '' = '';
   /** True while a join is in flight — the caller reports the failure, not the generic fatal path. */
@@ -863,6 +876,7 @@ export class NetworkManager {
 
   /** Tells the host we are leaving (so it can remove us) before closing the connections. */
   sendLeave(): void {
+    if (this.relay) return; // official: the provider tombstones the seat instead (leave_match)
     if (this.isHost) {
       // Announce first: the survivors start electing immediately instead of waiting for a timeout.
       this.broadcast({ t: 'hostgone', reason: 'The host left the planet' });
@@ -894,6 +908,10 @@ export class NetworkManager {
   /** Sends to a *player* id (the id the game keys players by) — peer ids are resolved here. */
   sendTo(id: string, msg: NetMessage): void {
     if (!id || id === this.myId) return;
+    if (this.relay) {
+      this.relay.send(id, msg);
+      return;
+    }
     const conn = this.conns.get(this.peerIdOf(id));
     if (conn && conn.open) {
       try {
@@ -906,6 +924,16 @@ export class NetworkManager {
   }
 
   sendToHost(msg: NetMessage): void {
+    if (this.relay) {
+      // Official: the authority is the "host". Its own sends loop back locally exactly like
+      // a P2P host's do; everyone else addresses the authority seat.
+      if (this.isHost) {
+        this.cbs.onMessage(this.myId, msg);
+        return;
+      }
+      if (this.hostId && this.hostId !== this.myId) this.relay.send(this.hostId, msg);
+      return;
+    }
     if (this.isHost) {
       this.cbs.onMessage(this.myId, msg);
       return;
@@ -914,6 +942,10 @@ export class NetworkManager {
   }
 
   broadcast(msg: NetMessage, exceptId?: string): void {
+    if (this.relay) {
+      this.relay.broadcast(msg, exceptId);
+      return;
+    }
     const skipPeer = exceptId ? this.peerIdOf(exceptId) : '';
     for (const [id, conn] of this.conns) {
       if (id === skipPeer || id === this.peerId) continue;
@@ -928,6 +960,19 @@ export class NetworkManager {
   }
 
   update(dt: number): void {
+    if (this.relay) {
+      // Official transport: no channels to ping, no elections, no desert recovery — the
+      // authority is decided server-side from seat liveness. Only the traffic meter runs.
+      this.statT += dt;
+      if (this.statT >= 1) {
+        this.msgsPerSec = this.statsOn ? this.statMsgs / this.statT : 0;
+        this.bytesPerSec = this.statsOn ? this.statBytes / this.statT : 0;
+        this.statMsgs = 0;
+        this.statBytes = 0;
+        this.statT = 0;
+      }
+      return;
+    }
     // keepalive / stale connection detection
     this.pingT -= dt;
     if (this.pingT <= 0) {
@@ -980,6 +1025,7 @@ export class NetworkManager {
 
   leave(): void {
     this.disposePeer();
+    this.relay = null; // dropping the room drops the official wire too — never leak it into P2P
     this.isHost = false;
     this.connected = false;
     this.online = false;

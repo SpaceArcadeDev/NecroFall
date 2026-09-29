@@ -264,6 +264,26 @@ export interface MatchPlayerRow {
   left: boolean;
 }
 
+/**
+ * One relayed P2P message of an official match (2026-09-29) — the SpacetimeDB-carried wire of
+ * the authority protocol. Receivers rebuild the sender's game id from `fromHex` and feed
+ * `{ t: kind, ...JSON.parse(payload) }` into the same `onNetMessage` handlers P2P uses.
+ */
+export interface MatchMsgRow {
+  id: bigint;
+  matchId: number;
+  /** Sender identity hex. */
+  fromHex: string;
+  /** Target identity hex; '' = broadcast to every seat. */
+  toHex: string;
+  /** NetMessage kind (`st`, `s`, `ehits`, ...). */
+  kind: string;
+  seq: bigint;
+  /** JSON body of the message (all fields except `t`). */
+  payload: string;
+  at: Timestamp;
+}
+
 export interface MatchHistoryRow {
   id: number;
   identity: Identity;

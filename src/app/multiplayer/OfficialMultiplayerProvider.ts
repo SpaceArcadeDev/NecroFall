@@ -30,8 +30,9 @@ import {
   reportNexusCapture,
   reportNecrophageVictory,
   findRankedMatch as findRankedMatchReducer,
+  sendMatchMsg,
 } from '../spacetimedb/reducers';
-import { hexOf, Identity, MatchPlayerRow, PlayerRow } from '../spacetimedb/rows';
+import { hexOf, Identity, MatchMsgRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
 import { loadSelection, selectionToWire } from '../../customization/CustomizationStore';
 import { MultiplayerProvider, ProviderConnectionState, ProviderGameEvent } from './MultiplayerProvider';
@@ -40,6 +41,7 @@ import {
   OfficialGameBridge,
   OfficialGamePlayerInfo,
   OfficialMatchPayload,
+  OfficialNetMessage,
   OfficialStateMessage,
 } from './OfficialTypes';
 
@@ -53,6 +55,12 @@ const DIR_EPS_DEG = 12;
 const AIM_EPS_DEG = 10;
 /** Speed change that counts as material (u/s). */
 const SPEED_EPS = 1.4;
+/**
+ * How long a merely-DISCONNECTED authority keeps its role before the relay hands it to the
+ * next seat (a clean LEAVE hands over immediately). Covers a link blip without ping-ponging
+ * the host role between two clients.
+ */
+const AUTHORITY_GRACE_MS = 2500;
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -137,8 +145,20 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private seq = 0n;
 
   // remote application bookkeeping
-  private appliedPoses = new Map<string, bigint>();
   private cacheUnsub: (() => void) | null = null;
+
+  // ---- relay wire (2026-09-29): the official match's P2P message channel
+  /** Highest match_msg id already fed to the game (monotonic — rows are swept by the server). */
+  private lastRelayId = 0n;
+  /** Sender-monotonic counter for outgoing relay messages (diagnostics). */
+  private relaySeq = 0n;
+  /** The game id of the current match authority ('' until determined from the seat rows). */
+  private authorityId = '';
+  /** A disagreed-on authority candidate and when it first appeared (role-handover hysteresis). */
+  private authorityPendingId = '';
+  private authorityPendingSince = 0;
+  /** Roster signature last pushed to the game — names/colonies/classes/tombstones. */
+  private rosterSignature = '';
 
   private gameListeners = new Set<(e: ProviderGameEvent) => void>();
   private stateListeners = new Set<(s: ProviderConnectionState) => void>();
@@ -168,7 +188,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.cacheUnsub?.();
     this.cacheUnsub = null;
     if (this.matchId) releaseMatch(this.matchId);
-    this.appliedPoses.clear();
+    this.clearRelayState();
     this.matchId = 0;
     this.payload = null;
     this.matchEndEmitted = false;
@@ -181,11 +201,21 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.matchId = 0;
     this.payload = null;
     this.matchEndEmitted = false;
-    this.appliedPoses.clear();
+    this.clearRelayState();
     this.gameApi = null;
     this.lastQueueSignature = '';
     this.lastCandidateSignature = '';
     this.clearConfirmHold();
+  }
+
+  /** Forget everything that belongs to one match's relay wire. */
+  private clearRelayState(): void {
+    this.lastRelayId = 0n;
+    this.relaySeq = 0n;
+    this.authorityId = '';
+    this.authorityPendingId = '';
+    this.authorityPendingSince = 0;
+    this.rosterSignature = '';
   }
 
   /** Forget any pending all-confirmed beat — a new queue must never inherit the old one's. */
@@ -420,12 +450,175 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.forcePose = true;
     this.lastInputSentAt = 0;
     this.lastPoseSentAt = 0;
-    this.appliedPoses.clear();
     if (this.payload) {
-      // Re-send the initial spawn pose right away so other clients see us.
+      // Push the current seats + authority immediately: the game may have booted before the
+      // last cache change, and the relay needs BOTH before it can route anything.
+      this.rosterSignature = ''; // force a fresh push
+      this.syncRosterAndAuthority(ClientCache.shared);
+      // Re-send the initial spawn pose right away so the server record is anchored.
       window.setTimeout(() => this.sendPoseNow(), 400);
       window.setTimeout(() => this.sendPoseNow(), 1400);
     }
+  }
+
+  // ------------------------------------------------------------ relay wire (official)
+
+  /**
+   * Relay one P2P message to ONE seat (game id). The game id is mapped back to the seat's
+   * identity; unknown ids are dropped (the sender's roster and ours can differ for a beat).
+   */
+  sendNetTo(toId: string, msg: OfficialNetMessage): void {
+    if (!this.matchId) return;
+    const hex = this.hexForGameId(toId);
+    if (!hex || hex === this.myHex) return;
+    this.relay(msg, hex);
+  }
+
+  /**
+   * Relay one P2P message to every seat (the authority's broadcast). `exceptId` rides along as
+   * the `ex` field, which receivers check against their own game id — the P2P
+   * `broadcast(msg, exceptId)` rule, preserved across the SpacetimeDB hop.
+   */
+  broadcastNet(msg: OfficialNetMessage, exceptId?: string): void {
+    if (!this.matchId) return;
+    this.relay(exceptId ? { ...msg, ex: exceptId } : msg, '');
+  }
+
+  /** Serialize one message into a `match_msg` row (kind + JSON body, `t` stripped). */
+  private relay(msg: OfficialNetMessage, toHex: string): void {
+    const kind = typeof msg.t === 'string' ? msg.t : '';
+    if (!kind) return;
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(msg)) if (k !== 't') body[k] = v;
+    this.relaySeq += 1n;
+    try {
+      sendMatchMsg({
+        matchId: this.matchId,
+        toHex,
+        kind,
+        seq: this.relaySeq,
+        payload: JSON.stringify(body),
+      });
+    } catch (err) {
+      console.warn('[NECROFALL] relay encode failed', err);
+    }
+  }
+
+  /** A game id ("og-<hex12>") back to the sender's identity hex — reverse of `gameIdFor`. */
+  private hexForGameId(id: string): string {
+    if (!this.matchId || !id.startsWith('og-')) return '';
+    const short = id.slice(3);
+    for (const row of ClientCache.shared.matchPlayers(this.matchId)) {
+      const hex = hexOf(row.identity);
+      if (hex && hex.startsWith(short)) return hex;
+    }
+    return '';
+  }
+
+  /**
+   * Deliver newly committed relay rows to the game. Rows older than the subscription seed
+   * are skipped (a fresh subscription replays the last few seconds), our own sends never come
+   * back to us, private traffic for someone else is ignored, and `ex` is the broadcast
+   * exclusion. Everything else is fed VERBATIM into the game — the same `onNetMessage` switch
+   * a P2P packet enters.
+   */
+  private emitRelay(cache: ClientCache): void {
+    if (!this.matchId || !this.gameApi) return;
+    // Collect the not-yet-seen rows first (usually zero to a few), then apply them in id
+    // order — the cache list is a hot stream and is not kept sorted for us.
+    let fresh: { id: bigint; row: MatchMsgRow }[] | null = null;
+    for (const row of cache.matchMessages(this.matchId)) {
+      if (row.id <= this.lastRelayId) continue;
+      (fresh ??= []).push({ id: row.id, row });
+    }
+    if (!fresh) return;
+    fresh.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    for (const { id, row } of fresh) {
+      this.lastRelayId = id;
+      if (row.fromHex === this.myHex) continue;
+      if (row.toHex && row.toHex !== this.myHex) continue;
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = JSON.parse(row.payload) as Record<string, unknown>;
+      } catch {
+        continue; // corrupt body — the streams are continuous, the next message recovers
+      }
+      if (!body || typeof body !== 'object') continue;
+      if (typeof body.ex === 'string' && body.ex === this.myGameId) continue;
+      this.gameApi.applyNetMessage(this.gameIdFor(row.fromHex), { t: row.kind, ...body });
+    }
+  }
+
+  /**
+   * Keep the game's roster and the authority role in step with the seat rows. The authority
+   * is the LOWEST connected non-left seat id — deterministic for every client, so a dropped
+   * authority hands over to the same successor everywhere. A merely-disconnected authority
+   * keeps the role for `AUTHORITY_GRACE_MS` (a clean LEAVE hands over at once); a flapping
+   * `connected` flag can never ping-pong the role.
+   */
+  private syncRosterAndAuthority(cache: ClientCache): void {
+    if (!this.matchId || !this.gameApi) return;
+    const rows = cache.matchPlayers(this.matchId);
+    if (rows.length === 0) return;
+    const players: OfficialGamePlayerInfo[] = [];
+    const segs: string[] = [];
+    for (const r of rows) {
+      const hex = hexOf(r.identity);
+      players.push({
+        id: this.gameIdFor(hex),
+        name: r.name || 'Survivor',
+        colony: r.colony,
+        necrotech: r.necrotech,
+        left: r.left,
+      });
+      segs.push(`${r.id}:${r.name}|${r.colony}|${r.necrotech}|${r.left ? 1 : 0}`);
+    }
+    const sig = segs.join(';');
+    if (sig !== this.rosterSignature) {
+      this.rosterSignature = sig;
+      this.gameApi.setRoster(players);
+    }
+
+    const live = rows.filter(r => !r.left);
+    if (live.length === 0) return;
+    const connected = live.filter(r => r.connected);
+    const pick = (connected.length > 0 ? connected : live).slice().sort((a, b) => a.id - b.id)[0];
+    const candidate = this.gameIdFor(hexOf(pick.identity));
+    if (!candidate || candidate === this.authorityId) {
+      this.authorityPendingId = '';
+      this.authorityPendingSince = 0;
+      return;
+    }
+    if (!this.authorityId) {
+      this.setAuthorityNow(candidate);
+      return;
+    }
+    const current = live.find(r => this.gameIdFor(hexOf(r.identity)) === this.authorityId);
+    // GONE (left or row removed) — the seat itself decided; hand over now.
+    if (!current) {
+      this.setAuthorityNow(candidate);
+      return;
+    }
+    // DISCONNECTED — a link blip looks exactly like a drop for a moment; wait the grace out.
+    if (!current.connected) {
+      if (this.authorityPendingId !== candidate) {
+        this.authorityPendingId = candidate;
+        this.authorityPendingSince = performance.now();
+      } else if (performance.now() - this.authorityPendingSince >= AUTHORITY_GRACE_MS) {
+        this.setAuthorityNow(candidate);
+      }
+      return;
+    }
+    this.authorityPendingId = '';
+    this.authorityPendingSince = 0;
+  }
+
+  /** The authority is us or someone else — push the new role into the game once. */
+  private setAuthorityNow(id: string): void {
+    this.authorityId = id;
+    this.authorityPendingId = '';
+    this.authorityPendingSince = 0;
+    this.gameApi?.setAuthority(id);
   }
 
   /**
@@ -525,7 +718,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.emitQueue(cache);
     this.emitCandidate(cache);
     this.detectMatchStart(cache);
-    this.applyRemotePoses(cache);
+    this.emitRelay(cache);
+    this.syncRosterAndAuthority(cache);
     this.detectMatchEnd(cache);
   }
 
@@ -671,6 +865,12 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private beginMatch(cache: ClientCache, matchId: number, seed: number, elapsed: number): void {
     this.matchId = matchId;
     this.matchEndEmitted = false;
+    // Fresh relay wire for this match: skip every row that already exists (the subscription
+    // replays a few seconds of history) and wait for the live stream from here.
+    this.clearRelayState();
+    for (const row of cache.matchMessages(matchId)) {
+      if (row.id > this.lastRelayId) this.lastRelayId = row.id;
+    }
     if (this.idleEmitTimer) {
       // The match materialized — the deferred idle signal would be a lie.
       window.clearTimeout(this.idleEmitTimer);
@@ -699,65 +899,27 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       name: row.name || 'Survivor',
       colony: row.colony,
       necrotech: row.necrotech,
+      left: row.left,
     }));
     const row = cache.match(this.matchId);
     const season = cache.rankedSeason();
+    // The boot-time authority: lowest connected non-left seat — recomputed live by
+    // `syncRosterAndAuthority` as seats come and go.
+    const live = (cache.matchPlayers(this.matchId) ?? []).filter(r => !r.left);
+    const connected = live.filter(r => r.connected);
+    const authorityPick = (connected.length > 0 ? connected : live).slice().sort((a, b) => a.id - b.id)[0];
     return {
       matchId: this.matchId,
       seed: row?.mapSeed ?? 1,
       elapsed: row?.durationSeconds ?? 0,
       meId: this.myGameId,
       players,
+      authorityId: authorityPick ? this.gameIdFor(hexOf(authorityPick.identity)) : this.myGameId,
       // Ranked facts (plan §32): the game regenerates the whole planet + ecology from these.
       ranked: Boolean(row?.ranked),
       planetKey: row?.planetKey ?? '',
       rankRing: row?.rankRing ?? 255,
       universeSeed: season ? Number(season.universeSeed % 4294967296n) >>> 0 : undefined,
-    };
-  }
-
-  private applyRemotePoses(cache: ClientCache): void {
-    if (!this.matchId || !this.gameApi) return;
-    for (const row of cache.matchPlayers(this.matchId)) {
-      const hex = hexOf(row.identity);
-      if (!hex || hex === this.myHex || !row.hasPose) continue;
-      const stamp = row.updatedAt.microsSinceUnixEpoch;
-      if ((this.appliedPoses.get(hex) ?? 0n) >= stamp) continue;
-      this.appliedPoses.set(hex, stamp);
-      this.gameApi.applyRemote(this.gameIdFor(hex), this.toPoseMessage(row));
-    }
-  }
-
-  private toPoseMessage(row: MatchPlayerRow): OfficialStateMessage {
-    const id = this.gameIdFor(hexOf(row.identity));
-    // The wire `time`/`pt` carry the SERVER clock: Game's ClockSync maps it onto
-    // the local clock, exactly like a P2P host's poses.
-    const time = Number(row.updatedAt.microsSinceUnixEpoch) / 1e6;
-    return {
-      t: 'st',
-      time,
-      state: {
-        id,
-        pt: time,
-        x: round2(row.x), y: round2(row.y), z: round2(row.z),
-        fx: round2(row.fx), fy: round2(row.fy), fz: round2(row.fz),
-        hp: Math.round(row.hp),
-        col: row.colony,
-        alive: row.alive ? 1 : 0,
-        lvl: 1,
-        ntn: '',
-        ntc: '',
-        mut: 0,
-        bl: 0,
-        xp: 0,
-        xpn: 0,
-        frz: 0,
-        acc: '',
-        sh: 0,
-        shm: 0,
-        inv: 0,
-        dsh: 0,
-      },
     };
   }
 

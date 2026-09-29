@@ -603,7 +603,7 @@ function overseerEye(): AccessoryBuild {
 }
 
 export const HATS: AccessoryDef[] = [
-  { id: 'pumpkin', name: 'PUMPKIN JACK', desc: 'A carved pumpkin worn whole over the head, lit from inside.', build: pumpkin },
+  { id: 'pumpkin', name: 'PUMPKIN JACK', desc: 'A carved pumpkin worn whole over the head.', build: pumpkin },
   { id: 'warlock', name: 'WARLOCK HAT', desc: 'A bent, brimmed hat that leaks arcane fall-out.', build: warlock },
   { id: 'bone-crown', name: 'BONE CROWN', desc: 'Three tiny skulls watch what you watch.', build: boneCrown },
   { id: 'iron-crown', name: 'IRON CROWN', desc: 'Spiked iron and a humming power gem.', build: ironCrown },

@@ -427,24 +427,38 @@
 }
 .acc-right {
   flex: 0 1 420px;
+  /* A flex item's default `min-width: auto` makes its CONTENT a floor: the nowrap tab row below
+     is ~670px wide, so this column grew to fit it (~710px) and squeezed the avatar stage down to
+     ~236px (user report: "the right section increased width; keep the old ratio"). With
+     `min-width: 0` the column stays at its 420px basis and the TAB ROW does the scrolling. */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
-/* ONE ROW, ALWAYS (user ask 2026-09-29): the six categories scroll HORIZONTALLY instead of
-   wrapping onto a second row — the wrap made the list jump height and read as two shelves. */
+/* ONE ROW, ALWAYS (user ask): the six categories scroll HORIZONTALLY inside the column instead
+   of wrapping into a second shelf. A SLIM VISIBLE bar is deliberate — with the bar hidden the
+   row reads as a dead end, while SPAWN/ELIMINATED sit past the right edge. */
 .acc-tabs {
   display: flex;
   gap: 8px;
   justify-content: flex-start;
   flex-wrap: nowrap;
+  min-width: 0;
   overflow-x: auto;
+  /* …and NEVER a vertical bar: `overflow-x: auto` forces `overflow-y` to auto too, and the 5px
+     horizontal bar counts as overflow — the row grew a 10px vertical scrollbar gutter on the
+     right (measured: 410px of tabs in a 420px column). One row, one bar. */
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 120, 220, 0.5) transparent;
   margin: 0 0 8px;
   padding-bottom: 2px;
 }
-.acc-tabs::-webkit-scrollbar { display: none; }
+.acc-tabs::-webkit-scrollbar { height: 5px; }
+.acc-tabs::-webkit-scrollbar-track { background: transparent; }
+.acc-tabs::-webkit-scrollbar-thumb { background: rgba(150, 120, 220, 0.45); border-radius: 3px; }
 .acc-tab { flex: 0 0 auto; white-space: nowrap; }
 /* one line of context per category — the three effect tabs must say WHEN they play */
 .acc-hint {

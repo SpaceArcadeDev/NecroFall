@@ -108,6 +108,8 @@ export class AppShell implements ShellContext {
   private gameScreenWatch = 0;
   /** Last in-game screen seen — leaving the P2P LOBBY must return to the shell, not the legacy menu. */
   private lastGameScreen: ScreenName = 'menu';
+  /** The main menu's live chrome height + 6 — the floating friends bar's top offset. */
+  private railTopPx = 78;
   /**
    * The OFFICIAL lobby is standing on the game's own P2P lobby screen (user ask 2026-09-29).
    * The shell owns the screen though — the flag routes the screen-change observer and feeds
@@ -192,8 +194,12 @@ export class AppShell implements ShellContext {
     this.topBar.settings.addEventListener('click', () => this.toggleSettings());
     this.topBar.howto.addEventListener('click', () => this.openGameScreen('howto'));
 
-    // The avatar stage is sized from its box — restage it when the window reflows.
-    window.addEventListener('resize', () => this.restageAvatar());
+    // The avatar stage is sized from its box — restage it when the window reflows
+    // (and re-measure the friends bar's main-menu offset while we're at it).
+    window.addEventListener('resize', () => {
+      this.restageAvatar();
+      this.refreshRail();
+    });
 
     // The floating "ACCOUNT" pill lets a P2P player return to the shell from
     // the legacy menu without reloading.
@@ -1734,6 +1740,12 @@ export class AppShell implements ShellContext {
    */
   private refreshRail(): void {
     const g = this.game;
+    // The floating bar must sit EXACTLY where the main menu's bar sits: measure the
+    // chrome's live height here (it collapses to 0 on bare/game screens — keep the last
+    // good value) and hand it to the CSS as `--nf-rail-top` (user ask 2026-09-29 PM).
+    const chromeH = this.chrome.getBoundingClientRect().height;
+    if (chromeH > 8) this.railTopPx = Math.round(chromeH) + 6;
+    this.rail.element.style.setProperty('--nf-rail-top', `${this.railTopPx}px`);
     const inSession = !!g && (g.phase === 'playing' || g.phase === 'colony' || g.phase === 'necrotech');
     const excluded =
       this.screen === 'login' ||

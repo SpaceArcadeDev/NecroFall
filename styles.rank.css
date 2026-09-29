@@ -144,7 +144,9 @@
 /* quick actions (user ask 2026-09-29 PM): the code input FIRST, then JOIN ·
    CREATE LOBBY · FIND MATCH. Desktop + landscape stack them in the right column;
    portrait wraps: input on its own line, the three buttons share the next.
-   The input matches the buttons' height EXACTLY (user ask). */
+   The input is built IDENTICALLY to the buttons — same height, padding, font size and
+   border — so it can never render a different height (user ask: "exact same height
+   as the join button"). */
 .rk-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 2px; }
 .rk-quick .rk-btn { flex: 1 1 0; height: 34px; justify-content: center; padding: 9px 8px; font-size: 11px; letter-spacing: 0.08em; white-space: nowrap; }
 .rk-join-input {
@@ -157,9 +159,10 @@
   background: rgba(10, 6, 20, 0.6);
   color: var(--ui-text);
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
   letter-spacing: 0.2em;
   text-transform: uppercase;
+  line-height: 1;
 }
 
 /* the map's expand toggle — and the fullscreen map it opens */

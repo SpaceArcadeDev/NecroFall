@@ -1778,7 +1778,10 @@ html.nf-onb-colony .count-badge { display: none; }
    (user ask 2026-09-29: "no need enter animation for collapsed friends menu in lobby"). */
 .nf-rail.floating {
   position: fixed;
-  top: 78px;
+  /* The MAIN MENU's own offset — measured by the shell (chrome height + 6) and handed
+     over as `--nf-rail-top`, so the bar's position and height are IDENTICAL in the
+     lobby and the main menu on every viewport (user ask 2026-09-29 PM). */
+  top: var(--nf-rail-top, 78px);
   right: 10px;
   bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   left: auto;
@@ -1787,12 +1790,15 @@ html.nf-onb-colony .count-badge { display: none; }
   z-index: 4050;
   animation: none;
 }
-/* In the in-game LOBBY the bar gets a REAL strip of its own (user ask 2026-09-29 PM:
-   "in lobby, no relative space given for collapsed friends menu"): while the floating
-   bar is on screen the whole lobby screen ends left of it instead of being covered.
-   78 = rail right offset 10 + bar width 58 + a 10px gutter. */
-body:has(.nf-rail.floating:not(.hidden)) .lobby-screen {
-  right: 78px;
+/* In the in-game LOBBY the bar gets its own strip (user ask), but ONLY the roster panel
+   yields to it (user ask 2026-09-29 PM: the purple backdrop, the header and the code
+   chrome must stay untouched — the whole screen used to shrink). The reserve applies
+   where the panel could actually reach the bar (≤959px, i.e. phones/landscape). */
+@media (max-width: 959px) {
+  body:has(.nf-rail.floating:not(.hidden)) .lobby-screen .lobby-panel {
+    width: min(720px, calc(100% - 78px));
+    margin-right: 78px;
+  }
 }
 /* short landscape frames: hand the bar back the nav's reserve so it is never a stub */
 @media (max-height: 480px) {
@@ -1800,9 +1806,9 @@ body:has(.nf-rail.floating:not(.hidden)) .lobby-screen {
 }
 .nf-rail.open { border-color: color-mix(in srgb, var(--ui-accent) 65%, transparent); }
 /* BARE screens collapse the chrome to height 0 (wordmark rises to the top) — the bar
-   keeps the MAIN MENU's top offset (chrome 72px + its own 6px) so its position and
-   height are IDENTICAL on every shell screen (user ask 2026-09-29). */
-.nf-shell.bare-mode .nf-rail:not(.floating) { margin-top: 78px; }
+   keeps the MAIN MENU's top offset (measured live into `--nf-rail-top`) so its position
+   and height are IDENTICAL on every shell screen (user ask 2026-09-29 PM). */
+.nf-shell.bare-mode .nf-rail:not(.floating) { margin-top: var(--nf-rail-top, 78px); }
 .nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes nf-panel-in {
   from { opacity: 0; transform: translateX(14px); }

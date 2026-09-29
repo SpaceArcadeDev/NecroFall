@@ -873,7 +873,7 @@
 .rk-board-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 44px 1fr 80px 64px 96px;
+  grid-template-columns: 44px 1fr 80px auto;
   align-items: center;
   gap: 8px;
   padding: 9px 10px;
@@ -895,8 +895,12 @@
 .rk-board-row.top1 .rk-board-rank { color: #ffd166; }
 .rk-board-name { font-weight: 700; letter-spacing: 0.05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rk-board-colony { font-size: 10.5px; font-weight: 800; letter-spacing: 0.2em; }
-.rk-board-stars { text-align: right; font-weight: 800; color: #ffd166; }
-.rk-board-tier { text-align: right; font-size: 10.5px; letter-spacing: 0.12em; color: var(--ui-text-muted); }
+/* The rank cell (user ask 2026-09-29): DIVISION · STARS in that reading order —
+   the division decides the standing, the stars rank within it. */
+.rk-board-rankcell { display: flex; align-items: baseline; justify-content: flex-end; gap: 5px; white-space: nowrap; }
+.rk-board-tier { font-size: 10.5px; letter-spacing: 0.12em; color: var(--ui-text-muted); }
+.rk-board-sep { font-size: 10.5px; color: var(--ui-text-muted); opacity: 0.65; }
+.rk-board-stars { font-weight: 800; color: #ffd166; }
 
 /* ============================================================ rank result overlay (plan §80) */
 .nf-rankresult {
@@ -1168,8 +1172,10 @@
   .rk-stat-grid { gap: 6px; margin-top: 10px; }
   .rk-shield-clock { font-size: 19px; }
   .rk-planetlist { max-height: 190px; }
-  .rk-board-row { grid-template-columns: 36px 1fr 64px 54px; }
-  .rk-board-tier { display: none; }
+  /* the division is part of the rank — it must survive the phone dress (user ask 2026-09-29) */
+  .rk-board-row { grid-template-columns: 30px 1fr 62px auto; gap: 6px; }
+  .rk-board-tier, .rk-board-sep { font-size: 9px; }
+  .rk-board-stars { font-size: 12px; }
   .nf-rr-card { padding: 24px 18px 18px; }
   .nf-rr-delta { font-size: 52px; }
 }

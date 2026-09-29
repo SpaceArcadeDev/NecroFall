@@ -1403,12 +1403,17 @@ export class RankPage {
         line.type = 'button';
         if (i < 3) line.classList.add(`top${i + 1}`);
         if (hexOf(r.identity) === this.ctx.myHex()) line.classList.add('me');
+        // One rank cell, DIVISION then STARS (user ask 2026-09-29): the division sets
+        // the standing, the stars rank within it — exactly how the ladder sorts.
         line.innerHTML =
           `<span class="rk-board-rank">#${i + 1}</span>` +
           `<span class="rk-board-name">${r.playerName || 'SURVIVOR'}</span>` +
           `<span class="rk-board-colony" style="color:${COLONIES[r.colony]?.css ?? '#999'}">${COLONIES[r.colony]?.name ?? '—'}</span>` +
+          `<span class="rk-board-rankcell">` +
+          `<span class="rk-board-tier">${rankLabel(info.tier, info.division)}</span>` +
+          `<span class="rk-board-sep">·</span>` +
           `<span class="rk-board-stars">${info.stars} ★</span>` +
-          `<span class="rk-board-tier">${rankLabel(info.tier, info.division)}</span>`;
+          `</span>`;
         line.addEventListener('click', () => this.ctx.openProfile(hexOf(r.identity)));
         panel.appendChild(line);
       });

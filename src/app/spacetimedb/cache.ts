@@ -350,9 +350,22 @@ export class ClientCache {
       .sort((a, b) => Number(b.discoveredAt - a.discoveredAt));
   }
 
-  /** The KING OF GODS leaderboard (plan §78) — top ranked survivors. */
+  /**
+   * The KING OF GODS leaderboard (plan §78) — top ranked survivors, in RANK
+   * ORDER: total stars (division first, then stars within it), wins, fewer
+   * matches, identity hex. The re-sort is mandatory even though the server
+   * view already sorts: clients store view rows keyed by identity, so `iter()`
+   * yields KEY order and the view's array order is lost — without this the
+   * board showed a lower division above a higher one (user ask 2026-09-29).
+   */
   rankedTop(): PlayerRow[] {
-    return this.list<PlayerRow>('rankedTop');
+    return [...this.list<PlayerRow>('rankedTop')].sort(
+      (a, b) =>
+        b.rankPoints - a.rankPoints ||
+        b.wins - a.wins ||
+        a.matchesPlayed - b.matchesPlayed ||
+        hexOf(a.identity).localeCompare(hexOf(b.identity))
+    );
   }
 
   /** Every resident seat belonging to `hex` (the matchmaking scope subscribes only these). */

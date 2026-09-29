@@ -398,6 +398,21 @@ export class GalacticMap {
     this.emitSelection();
   }
 
+  /**
+   * FLY INTO a planet's solar system and select the planet (user ask 2026-09-29:
+   * "on click the planet, the intergalactic map should zoom into the solar system
+   * level and show that planet automatically"). One continuous approach: the camera
+   * lands where the planet band is open (ramp 85%), the system is pinned and the
+   * planet itself is selected — the same landing the tap-to-enter flow uses.
+   */
+  flyToPlanet(p: PlanetDescriptor): void {
+    const g = this.resolveGalaxy(p);
+    const sys = g ? this.resolveSystem(p, g) : null;
+    if (!g || !sys) return;
+    this.flyToSystem(g, sys);
+    this.selectPlanet(p, g, sys);
+  }
+
   /** Clear the selection WITHOUT touching the camera (plan §51 — empty-space tap). */
   clearSelection(): void {
     if (!this.selected) return;
@@ -1829,7 +1844,7 @@ export class GalacticMap {
           ctx.globalAlpha = (0.3 + 0.25 * Math.sin(t * 3.2)) * pa;
           ctx.lineWidth = 1.2;
           ctx.beginPath();
-          ctx.arc(px, py, pr + 7.4, 0, Math.PI * 2);
+          ctx.arc(px, py, pr + 5.8, 0, Math.PI * 2);
           ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -1839,7 +1854,7 @@ export class GalacticMap {
       // bright, another colony's stays muted.
       if (controlled && row && row.controlExpiresAt - nowUs > FRESH_CAPTURE_REMAIN_US) {
         const fa = (mine ? 0.7 + 0.3 * Math.sin(t * 4) : 0.38) * pa;
-        const fy = py - pr - 8;
+        const fy = py - pr - 18;
         ctx.globalAlpha = fa;
         ctx.fillStyle = ownerColor ?? '#ffd166';
         ctx.beginPath();
@@ -1851,19 +1866,35 @@ export class GalacticMap {
         ctx.fill();
         ctx.globalAlpha = 1;
       }
-      // shield arc (plan §39): colony ring drains with the 72 h countdown
+      // PLANETARY SHIELD as a CIRCULAR TIMER (user ask 2026-09-29: "on the planet
+      // also show a circular progress bar going down"): a dark rail ring with the
+      // colony's remaining-shield arc shrinking from the top — the same rail + arc
+      // language as the HUD's ward rings, so the state reads at a glance at every
+      // zoom the planets render at. Sits OUTSIDE the selection reticle (pr+12) so
+      // the white ring can never sit on top of the colony's gauge.
       if (controlled && row.controlExpiresAt > 0) {
         const remain = Math.max(0, row.controlExpiresAt - nowUs);
-        const total = SHIELD_TOTAL_US;
-        const frac = Math.min(1, remain / total);
+        const frac = Math.min(1, remain / SHIELD_TOTAL_US);
         const low = remain < 10 * 60 * 1e6;
         const alpha = low ? 0.55 + 0.45 * Math.sin(t * 6) : 1;
-        ctx.globalAlpha = alpha * pa;
-        ctx.strokeStyle = this.data.colonyColors[row.colony];
-        ctx.lineWidth = 2;
+        const ringR = pr + 12;
+        ctx.lineWidth = 3;
+        // rail — the full 72 h circle, dark, so what remains reads as a gauge
+        ctx.globalAlpha = 0.55 * pa;
+        ctx.strokeStyle = 'rgba(8,5,16,0.85)';
         ctx.beginPath();
-        ctx.arc(px, py, pr + 4.5, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.arc(px, py, ringR, 0, Math.PI * 2);
         ctx.stroke();
+        // remaining shield — the arc that SHRINKS as the ward burns down
+        if (frac > 0.003) {
+          ctx.globalAlpha = alpha * pa;
+          ctx.strokeStyle = this.data.colonyColors[row.colony];
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.arc(px, py, ringR, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+          ctx.stroke();
+          ctx.lineCap = 'butt';
+        }
         ctx.globalAlpha = 1;
       }
       // PLANETARY SHIELD (user ask 2026-09-29): a colony that HOLDS a planet keeps its 72 h ward

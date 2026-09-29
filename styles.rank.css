@@ -1271,7 +1271,33 @@ body.nf-touch .rk-hover-tip { display: none !important; }
    ALL held worlds of every colony, live shield timers, tap-to-fly — opened from
    the strip's globe button or the colony panel's VIEW ALL. Reuses the
    leaderboard's overlay/panel shell (`.rk-board-*`); everything below is its own. */
-.rk-terr { width: min(560px, 94vw); }
+/* BIGGER (user ask 2026-09-29): the roster is the map's reading surface now, so it
+   gets the wide sheet — 780px on desktop, full width on phones, taller scroll area. */
+.rk-terr { width: min(780px, 96vw); max-height: min(88vh, 920px); }
+
+/* COLONY STANDINGS (user ask): every colony's season line — the two that hold
+   nothing included — as three tinted cards above the roster. */
+.rk-terr-stats { margin-bottom: 12px; }
+.rk-terr-stats-kicker { font-size: 8.5px; letter-spacing: 0.24em; font-weight: 800; color: var(--ui-text-muted); margin-bottom: 6px; }
+.rk-terr-stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.rk-terr-stat {
+  --rk-colony: #999;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid color-mix(in srgb, var(--rk-colony) 35%, transparent);
+}
+.rk-terr-stat.mine {
+  background: color-mix(in srgb, var(--rk-colony) 10%, rgba(255, 255, 255, 0.02));
+  border-color: color-mix(in srgb, var(--rk-colony) 60%, transparent);
+}
+.rk-terr-stat-name { font-size: 10px; font-weight: 800; letter-spacing: 0.16em; color: color-mix(in srgb, var(--rk-colony) 78%, #fff 22%); }
+.rk-terr-stat-nums { font-size: 9.5px; letter-spacing: 0.06em; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rk-terr-stat-nums b { color: #e9e2ff; font-size: 12px; font-variant-numeric: tabular-nums; }
+.rk-terr-stat-nums b.warn { color: #ffd166; }
 .rk-colonies-all {
   border: none;
   background: none;
@@ -1409,6 +1435,46 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .rk-record-jump:hover { background: rgba(255, 209, 102, 0.14); border-color: rgba(255, 209, 102, 0.55); }
+
+/* ============================================================ expanded-map shield bar (user ask 2026-09-29)
+   The fullscreen map's planet card shows the 72 h ward as a draining bar + live
+   clock — the DOM twin of the circular gauge drawn on the planet itself. */
+.rk-shieldbar {
+  --rk-colony: #ffd166;
+  display: grid;
+  gap: 5px;
+  margin-top: 2px;
+}
+.rk-shieldbar-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rk-shieldbar-label { font-size: 8.5px; letter-spacing: 0.24em; color: #46e0c8; font-weight: 800; }
+.rk-shieldbar-clock {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: #d8fff6;
+  text-shadow: 0 0 14px rgba(70, 224, 200, 0.45);
+}
+.rk-shieldbar-clock.low { color: #ffb35c; text-shadow: 0 0 14px rgba(255, 179, 92, 0.5); }
+.rk-shieldbar-clock.fallen { color: #ff6b81; text-shadow: 0 0 14px rgba(255, 107, 129, 0.5); }
+.rk-shieldbar-track {
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(8, 5, 16, 0.7);
+  border: 1px solid rgba(165, 140, 235, 0.18);
+  overflow: hidden;
+}
+.rk-shieldbar-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk-colony) 55%, transparent), var(--rk-colony));
+  box-shadow: 0 0 10px -2px var(--rk-colony);
+  transition: width 0.9s linear;
+}
+.rk-shieldbar-fill.low { background: #ffb35c; box-shadow: 0 0 10px -2px #ffb35c; }
+.rk-shieldbar-fill.fallen { width: 0 !important; background: #ff5d73; }
 
 @media (max-width: 520px) {
   .rk-terr-cd { font-size: 11px; min-width: 54px; }

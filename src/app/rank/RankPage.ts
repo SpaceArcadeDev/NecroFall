@@ -64,6 +64,9 @@ const HOUR_US = 3_600_000_000;
 /** A world claimed within the last day still shows > 48 h of its 72 h shield. */
 const FRESH_CAPTURE_REMAIN_US = 48 * HOUR_US;
 
+/** The full 72 h planetary control lifetime (mirrors the server + the canvas gauge). */
+const SHIELD_TOTAL_US = 72 * HOUR_US;
+
 /** Compact shield timer for the territory list (H:MM:SS → MM:SS → FALLEN). */
 function territoryCountdown(expiresUs: number, nowUs: number): string {
   const text = shieldCountdownText(expiresUs, nowUs);
@@ -92,6 +95,8 @@ export class RankPage {
   private territoryFilter: 'ALL' | 'MINE' | 'FALLING' = 'ALL';
   /** The open overlay's countdown spans (one write per changed second). */
   private territoryCd: { el: HTMLElement; expires: number }[] = [];
+  /** The expanded map's live shield bar refs (re-armed on every mapinfo rebuild). */
+  private mapInfoShield: { fill: HTMLElement; cd: HTMLElement; expires: number } | null = null;
   private selection: MapSelection = { level: 'galactic', galaxy: null, system: null, planet: null, selected: null };
   private unsubscribe: () => void = () => undefined;
   private statsTimer = 0;
@@ -319,6 +324,7 @@ export class RankPage {
       this.renderMapInfo(); // …and so does the fullscreen info card
       if (this.territoryEl) this.renderTerritory(); // new rows land while it's open
       this.refreshTerritoryCountdowns();
+      this.updateMapInfoShield();
     }, 500);
   }
 
@@ -517,6 +523,7 @@ export class RankPage {
     if (sig === this.mapInfoSig) return;
     this.mapInfoSig = sig;
     this.mapInfoEl.innerHTML = '';
+    this.mapInfoShield = null; // a rebuild re-arms the live shield refs below
     if (!planet && !sys && !galaxy) {
       this.mapInfoEl.classList.add('hidden');
       return;
@@ -543,6 +550,23 @@ export class RankPage {
         { colonyColors: colours, colonyNames: names }
       );
       card.appendChild(controlBlock(summary, { kicker: 'CONTROL', compact: true }));
+      // PLANETARY SHIELD BAR + TIMER (user ask 2026-09-29): the expanded map's card
+      // shows the ward burning down — a draining bar in the colony's colour with the
+      // live clock beside it, the SAME 72 h rule the canvas gauge and side panel use.
+      if (row && row.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3 && Number(row.controlExpiresAt) > 0) {
+        const shieldBox = el('div', 'rk-shieldbar');
+        shieldBox.style.setProperty('--rk-colony', COLONIES[row.controllingColony]?.css ?? '#999');
+        const top = el('div', 'rk-shieldbar-row');
+        top.appendChild(el('span', 'rk-shieldbar-label', 'PLANETARY SHIELD'));
+        const cd = el('b', 'rk-shieldbar-clock', territoryCountdown(Number(row.controlExpiresAt), this.serverNowUs()));
+        top.appendChild(cd);
+        const track = el('div', 'rk-shieldbar-track');
+        const fill = el('i', 'rk-shieldbar-fill');
+        track.appendChild(fill);
+        shieldBox.append(top, track);
+        card.appendChild(shieldBox);
+        this.mapInfoShield = { fill, cd, expires: Number(row.controlExpiresAt) };
+      }
       card.appendChild(
         discoveryBlock(this.discoveriesForPlanet(planet.key), {
           fallback: row?.discovered ? 'historical' : 'none',
@@ -597,6 +621,7 @@ export class RankPage {
       card.appendChild(line);
     }
     this.mapInfoEl.appendChild(card);
+    if (this.mapInfoShield) this.updateMapInfoShield(); // arm the bar at its true width
     this.mapInfoEl.classList.remove('hidden');
   }
 
@@ -1036,12 +1061,11 @@ export class RankPage {
   }
 
   private jumpTo(p: PlanetDescriptor): void {
-    const { gx, gy } = decodeGalaxyId(p.galaxyId);
-    const g = galaxyAt(this.universeSeed(), gx, gy) ?? this.map.currentGalaxy;
-    if (g && g.galaxyId !== this.map.currentGalaxy?.galaxyId) this.map.openGalaxy(g);
-    const sys = systemAt(this.universeSeed(), p.ring, p.galaxyId, p.systemId, g?.systemCount ?? 200);
-    this.map.markSystem(sys);
-    this.map.selectPlanet(p);
+    // ZOOM INTO THE SOLAR SYSTEM (user ask 2026-09-29): a deep link now lands with
+    // the planet's system open and the planet selected — not just a highlight on a
+    // wide map. Every "find back the planet" flow shares this path (roster rows,
+    // recent battles, the record drawer, FIND ANOTHER PLANET).
+    this.map.flyToPlanet(p);
   }
 
   private startRanked(p: PlanetDescriptor): void {
@@ -1159,10 +1183,32 @@ export class RankPage {
       .rankedPlanetsAll()
       .filter((r) => r.state === RANKED_PLANET_CONTROLLED && r.controllingColony < 3);
     const history = ClientCache.shared.myRankHistory(this.ctx.myHex()).slice(0, 6);
+    // COLONY STANDINGS (user ask 2026-09-29): planets / dominated systems / shields
+    // falling within the hour for ALL THREE colonies — the same aggregation the
+    // season `colony_stats` procedure runs (§41/§42), so zero-holding colonies show
+    // their (empty) line too instead of vanishing from the roster.
+    const planets = [0, 0, 0];
+    const falling = [0, 0, 0];
+    const bySys = new Map<string, Map<number, number>>();
+    for (const r of held) {
+      planets[r.controllingColony]++;
+      if (Number(r.controlExpiresAt) - now < HOUR_US) falling[r.controllingColony]++;
+      const key = `${r.ring}:${r.galaxyId}:${r.systemId}`;
+      let m = bySys.get(key);
+      if (!m) bySys.set(key, (m = new Map()));
+      m.set(r.controllingColony, (m.get(r.controllingColony) ?? 0) + 1);
+    }
+    const systems = [0, 0, 0];
+    for (const m of bySys.values()) {
+      let total = 0;
+      for (const v of m.values()) total += v;
+      for (const [c, v] of m) if (v * 2 >= total) systems[c]++; // >= 50% dominates (§42)
+    }
     const sig =
       `${this.territoryFilter}|${myColony}|` +
       held.map((r) => `${r.planetKey}:${r.controllingColony}:${r.controlExpiresAt}`).join(',') +
-      '|' + history.map((h) => `${h.id}:${h.delta}`).join(',');
+      '|' + history.map((h) => `${h.id}:${h.delta}`).join(',') +
+      `|c:${planets.join(',')}:${systems.join(',')}:${falling.join(',')}`;
     if (sig === this.territorySig) return;
     this.territorySig = sig;
     this.territoryCd = [];
@@ -1177,6 +1223,23 @@ export class RankPage {
     close.addEventListener('click', () => this.closeTerritory());
     head.appendChild(close);
     panel.appendChild(head);
+
+    // COLONY STANDINGS — every colony's season line, INCLUDING the ones holding
+    // nothing (user ask: "show stats on other 2 colonies"), my colony highlighted.
+    const standings = el('div', 'rk-terr-stats');
+    standings.appendChild(el('div', 'rk-terr-stats-kicker', 'COLONY STANDINGS · THIS SEASON'));
+    const statRow = el('div', 'rk-terr-stats-row');
+    for (const c of [0, 1, 2]) {
+      const stat = el('div', `rk-terr-stat${c === myColony ? ' mine' : ''}`);
+      stat.style.setProperty('--rk-colony', COLONIES[c]?.css ?? '#999');
+      stat.innerHTML =
+        `<span class="rk-terr-stat-name">${COLONIES[c]?.symbol ?? '◆'} ${COLONIES[c]?.name ?? '—'}</span>` +
+        `<span class="rk-terr-stat-nums"><b>${planets[c]}</b> worlds · <b>${systems[c]}</b> systems · ` +
+        `<b class="${falling[c] ? 'warn' : ''}">${falling[c]}</b> falling</span>`;
+      statRow.appendChild(stat);
+    }
+    standings.appendChild(statRow);
+    panel.appendChild(standings);
 
     // FILTERS: ALL · MY COLONY · FALLING (< 1 h — the same rule colony stats use).
     const filters = el('div', 'rk-terr-filters');
@@ -1306,6 +1369,24 @@ export class RankPage {
       item.el.classList.toggle('low', remain > 0 && remain < HOUR_US);
       item.el.classList.toggle('gone', remain <= 0);
     }
+  }
+
+  /** Live bar + clock for the expanded map's shield card (one write per second). */
+  private updateMapInfoShield(): void {
+    const s = this.mapInfoShield;
+    if (!s) return;
+    const now = this.serverNowUs();
+    const remain = Math.max(0, s.expires - now);
+    const width = `${(Math.min(1, remain / SHIELD_TOTAL_US) * 100).toFixed(1)}%`;
+    if (s.fill.style.width !== width) s.fill.style.width = width;
+    const text = territoryCountdown(s.expires, now);
+    if (s.cd.textContent !== text) s.cd.textContent = text;
+    const low = remain > 0 && remain < HOUR_US;
+    s.cd.classList.toggle('low', low);
+    s.fill.classList.toggle('low', low);
+    const gone = remain <= 0;
+    s.cd.classList.toggle('fallen', gone);
+    s.fill.classList.toggle('fallen', gone);
   }
 
   /** Fly to a planet from its stored key (history / roster deep links). */

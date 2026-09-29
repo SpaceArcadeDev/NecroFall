@@ -771,8 +771,10 @@ export class Effects {
       });
     }
 
-    // slash pool: four crescent ribbons, rebuilt in place (28 verts each, no allocation at runtime)
-    for (let i = 0; i < 4; i++) {
+    // slash pool: twelve crescent ribbons, rebuilt in place (28 verts each, no allocation at
+    // runtime). Twelve because ONE whip swing draws up to eight crescents in the same frame (see
+    // Player.updateAutoAttack / MAX_LASHES) while the Scythe may hold four of its own.
+    for (let i = 0; i < 12; i++) {
       const steps = SLASH_STEPS;
       const pos = new Float32Array(steps * 2 * 3);
       const col = new Float32Array(steps * 2 * 3);
@@ -1765,14 +1767,17 @@ export class Effects {
     const oy = pos.y;
     const oz = pos.z;
     const steps = SLASH_STEPS;
-    const bright = _slashBright.setHex(color).lerp(_whiteColor, 0.5);
+    const bright = _slashBright.setHex(color).lerp(_whiteColor, 0.35);
     const body = _slashBody.setHex(color);
     for (let i = 0; i < steps; i++) {
       const t = i / (steps - 1);
       // the leading edge is at t = 0, so the arc fades away behind the swing
       const ang = spin * (0.5 - t) * arc;
       _swD.copy(dirN).applyAxisAngle(upN, ang).normalize();
-      const fade = Math.pow(1 - t * 0.95, 0.8);
+      // OPAQUE head -> TRANSPARENT tail (user ask 2026-09-30): the leading 15% of the swing holds
+      // at full strength and the rest runs out faster than before, so the ribbon reads as a SLASH
+      // instead of a soft wash of light.
+      const fade = t < 0.15 ? 1 : Math.pow((1 - t) / 0.85, 1.5);
       const rIn = range * inner;
       const rOut = range * (inner + (1 - inner) * (0.55 + 0.45 * fade));
       const p = i * 6;
@@ -1788,13 +1793,13 @@ export class Effects {
       fx.pos[p + 3] = _swE.x;
       fx.pos[p + 4] = _swE.y;
       fx.pos[p + 5] = _swE.z;
-      // inner edge bright, outer edge softer, both dimming toward the tail
-      fx.col[p] = (bright.r * 0.75 + body.r * 0.25) * fade;
-      fx.col[p + 1] = (bright.g * 0.75 + body.g * 0.25) * fade;
-      fx.col[p + 2] = (bright.b * 0.75 + body.b * 0.25) * fade;
-      fx.col[p + 3] = body.r * fade * 0.45;
-      fx.col[p + 4] = body.g * fade * 0.45;
-      fx.col[p + 5] = body.b * fade * 0.45;
+      // inner edge = near-solid ink, outer edge = a third of it; both run out toward the tail
+      fx.col[p] = bright.r * fade;
+      fx.col[p + 1] = bright.g * fade;
+      fx.col[p + 2] = bright.b * fade;
+      fx.col[p + 3] = body.r * fade * 0.35;
+      fx.col[p + 4] = body.g * fade * 0.35;
+      fx.col[p + 5] = body.b * fade * 0.35;
     }
     const gpos = fx.mesh.geometry.attributes.position as THREE.BufferAttribute;
     const gcol = fx.mesh.geometry.attributes.color as THREE.BufferAttribute;

@@ -3429,7 +3429,10 @@ export class Game {
         if (id === 'burst') {
           this.abilities.burst(caster, this.isHost ? 'host' : 'remote', Number(msg.rm) || CONFIG.burstRangeMul);
         } else {
-          this.abilities.runExternal(id, caster, dir, Number(msg.dist) || 0, Number(msg.dmg) || 0, Number(msg.arc) || 0);
+          this.abilities.runExternal(
+            id, caster, dir, Number(msg.dist) || 0, Number(msg.dmg) || 0, Number(msg.arc) || 0,
+            Array.isArray(msg.dirs) ? (msg.dirs as number[]) : []
+          );
         }
         if (this.isHost && from !== this.net.myId) {
           this.net.broadcast(msg, from);

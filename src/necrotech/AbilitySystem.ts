@@ -60,6 +60,8 @@ export class AbilitySystem {
   /** Damage / arc carried by an auto-attack event (the whip lash) so the host applies the owner's roll. */
   private castDmg = 0;
   private castArc = 0;
+  /** Flattened lash directions a whip event carries (x,y,z per lash) — see `Player.updateAutoAttack`. */
+  private castDirs: number[] = [];
 
   constructor(private game: Game) {}
 
@@ -131,15 +133,15 @@ export class AbilitySystem {
   }
 
   /** External casts (events received over the network). */
-  runExternal(id: string, caster: Player, aim: THREE.Vector3, dist = 0, evDmg = 0, evArc = 0): void {
-    this.run(id, caster, aim, this.game.isHost ? 'host' : 'remote', dist, evDmg, evArc);
+  runExternal(id: string, caster: Player, aim: THREE.Vector3, dist = 0, evDmg = 0, evArc = 0, evDirs: number[] = []): void {
+    this.run(id, caster, aim, this.game.isHost ? 'host' : 'remote', dist, evDmg, evArc, evDirs);
   }
 
   /**
    * Fires a standalone ability event that is not tied to the Skill / Ultimate slots — used by world
    * triggers such as the Blitz pad, so its blast takes the normal host-authoritative damage route.
    */
-  fireEvent(p: Player, id: string, dist = 0, evDmg = 0, evArc = 0): void {
+  fireEvent(p: Player, id: string, dist = 0, evDmg = 0, evArc = 0, evDirs: number[] = []): void {
     const g = this.game;
     const aim = new THREE.Vector3().copy(p.aimDir.lengthSq() > 0.01 ? p.aimDir : p.facing).normalize();
     const eid = AbilitySystem.nextEventId++;
@@ -152,15 +154,17 @@ export class AbilitySystem {
       dy: Math.round(aim.y * 1000) / 1000,
       dz: Math.round(aim.z * 1000) / 1000,
       dist,
-      // only the whip uses these: the owner rolls the lash damage, the host applies that exact number
+      // only the whip uses these: the owner rolls the lash damage and sends the exact lash spread
+      // it drew, so the host lands those numbers along those very directions
       dmg: evDmg > 0 ? evDmg : undefined,
       arc: evArc > 0 ? evArc : undefined,
+      dirs: evDirs.length >= 3 ? evDirs : undefined,
     };
     if (g.isHost) {
-      this.run(id, p, aim, 'caster', dist, evDmg, evArc);
+      this.run(id, p, aim, 'caster', dist, evDmg, evArc, evDirs);
       if (g.net.connected) g.net.broadcast(msg);
     } else {
-      this.run(id, p, aim, 'caster', dist, evDmg, evArc);
+      this.run(id, p, aim, 'caster', dist, evDmg, evArc, evDirs);
       g.net.sendToHost(msg);
     }
   }
@@ -681,11 +685,12 @@ export class AbilitySystem {
 
   // ------------------------------------------------------------ ability switch
 
-  run(id: string, caster: Player, aim: THREE.Vector3, mode: CastMode, dist = 0, evDmg = 0, evArc = 0): void {
+  run(id: string, caster: Player, aim: THREE.Vector3, mode: CastMode, dist = 0, evDmg = 0, evArc = 0, evDirs: number[] = []): void {
     const g = this.game;
     const fx = true; // every peer plays visuals
     this.castDmg = evDmg;
     this.castArc = evArc;
+    this.castDirs = evDirs;
     const applyDmg = g.isHost; // damage authority
     const ownerSim = mode === 'caster'; // this peer owns the caster's projectiles
     const visualProj = !ownerSim;
@@ -855,22 +860,31 @@ export class AbilitySystem {
       }
       // ------------------------------------------------ WHIPLASH (Warden)
       case 'whip': {
-        // Host half of a lash: no visuals (the owner already drew the swing), just the damage the
-        // owner rolled, applied to everything inside the transmitted arc — creatures AND survivors.
-        // Leaving players out of this cone left a client whip unable to damage anybody else while
-        // its Necrophage kills landed normally.
+        // Host half of a swing: no visuals (the owner already drew the lashes), just the damage the
+        // owner rolled, applied to everything inside the transmitted lash spread — creatures AND
+        // survivors. The owner sends one direction per lash (`dirs`); an older sender's event falls
+        // back to its single aim vector. A body inside several cones is still hit once per swing.
         if (!applyDmg) break;
-        const half = this.castArc > 0.05
-          ? this.castArc * 0.5
-          : (caster.necrotech.stats.whipArc ?? 0.7) + caster.mods.projCount * 0.34;
+        const half = this.castArc > 0.05 ? this.castArc * 0.5 : (caster.necrotech.stats.whipArc ?? 0.7);
         const range = Math.max(1.5, caster.autoRange);
-        // The lash obeys the caster's range ring exactly like a locally-run whip (see
+        // The lashes obey the caster's range ring exactly like a locally-run whip (see
         // Player.autoFootprint): a body outside the drawn footprint — shrunken by a jump — is out.
         const foot = caster.ringFootprint(range);
         if (!foot.reach) break;
         const cosFoot = Math.cos(foot.theta);
         const cos = Math.cos(Math.min(2.6, half));
         const dmg = this.castDmg > 0 ? this.castDmg : caster.autoDamage;
+        const dirs = this.castDirs.length >= 3 ? this.castDirs : null;
+        const dirCount = dirs ? Math.floor(dirs.length / 3) : 1;
+        const inLashes = (x: number, y: number, z: number, inv: number): boolean => {
+          for (let j = 0; j < dirCount; j++) {
+            const bx = dirs ? dirs[j * 3] : aim.x;
+            const by = dirs ? dirs[j * 3 + 1] : aim.y;
+            const bz = dirs ? dirs[j * 3 + 2] : aim.z;
+            if ((x * bx + y * by + z * bz) * inv >= cos) return true;
+          }
+          return false;
+        };
         const list = g.enemies.query(caster.position.x, caster.position.y, caster.position.z, range + 4, this.tmpE);
         for (const e of list) {
           if (!e.alive) continue;
@@ -878,7 +892,7 @@ export class AbilitySystem {
           _v.copy(e.position).addScaledVector(e.up, e.radius * 0.5).sub(_v2.copy(caster.position).addScaledVector(caster.up, 1.1));
           const dist = _v.length();
           if (dist > range + e.radius) continue;
-          if (dist > 1e-3 && _v.multiplyScalar(1 / dist).dot(aim) < cos) continue;
+          if (dist > 1e-3 && !inLashes(_v.x, _v.y, _v.z, 1 / dist)) continue;
           g.hitEnemy(e, dmg, caster.id, 'auto');
         }
         for (const pl of g.players.values()) {
@@ -887,7 +901,7 @@ export class AbilitySystem {
           _v.copy(pl.position).addScaledVector(pl.up, 0.9).sub(_v2.copy(caster.position).addScaledVector(caster.up, 1.1));
           const dist = _v.length();
           if (dist > range + 1.3) continue;
-          if (dist > 1e-3 && _v.multiplyScalar(1 / dist).dot(aim) < cos) continue;
+          if (dist > 1e-3 && !inLashes(_v.x, _v.y, _v.z, 1 / dist)) continue;
           g.hitPlayer(pl, dmg, caster.id, 'auto');
         }
         break;

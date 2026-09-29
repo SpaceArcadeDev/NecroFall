@@ -25,6 +25,10 @@ const _tmp2 = new THREE.Vector3();
 const _white = new THREE.Color(0xffffff);
 /** Reused enemy list for the whip lash and the Madmen passive scans. */
 const _whipList: Enemy[] = [];
+/** Most lashes ONE whip swing may deal — its count is engaged targets + extra-projectile perks. */
+const MAX_LASHES = 8;
+/** Lash directions of the swing being fired (up to `MAX_LASHES`) — reused, never held. */
+const _whipDirs: THREE.Vector3[] = Array.from({ length: MAX_LASHES }, () => new THREE.Vector3());
 /** Reused multi-target list + its scores (see `Player.selectTargets`) — never held across calls. */
 const _targets: (Enemy | Player)[] = [];
 const _targetScores: number[] = [];
@@ -2188,25 +2192,55 @@ export class Player {
     const execMult = isEnemy && (target as Enemy).hp < (target as Enemy).maxHp * 0.5 ? this.mods.execMul : 1;
     const dmg = this.autoDamage * (crit ? 2 : 1) * execMult;
 
-    // ---- WHIP: no projectile at all. The lash is swept across the front arc, and every extra
-    // "projectile" from a perk WIDENS that arc instead of adding a shot.
+    // ---- WHIP: no projectile at all — every strike is one or more lashes swept across the front.
+    // The lash COUNT follows the same rule the projectile styles follow for shots: the engaged
+    // target list (level-scaled, see `autoTargets`) decides how many bodies one swing reaches, and
+    // every extra "projectile" from a perk adds one MORE lash on top (user ask 2026-09-30). A
+    // veteran cracks at the engaged crowd at once; +1 projectile perk = +1 visible slash.
     if (st.style === 'whip') {
-      const halfAngle = Math.min(2.6, (st.whipArc ?? 0.7) + this.mods.projCount * 0.34);
+      const halfAngle = st.whipArc ?? 0.7;
+      const arc = halfAngle * 2;
       const range = this.autoRange;
-      // a whip CRACK: one flat crescent of light swept across the front arc (not the layered sweep
-      // the Scythe Arc and Spinner use — those are different moves and must look different). The cut
-      // rides at CHEST height, never on the ground: laid at ankle height the ribbon was swallowed by
-      // the first terrain bump it crossed and the basic attack read as nothing at all.
-      g.effects.slashArc(this.position, this.up, _tmp, range, halfAngle * 2, st.color, {
-        dur: 0.18, spin: 1, inner: 0.55, lift: 1.15,
-      });
+      const lashCount = Math.min(MAX_LASHES, targets.length + this.mods.projCount);
+      for (let j = 0; j < lashCount; j++) {
+        const t = targets[j % targets.length];
+        const tIsEnemyJ = 'radius' in t;
+        const d = _whipDirs[j];
+        d.copy(t.position).addScaledVector(t.up, tIsEnemyJ ? (t as Enemy).radius * 0.5 : 0.9)
+          .sub(_muzzle.copy(this.position).addScaledVector(this.up, 1.1)).normalize();
+        if (j >= targets.length) {
+          // an extra-perk lash: its target's cut again, flared to the side so it reads as its own
+          const wrap = Math.floor(j / targets.length);
+          d.applyAxisAngle(this.up, (j % 2 === 0 ? 1 : -1) * 0.35 * wrap);
+        }
+      }
+      // a whip CRACK: one flat crescent of light per lash (not the layered sweep the Scythe Arc and
+      // Spinner use — those are different moves and must look different). The cut rides at CHEST
+      // height, never on the ground: laid at ankle height the ribbon was swallowed by the first
+      // terrain bump it crossed and the basic attack read as nothing at all.
+      for (let j = 0; j < lashCount; j++) {
+        g.effects.slashArc(this.position, this.up, _whipDirs[j], range, arc, st.color, {
+          dur: 0.18, spin: 1, inner: 0.55, lift: 1.15,
+        });
+      }
       if (this.isLocal) g.audio.sfx('hit', 0.4);
-      // the host applies the lash itself; a client sends its roll so the host lands that exact number
-      if (g.isHost) this.whipHits(halfAngle, range, dmg, crit);
-      else g.abilities.fireEvent(this, 'whip', 0, dmg, halfAngle * 2);
-      // and every OTHER peer draws the same crescent: a remote whip used to cut bodies with
+      // the host applies the lashes itself; a client hands the host its roll AND the exact spread
+      // it drew, so every peer lands the same cuts in the same places
+      const dirs: number[] = [];
+      for (let j = 0; j < lashCount; j++) {
+        dirs.push(
+          Math.round(_whipDirs[j].x * 1000) / 1000,
+          Math.round(_whipDirs[j].y * 1000) / 1000,
+          Math.round(_whipDirs[j].z * 1000) / 1000
+        );
+      }
+      if (g.isHost) this.whipHits(_whipDirs, lashCount, halfAngle, range, dmg, crit);
+      else g.abilities.fireEvent(this, 'whip', 0, dmg, arc, dirs);
+      // and every OTHER peer draws the same crescents: a remote whip used to cut bodies with
       // nothing visibly swinging (bullets had the same hole — see `mirrorShot`)
-      if (this.isLocal) g.mirrorWhip(this.id, _tmp, halfAngle * 2, st.color);
+      if (this.isLocal) {
+        for (let j = 0; j < lashCount; j++) g.mirrorWhip(this.id, _whipDirs[j], arc, st.color);
+      }
       return;
     }
 
@@ -2287,18 +2321,19 @@ export class Player {
   }
 
   /**
-   * Everything caught in a whip lash: a cone in front of the caster, hit once per swing. Only the
-   * host applies the damage, so the lash is broadcast like any other auto-attack.
+   * Everything caught in the swing's LASHES: one cone per lash direction, a body hit at most once
+   * per swing however many cones overlap it. Only the host applies the damage, so the lash is
+   * broadcast like any other auto-attack.
    *
    * PLAYERS are cut by the same swing — the lash is the weapon's whole hit volume, so skipping them
    * made every whip class (WHIPLASH and any fusion carrying its arc) unable to touch another
    * survivor at all, while its enemies-only cone still mowed down Necrophages.
    */
-  private whipHits(halfAngle: number, range: number, dmg: number, crit: boolean): void {
+  private whipHits(dirs: THREE.Vector3[], dirCount: number, halfAngle: number, range: number, dmg: number, crit: boolean): void {
     const g = this.game;
     if (!g.isHost || !this.alive || this.frozen) return;
-    // The lash obeys the range ring like everything else: its own cone test measures sphere
-    // distance, so an airborne lash could cut bodies the drawn footprint no longer covered.
+    // The lashes obey the range ring like everything else: the cone test measures sphere distance,
+    // so an airborne lash could cut bodies the drawn footprint no longer covered.
     const foot = this.ringFootprint(range);
     if (!foot.reach) return;
     const cosFoot = Math.cos(foot.theta);
@@ -2310,8 +2345,13 @@ export class Player {
       _tmp2.copy(e.position).addScaledVector(e.up, e.radius * 0.5).sub(_muzzle.copy(this.position).addScaledVector(this.up, 1.1));
       const dist = _tmp2.length();
       if (dist > range + e.radius) continue;
-      if (dist > 1e-3 && _tmp2.multiplyScalar(1 / dist).dot(_tmp) < cos) continue;
-      g.hitEnemy(e, dmg, this.id, 'auto', crit);
+      // each lash cuts its own cone; overlapping cones still land ONE hit on a body per swing
+      let hit = dist <= 1e-3;
+      if (!hit) {
+        _tmp2.multiplyScalar(1 / dist);
+        for (let j = 0; j < dirCount && !hit; j++) hit = _tmp2.dot(dirs[j]) >= cos;
+      }
+      if (hit) g.hitEnemy(e, dmg, this.id, 'auto', crit);
     }
     for (const pl of g.players.values()) {
       if (pl === this || !pl.alive) continue;
@@ -2320,7 +2360,12 @@ export class Player {
       _tmp2.copy(pl.position).addScaledVector(pl.up, 0.9).sub(_muzzle.copy(this.position).addScaledVector(this.up, 1.1));
       const dist = _tmp2.length();
       if (dist > range + 1.3) continue;
-      if (dist > 1e-3 && _tmp2.multiplyScalar(1 / dist).dot(_tmp) < cos) continue;
+      let hit = dist <= 1e-3;
+      if (!hit) {
+        _tmp2.multiplyScalar(1 / dist);
+        for (let j = 0; j < dirCount && !hit; j++) hit = _tmp2.dot(dirs[j]) >= cos;
+      }
+      if (!hit) continue;
       // Host authority: hitPlayer applies it here AND relays the pdmg every peer sees.
       g.hitPlayer(pl, dmg, this.id, 'auto');
     }

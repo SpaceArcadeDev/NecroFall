@@ -5,9 +5,10 @@
 // selections and countdown shield arcs.
 //
 // INTERACTION MODEL (plan §19–§28/§72): TAP = SELECT (never zoom), a SECOND tap
-// enters the object, DRAG = pan, PINCH/WHEEL = zoom. At SOLAR SYSTEM level the
-// drag is locked to the current system (pinned focus + bounded camera), so the
-// player can never slide into a neighbouring system — zooming out releases it.
+// enters the object, DRAG = pan, PINCH/WHEEL = zoom. While the SOLAR SYSTEM is
+// VISIBLE its planets own the view: the camera is clamped to that system, taps
+// can never target a neighbour, and zooming grows around the soft-locked target.
+// Zooming out to the dot level releases the lock, so dragging there re-aims it.
 //
 // The map is VIEW-ONLY: nothing here decides availability or ownership — rows
 // come from the server subscription, everything else is regenerated from the
@@ -149,6 +150,15 @@ function softBound(v: number, centre: number, radius: number, half: number): num
   return v;
 }
 
+/** '#rrggbb' (or the 3-digit form) → an rgba() string with the given alpha. */
+function withAlpha(color: string, a: number): string {
+  let hex = color.replace('#', '').trim();
+  if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  const n = parseInt(hex, 16);
+  if (!Number.isFinite(n)) return `rgba(255,255,255,${a})`;
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
 /** Face-sprite caches (user 2026-09-29: the dot transition stuttered): the FULL face
@@ -189,10 +199,10 @@ export class GalacticMap {
   private focusGalaxy: GalaxyDescriptor | null = null;
   private focusSystem: SystemDescriptor | null = null;
   /**
-   * SYSTEM DRAG LOCK (plan §23–§26): once the solar-system level is entered the
-   * focused system is PINNED — camera movement can never swap the lock onto a
-   * neighbour, and the camera itself is clamped to the system's own bounds.
-   * Zooming out to the galaxy tier clears the pin (that is the release).
+   * SYSTEM DRAG LOCK (plan §23–§26, v3): the focused system is PINNED for as long as the solar
+   * system is VISIBLE (its planets drawn) — camera movement can never swap the lock onto a
+   * neighbour and the camera itself is clamped to the system's own bounds. Zooming back out to
+   * the dot level releases it (a drag there re-aims the soft lock).
    */
   private pinnedSystem: SystemDescriptor | null = null;
   /** Per-system camera-clamp radius (world units), computed once per system. */
@@ -809,22 +819,37 @@ export class GalacticMap {
       }
     }
     const sysAlpha = ramp01(zoom, ranges.sysStart, ranges.sysEnd);
-    // SYSTEM DRAG LOCK (plan §23/§26): the pinned system is the focus wherever the
-    // tiers are — but panning it far off-screen releases the pin, so the crosshair
-    // claims the target again (panning away is an explicit re-aim).
+    const planetAlpha = ramp01(zoom, ranges.plStart, ranges.plEnd);
+    const closeAlpha = ramp01(zoom, ranges.closeStart, ranges.closeEnd);
+    // WHILE THE SYSTEM IS VISIBLE ITS GALAXY IS LOCKED TOO (user ask 2026-09-29 — caught live: a
+    // drag inside the clamp can still push the view centre across the galaxy lattice, and the
+    // soft-focus then adopted the neighbour's nearest system = the lock "jumped" solar systems).
+    // The pinned system's galaxy is derived directly, and only while `planetAlpha` is open.
+    const flying = this.camTarget !== null;
+    if (this.pinnedSystem && planetAlpha > 0.02) {
+      const { gx, gy } = decodeGalaxyId(this.pinnedSystem.galaxyId);
+      const pg = galaxyAt(this.data.universeSeed, gx, gy);
+      if (pg) galaxy = pg;
+    }
+    // SYSTEM DRAG LOCK v3 (user ask 2026-09-29). The lock's life is tied to the SOLAR SYSTEM
+    // BEING VISIBLE (its planets drawn, `planetAlpha > 0`):
+    //   • the moment the visible band opens, the soft-locked system is PINNED, and for as long as
+    //     the band lasts the pin survives ANY pan — the camera is clamped to the system and taps
+    //     can never target a neighbour ("once the solar system is visible, don't allow drag/tap to
+    //     go to a different solar system");
+    //   • zooming back out to the dot level RELEASES it, so dragging there re-aims the soft lock
+    //     at the nearest system to the crosshair. The old "panned 1.25 half-views away" release
+    //     never fired on a small viewport — the lock felt stuck to the last system (user report).
+    // SCRIPTED FLIGHTS ARE EXEMPT from both new rules (caught live): mid-flight the view centre
+    // sweeps across the galaxy lattice, and re-aiming there re-pinned the first neighbour it met —
+    // the flight landed with the WRONG system focused. A flight's own pin/selection is the intent.
     const nearest = galaxy && sysAlpha > 0.04 ? this.nearestSystemToViewCentre(galaxy) : null;
-    if (this.pinnedSystem && galaxy && this.pinnedSystem.galaxyId === galaxy.galaxyId) {
-      const w = this.systemWorldPos(galaxy, this.pinnedSystem);
-      const halfW = Math.max(1, this.width / (2 * this.cam.zoom));
-      const halfH = Math.max(1, this.height / (2 * this.cam.zoom));
-      if (Math.abs(w.x - this.cam.x) > halfW * 1.25 || Math.abs(w.y - this.cam.y) > halfH * 1.25) {
-        this.pinnedSystem = null; // panned away — release
-      }
+    if (this.pinnedSystem && !flying && (!galaxy || this.pinnedSystem.galaxyId !== galaxy.galaxyId)) {
+      this.pinnedSystem = null; // the focus moved to another galaxy entirely (dot level only)
     }
     const pinnedHere = this.pinnedSystem && galaxy && this.pinnedSystem.galaxyId === galaxy.galaxyId;
     const system = pinnedHere ? this.pinnedSystem : nearest;
-    const planetAlpha = ramp01(zoom, ranges.plStart, ranges.plEnd);
-    const closeAlpha = ramp01(zoom, ranges.closeStart, ranges.closeEnd);
+    if (!this.pinnedSystem && !flying && system && planetAlpha > 0.02) this.pinnedSystem = system; // the band opened — lock it
     const planet = galaxy && system && planetAlpha > 0.08 ? this.nearestPlanetToViewCentre(galaxy, system) : null;
     this.lock = { galaxy, system, planet, sysAlpha, planetAlpha, closeAlpha, ranges };
 
@@ -1747,6 +1772,12 @@ export class GalacticMap {
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
+      // PLANETARY SHIELD (user ask 2026-09-29): a colony that HOLDS a planet keeps its 72 h ward
+      // up — draw it as an energy bubble over the body in the COLONY'S colour. The countdown arc
+      // above is the clock; this is the state.
+      if (controlled && row.controlExpiresAt > nowUs && pr >= 4.5) {
+        this.drawPlanetShield(px, py, pr, this.data.colonyColors[row.colony], t, pa);
+      }
       if (isReserved && !controlled) {
         ctx.globalAlpha = pa;
         ctx.setLineDash([3, 3]);
@@ -1789,6 +1820,74 @@ export class GalacticMap {
       ctx.fillText(system.name.toUpperCase(), center.x, center.y - starR - 12);
       ctx.globalAlpha = 1;
     }
+  }
+
+  /**
+   * PLANETARY SHIELD (user ask 2026-09-29): a colony that HOLDS a planet keeps a 72-hour ward
+   * around it — drawn as an energy bubble in the COLONY'S colour, wearing the same pattern as the
+   * in-game Nexus shield: a bright fresnel rim, a scrolling lat/long energy lattice and
+   * containment bands rising through it. Additive and purely visual — the countdown arc beside it
+   * is the clock. Gated to bodies big enough to read (deep zoom only).
+   */
+  private drawPlanetShield(px: number, py: number, pr: number, color: string, t: number, alpha: number): void {
+    const ctx = this.ctx;
+    const R = pr * 1.55 + 3;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    // fresnel rim: clear at the centre, the colony's colour gathering at the edge
+    const grad = ctx.createRadialGradient(px, py, R * 0.12, px, py, R);
+    grad.addColorStop(0, withAlpha(color, 0));
+    grad.addColorStop(0.55, withAlpha(color, 0.05));
+    grad.addColorStop(0.85, withAlpha(color, 0.14));
+    grad.addColorStop(1, withAlpha(color, 0.3));
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(px, py, R, 0, Math.PI * 2);
+    ctx.fill();
+    // the energy lattice — the shader's own sin(a·14 + t·0.9)·sin(b·16 − t·0.6) grid, sampled into
+    // a scrolling veil of bright cells (front hemisphere solid, the back a faint ghost)
+    const LON = pr > 9 ? 26 : 16;
+    const LAT = pr > 9 ? 13 : 9;
+    const dot = Math.max(1, Math.min(2, pr * 0.1));
+    ctx.fillStyle = withAlpha(color, 0.9);
+    for (let i = 0; i < LON; i++) {
+      const a = ((i + 0.5) / LON) * Math.PI * 2;
+      const front = Math.sin(a) > 0;
+      for (let j = 0; j < LAT; j++) {
+        const b = -Math.PI / 2 + ((j + 0.5) / LAT) * Math.PI;
+        const v = Math.sin(a * 14 + t * 0.9) * Math.sin(b * 16 - t * 0.6);
+        if (v < 0.35) continue;
+        const sx = px + Math.cos(a) * Math.cos(b) * R;
+        const sy = py - Math.sin(b) * R;
+        ctx.globalAlpha = alpha * (front ? 0.5 : 0.12) * ((v - 0.35) / 0.65);
+        ctx.beginPath();
+        ctx.arc(sx, sy, dot / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // containment bands rising through the bubble (the shader's fract(l.y·5 − t·0.12) rings)
+    for (let k = 0; k < 3; k++) {
+      const ph = (t * 0.115 + k / 3) % 1;
+      const yb = -1 + 2 * ph;
+      const bb = Math.asin(Math.max(-0.97, Math.min(0.97, yb)));
+      const rr = Math.cos(bb) * R;
+      if (rr < 2) continue;
+      ctx.globalAlpha = alpha * 0.3 * Math.sin(Math.PI * ph);
+      ctx.strokeStyle = withAlpha(color, 0.9);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(px, py - Math.sin(bb) * R, rr, rr * 0.34, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // the rim itself, brighter than the fill
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.strokeStyle = withAlpha(color, 0.85);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.arc(px, py, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   /**
@@ -1947,13 +2046,16 @@ export class GalacticMap {
       if (this.pinch && this.pointers.size === 2) {
         const [a, b] = [...this.pointers.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        // zoom TOWARD the pinch midpoint (plan §8): the world point under the midpoint
-        // stays pinned while the scale changes, exactly like the wheel path
-        const mx = (a.x + b.x) / 2;
-        const my = (a.y + b.y) / 2;
-        const before = this.screen2world(mx, my);
+        // zoom TOWARD the pinch midpoint (plan §8) — or toward the SOFT-LOCKED TARGET when one is
+        // locked (user ask 2026-09-29: "while zooming, zoom into the soft locked target without
+        // changing targets"): the anchor keeps the target under the same screen point as the
+        // scale changes, and the lock is frozen for the gesture so it can never slide to a
+        // neighbour mid-pinch.
+        this.holdSoftLock();
+        const anchor = this.zoomAnchor((a.x + b.x) / 2, (a.y + b.y) / 2);
+        const before = this.screen2world(anchor.x, anchor.y);
         this.cam.zoom = Math.max(4, Math.min(1700, (this.pinch.zoom * d) / Math.max(1, this.pinch.dist)));
-        const after = this.screen2world(mx, my);
+        const after = this.screen2world(anchor.x, anchor.y);
         this.cam.x += before.x - after.x;
         this.cam.y += before.y - after.y;
         // SYSTEM LOCK (plan §27): a pinch may not escape the system either.
@@ -1968,6 +2070,10 @@ export class GalacticMap {
           // must not jitter (plan §20/§48: small finger movement ≠ pan).
           if (Math.hypot(dx, dy) <= this.drag.slop) return;
           this.drag.moved = true;
+          // RE-AIM (user ask 2026-09-29): a real pan at the DOT level releases the system pin,
+          // so the soft lock follows the crosshair and dragging CAN change solar systems again.
+          // Inside the visible band the pin stays: the drag is clamped to the system instead.
+          if (this.lock.planetAlpha <= 0.02) this.pinnedSystem = null;
         }
         this.cam.x = this.drag.camx - dx / this.cam.zoom;
         this.cam.y = this.drag.camy - dy / this.cam.zoom;
@@ -1999,9 +2105,11 @@ export class GalacticMap {
       (e) => {
         e.preventDefault();
         const factor = Math.exp(-e.deltaY * 0.0016);
-        const before = this.screen2world(e.offsetX, e.offsetY);
+        this.holdSoftLock();
+        const anchor = this.zoomAnchor(e.offsetX, e.offsetY);
+        const before = this.screen2world(anchor.x, anchor.y);
         this.cam.zoom = Math.max(4, Math.min(1700, this.cam.zoom * factor));
-        const after = this.screen2world(e.offsetX, e.offsetY);
+        const after = this.screen2world(anchor.x, anchor.y);
         this.cam.x += before.x - after.x;
         this.cam.y += before.y - after.y;
         this.camTarget = null;
@@ -2103,6 +2211,10 @@ export class GalacticMap {
     } else if (hit.kind === 'system' && hit.system) {
       const g = this.lock.galaxy ?? this.focusGalaxy;
       if (!g) return;
+      // NO CROSS-SYSTEM TAP while the current solar system is VISIBLE (user ask 2026-09-29): the
+      // open system owns the lock, so a tap can never jump the target onto a neighbour. At the
+      // dot level every system stays tappable (that is how you re-aim before entering one).
+      if (this.lock.planetAlpha > 0.02 && hit.system.systemId !== (this.lock.system?.systemId ?? -1)) return;
       if (this.selected?.type === 'system' && this.selected.system?.systemId === hit.system.systemId) {
         this.flyToSystem(g, hit.system); // 2nd tap: enter
         return;
@@ -2127,9 +2239,16 @@ export class GalacticMap {
     this.emitSelection();
   }
 
-  /** Zoom around the viewport centre (the ± buttons). */
+  /** Zoom around the soft-locked target when one is locked, else the viewport centre (the ± buttons). */
   zoomStep(factor: number): void {
+    this.holdSoftLock();
+    const anchor = this.zoomAnchor(this.width / 2, this.height / 2);
+    const before = this.screen2world(anchor.x, anchor.y);
     this.cam.zoom = Math.max(4, Math.min(1700, this.cam.zoom * factor));
+    const after = this.screen2world(anchor.x, anchor.y);
+    // With no lock the anchor IS the centre → the shift is zero (the classic centre zoom).
+    this.cam.x += before.x - after.x;
+    this.cam.y += before.y - after.y;
     this.camTarget = null;
     this.clampCameraToSystem();
   }
@@ -2149,21 +2268,52 @@ export class GalacticMap {
     this.selectSystem(g, sys);
   }
 
+  /**
+   * The world point a zoom step should grow around. While a system is soft-locked (and its tier
+   * is on screen) the anchor IS that system (user ask 2026-09-29: "while zooming, zoom into the
+   * soft locked target without changing targets") — the target stays under the same screen point
+   * as the scale changes, which also keeps the nearest-to-centre scan on it (the anchored system
+   * is provably never overtaken: for every other system P, |k·(P−C)−(k−1)·(A−C)| ≥ |A−C|). With
+   * no lock the pointer / pinch midpoint owns the anchor, exactly as before.
+   */
+  private zoomAnchor(px: number, py: number): { x: number; y: number } {
+    const { system, galaxy, sysAlpha } = this.lock;
+    if (system && galaxy && sysAlpha > 0.04) {
+      const w = this.systemWorldPos(galaxy, system);
+      return this.world2screen(w.x, w.y);
+    }
+    return { x: px, y: py };
+  }
+
+  /**
+   * Freeze the current soft lock through a zoom gesture: with the target pinned, no amount of
+   * scaling can slide the lock onto a neighbour (the release rules live in `updateSoftFocus` and
+   * the pointer-drag re-aim — dragging at the dot level is how the player re-targets).
+   */
+  private holdSoftLock(): void {
+    const { system, galaxy, sysAlpha } = this.lock;
+    if (!system || !galaxy || sysAlpha <= 0.04) return;
+    if (!this.pinnedSystem || this.pinnedSystem.galaxyId !== galaxy.galaxyId) this.pinnedSystem = system;
+  }
+
   // ------------------------------------------------------------ system drag lock (plan §23–§28)
 
   /**
-   * The camera may not leave the CURRENT solar system (plan §24/§25) — but inside it
-   * the player roams FREELY (user 2026-09-29: "horizontal drag too limited"). The old
-   * bound kept the whole system inside the viewport, which collapses to LOCKED-CENTRE
-   * whenever the viewport is wider than the system (every landscape frame). The bound
-   * is now the viewport itself: the star may sit near an edge — always still on screen —
-   * so any planet can be brought anywhere you like. Scripted flights are exempt.
+   * The camera may not leave the CURRENT solar system while it is VISIBLE (user ask 2026-09-29:
+   * "once the solar system is visible, don't allow drag to go to a different solar system"). The
+   * clamp used to run only at `level === 'system'`, which left the first slice of the planet ramp
+   * (planetAlpha 0…0.52 — planets already drawn, tier flag still 'galaxy') free to pan away. The
+   * bound is the viewport itself: the star may sit near an edge — always still on screen — so any
+   * planet can be brought anywhere you like. Scripted flights are exempt.
    */
   private clampCameraToSystem(): void {
     if (this.camTarget) return;
-    if (this.level !== 'system' || !this.focusGalaxy || !this.focusSystem) return;
-    const sw = this.systemWorldPos(this.focusGalaxy, this.focusSystem);
-    const radius = this.systemClampRadius(this.focusGalaxy, this.focusSystem);
+    if (this.lock.planetAlpha <= 0.02) return;
+    const sys = this.focusSystem ?? this.pinnedSystem;
+    const gal = this.focusGalaxy ?? this.lock.galaxy;
+    if (!sys || !gal) return;
+    const sw = this.systemWorldPos(gal, sys);
+    const radius = this.systemClampRadius(gal, sys);
     const halfW = this.width / (2 * this.cam.zoom);
     const halfH = this.height / (2 * this.cam.zoom);
     // 82% of a half-viewport: the star stays visible with a margin, the drag is free.

@@ -146,9 +146,30 @@ export function getStarsToPromotion(totalStars: number): number {
 }
 
 /**
+ * PROMOTION GRANT (user ask 2026-09-29): true when `total` sits EXACTLY on a division
+ * boundary below Liberator — the total a win lands on when it crosses into the next
+ * division (or the next tier's bottom division).
+ */
+function onDivisionBoundary(total: number): boolean {
+  if (total <= 0 || total >= LIBERATOR_BASE) return false;
+  for (let i = 0; i < LADDER.length; i++) {
+    const step = LADDER[i];
+    const base = TIER_BASE[i];
+    const span = step.divisions * step.per;
+    if (total > base + span) continue;
+    return (total - base) % step.per === 0;
+  }
+  return false;
+}
+
+/**
  * APPLY A MATCH RESULT (plan §2/§4):
  *   WIN  = +1 star · DRAW = 0 · LOSS = −1 star
  * Explicit edge cases:
+ *   • PROMOTION GRANT (user ask 2026-09-29): a win that CROSSES into a new division lands with
+ *     its FIRST STAR lit (3★ Bronze III → 1★ Bronze II) instead of a blank 0★. The granted
+ *     star is a normal star — a later loss can take it back down to 0★ of the same division.
+ *     `delta` stays the match's own +1; the grant is the promotion itself.
  *   • BRONZE losses cost no stars (plan §4 — "Bronze losses").
  *   • LIBERATOR at 0 stars (total 100) never drops to Platinum (plan §4).
  *   • GOD/KOG DO drop a star across the boundary (KOG is not protected):
@@ -158,7 +179,11 @@ export function getStarsToPromotion(totalStars: number): number {
  */
 export function applyRankResult(totalStars: number, result: number): { stars: number; delta: number } {
   const total = Math.max(0, Math.floor(totalStars));
-  if (result === RANK_RESULT_WIN) return { stars: total + 1, delta: 1 };
+  if (result === RANK_RESULT_WIN) {
+    const next = total + 1;
+    if (onDivisionBoundary(next)) return { stars: next + 1, delta: 1 };
+    return { stars: next, delta: 1 };
+  }
   if (result === RANK_RESULT_DRAW) return { stars: total, delta: 0 };
   // LOSS
   const tier = getRankFromStars(total).tier;

@@ -46,10 +46,10 @@ export class MatchFoundModal {
     this.element.classList.add('hidden');
   }
 
-  /** The ranked target world ('' hides the line). */
-  setTarget(name: string): void {
+  /** The ranked target world ('' hides the line). `isNew` wears the NEW pill beside the name. */
+  setTarget(name: string, isNew = false): void {
     this.target.classList.toggle('hidden', !name);
-    if (name) this.target.innerHTML = `<span>TARGETING</span>${name}`;
+    if (name) this.target.innerHTML = `<span>TARGETING</span>${name}${isNew ? '<span class="nf-new-pill">NEW</span>' : ''}`;
   }
 
   /** Fill window: 5 seconds of "searching", no confirmation yet. */

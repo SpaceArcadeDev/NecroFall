@@ -1044,7 +1044,9 @@ export class RankPage {
     const overlay = el('div', 'rk-board-overlay');
     const panel = el('div', 'rk-board');
     const head = el('div', 'rk-board-head');
-    head.innerHTML = '<span class="rk-board-title">KING OF GODS</span><span class="rk-board-sub">TOP RANKED SURVIVORS</span>';
+    // The board's headline is LEADERBOARD, not the top tier's name (user ask 2026-09-29): the
+    // panel lists survivors of every rank, so it must not claim to be the KoG bracket.
+    head.innerHTML = '<span class="rk-board-title">LEADERBOARD</span><span class="rk-board-sub">TOP RANKED SURVIVORS</span>';
     const close = el('button', 'rk-board-close', '✕') as HTMLButtonElement;
     close.type = 'button';
     close.addEventListener('click', () => this.toggleBoard());

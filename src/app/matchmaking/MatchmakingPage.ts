@@ -58,32 +58,31 @@ export class MatchmakingPage {
       const colony = me && me.colony < 3 ? COLONIES[me.colony]?.name ?? '' : '';
       this.queueStatus.setMessage(colony ? `Searching as ${colony}…` : 'Searching for players…');
       const queue = ClientCache.shared.myQueue();
-      let target = '';
-      if (queue?.ranked && queue.planetKey) {
-        const parsed = parsePlanetKey(queue.planetKey);
-        if (parsed) {
-          const season = ClientCache.shared.rankedSeason();
-          const seed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
-          target = planetAt(seed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId).name.toUpperCase();
-        }
-      }
-      this.queueStatus.setTarget(target);
-      this.modal.setTarget(target);
+      const target = queue?.ranked && queue.planetKey ? this.targetInfo(queue.planetKey) : { name: '', isNew: false };
+      this.queueStatus.setTarget(target.name);
+      this.modal.setTarget(target.name, target.isNew);
       return;
     }
     const q = ClientCache.shared.myQueue();
-    let modalTarget = '';
-    if (q?.ranked && q.planetKey) {
-      const parsed = parsePlanetKey(q.planetKey);
-      if (parsed) {
-        const season = ClientCache.shared.rankedSeason();
-        const seed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
-        modalTarget = planetAt(seed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId).name.toUpperCase();
-      }
-    }
-    this.modal.setTarget(modalTarget);
+    const modalTarget = q?.ranked && q.planetKey ? this.targetInfo(q.planetKey) : { name: '', isNew: false };
+    this.modal.setTarget(modalTarget.name, modalTarget.isNew);
     this.modal.show();
     if (info.filling) this.modal.updateFilling(info.deadlineSeconds);
     else this.modal.updateConfirming(info.deadlineSeconds, info.seats, info.myConfirmed, info.allConfirmed);
+  }
+
+  /**
+   * The ranked target's display name + whether it is NEW to this account. "New" = a planet the
+   * player has never fought on: their own rank history holds one row per ranked match (the account
+   * scope keeps it subscribed), so an absent planet_key is first contact (user ask 2026-09-29).
+   */
+  private targetInfo(planetKey: string): { name: string; isNew: boolean } {
+    const parsed = parsePlanetKey(planetKey);
+    if (!parsed) return { name: '', isNew: false };
+    const season = ClientCache.shared.rankedSeason();
+    const seed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+    const name = planetAt(seed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId).name.toUpperCase();
+    const played = ClientCache.shared.myRankHistory(this.ctx.myHex()).some(r => r.planetKey === planetKey);
+    return { name, isNew: !played };
   }
 }

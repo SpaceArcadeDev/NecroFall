@@ -278,12 +278,13 @@ body.nf-touch .mbtn.dash .m-tag { position: static; }
 /* cooldown seconds + dash charges */
 .m-cd {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  inset: auto;
+  /* SKILL / ULT numbers ride the TOP-RIGHT corner, matching the desktop rail's jump/dash badges
+     (user ask 2026-09-29) — the centre of the button stays the ability glyph. */
+  top: 5%;
+  right: 8%;
   font-family: Consolas, monospace;
-  font-size: clamp(14px, 2.6vh, 20px);
+  font-size: clamp(11px, 1.9vh, 14px);
   font-weight: 800;
   color: #fff;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
@@ -487,6 +488,16 @@ body.nf-touch .acc-preview { width: 100%; }
 body.nf-touch .acc-caption { font-size: 9.5px; min-height: 12px; }
 body.nf-touch .acc-layout { gap: 10px; }
 body.nf-touch .acc-tabs { gap: 6px; margin-bottom: 6px; }
+/* Phones: the beam layers behind the two arcade pickers are capped smaller (a full-bleed masked
+   layer is a lot of texture memory for a phone GPU — flicker hardening 2026-09-29). */
+body.nf-touch .modal.levelup::before,
+body.nf-touch .modal.levelup::after,
+body.nf-touch .modal.pickup::before,
+body.nf-touch .modal.pickup::after {
+  width: min(120vmax, 1400px);
+  height: min(120vmax, 1400px);
+  margin: calc(min(120vmax, 1400px) / -2) 0 0 calc(min(120vmax, 1400px) / -2);
+}
 body.nf-touch .cards { gap: 10px; }
 body.nf-touch .card { width: min(240px, 30vw); min-width: 176px; padding: 12px; }
 

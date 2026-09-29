@@ -1081,10 +1081,6 @@ body {
 /* ---- RECALL (idle-gated return to base): its own small round action button at the bottom-left
    of the ability cluster — see `.ab-sm.recall` beside the Jump / Dash rail rules. It is NEVER a
    text chip like the Necrotech pills (user ask 2026-09-29). */
-@keyframes recallPulse {
-  0%, 100% { box-shadow: 0 0 8px rgba(143, 215, 255, 0.25); }
-  50% { box-shadow: 0 0 16px rgba(143, 215, 255, 0.55); }
-}
 .recall-bar {
   width: min(240px, 60vw);
   height: 5px;
@@ -1795,6 +1791,27 @@ body {
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
   pointer-events: none;
 }
+/* SKILL / ULT NUMBERS ride the button's TOP-RIGHT corner in the SAME badge language the Jump /
+   Dash counters wear (user ask 2026-09-29: "numbering like blink strike should be on top right of
+   the button like the jump/dash button numbering"). Scoped to the big `.ab` buttons so the RECALL
+   button's centred countdown (`.rc-cd` lives in an `.ab-sm`) keeps its own placement, and an
+   empty number hides the badge entirely. */
+.ab > .ab-cd {
+  inset: auto;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  color: #12101a;
+  background: #cfc2ee;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+  text-shadow: none;
+}
+.ab > .ab-cd:empty { display: none; }
 /* the ability's own name, wrapped across the bottom of the button */
 .ab-key {
   position: absolute;
@@ -1915,8 +1932,9 @@ body {
 }
 
 /* RECALL — the round home button under the radar (see `.hud-left .ab-sm.recall`): the home
-   glyph alone, dim when the press would do nothing, breathing while usable, lit with the
-   countdown ticking while the channel runs. */
+   glyph alone, dim when the press would do nothing, lit with the countdown ticking while the
+   channel runs. NO GLOW (user ask 2026-09-29): the ready state is a crisp thin ring — the old
+   breathing box-shadow halo is gone, and the channel state is a solid ring plus the numbers. */
 .ab-sm.recall {
   color: #7d8aa6;
   opacity: 0.55;
@@ -1926,14 +1944,12 @@ body {
 .ab-sm.recall.ready {
   opacity: 1;
   color: #cfeaff;
-  box-shadow: 0 0 0 1px rgba(143, 215, 255, 0.75), 0 0 16px rgba(143, 215, 255, 0.45), inset 0 0 10px rgba(0, 0, 0, 0.6);
-  animation: recallPulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 1px rgba(143, 215, 255, 0.6), inset 0 0 10px rgba(0, 0, 0, 0.6);
 }
 .ab-sm.recall.channel {
   opacity: 1;
   color: #ffffff;
-  box-shadow: 0 0 0 1.5px #8fd7ff, 0 0 20px rgba(143, 215, 255, 0.65), inset 0 0 12px rgba(64, 140, 200, 0.5);
-  animation: none;
+  box-shadow: 0 0 0 1.5px #8fd7ff, inset 0 0 12px rgba(64, 140, 200, 0.4);
 }
 .ab-sm.recall .rc-cd { font-size: 15px; }
 
@@ -1989,7 +2005,14 @@ body {
 }
 
 /* ---- respawn overlay */
-.respawn { background: radial-gradient(60% 55% at 50% 45%, rgba(120, 20, 40, 0.5), rgba(4, 2, 8, 0.86)); }
+/* MUCH more translucent (user ask 2026-09-29): the death screen is a readout, not a wall — the
+   kill, YOUR ELIMINATED EFFECT and the fight that goes on all stay watchable through it. */
+.respawn { background: radial-gradient(60% 55% at 50% 45%, rgba(120, 20, 40, 0.2), rgba(4, 2, 8, 0.4)); }
+.respawn .modal-card {
+  background: linear-gradient(180deg, rgba(28, 13, 26, 0.4), rgba(12, 6, 14, 0.48));
+  box-shadow: 0 0 34px rgba(0, 0, 0, 0.35);
+  backdrop-filter: none;
+}
 .respawn-title {
   font-size: clamp(28px, 5vw, 46px);
   font-weight: 900;
@@ -2270,7 +2293,10 @@ body {
   border-radius: 50%;
   pointer-events: none;
   z-index: 0;
-  will-change: transform;
+  /* NO `will-change` here (flicker hardening 2026-09-29): permanently promoting two giant masked
+     layers eats GPU memory on phones — a classic driver-level flicker source. The running
+     transform animation promotes them on its own. `backface-visibility` stops layer flips. */
+  backface-visibility: hidden;
 }
 .modal.levelup::before,
 .modal.pickup::before {
@@ -2375,6 +2401,7 @@ body {
   animation: nf-rainbow-spin 1.5s linear infinite;
   pointer-events: none;
   will-change: transform;
+  backface-visibility: hidden;
 }
 /* the cover: everything inside the 3px band is the card's own (opaque) surface again */
 .modal.levelup .modal-card::after,
@@ -2757,10 +2784,15 @@ body.nf-touch .modal.pickup .modal-card { width: min(820px, 90vw); }
   left: -60%;
   width: 55%;
   background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  /* COMPOSITOR-ONLY (flicker fix 2026-09-29): this used to animate `left`, a MAIN-THREAD repaint
+     of the whole card + its shadow over the live canvas every frame — the classic Android-Chromium
+     "flickers in and out" trigger. Identical travel, transform only: left -60% → 120% of the card
+     equals 0 → 327% of the strip's own 55% width. */
+  transform: translateX(0);
   animation: nf-sheen 3.4s ease-in-out infinite;
   pointer-events: none;
 }
-@keyframes nf-sheen { 0% { left: -60%; } 55%, 100% { left: 120%; } }
+@keyframes nf-sheen { 0% { transform: translateX(0); } 55%, 100% { transform: translateX(327%); } }
 
 /* ---- Esc menu: the same lit-card language as the rest of the menus, sectioned so the column
    reads top-to-bottom instead of as one wall of rows. */

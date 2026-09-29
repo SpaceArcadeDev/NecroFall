@@ -993,6 +993,19 @@
   margin-bottom: 2px;
   font-weight: 700;
 }
+/* the NEW pill beside the world's name (first contact with this planet, user ask 2026-09-29) */
+.nf-queue-target .nf-new-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  vertical-align: 2px;
+  color: #06131a;
+  background: linear-gradient(180deg, #b9f4ff, #63d2ff);
+  box-shadow: 0 0 14px rgba(99, 210, 255, 0.55);
+}
 
 /* ============================================================ animations */
 @keyframes rk-crest-in { from { transform: scale(0.5) rotate(-12deg); opacity: 0; } to { transform: scale(1) rotate(0); opacity: 1; } }

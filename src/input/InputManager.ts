@@ -37,6 +37,12 @@ export class InputManager {
 
   private ndc = new THREE.Vector2(0, 0);
   private mouseSeen = false;
+  /**
+   * The pointerType of the most recent POINTER (or touch) press/release. Mouse handlers consult
+   * it so compatibility mouse events synthesised by a touch can never aim or cast (see the
+   * `mousedown` guard): '' until the first pointer event, 'mouse'/'pen'/'touch' after.
+   */
+  private lastPointerType = '';
   private keys = new Set<string>();
   private qJump = false;
   private qDash = false;
@@ -76,6 +82,14 @@ export class InputManager {
       target.addEventListener(type as string, fn as EventListener, opts);
       this.disposers.push(() => target.removeEventListener(type as string, fn as EventListener));
     };
+
+    // Source-of-truth for the mouse guards: the capture-phase pointer press/release. A finger or
+    // pen stamps 'touch'/'pen' here, so the compatibility `mousedown`/`mouseup` that follows it is
+    // ignored; a real mouse stamps 'mouse' on every press and stays fully functional.
+    on(window, 'pointerdown', (e: PointerEvent) => { this.lastPointerType = e.pointerType || 'mouse'; }, { capture: true, passive: true });
+    on(window, 'pointerup', (e: PointerEvent) => { this.lastPointerType = e.pointerType || 'mouse'; }, { capture: true, passive: true });
+    // Old WebKit without Pointer Events: touchstart is the only tell.
+    on(window, 'touchstart', () => { this.lastPointerType = 'touch'; }, { capture: true, passive: true });
 
     on(window, 'keydown', (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement) return;
@@ -126,6 +140,12 @@ export class InputManager {
 
     on(el, 'mousedown', (e: MouseEvent) => {
       if (!this.enabled) return;
+      // A TOUCH NEVER CASTS (user report 2026-09-29: "tapping the screen fires my skill"). Every
+      // touch synthesises compatibility mouse events; without this guard a canvas tap anywhere
+      // outside the move lane became press-to-aim + release-to-cast. `lastPointerType` is stamped
+      // by the capture-phase pointer/touch listeners below, so a REAL mouse (pointerType 'mouse')
+      // still aims and casts on hybrid laptops.
+      if (this.lastPointerType !== 'mouse' && this.lastPointerType !== '') return;
       // press and hold to aim (the ground marker follows the cursor), release to cast
       if (e.button === 0) {
         this.lmbDown = true;
@@ -144,6 +164,8 @@ export class InputManager {
         this.lmbDown = this.rmbDown = false;
         return;
       }
+      // ...and the matching release of a touch-synthesised press must not cast either.
+      if (this.lastPointerType !== 'mouse' && this.lastPointerType !== '') return;
       const held = this.aimHold;
       this.aimHold = null;
       // The RELEASE owns the cast: `aimHold` may have been wiped mid-hold (a blur, a focus steal),

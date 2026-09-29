@@ -431,7 +431,21 @@
   flex-direction: column;
   min-height: 0;
 }
-.acc-tabs { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 0 0 8px; }
+/* ONE ROW, ALWAYS (user ask 2026-09-29): the six categories scroll HORIZONTALLY instead of
+   wrapping onto a second row — the wrap made the list jump height and read as two shelves. */
+.acc-tabs {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  margin: 0 0 8px;
+  padding-bottom: 2px;
+}
+.acc-tabs::-webkit-scrollbar { display: none; }
+.acc-tab { flex: 0 0 auto; white-space: nowrap; }
 /* one line of context per category — the three effect tabs must say WHEN they play */
 .acc-hint {
   font-size: 10px;
@@ -1078,6 +1092,14 @@
 .screen.nt-screen { justify-content: flex-start; overflow: hidden; }
 .screen.nt-screen::before,
 .screen.nt-screen::after { display: none; }
+/* The SPAWN picker: official matches open the Necrotech select OVER the live match (starter
+   class at spawn), so its backdrop is MUCH more translucent than the menu screens' — the world
+   behind stays visible while you pick (user ask 2026-09-29). */
+.screen.nt-screen {
+  background:
+    radial-gradient(90% 74% at 50% 16%, rgba(96, 44, 168, 0.14), rgba(6, 4, 12, 0.3) 74%),
+    linear-gradient(180deg, rgba(10, 6, 18, 0.14), rgba(6, 4, 12, 0.34));
+}
 .nt-screen .sel-head { flex: 0 0 auto; margin-top: clamp(0px, 1.5vh, 14px); }
 .nt-screen .sel-preview {
   flex: 1 1 auto;

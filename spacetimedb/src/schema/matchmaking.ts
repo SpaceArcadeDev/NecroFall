@@ -70,6 +70,12 @@ export const queue_entry = table(
     ranked: t.bool().default(false),
     /** The planet the player queued for (`ring:g:s:p`) — '' for classic queues. */
     planet_key: t.string().default(''),
+    /**
+     * Coarse player region ('as','eu','na','sa','oc','af'; '' = unknown) — a LATENCY hint:
+     * hybrid gameplay is peer-to-peer, so same-region pairing keeps the direct hop short.
+     * After a short wait the region lock relaxes so small regions still find matches.
+     */
+    region: t.string().default(''),
   }
 );
 
@@ -86,6 +92,8 @@ export const candidate_match = table(
     /** Ranked candidate: only ranked queue entries on the same planet may fill it. */
     ranked: t.bool().default(false),
     planet_key: t.string().default(''),
+    /** Region of the candidate's seed entry — same-region entries fill it first (see queue.ts). */
+    region: t.string().default(''),
   }
 );
 

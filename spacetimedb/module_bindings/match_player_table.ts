@@ -39,4 +39,5 @@ export default __t.row({
   statsReportedAt: __t.u64().name("stats_reported_at"),
   updatedAt: __t.timestamp().name("updated_at"),
   left: __t.bool(),
+  kickReason: __t.string().name("kick_reason"),
 });

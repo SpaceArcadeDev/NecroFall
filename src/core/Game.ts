@@ -4380,8 +4380,12 @@ export class Game {
     this.ui.hidePauseMenu();
   }
 
-  /** Leaving mid-match is not the end of the match: P2P elects a new host, OFFICIAL tombstones the seat. */
-  private leaveMatch(): void {
+  /**
+   * Leaving mid-match is not the end of the match: P2P elects a new host, OFFICIAL tombstones the
+   * seat. PUBLIC since 2026-09-29: the shell also routes the anti-cheat KICK exit through here
+   * (the kicked seat is already a tombstone; the leave reducer is idempotent).
+   */
+  leaveMatch(): void {
     this.paused = false;
     this.ui.hidePauseMenu();
     this.ui.hideRespawn();

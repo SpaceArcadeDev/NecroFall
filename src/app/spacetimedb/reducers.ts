@@ -65,7 +65,7 @@ export const inviteToParty = (target: Identity): void => callReducer('inviteToPa
 export const declineInvite = (id: number): void => callReducer('declineInvite', { id }, true);
 
 // ------------------------------------------------------------ matchmaking
-export const findMatch = (): void => callReducer('findMatch');
+export const findMatch = (region: string): void => callReducer('findMatch', { region });
 export const cancelFindMatch = (): void => callReducer('cancelFindMatch');
 export const confirmMatch = (): void => callReducer('confirmMatch');
 export const declineMatch = (): void => callReducer('declineMatch');
@@ -177,6 +177,25 @@ export interface SendMatchMsgArgs {
   payload: string;
 }
 export const sendMatchMsg = (args: SendMatchMsgArgs): void => callReducer('sendMatchMsg', args, true);
+
+/**
+ * HYBRID ANTI-CHEAT (2026-09-29): report one observed impossible pose sample from another
+ * seat's broadcast stream. Fire-and-forget — the server corroborates the sample against the
+ * target's own pose record and decides (see `game/verification.ts`). Never gates gameplay.
+ */
+export interface ReportViolationArgs {
+  matchId: number;
+  /** Identity hex of the suspected seat. */
+  targetHex: string;
+  /** 'speed' — the only detector class today. */
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  /** Reporter-clock micros of the sample (metadata). */
+  at: bigint;
+}
+export const reportViolation = (args: ReportViolationArgs): void => callReducer('reportViolation', args, true);
 
 export const reportMatchStats = (kills: number, deaths: number, objectives: number, damage: number): void =>
   callReducer('reportMatchStats', { kills, deaths, objectives, damage });

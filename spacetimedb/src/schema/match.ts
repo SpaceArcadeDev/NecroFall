@@ -82,6 +82,38 @@ export const match_player = table(
      * rewards or history. Reconnection never revives it.
      */
     left: t.bool().default(false),
+    /**
+     * Non-empty when the anti-cheat layer FORCE-REMOVED the seat (`left = true`): the reason
+     * rides the public row so the offender's client shows it and everyone else ignores them.
+     */
+    kick_reason: t.string().default(''),
+  }
+);
+
+/**
+ * Anti-cheat report records (PRIVATE — never subscribed by clients). Hybrid matches run
+ * peer-to-peer; this table is how the server AUDITS the suspicion that a seat's broadcast
+ * stream disagrees with the pose record that same seat reports to the server. Corroborated
+ * reports remove the offender from the match (see `game/verification.ts`).
+ */
+export const violation_report = table(
+  { name: 'violation_report' },
+  {
+    id: t.u32().primaryKey().autoInc(),
+    match_id: t.u32().index('btree'),
+    reporter: t.identity().index('btree'),
+    target: t.identity().index('btree'),
+    /** What the reporter saw — currently 'speed' (impossible motion in the pose stream). */
+    kind: t.string(),
+    /** The sample pose the reporter observed on the wire. */
+    x: t.f64(),
+    y: t.f64(),
+    z: t.f64(),
+    /** Reporter-clock micros of the sample (metadata; corroboration uses server state only). */
+    at: t.u64(),
+    /** True when the sample contradicted the target's own recent pose claim to the server. */
+    corroborated: t.bool(),
+    at_server: t.timestamp(),
   }
 );
 

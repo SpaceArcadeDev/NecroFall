@@ -20,4 +20,5 @@ export default __t.row({
   candidateMatchId: __t.option(__t.u32()).name("candidate_match_id"),
   ranked: __t.bool(),
   planetKey: __t.string().name("planet_key"),
+  region: __t.string(),
 });

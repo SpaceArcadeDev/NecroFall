@@ -205,6 +205,8 @@ export interface QueueEntryRow {
   ranked: boolean;
   /** `ring:galaxyId:systemId:planetId` for ranked searches, '' otherwise. */
   planetKey: string;
+  /** Coarse region tag for regional matching ('as','eu','na','sa','oc','af', '' = unknown). */
+  region: string;
 }
 
 export interface CandidateRow {
@@ -214,6 +216,8 @@ export interface CandidateRow {
   status: number;
   ranked: boolean;
   planetKey: string;
+  /** Region of the candidate's seed entry — same-region players fill it first. */
+  region: string;
 }
 
 export interface CandidatePlayerRow {
@@ -273,6 +277,8 @@ export interface MatchPlayerRow {
   updatedAt: Timestamp;
   /** The player pressed LEAVE MATCH — the seat is a tombstone (no rewards, not "in a match"). */
   left: boolean;
+  /** Non-empty when the anti-cheat layer force-removed the seat — shown to the offender. */
+  kickReason: string;
 }
 
 /**

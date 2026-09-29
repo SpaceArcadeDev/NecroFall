@@ -60,6 +60,7 @@ import RecordProfileViewReducer from "./record_profile_view_reducer";
 import ReportMatchStatsReducer from "./report_match_stats_reducer";
 import ReportNecrophageVictoryReducer from "./report_necrophage_victory_reducer";
 import ReportNexusCaptureReducer from "./report_nexus_capture_reducer";
+import ReportViolationReducer from "./report_violation_reducer";
 import SendMatchMsgReducer from "./send_match_msg_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetBanAdminReducer from "./set_ban_admin_reducer";
@@ -559,6 +560,7 @@ const reducersSchema = __reducers(
   __reducerSchema("report_match_stats", ReportMatchStatsReducer),
   __reducerSchema("report_necrophage_victory", ReportNecrophageVictoryReducer),
   __reducerSchema("report_nexus_capture", ReportNexusCaptureReducer),
+  __reducerSchema("report_violation", ReportViolationReducer),
   __reducerSchema("send_match_msg", SendMatchMsgReducer),
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_ban_admin", SetBanAdminReducer),

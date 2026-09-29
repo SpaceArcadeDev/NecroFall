@@ -33,8 +33,9 @@ import {
   reportNecrophageVictory,
   findRankedMatch as findRankedMatchReducer,
   sendMatchMsg,
+  reportViolation,
 } from '../spacetimedb/reducers';
-import { hexOf, Identity, MatchMsgRow } from '../spacetimedb/rows';
+import { hexOf, Identity, MatchMsgRow, MatchPlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
 import { loadSelection, selectionToWire } from '../../customization/CustomizationStore';
 import { MultiplayerProvider, ProviderConnectionState, ProviderGameEvent } from './MultiplayerProvider';
@@ -46,6 +47,8 @@ import {
   OfficialNetMessage,
   OfficialStateMessage,
 } from './OfficialTypes';
+import { OfficialP2PLink } from './OfficialP2PLink';
+import { regionTag } from './Region';
 
 /** Movement sent to the server at most this often while actively moving (heartbeat). */
 const MOVE_HEARTBEAT_S = 1.0;
@@ -83,6 +86,21 @@ const CONFLICT_STALE_MS = 3000;
  * broadcasting — takes the role back within this window, P2P-style.
  */
 const CONFLICT_CONCEDE_MS = 6000;
+/**
+ * HYBRID ANTI-CHEAT (2026-09-29): broadcast-stream physics bounds. The stream is what every
+ * peer renders, so an impossible sample here is what a position cheat looks like from outside.
+ * Legit teleports (recall, respawn) DO jump — they are single events, and they match the
+ * sender's own server-side pose claim, so the server dismisses reports about them (see
+ * `spacetimedb/src/game/verification.ts`). This detector never gates a frame.
+ */
+const STREAM_SPEED_MAX = 45;
+const STREAM_JUMP_DIST = 30;
+/** Anomalous samples needed inside the window before a report is filed... */
+const STREAM_STRIKE_WINDOW_MS = 6000;
+const STREAM_STRIKES_TO_REPORT = 3;
+/** ...and the pause between reports about the same seat (the server cooldown is 6 s). */
+const REPORT_COOLDOWN_MS = 7000;
+const MAX_REPORTS_PER_TARGET = 3;
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -205,6 +223,17 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   /** 1 Hz watchdog: promotes the next seat when the authority goes quiet. */
   private watchdogTimer = 0;
 
+  // ---- hybrid P2P transport (2026-09-29): the WebRTC mesh is the PRIMARY wire; the
+  // SpacetimeDB relay (`match_msg`) stays as the per-pair fallback for NAT failures.
+  /** Live mesh between the match's seats. Null before the first roster push / after reset. */
+  private link: OfficialP2PLink | null = null;
+  /** Per-sender last observed stream pose (anti-cheat detector state). */
+  private streamPose = new Map<string, { x: number; y: number; z: number; t: number }>();
+  /** Per-sender strike/report bookkeeping for the stream detector. */
+  private streamStrikes = new Map<string, { strikes: number; windowStart: number; lastReportAt: number; reports: number }>();
+  /** Our own seat was force-removed — the shell is told exactly once. */
+  private kickedEmitted = false;
+
   private gameListeners = new Set<(e: ProviderGameEvent) => void>();
   private stateListeners = new Set<(s: ProviderConnectionState) => void>();
   private lastQueueSignature = '';
@@ -305,6 +334,12 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.matchStartAt = 0;
     this.silentSeats.clear();
     this.conflictSince.clear();
+    // Hybrid transport: every match boundary drops the mesh and the detector state.
+    this.link?.stop();
+    this.link = null;
+    this.streamPose.clear();
+    this.streamStrikes.clear();
+    this.kickedEmitted = false;
   }
 
   /** Forget any pending all-confirmed beat — a new queue must never inherit the old one's. */
@@ -342,8 +377,13 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     cancelFindMatch();
   }
 
-  findMatch(): void {
-    findMatch();
+  /**
+   * FIND MATCH — region-preferred (hybrid 2026-09-29). The tag travels with the queue entry;
+   * the server fills same-region players first and relaxes the lock after a short wait, so
+   * thin regions still find matches. P2P gameplay makes same-region = short direct hop.
+   */
+  findMatch(region?: string): void {
+    findMatch(region ?? regionTag());
   }
 
   /** FIND RANKED MATCH — queue solo for one planet (plan §5/§53). */
@@ -568,24 +608,37 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   // ------------------------------------------------------------ relay wire (official)
 
   /**
-   * Relay one P2P message to ONE seat (game id). The game id is mapped back to the seat's
-   * identity; unknown ids are dropped (the sender's roster and ours can differ for a beat).
+   * Send one P2P message to ONE seat (game id). HYBRID (2026-09-29): the WebRTC mesh serves
+   * it when the pair is direct — one hop, peer to peer, exactly like P2P mode; a pair the
+   * mesh cannot reach falls back to the SpacetimeDB relay. Both paths are fire-and-forget:
+   * nothing here ever waits on the server.
    */
   sendNetTo(toId: string, msg: OfficialNetMessage): void {
     if (!this.matchId) return;
     const hex = this.hexForGameId(toId);
     if (!hex || hex === this.myHex) return;
+    const seatId = this.seatIdOf(hex);
+    if (seatId >= 0 && this.link?.send(seatId, msg)) return;
     this.relay(msg, hex);
   }
 
   /**
-   * Relay one P2P message to every seat (the authority's broadcast). `exceptId` rides along as
-   * the `ex` field, which receivers check against their own game id — the P2P
-   * `broadcast(msg, exceptId)` rule, preserved across the SpacetimeDB hop.
+   * Send one P2P message to every seat except `exceptId` — routed PER PAIR: direct over the
+   * WebRTC mesh where possible, relay-targeted where not. (Direct sends carry no `ex` field:
+   * targeting is already exact, one message per peer.)
    */
   broadcastNet(msg: OfficialNetMessage, exceptId?: string): void {
     if (!this.matchId) return;
-    this.relay(exceptId ? { ...msg, ex: exceptId } : msg, '');
+    // Liveness anchor of the authority role: a broadcast snapshot went out just now.
+    if (msg.t === 's' && !exceptId) this.lastSnapshotSentAt = performance.now();
+    for (const row of ClientCache.shared.matchPlayers(this.matchId)) {
+      if (row.left) continue;
+      const hex = hexOf(row.identity);
+      if (!hex || hex === this.myHex) continue;
+      if (exceptId && this.gameIdFor(hex) === exceptId) continue;
+      if (this.link?.send(row.id, msg)) continue;
+      this.relay(msg, hex);
+    }
   }
 
   /** Serialize one message into a `match_msg` row (kind + JSON body, `t` stripped). */
@@ -603,8 +656,6 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
         seq: this.relaySeq,
         payload: JSON.stringify(body),
       });
-      // Liveness anchor of the authority role: a broadcast snapshot went out just now.
-      if (kind === 's' && toHex === '') this.lastSnapshotSentAt = performance.now();
     } catch (err) {
       console.warn('[NECROFALL] relay encode failed', err);
     }
@@ -619,6 +670,130 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       if (hex && hex.startsWith(short)) return hex;
     }
     return '';
+  }
+
+  /** A seat id (match_player.id) back to its identity hex. */
+  private hexForSeatId(seatId: number): string {
+    if (!this.matchId) return '';
+    for (const row of ClientCache.shared.matchPlayers(this.matchId)) {
+      if (row.id === seatId) return hexOf(row.identity);
+    }
+    return '';
+  }
+
+  /** Keep the WebRTC mesh in step with the seat rows (idempotent, cheap). */
+  private ensureLink(rows: MatchPlayerRow[]): void {
+    if (!this.matchId) return;
+    const mySeat = rows.find(r => hexOf(r.identity) === this.myHex)?.id ?? -1;
+    if (mySeat < 0) return;
+    const roster = rows.filter(r => !r.left).map(r => ({ seatId: r.id, hex: hexOf(r.identity) }));
+    if (!this.link) {
+      this.link = new OfficialP2PLink(
+        (seatId, msg) => this.onLinkMessage(seatId, msg),
+        () => { /* topology changes are visible via transportState() */ },
+      );
+      this.link.start(this.matchId, mySeat, roster);
+    } else {
+      this.link.setSeats(roster);
+    }
+  }
+
+  /** One message arrived over a DIRECT WebRTC channel. */
+  private onLinkMessage(seatId: number, msg: unknown): void {
+    if (!this.matchId || !msg || typeof msg !== 'object') return;
+    const m = msg as Record<string, unknown>;
+    const kind = typeof m.t === 'string' ? m.t : '';
+    if (!kind) return;
+    const hex = this.hexForSeatId(seatId);
+    if (!hex) return;
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(m)) if (k !== 't') body[k] = v;
+    this.dispatchIncoming(hex, kind, body);
+  }
+
+  /**
+   * THE single arrival funnel for remote messages, whatever the wire: direct WebRTC frames and
+   * relayed rows both land here, keeping the watchdog clocks, the double-authority resolver and
+   * the anti-cheat detector transport-agnostic — exactly one place decides.
+   */
+  private dispatchIncoming(fromHex: string, kind: string, body: Record<string, unknown>): void {
+    if (!this.matchId || !this.gameApi || !fromHex || fromHex === this.myHex) return;
+    // A seat that left (or was KICKED) stops existing for the match: ignore its traffic.
+    const seat = ClientCache.shared.matchPlayers(this.matchId).find(r => hexOf(r.identity) === fromHex);
+    if (seat?.left) return;
+    // Liveness evidence for the authority watchdog (mirrors `noteRelayArrival`, direct side).
+    const now = performance.now();
+    const prev = this.seenLast.get(fromHex) ?? 0;
+    this.seenPrev.set(fromHex, prev);
+    this.seenLast.set(fromHex, now);
+    if (kind === 's') {
+      const fromId = this.gameIdFor(fromHex);
+      if (fromId === this.authorityId) {
+        this.authoritySnapAt = now;
+        this.silentSeats.delete(fromId);
+      }
+    }
+    if (typeof body.ex === 'string' && body.ex === this.myGameId) return;
+    if (kind === 's' && this.authorityId === this.myGameId) {
+      // DOUBLE AUTHORITY: resolve before the snapshot reaches the game ('apply' = we yielded).
+      const verdict = this.resolveSnapshotConflict(fromHex);
+      if (verdict === 'drop') return;
+    }
+    if (kind === 'st') this.inspectStream(fromHex, body);
+    this.gameApi.applyNetMessage(this.gameIdFor(fromHex), { t: kind, ...body });
+  }
+
+  /**
+   * HYBRID ANTI-CHEAT: inspect a seat's broadcast pose stream for physically impossible
+   * motion. Never gates gameplay — a confirmed pattern files a quiet `report_violation`, and
+   * the SERVER corroborates the sample against the sender's own pose record before removing
+   * them (`spacetimedb/src/game/verification.ts`). Legit teleports (recall/respawn) are single
+   * jumps that match the sender's own sync_pose claim, so they can never corroborate.
+   */
+  private inspectStream(fromHex: string, body: Record<string, unknown>): void {
+    const state = body.state as Record<string, unknown> | undefined;
+    if (!state) return;
+    const x = Number(state.x);
+    const y = Number(state.y);
+    const z = Number(state.z);
+    if (![x, y, z].every(Number.isFinite)) return;
+    const now = performance.now();
+    const prev = this.streamPose.get(fromHex);
+    this.streamPose.set(fromHex, { x, y, z, t: now });
+    if (!prev) return;
+    const dt = Math.max(0.05, (now - prev.t) / 1000);
+    const dist = Math.hypot(x - prev.x, y - prev.y, z - prev.z);
+    const speed = dist / dt;
+    const anomalous = (speed > STREAM_SPEED_MAX && dist > 6) || dist > STREAM_JUMP_DIST;
+    if (!anomalous) return;
+    const st = this.streamStrikes.get(fromHex) ?? { strikes: 0, windowStart: now, lastReportAt: 0, reports: 0 };
+    if (now - st.windowStart > STREAM_STRIKE_WINDOW_MS) {
+      st.strikes = 0;
+      st.windowStart = now;
+    }
+    st.strikes++;
+    this.streamStrikes.set(fromHex, st);
+    if (st.strikes < STREAM_STRIKES_TO_REPORT) return;
+    if (st.reports >= MAX_REPORTS_PER_TARGET) return;
+    if (now - st.lastReportAt < REPORT_COOLDOWN_MS) return;
+    st.strikes = 0;
+    st.lastReportAt = now;
+    st.reports++;
+    console.warn(`[NECROFALL] impossible stream from ${fromHex.slice(0, 14)} — reporting to verification`);
+    reportViolation({
+      matchId: this.matchId,
+      targetHex: fromHex,
+      kind: 'speed',
+      x: Math.round(x * 100) / 100,
+      y: Math.round(y * 100) / 100,
+      z: Math.round(z * 100) / 100,
+      at: BigInt(Math.round(now * 1000)),
+    });
+  }
+
+  /** Debug/telemetry: this client's hybrid transport topology (direct vs relay per seat). */
+  transportState(): unknown {
+    return { matchId: this.matchId, link: this.link?.state() ?? null };
   }
 
   /**
@@ -650,15 +825,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
         continue; // corrupt body — the streams are continuous, the next message recovers
       }
       if (!body || typeof body !== 'object') continue;
-      if (typeof body.ex === 'string' && body.ex === this.myGameId) continue;
-      if (row.kind === 's' && this.authorityId === this.myGameId) {
-        // DOUBLE AUTHORITY: two seats believe they run the match. Resolve before the snapshot
-        // reaches the game — 'apply' means we yielded to the sender first, so the game takes
-        // it as a CLIENT (the same path a normal snapshot uses).
-        const verdict = this.resolveSnapshotConflict(row.fromHex);
-        if (verdict === 'drop') continue;
-      }
-      this.gameApi.applyNetMessage(this.gameIdFor(row.fromHex), { t: row.kind, ...body });
+      this.dispatchIncoming(row.fromHex, row.kind, body);
     }
   }
 
@@ -780,6 +947,15 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     if (sig !== this.rosterSignature) {
       this.rosterSignature = sig;
       this.gameApi.setRoster(players);
+    }
+
+    // HYBRID TRANSPORT: keep the WebRTC mesh in step with the roster.
+    this.ensureLink(rows);
+    // ANTI-CHEAT: our own seat was force-removed — tell the shell ONCE, with the reason.
+    const mine = rows.find(r => hexOf(r.identity) === this.myHex);
+    if (mine && mine.left && mine.kickReason && !this.kickedEmitted) {
+      this.kickedEmitted = true;
+      this.emit({ type: 'kicked', reason: mine.kickReason });
     }
 
     const live = rows.filter(r => !r.left);

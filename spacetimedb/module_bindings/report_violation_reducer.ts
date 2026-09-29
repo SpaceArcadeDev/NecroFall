@@ -10,12 +10,12 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  matchId: __t.u32().primaryKey().name("match_id"),
-  createdAt: __t.u64().name("created_at"),
-  deadline: __t.u64(),
-  status: __t.u8(),
-  ranked: __t.bool(),
-  planetKey: __t.string().name("planet_key"),
-  region: __t.string(),
-});
+export default {
+  matchId: __t.u32(),
+  targetHex: __t.string(),
+  kind: __t.string(),
+  x: __t.f64(),
+  y: __t.f64(),
+  z: __t.f64(),
+  at: __t.u64(),
+};

@@ -47,6 +47,50 @@ import { sweepPartyInvites } from './party';
 /** One scan per second ages every window; the real granularity lives in constants. */
 const SCAN_INTERVAL_US = 1_000_000n;
 
+/**
+ * REGIONAL MATCHING (hybrid 2026-09-29): official gameplay is peer-to-peer, so same-region
+ * players get the short direct hop. Region is a PREFERENCE, not a wall — once a queued player
+ * has waited this long (or the open candidate is this old), cross-region filling is allowed
+ * so small regions still find matches.
+ */
+const REGION_EXPAND_US = 20_000_000n;
+
+/**
+ * How long a candidate's FILL window may stretch while a region-blocked waiter matures.
+ * Without this the candidate would flip to confirmation (and close) before the waiter's
+ * REGION_EXPAND clock runs out — cross-region pairs could never form. Bounded by the same
+ * window; only ever fires when such a waiter exists, so solo queues keep their 5 s window.
+ */
+const REGION_WAIT_EXT_US = 20_000_000n;
+
+/** Coarse region tag ('as','eu','na','sa','oc','af', ''). Lowercased, bounded, safe charset. */
+function normalizeRegion(raw: string): string {
+  const s = (raw ?? '').trim().toLowerCase().slice(0, 12);
+  return /^[a-z0-9-]*$/.test(s) ? s : '';
+}
+
+/** True when `region` may fill this candidate right now (same region, unknown region, or relaxed). */
+function regionAllowed(region: string, queuedAt: bigint, candidate: any, now: bigint): boolean {
+  if (!region || !candidate.region || region === candidate.region) return true;
+  if (now - queuedAt >= REGION_EXPAND_US) return true;
+  return now - (candidate.created_at as bigint) >= REGION_EXPAND_US;
+}
+
+/**
+ * A QUEUED player this candidate cannot take YET but whom the expansion clock will unlock
+ * inside the extension window — the signal that keeps the fill window open (see the scanner).
+ */
+function hasRegionWaiter(ctx: any, candidate: any, now: bigint): boolean {
+  for (const q of ctx.db.queue_entry.iter()) {
+    if (q.status !== QUEUE_QUEUED) continue;
+    if (Boolean(q.ranked) !== Boolean(candidate.ranked)) continue;
+    if (candidate.ranked && (q.planet_key ?? '') !== candidate.planet_key) continue;
+    if (regionAllowed(q.region ?? '', q.queued_at, candidate, now)) continue;
+    if (REGION_EXPAND_US - (now - q.queued_at) <= REGION_WAIT_EXT_US) return true;
+  }
+  return false;
+}
+
 function nowMicros(ctx: any): bigint {
   return ctx.timestamp.microsSinceUnixEpoch as bigint;
 }
@@ -66,8 +110,9 @@ function activeMatchFor(ctx: any, identity: any): any | undefined {
  *   account exists and is onboarded, not already queued, not already in a match.
  * A party is queued by its LEADER and enters as one atomic group (plan §72).
  */
-export const find_match = spacetimedb.reducer((ctx) => {
+export const find_match = spacetimedb.reducer({ region: t.string() }, (ctx, { region }) => {
   const me = requireOnboarded(ctx);
+  const zone = normalizeRegion(region);
   // Self-heal: a module update can leave the schedule table empty, and without
   // the scanner candidates never age — the queue would silently stall.
   armMatchmakingScan(ctx);
@@ -100,6 +145,7 @@ export const find_match = spacetimedb.reducer((ctx) => {
       candidate_match_id: undefined,
       ranked: false,
       planet_key: '',
+      region: zone,
     });
   }
 
@@ -136,15 +182,22 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
       if (candidate.status === CANDIDATE_FILLING) {
         fillCandidate(ctx, candidate, now);
         if (now >= candidate.deadline) {
-          const seats = [...ctx.db.match_candidate_player.match_id.filter(candidate.match_id)];
-          if (seats.length >= MATCH_MIN_PLAYERS) {
-            ctx.db.candidate_match.match_id.update({
-              ...candidate,
-              status: CANDIDATE_CONFIRMING,
-              deadline: now + CONFIRM_WINDOW_US,
-            });
+          // Regional patience: a queued player from another region who will become eligible
+          // inside the expansion window keeps the fill window open — otherwise the candidate
+          // would close before they mature and a cross-region pair could never form.
+          if (hasRegionWaiter(ctx, candidate, now) && now - (candidate.created_at as bigint) < FILL_WINDOW_US + REGION_WAIT_EXT_US) {
+            ctx.db.candidate_match.match_id.update({ ...candidate, deadline: now + 1_000_000n });
           } else {
-            releaseCandidate(ctx, candidate.match_id, false);
+            const seats = [...ctx.db.match_candidate_player.match_id.filter(candidate.match_id)];
+            if (seats.length >= MATCH_MIN_PLAYERS) {
+              ctx.db.candidate_match.match_id.update({
+                ...candidate,
+                status: CANDIDATE_CONFIRMING,
+                deadline: now + CONFIRM_WINDOW_US,
+              });
+            } else {
+              releaseCandidate(ctx, candidate.match_id, false);
+            }
           }
         }
       } else if (candidate.status === CANDIDATE_CONFIRMING) {
@@ -192,6 +245,7 @@ export function maybeCreateCandidate(ctx: any, now: bigint): void {
     status: CANDIDATE_FILLING,
     ranked: Boolean(seed.ranked),
     planet_key: seed.ranked ? seed.planet_key ?? '' : '',
+    region: seed.region ?? '',
   });
   fillCandidate(ctx, candidate, now);
 }
@@ -208,7 +262,7 @@ export function fillOpenCandidates(ctx: any, now: bigint): void {
  *   1. parties stay whole, 2. max 3 per colony, 3. max 9 total,
  *   4. prefer the rarest colony and the longest wait.
  */
-function fillCandidate(ctx: any, candidate: any, _now: bigint): void {
+function fillCandidate(ctx: any, candidate: any, now: bigint): void {
   const seats = [...ctx.db.match_candidate_player.match_id.filter(candidate.match_id)];
   const counts = [0, 0, 0];
   let total = 0;
@@ -219,9 +273,12 @@ function fillCandidate(ctx: any, candidate: any, _now: bigint): void {
 
   // Group the queue: party rows collapse into atomic groups. RANKED entries only
   // ever fill a ranked candidate for the SAME planet (plan §5/§53) — mode and
-  // planet are hard filters, not preferences.
+  // planet are hard filters, not preferences. REGION is a soft filter: same-region
+  // (or unknown-region) entries fill first; everyone else may join after the wait
+  // window so a thin region still gets games.
   const queued = [...ctx.db.queue_entry.iter()].filter(
     q => q.status === QUEUE_QUEUED && Boolean(q.ranked) === Boolean(candidate.ranked) && (!candidate.ranked || (q.planet_key ?? '') === candidate.planet_key)
+      && regionAllowed(q.region ?? '', q.queued_at, candidate, now)
   );
   const groups: { key: string; entries: any[] }[] = [];
   const partyGroups = new Map<number, any[]>();
@@ -293,10 +350,22 @@ export function finalizeCandidate(ctx: any, candidateId: number): void {
   const confirmed = seats.filter(s => s.confirmed);
   const unconfirmed = seats.filter(s => !s.confirmed);
 
-  // Drop the no-shows entirely.
+  // Drop the no-shows entirely — EXCEPT a LONE unconfirmed seat while a region-blocked
+  // player is waiting: that player is not a no-show, they are half of a cross-region pair
+  // whose timing missed the fill window. Keep them searching so the next candidate can
+  // pair them (see `hasRegionWaiter` — this is the thin-region path into a match).
+  const soloRescue =
+    seats.length === 1 &&
+    Boolean(candidate?.region) &&
+    hasRegionWaiter(ctx, candidate, nowMicros(ctx));
   for (const s of unconfirmed) {
     ctx.db.match_candidate_player.id.delete(s.id);
-    ctx.db.queue_entry.identity.delete(s.identity);
+    const q = ctx.db.queue_entry.identity.find(s.identity);
+    if (q && soloRescue) {
+      ctx.db.queue_entry.identity.update({ ...q, status: QUEUE_QUEUED, candidate_match_id: undefined });
+    } else {
+      ctx.db.queue_entry.identity.delete(s.identity);
+    }
   }
 
   if (confirmed.length >= MATCH_MIN_PLAYERS) {

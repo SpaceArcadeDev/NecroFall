@@ -59,6 +59,7 @@ export {
   report_necrophage_victory,
 } from './game/simulation';
 export { send_match_msg } from './game/relay';
+export { report_violation } from './game/verification';
 export { report_match_stats } from './game/rewards';
 
 // ---- social (plan §5/§6)

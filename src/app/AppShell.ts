@@ -761,6 +761,14 @@ export class AppShell implements ShellContext {
       // Ranked matches get the RANK RESULT overlay once the game's own end
       // screen has landed (plan §80) — stars, ladder move and planet fate.
       this.scheduleRankResult(e.matchId);
+    } else if (e.type === 'kicked') {
+      // HYBRID ANTI-CHEAT (2026-09-29): the server force-removed this seat mid-match — its
+      // stream disagreed with its own pose record. The seat is already a tombstone
+      // server-side; detach the game (which also resets the provider) and take the screen back.
+      this.toast(e.reason || 'Removed from the match.');
+      if (this.game) this.game.leaveMatch();
+      else this.official.leaveMatch();
+      this.goHome();
     } else if (e.type === 'error') {
       this.toast(e.message || 'Multiplayer error.');
     }

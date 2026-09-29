@@ -79,6 +79,8 @@ export const find_ranked_match = spacetimedb.reducer(
       candidate_match_id: undefined,
       ranked: true,
       planet_key: key,
+      // Ranked pools are thin and planet-locked already — region behaves as unknown here.
+      region: '',
     });
 
     // Snappy path: react to this enqueue now instead of waiting for the scan.

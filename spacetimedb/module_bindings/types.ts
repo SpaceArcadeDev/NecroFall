@@ -22,6 +22,7 @@ export const CandidateMatch = __t.object("CandidateMatch", {
   status: __t.u8(),
   ranked: __t.bool(),
   planetKey: __t.string(),
+  region: __t.string(),
 });
 export type CandidateMatch = __Infer<typeof CandidateMatch>;
 
@@ -209,6 +210,7 @@ export const MatchPlayer = __t.object("MatchPlayer", {
   statsReportedAt: __t.u64(),
   updatedAt: __t.timestamp(),
   left: __t.bool(),
+  kickReason: __t.string(),
 });
 export type MatchPlayer = __Infer<typeof MatchPlayer>;
 
@@ -413,6 +415,7 @@ export const QueueEntry = __t.object("QueueEntry", {
   candidateMatchId: __t.option(__t.u32()),
   ranked: __t.bool(),
   planetKey: __t.string(),
+  region: __t.string(),
 });
 export type QueueEntry = __Infer<typeof QueueEntry>;
 
@@ -495,4 +498,19 @@ export const ServerClock = __t.object("ServerClock", {
   nowUs: __t.u64(),
 });
 export type ServerClock = __Infer<typeof ServerClock>;
+
+export const ViolationReport = __t.object("ViolationReport", {
+  id: __t.u32(),
+  matchId: __t.u32(),
+  reporter: __t.identity(),
+  target: __t.identity(),
+  kind: __t.string(),
+  x: __t.f64(),
+  y: __t.f64(),
+  z: __t.f64(),
+  at: __t.u64(),
+  corroborated: __t.bool(),
+  atServer: __t.timestamp(),
+});
+export type ViolationReport = __Infer<typeof ViolationReport>;
 

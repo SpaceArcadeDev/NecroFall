@@ -19,6 +19,8 @@ export type ProviderGameEvent =
   | { type: 'candidate'; deadlineSeconds: number; seats: { colony: number; confirmed: boolean; me: boolean }[]; myConfirmed: boolean }
   | { type: 'match-start'; matchId: number }
   | { type: 'match-end'; matchId: number; winnerColony: number | null }
+  /** HYBRID ANTI-CHEAT (2026-09-29): the server force-removed OUR seat — show the reason and exit. */
+  | { type: 'kicked'; reason: string }
   | { type: 'match-event'; kind: number; a: number; b: number }
   | { type: 'error'; message: string };
 

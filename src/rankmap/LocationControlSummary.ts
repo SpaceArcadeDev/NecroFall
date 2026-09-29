@@ -83,6 +83,13 @@ export interface DominanceOptions {
   systemId?: number;
   /** Planet level: the row's control expiry. */
   shieldExpiresAt?: number;
+  /**
+   * Server clock (micros). When provided, a CONTROLLED row only counts while its
+   * shield is UP — a fallen shield is Necrophage-held (user 2026-09-29: "even after
+   * colony shield falls, it should be taken over by necrophages"), no matter whether
+   * the 1 Hz sweep has cleared the row yet.
+   */
+  nowUs?: number;
 }
 
 export function necrophagesOwner(): OwnerRef {
@@ -99,6 +106,15 @@ export function colonyOwner(colony: number, colors: readonly string[], names?: r
 }
 
 /**
+ * SHIELD-FALLEN = NECROPHAGES (user 2026-09-29). A colony row HOLDS a planet only
+ * while its 72 h shield is up; an expired shield reads exactly like an infested
+ * world (Necrophage-held) on every surface, independent of the server sweep.
+ */
+export function isHeldNow(row: ControlRow, nowUs: number): boolean {
+  return row.state === RANKED_PLANET_CONTROLLED && row.colony < COLONY_CAP && (row.controlExpiresAt ?? 0) > nowUs;
+}
+
+/**
  * THE control aggregation (plan §12/§45). `rows` are the server rows of the
  * galaxy (pass `systemId` to narrow); never generated data.
  */
@@ -111,11 +127,15 @@ export function calculateDominance(rows: readonly ControlRow[], opts: DominanceO
     if (opts.systemId !== undefined && row.systemId !== opts.systemId) continue;
     total++;
     let owner = Number.NaN;
-    if (row.state === RANKED_PLANET_CONTROLLED && row.colony < COLONY_CAP) {
+    const controlled = row.state === RANKED_PLANET_CONTROLLED && row.colony < COLONY_CAP;
+    const heldNow = controlled && (opts.nowUs === undefined || (row.controlExpiresAt ?? 0) > opts.nowUs);
+    if (heldNow) {
       owner = row.colony;
       if ((row.controlExpiresAt ?? 0) > shield) shield = row.controlExpiresAt ?? 0;
-    } else if (row.discovered && row.colony === COLONY_NONE) {
-      owner = OWNER_NECROPHAGES; // infested, held by the Necrophages
+    } else if ((row.discovered && row.colony === COLONY_NONE) || (controlled && !heldNow)) {
+      // infested — or a FALLEN shield before the 1 Hz sweep clears the row — is
+      // Necrophage-held (user 2026-09-29)
+      owner = OWNER_NECROPHAGES;
     }
     if (Number.isNaN(owner)) continue;
     counts.set(owner, (counts.get(owner) ?? 0) + 1);

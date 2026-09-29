@@ -215,7 +215,10 @@ export function maybeReleasePlanet(ctx: any, key: string): void {
 /** True when the planet can host a new ranked match (plan §53). */
 export function planetAvailable(ctx: any, key: string, now: bigint): boolean {
   const planet = ctx.db.ranked_planet.planet_key.find(key);
-  if (planet && planet.state === 1) return false; // controlled — shielded
+  // held only while the shield is UP: a FALLEN shield frees the world for a new match
+  // even before the sweep has cleared the row (user 2026-09-29: "even after colony
+  // shield falls, it should be taken over by necrophages")
+  if (planet && planet.state === 1 && planet.control_expires_at > now) return false;
   const res = ctx.db.ranked_planet_reservation.planet_key.find(key);
   if (res && res.expires_at > now) return false; // locked by a live match
   return true;
@@ -267,7 +270,9 @@ export function sweepRanked(ctx: any, now: bigint): void {
   }
   for (const planet of [...ctx.db.ranked_planet.iter()]) {
     if (planet.state !== 1) continue;
-    if (planet.control_expires_at === 0n || planet.control_expires_at > now) continue;
+    // a shield with no expiry (or an expired one) is no shield — clear it back to the
+    // Necrophages (user 2026-09-29)
+    if (planet.control_expires_at > now) continue;
     ctx.db.ranked_planet.planet_key.update({
       ...planet,
       state: 0,

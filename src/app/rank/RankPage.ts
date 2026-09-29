@@ -462,7 +462,9 @@ export class RankPage {
 
   private planetAvailable(p: PlanetDescriptor): boolean {
     const row = this.planetRow(p.key);
-    if (row && row.state === RANKED_PLANET_CONTROLLED) return false;
+    // held = shield UP only (user 2026-09-29: a fallen shield is Necrophage-held) —
+    // the world becomes contestable again even before the server sweep clears it
+    if (row && row.state === RANKED_PLANET_CONTROLLED && Number(row.controlExpiresAt) > this.serverNowUs()) return false;
     if (ClientCache.shared.reservedPlanetKeys().has(p.key)) return false;
     return true;
   }
@@ -503,11 +505,6 @@ export class RankPage {
     const planet = loc?.planet ?? sel.planet;
     const sys = loc?.system ?? sel.system;
     const galaxy = loc?.galaxy ?? sel.galaxy;
-    // the account row is read HERE (once) and folded into the signature below — a card
-    // built before the account loads used to keep its missing YOUR COLONY tag until
-    // the selection changed (user 2026-09-29: "why doesnt it always say YOUR COLONY...
-    // seems like a bug").
-    const mc = this.me();
     // MINIMAL (user 2026-09-29): control headline + at most THREE discoverers.
     const MAX_ROWS = 3;
     let sig = 'none';
@@ -519,7 +516,6 @@ export class RankPage {
     } else if (galaxy) {
       sig = `g:${galaxy.galaxyId}:${this.rowsForGalaxy(galaxy.galaxyId).length}:${this.discoveriesForGalaxy(galaxy.galaxyId).length}`;
     }
-    sig += `:col${mc?.colony ?? -1}`;
     if (sig === this.mapInfoSig) return;
     this.mapInfoSig = sig;
     this.mapInfoEl.innerHTML = '';
@@ -547,13 +543,13 @@ export class RankPage {
               },
             ]
           : [],
-        { colonyColors: colours, colonyNames: names }
+        { colonyColors: colours, colonyNames: names, nowUs: this.serverNowUs() }
       );
       card.appendChild(controlBlock(summary, { kicker: 'CONTROL', compact: true }));
       // PLANETARY SHIELD BAR + TIMER (user ask 2026-09-29): the expanded map's card
       // shows the ward burning down — a draining bar in the colony's colour with the
       // live clock beside it, the SAME 72 h rule the canvas gauge and side panel use.
-      if (row && row.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3 && Number(row.controlExpiresAt) > 0) {
+      if (row && row.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3 && Number(row.controlExpiresAt) > this.serverNowUs()) {
         const shieldBox = el('div', 'rk-shieldbar');
         shieldBox.style.setProperty('--rk-colony', COLONIES[row.controllingColony]?.css ?? '#999');
         const top = el('div', 'rk-shieldbar-row');
@@ -582,6 +578,7 @@ export class RankPage {
         colonyColors: colours,
         colonyNames: names,
         systemId: sys.systemId,
+        nowUs: this.serverNowUs(),
       });
       card.appendChild(controlBlock(summary, { kicker: 'CONTROL', compact: true }));
       card.appendChild(
@@ -604,22 +601,14 @@ export class RankPage {
         line.innerHTML = `<b style="color:${pv.color}">${pv.glyph}</b> ${galaxy.poiLabel}`;
         card.appendChild(line);
       }
-      const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names });
+      const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names, nowUs: this.serverNowUs() });
       card.appendChild(controlBlock(summary, { kicker: 'TERRITORY', compact: true }));
       card.appendChild(
         discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs(), max: MAX_ROWS })
       );
     }
-    // MY TERRITORY marker (user ask 2026-09-29; user v2: the overlay shows only what
-    // APPLIES to the selection — the galaxy's own POI line above — and the generic
-    // icon key is gone; this one row stays as the plain "YOUR COLONY" tag for the
-    // colony-coloured rings/pennant on the map). `mc` was read at the top of THIS
-    // render and is part of the signature, so the tag can never stay missing.
-    if (mc && mc.colony < 3) {
-      const line = el('div', 'rk-mapinfo-colony');
-      line.innerHTML = `<b style="color:${COLONIES[mc.colony].css}">${COLONIES[mc.colony].symbol}</b><span>YOUR COLONY</span>`;
-      card.appendChild(line);
-    }
+    // (the old "YOUR COLONY" tag is REMOVED — user 2026-09-29: "the your colony
+    // element shouldnt be there... its confusing and serves no purpose")
     this.mapInfoEl.appendChild(card);
     if (this.mapInfoShield) this.updateMapInfoShield(); // arm the bar at its true width
     this.mapInfoEl.classList.remove('hidden');
@@ -853,11 +842,17 @@ export class RankPage {
   // ------------------------------------------------------------ breadcrumb
 
   private renderBreadcrumb(): void {
-    const parts: string[] = ['GALACTIC CORE'];
+    // NO 'GALACTIC CORE' stub (user 2026-09-29: "remove the text GALACTIC CORE...
+    // if blank remove the UI"). The bar FADES IN with the first zoom layer — the
+    // galaxy name — and the solar system name joins it on the next (user: "fade in
+    // the ui and say the galaxy name as first layer then zooming in further should
+    // say solar system name").
     const g = this.map.currentGalaxy;
     const sys = this.map.currentSystem;
+    const parts: string[] = [];
     if (g) parts.push(g.name.toUpperCase());
     if (sys) parts.push(sys.name.toUpperCase());
+    this.breadcrumb.classList.toggle('on', parts.length > 0);
     const sig = parts.join('›');
     if (sig === this.crumbSig) return;
     this.crumbSig = sig;
@@ -868,13 +863,9 @@ export class RankPage {
       const b = el('button', `rk-crumb${last ? ' at' : ''}`, p) as HTMLButtonElement;
       b.type = 'button';
       if (!last) {
-        b.addEventListener('click', () => {
-          if (i === 0) {
-            this.map.flyToRing(this.myRing());
-          } else if (i === 1 && g && this.map.currentLevel === 'system') {
-            this.map.back();
-          }
-        });
+        // the only non-last crumb is the galaxy — while its system is on screen it
+        // walks back one tier (the old GALACTIC CORE crumb + its ring shortcut gone).
+        b.addEventListener('click', () => this.map.back());
       }
       this.breadcrumb.appendChild(b);
     });
@@ -1181,7 +1172,8 @@ export class RankPage {
     const now = this.serverNowUs();
     const held = ClientCache.shared
       .rankedPlanetsAll()
-      .filter((r) => r.state === RANKED_PLANET_CONTROLLED && r.controllingColony < 3);
+      // held = shield still UP (user 2026-09-29: a fallen shield is Necrophage-held)
+      .filter((r) => r.state === RANKED_PLANET_CONTROLLED && r.controllingColony < 3 && Number(r.controlExpiresAt) > now);
     const history = ClientCache.shared.myRankHistory(this.ctx.myHex()).slice(0, 6);
     // COLONY STANDINGS (user ask 2026-09-29): planets / dominated systems / shields
     // falling within the hour for ALL THREE colonies — the same aggregation the

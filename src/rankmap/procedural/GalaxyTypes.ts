@@ -59,12 +59,14 @@ export const MORPHOLOGY_LABELS: Record<GalaxyMorphology, string> = {
  * trait of the GALAXY ITSELF — never a claim about occupation, discovery or content
  * (the halo tints already speak the state language; these are seeded flavour only).
  * Old names implied things: COLONY STRONGHOLD → a player colony, DISCOVERY CLUSTER →
- * undiscovered worlds, NECROPHAGE SWARM → an active infestation. 'STANDARD GALAXY'
- * deliberately names the no-icon case so an icon-less galaxy reads as intentional.
+ * undiscovered worlds, NECROPHAGE SWARM → an active infestation; NEBULA didn't say
+ * anything at all, so it became STELLAR NURSERY (user 2026-09-29: "whats a nebula?
+ * it's confusing without explanation"). 'STANDARD GALAXY' deliberately names the
+ * no-icon case so an icon-less galaxy reads as intentional.
  */
 export const POI_LABELS: Record<GalaxyPoi, string> = {
   NORMAL: 'STANDARD GALAXY',
-  NEBULA: 'NEBULA',
+  NEBULA: 'STELLAR NURSERY',
   DEAD: 'DEAD CORE',
   CORRUPTED: 'CORRUPTED',
   STRONGHOLD: 'ANCIENT BASTION',

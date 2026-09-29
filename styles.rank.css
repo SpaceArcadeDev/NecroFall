@@ -336,8 +336,6 @@
 /* the selected galaxy's own POI line + the YOUR COLONY tag (user 2026-09-29) */
 .rk-mapinfo-poi { font-size: 8.5px; font-weight: 800; letter-spacing: 0.14em; color: #cfc6e6; margin-top: -2px; }
 .rk-mapinfo-poi b { font-size: 10px; margin-right: 1px; }
-.rk-mapinfo-colony { margin-top: 2px; padding-top: 5px; border-top: 1px solid rgba(165, 140, 235, 0.16); display: flex; align-items: baseline; gap: 5px; font-size: 8.5px; letter-spacing: 0.07em; color: #b6adcd; }
-.rk-mapinfo-colony b { font-size: 10px; line-height: 1; flex: none; }
 @media (orientation: portrait) {
   .rank-page.map-full .rk-mapinfo { top: calc(52px + env(safe-area-inset-top, 0px)); max-height: 38vh; width: min(240px, 68vw); }
 }
@@ -517,7 +515,13 @@
   backdrop-filter: blur(8px);
   font-size: 11px;
   letter-spacing: 0.1em;
+  /* blank (galactic tier) = no UI at all; it FADES IN with the galaxy layer
+     (user 2026-09-29) */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
 }
+.rk-breadcrumb.on { opacity: 1; pointer-events: auto; }
 .rk-crumb { border: none; background: none; color: var(--ui-text-muted); font: inherit; font-weight: 700; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
 .rk-crumb:hover { color: #fff; background: rgba(255, 255, 255, 0.06); }
 .rk-crumb.at { color: var(--ui-text); cursor: default; }

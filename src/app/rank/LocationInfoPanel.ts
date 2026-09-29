@@ -179,6 +179,7 @@ export function buildRootPanel(host: LocationPanelHost, focus: PanelFocus): HTML
     const summary = calculateDominance(host.rowsForGalaxy(galaxy.galaxyId), {
       colonyColors: COLONIES.map((c) => c.css),
       colonyNames: COLONIES.map((c) => c.name),
+      nowUs: host.serverNowUs(),
     });
     if (summary.dominantOwner) {
       box.appendChild(controlBlock(summary, { kicker: `DOMINANT FACTION IN ${galaxy.name.toUpperCase()}` }));
@@ -238,6 +239,7 @@ export function buildGalaxyPanel(g: GalaxyDescriptor, host: LocationPanelHost): 
   const summary = calculateDominance(rows, {
     colonyColors: COLONIES.map((c) => c.css),
     colonyNames: COLONIES.map((c) => c.name),
+    nowUs: host.serverNowUs(),
   });
   box.appendChild(controlBlock(summary, { kicker: 'TERRITORY' }));
 
@@ -267,6 +269,7 @@ export function buildSystemPanel(sys: SystemDescriptor, host: LocationPanelHost)
     colonyColors: COLONIES.map((c) => c.css),
     colonyNames: COLONIES.map((c) => c.name),
     systemId: sys.systemId,
+    nowUs: host.serverNowUs(),
   });
   box.appendChild(controlBlock(summary, { kicker: 'CONTROL' }));
 
@@ -286,19 +289,21 @@ export function buildSystemPanel(sys: SystemDescriptor, host: LocationPanelHost)
   const list = el('div', 'rk-planetlist');
   for (const p of planets) {
     const row = host.planetRow(p.key);
-    const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3;
-    const infested = Boolean(row?.discovered) && !controlled;
+    // a FALLEN shield is already Necrophage-held (user 2026-09-29) — the sweep only
+    // clears the row later
+    const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3 && Number(row.controlExpiresAt) > host.serverNowUs();
     const reserved = host.reservedKeys().has(p.key);
     const line = el('button', `rk-planetrow${controlled ? ' controlled' : ''}${reserved ? ' reserved' : ''}`) as HTMLButtonElement;
     line.type = 'button';
+    // EVERY uncontrolled world reads NECROPHAGES (user 2026-09-29: "all planets that
+    // are undiscovered should be under the control of necrophages") — a filling match
+    // still reads CONTESTED, which is live information.
     const tag = controlled
       ? colonyName(row!.controllingColony)
-      : infested
-        ? 'NECROPHAGES'
-        : reserved
-          ? 'CONTESTED'
-          : 'UNDISCOVERED';
-    const tagColor = controlled ? colonyColor(row!.controllingColony) : infested ? '#ff3b30' : '';
+      : reserved
+        ? 'CONTESTED'
+        : 'NECROPHAGES';
+    const tagColor = controlled ? colonyColor(row!.controllingColony) : reserved ? '' : '#ff3b30';
     if (tagColor) line.style.setProperty('--rk-colony', tagColor);
     line.innerHTML =
       `<span class="rk-planetrow-orb" style="background:${p.biomeColor}"></span>` +
@@ -314,7 +319,9 @@ export function buildSystemPanel(sys: SystemDescriptor, host: LocationPanelHost)
 /** PLANET expanded view (plan §11/§36) — the most actionable panel. */
 export function buildPlanetPanel(p: PlanetDescriptor, host: LocationPanelHost): HTMLElement {
   const row = host.planetRow(p.key);
-  const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3;
+  // a FALLEN shield is already Necrophage-held (user 2026-09-29) — the sweep only
+  // clears the row later
+  const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.controllingColony < 3 && Number(row.controlExpiresAt) > host.serverNowUs();
   const reserved = host.reservedKeys().has(p.key);
   const discovered = Boolean(row?.discovered);
   const mine = p.ring === host.myRing();
@@ -343,6 +350,7 @@ export function buildPlanetPanel(p: PlanetDescriptor, host: LocationPanelHost): 
   const summary = calculateDominance(controlRow ? [controlRow] : [], {
     colonyColors: COLONIES.map((c) => c.css),
     colonyNames: COLONIES.map((c) => c.name),
+    nowUs: host.serverNowUs(),
   });
   const status = el('div', 'rk-status');
   if (controlled) {
@@ -354,7 +362,10 @@ export function buildPlanetPanel(p: PlanetDescriptor, host: LocationPanelHost): 
   } else if (discovered) {
     status.innerHTML = `<div class="rk-status-line" style="color:#ff3b30">⬢ CONTROLLED BY NECROPHAGES</div><div class="rk-status-line dim">INFESTED — OPEN FOR LIBERATION</div>`;
   } else {
-    status.innerHTML = `<div class="rk-status-line dim">? UNDISCOVERED — FIRST CONTACT WILL BE RECORDED</div>`;
+    // EVERY uncharted world belongs to the Necrophages (user 2026-09-29: "all planets
+    // that are undiscovered should be under the control of necrophages"); the first
+    // liberation is what records it.
+    status.innerHTML = `<div class="rk-status-line" style="color:#ff3b30">⬢ CONTROLLED BY NECROPHAGES</div><div class="rk-status-line dim">UNCHARTED — FIRST CONTACT WILL BE RECORDED</div>`;
   }
   box.appendChild(status);
   if (summary.dominantOwner) box.appendChild(controlBlock(summary, { kicker: 'DOMINANCE' }));

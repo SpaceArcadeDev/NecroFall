@@ -18,6 +18,7 @@ import {
   calculateDominance,
   COLONY_NONE,
   DOMINANCE_THRESHOLD,
+  isHeldNow,
   NECROPHAGE_CONTROL_COLOR,
   NECROPHAGE_DEEP,
   NECROPHAGE_EMISSION,
@@ -79,9 +80,10 @@ const EMPTY: TerritoryVisual = {
 export function getTerritoryVisual(
   rows: readonly TerritoryRow[],
   colonyColors: readonly string[],
-  systemId?: number
+  systemId?: number,
+  nowUs?: number
 ): TerritoryVisual {
-  const summary = calculateDominance(rows, { colonyColors, systemId });
+  const summary = calculateDominance(rows, { colonyColors, systemId, nowUs });
   if (!summary.dominantOwner) return EMPTY;
   const colors = summary.ownerShares.map((s) => s.owner.color);
   const share = summary.ownerShares.map((s) => s.share);
@@ -107,22 +109,27 @@ export function getTerritoryVisual(
 }
 
 /** Galaxy-level aggregate (plan §35): all rows of the galaxy. */
-export function getGalaxyOwnership(rows: readonly TerritoryRow[], colonyColors: readonly string[]): TerritoryVisual {
-  return getTerritoryVisual(rows, colonyColors);
+export function getGalaxyOwnership(rows: readonly TerritoryRow[], colonyColors: readonly string[], nowUs?: number): TerritoryVisual {
+  return getTerritoryVisual(rows, colonyColors, undefined, nowUs);
 }
 
 /** System-level aggregate (plan §35): rows narrowed to one system. */
-export function getSystemOwnership(rows: readonly TerritoryRow[], colonyColors: readonly string[], systemId: number): TerritoryVisual {
-  return getTerritoryVisual(rows, colonyColors, systemId);
+export function getSystemOwnership(rows: readonly TerritoryRow[], colonyColors: readonly string[], systemId: number, nowUs?: number): TerritoryVisual {
+  return getTerritoryVisual(rows, colonyColors, systemId, nowUs);
 }
 
 /** Planet-level glow colour (plan §13): controller colour, or Necrophage red. */
 export function planetOwnershipColor(
   row: TerritoryRow | undefined,
-  colonyColors: readonly string[]
+  colonyColors: readonly string[],
+  nowUs?: number
 ): string | null {
   if (!row) return null;
-  if (row.state === RANKED_PLANET_CONTROLLED && row.colony < 3) return colonyColors[row.colony] ?? null;
+  if (row.state === RANKED_PLANET_CONTROLLED && row.colony < 3) {
+    // a FALLEN shield reads as Necrophage-held (user 2026-09-29)
+    if (nowUs !== undefined && !isHeldNow(row, nowUs)) return NECROPHAGE_CONTROL_COLOR;
+    return colonyColors[row.colony] ?? null;
+  }
   if (row.discovered && row.colony === COLONY_NONE) return NECROPHAGE_CONTROL_COLOR;
   return null;
 }
@@ -130,7 +137,8 @@ export function planetOwnershipColor(
 /** The planet's normalized owner visual (plan §13) — NECROPHAGES is a real owner. */
 export function planetOwnershipVisual(
   row: TerritoryRow | undefined,
-  colonyColors: readonly string[]
+  colonyColors: readonly string[],
+  nowUs?: number
 ): TerritoryVisual {
-  return getTerritoryVisual(row ? [row] : [], colonyColors);
+  return getTerritoryVisual(row ? [row] : [], colonyColors, undefined, nowUs);
 }

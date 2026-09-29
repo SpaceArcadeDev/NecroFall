@@ -23,7 +23,7 @@ import { systemPlanetCount } from './procedural/SolarSystemGenerator';
 import { ringConfig } from './procedural/RankRingConfig';
 import { decodeGalaxyId, MAX_RING_RADIUS, ringCenterRadius, ringInnerRadius, ringOfGalaxy, ringOuterRadius } from './procedural/SeedHash';
 import { getTerritoryVisual, planetOwnershipColor, NECROPHAGE_CONTROL_COLOR, type TerritoryVisual } from './Ownership';
-import { calculateDominance } from './LocationControlSummary';
+import { calculateDominance, isHeldNow } from './LocationControlSummary';
 import {
   type DiscoveryEntry,
 } from './DiscoveryTypes';
@@ -449,7 +449,10 @@ export class GalacticMap {
   planetAvailable(p: PlanetDescriptor): boolean {
     const rows = this.data.rowsForGalaxy(p.galaxyId);
     const row = rows.find((r) => r.planetKey === p.key);
-    if (row && row.state === RANKED_PLANET_CONTROLLED) return false;
+    // held = shield UP only (user 2026-09-29: "even after colony shield falls, it
+    // should be taken over by necrophages") — a fallen shield frees the world even
+    // before the server sweep clears the row
+    if (row && isHeldNow(row, this.data.serverNowUs())) return false;
     if (this.data.reservedKeys().has(p.key)) return false;
     return true;
   }
@@ -508,7 +511,7 @@ export class GalacticMap {
     const now = performance.now();
     const hit = this.territoryCache.get(galaxyId);
     if (hit && now - hit.at < 2000) return hit.vis;
-    const vis = getTerritoryVisual(this.data.rowsForGalaxy(galaxyId), this.data.colonyColors);
+    const vis = getTerritoryVisual(this.data.rowsForGalaxy(galaxyId), this.data.colonyColors, undefined, this.data.serverNowUs());
     if (this.territoryCache.size > 256) this.territoryCache.clear();
     this.territoryCache.set(galaxyId, { at: now, vis });
     return vis;
@@ -1589,7 +1592,15 @@ export class GalacticMap {
    */
   private drawSystemsLayer(t: number): void {
     const { galaxy, system, sysAlpha, planetAlpha } = this.lock;
-    if (!galaxy || sysAlpha <= 0.01) return;
+    if (!galaxy) return;
+    // THE CLUSTER MUST BE VISIBLE WHEN THE GALAXY IS (user 2026-09-29 v2: "some
+    // galaxies like cygelle dont have any solar systems" — at mid zoom the face is
+    // already fully formed (the focus keeps it up), but the old sysAlpha gate left
+    // the system motes at ~5-8% alpha = invisible). The reveal fades the cluster in
+    // over the SAME screen-size range the face itself becomes a real body on
+    // (radius 14→30 px); flying in still deepens it via sysAlpha.
+    const reveal = Math.max(sysAlpha, ramp01(this.galaxyScreenRadius(galaxy), 14, 30));
+    if (reveal <= 0.01) return;
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
     const my = this.myColor();
@@ -1617,7 +1628,7 @@ export class GalacticMap {
       // when the solar system stage opens the OTHER systems recede — but only to distant
       // STARS, never to nothing (plan §6): the surrounding cluster stays readable while
       // one system grows underneath the crosshair.
-      const a = sysAlpha * (front ? 1 - pa : 1 - pa * 0.55);
+      const a = reveal * (front ? 1 - pa : 1 - pa * 0.55);
       if (a <= 0.02) continue;
       // LOD (user: "show all solar systems as light dots until I zoom in"): only the
       // system under the crosshair (or hovered/selected) carries detail — every other
@@ -1776,7 +1787,7 @@ export class GalacticMap {
 
     for (const p of planets) {
       const row = rows.find((r) => r.planetKey === p.key);
-      const controlled = row?.state === RANKED_PLANET_CONTROLLED && row.colony < 3;
+      const controlled = row !== undefined && isHeldNow(row, nowUs);
       const isReserved = reserved.has(p.key);
       const isSel = this.selected?.planet?.key === p.key;
       const isHover = this.hover.kind === 'planet' && this.hover.planet?.key === p.key;
@@ -1807,7 +1818,7 @@ export class GalacticMap {
       // per-frame gradient objects, the same lesson the glow cache already learned).
       // Ownership: controllers carve their colour into the glow; discovered-but-infested
       // planets glow NECROPHAGE RED (plan §13/§34).
-      const ownerColor = planetOwnershipColor(row, this.data.colonyColors);
+      const ownerColor = planetOwnershipColor(row, this.data.colonyColors, nowUs);
       const glowColor = ownerColor ?? p.biomeColor;
       ctx.globalAlpha = 0.6 * pa;
       ctx.drawImage(this.glow(glowColor, 48), px - pr * 3, py - pr * 3, pr * 6, pr * 6);

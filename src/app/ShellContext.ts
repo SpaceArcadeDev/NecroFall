@@ -4,6 +4,7 @@ import { FpsPref, QualityPref } from '../core/Config';
 import { AppConfig } from './config';
 import { OfficialMultiplayerProvider } from './multiplayer/OfficialMultiplayerProvider';
 import { P2PMultiplayerProvider } from './multiplayer/P2PMultiplayerProvider';
+import type { PlanetDescriptor } from '../rankmap/procedural/GalaxyTypes';
 
 export interface LegacyLaunchOptions {
   roomCode?: string;
@@ -69,6 +70,18 @@ export interface ShellContext {
   returnFromQueue(): void;
   /** Boot the existing WebRTC game (P2P lobbies and offline play live there). */
   launchLegacy(options: LegacyLaunchOptions): void;
+  /** The SOLO picker (speedrun / survival) — the rank map as a run picker (user ask 2026-09-30). */
+  goSolo(mode: 'speedrun' | 'survival'): void;
+  /** The CUSTOM lobby setup screen (create / join by code). */
+  goCustom(): void;
+  /** Open the reused LOBBY screen for MY custom lobby (when its rows land). */
+  goCustomRoom(): void;
+  /** Start a solo run on one planet: records load here, the game takes the screen. */
+  startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor): void;
+  /** Create (host) a custom lobby; its room opens when the server rows land. */
+  createCustomLobby(): void;
+  /** Join a custom lobby by code; its room opens when the server rows land. */
+  joinCustomLobbyByCode(code: string): void;
   /** Stage (or park, with host=null) the OFFICIAL lobby line-up on the shell. */
   stageLobbyAvatars(host: HTMLElement | null, members: LobbySeatInfo[]): void;
   /** The find-survivors sheet (friends ▸ ADD FRIEND): search by name or player id. */

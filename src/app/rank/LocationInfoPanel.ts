@@ -19,7 +19,14 @@ import { calculateDominance, RANKED_PLANET_CONTROLLED, sharePercentages, type Lo
 import { relativeTime, type DiscoveryEntry } from '../../rankmap/DiscoveryTypes';
 import { planetAt } from '../../rankmap/procedural/PlanetGenerator';
 import { getRankDisplayName, getRankFromStars } from '../../rank/RankService';
+import { formatRunTime } from '../../utils/Utils';
 import type { RankedPlanetRow } from '../spacetimedb/rows';
+
+/** The planet's SOLO record board (user ask 2026-09-30). */
+export interface PlanetRecords {
+  speedrun: { name: string; timeMs: number } | null;
+  survival: { name: string; timeMs: number } | null;
+}
 
 /** Everything the panel needs from the page — data + actions (plan §71). */
 export interface LocationPanelHost {
@@ -33,6 +40,8 @@ export interface LocationPanelHost {
   discoveriesForGalaxy(galaxyId: number): DiscoveryEntry[];
   discoveriesForSystem(galaxyId: number, systemId: number): DiscoveryEntry[];
   discoveriesForPlanet(planetKey: string): DiscoveryEntry[];
+  /** SOLO-mode planet records (user ask 2026-09-30) — null sides when nobody has a run. */
+  planetRecordsFor(planetKey: string): PlanetRecords;
   planetAvailable(p: PlanetDescriptor): boolean;
   planetsOf(sys: SystemDescriptor): PlanetDescriptor[];
   /** Resolve the hierarchy descriptors for panel context. */
@@ -149,6 +158,28 @@ export function discoveryBlock(
       `<span class="rk-disc-when">${relativeTime(entry.discoveredAt, opts.nowUs)}</span>`;
     box.appendChild(line);
   }
+  return box;
+}
+
+/**
+ * PLANET RECORDS (user ask 2026-09-30): the fastest speedrun and the longest survival,
+ * each with the holder's name. Shown in the planet panel AND the fullscreen info
+ * overlay; vacant boards say so instead of hiding (the mode could always be attempted).
+ */
+export function recordsBlock(records: PlanetRecords, opts: { compact?: boolean } = {}): HTMLElement {
+  const box = el('div', 'rk-records');
+  box.appendChild(el('div', 'rk-records-head', 'PLANET RECORDS'));
+  const row = (label: string, rec: { name: string; timeMs: number } | null, accent: string): void => {
+    const line = el('div', `rk-record-row${rec ? ' set' : ''}`);
+    line.style.setProperty('--rk-record', accent);
+    line.innerHTML =
+      `<span class="rk-record-label">${label}</span>` +
+      `<b class="rk-record-time">${rec ? formatRunTime(rec.timeMs) : '--:--'}</b>` +
+      `<span class="rk-record-name">${rec ? escapeHtml(rec.name.toUpperCase()) : opts.compact ? '' : 'NO RECORD YET'}</span>`;
+    box.appendChild(line);
+  };
+  row('SPEEDRUN', records.speedrun, '#7ef0b0');
+  row('SURVIVAL', records.survival, '#ffd166');
   return box;
 }
 
@@ -385,6 +416,7 @@ export function buildPlanetPanel(p: PlanetDescriptor, host: LocationPanelHost): 
       nowUs: host.serverNowUs(),
     })
   );
+  box.appendChild(recordsBlock(host.planetRecordsFor(p.key)));
 
   const eco = el('div', 'rk-eco');
   eco.innerHTML =

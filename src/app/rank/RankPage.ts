@@ -9,12 +9,14 @@
 // `findRankedMatch` (§53) — first contact/discovery is earned by PLAYING and is
 // recorded by AppShell when a ranked match ends (user ask 2026-09-28).
 import { ClientCache } from '../spacetimedb/cache';
-import { hexOf } from '../spacetimedb/rows';
+import { COLONY_NONE as ROWS_COLONY_NONE, hexOf, RECORD_MODE_SPEEDRUN, RECORD_MODE_SURVIVAL } from '../spacetimedb/rows';
 import { colonyStats, ColonyStatsResult, findRankedMatch } from '../spacetimedb/reducers';
 import {
   releaseLocationDiscovery,
+  releasePlanetRecords,
   subscribeLocationDiscovery,
   subscribePlanetDetail,
+  subscribePlanetRecords,
   subscribeRank,
   subscribeRankGalaxy,
   subscribeTerritory,
@@ -48,8 +50,10 @@ import {
   buildSystemPanel,
   controlBlock,
   discoveryBlock,
+  recordsBlock,
   shieldCountdownText,
   type LocationPanelHost,
+  type PlanetRecords,
 } from './LocationInfoPanel';
 import { calculateDominance, COLONY_NONE } from '../../rankmap/LocationControlSummary';
 import {
@@ -110,6 +114,8 @@ export class RankPage {
   private subscribedGalaxies = new Set<number>();
   /** The ONE discovery scope the panel currently reads (plan §43 — never the universe). */
   private discoveryKey = '';
+  /** The ONE solo-records scope the panel currently reads (user ask 2026-09-30). */
+  private recordsKey = '';
   /** Last countdown text written to the DOM (plan §15 — one write per second). */
   private countdownSig = '';
   private recordEl: HTMLElement;
@@ -331,6 +337,10 @@ export class RankPage {
       releaseLocationDiscovery(this.discoveryKey);
       this.discoveryKey = '';
     }
+    if (this.recordsKey) {
+      releasePlanetRecords(this.recordsKey);
+      this.recordsKey = '';
+    }
     this.map.dispose();
     this.boardEl?.remove();
     this.closeTerritory();
@@ -376,9 +386,54 @@ export class RankPage {
     const parsed = parsePlanetKey(planetKey);
     if (!parsed) return [];
     const { gx, gy } = decodeGalaxyId(parsed.galaxyId);
-    return ClientCache.shared
+    const ranked = ClientCache.shared
       .locationDiscoveries(planetLocationKey(gx, gy, parsed.systemId, parsed.planetId))
-      .map(toDiscoveryEntry);
+      .map(toDiscoveryEntry)
+      .map((e) => ({ ...e }));
+    // FIRST-PLAYED FROM ANY MODE (user ask 2026-09-30): the solo modes' first-play log and
+    // the ranked discovery log are ONE list — earliest footfall first, deduplicated by
+    // player, re-numbered 01..09. Solo plays carry no colony (the ranked entry's wins).
+    const plays = ClientCache.shared.planetPlays(planetKey);
+    if (plays.length === 0) return ranked;
+    const byPlayer = new Map<string, DiscoveryEntry>();
+    for (const e of ranked) byPlayer.set(e.playerId, e);
+    for (const row of plays) {
+      const id = hexOf(row.identity);
+      const at = Number(row.firstPlayedAt.microsSinceUnixEpoch ?? 0n);
+      const prev = byPlayer.get(id);
+      if (!prev) {
+        byPlayer.set(id, {
+          playerId: id,
+          playerName: row.playerName || 'SURVIVOR',
+          colony: ROWS_COLONY_NONE,
+          discoveredAt: at,
+          index: 0,
+        });
+      } else if (at < prev.discoveredAt) {
+        prev.discoveredAt = at;
+      }
+    }
+    const merged = [...byPlayer.values()].sort((a, b) => a.discoveredAt - b.discoveredAt).slice(0, 9);
+    merged.forEach((e, i) => {
+      e.index = i + 1;
+    });
+    return merged;
+  }
+
+  /** The planet's SOLO record board (user ask 2026-09-30) — read straight off the cache. */
+  private planetRecordsFor(planetKey: string): PlanetRecords {
+    const sr = ClientCache.shared.planetRecord(planetKey, RECORD_MODE_SPEEDRUN);
+    const sv = ClientCache.shared.planetRecord(planetKey, RECORD_MODE_SURVIVAL);
+    return {
+      speedrun: sr ? { name: sr.playerName, timeMs: Number(sr.timeMs) } : null,
+      survival: sv ? { name: sv.playerName, timeMs: Number(sv.timeMs) } : null,
+    };
+  }
+
+  /** One-line signature of the record board — part of the panel/mapinfo render keys. */
+  private recordsSig(planetKey: string): string {
+    const r = this.planetRecordsFor(planetKey);
+    return `${r.speedrun ? `${r.speedrun.name}:${r.speedrun.timeMs}` : '-'}|${r.survival ? `${r.survival.name}:${r.survival.timeMs}` : '-'}`;
   }
 
   /** The map's first-contact request (plan §6/§47) is GONE — discovery is earned by
@@ -410,6 +465,15 @@ export class RankPage {
     if (this.discoveryKey) releaseLocationDiscovery(this.discoveryKey);
     this.discoveryKey = key;
     if (key) subscribeLocationDiscovery(key);
+
+    // SOLO records ride the SELECTED planet (user ask 2026-09-30) — one scope at a time,
+    // released with the next selection and on hide.
+    const recKey = loc?.type === 'planet' && loc.planet ? loc.planet.key : '';
+    if (recKey !== this.recordsKey) {
+      if (this.recordsKey) releasePlanetRecords(this.recordsKey);
+      this.recordsKey = recKey;
+      if (recKey) subscribePlanetRecords(recKey);
+    }
   }
 
   private me() {
@@ -503,7 +567,7 @@ export class RankPage {
     let sig = 'none';
     if (planet) {
       const row = this.planetRow(planet.key);
-      sig = `p:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${this.discoveriesForPlanet(planet.key).length}`;
+      sig = `p:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${this.discoveriesForPlanet(planet.key).length}:${this.recordsSig(planet.key)}`;
     } else if (sys) {
       sig = `s:${sys.galaxyId}:${sys.systemId}:${this.rowsForGalaxy(sys.galaxyId).length}:${this.discoveriesForSystem(sys.galaxyId, sys.systemId).length}`;
     } else if (galaxy) {
@@ -563,6 +627,9 @@ export class RankPage {
           max: MAX_ROWS,
         })
       );
+      // SOLO RECORDS (user ask 2026-09-30): the fastest speedrun + longest survival ride
+      // the SAME fullscreen info overlay as the discoverers list.
+      card.appendChild(recordsBlock(this.planetRecordsFor(planet.key), { compact: true }));
     } else if (sys) {
       const g = this.map.currentGalaxy ?? this.panelHost.currentGalaxyFor(sys);
       card.appendChild(el('div', 'rk-mapinfo-kicker', `${g ? g.name.toUpperCase() : 'GALAXY'} · SOLAR SYSTEM`));
@@ -939,7 +1006,7 @@ export class RankPage {
       const discoveries = this.discoveriesForPlanet(planet.key).length;
       const queue = ClientCache.shared.myQueue();
       const place = loc ? 'sel' : 'focus';
-      return `p:${place}:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${row?.discovered ? 1 : 0}:${discoveries}:${queue?.ranked ? queue.planetKey : ''}:${this.availableSig(planet)}`;
+      return `p:${place}:${planet.key}:${row?.state ?? -1}:${row?.controllingColony ?? -1}:${row?.discovered ? 1 : 0}:${discoveries}:${queue?.ranked ? queue.planetKey : ''}:${this.availableSig(planet)}:${this.recordsSig(planet.key)}`;
     }
     const sys = loc?.system ?? sel.system;
     if (sys) {
@@ -990,6 +1057,7 @@ export class RankPage {
       discoveriesForGalaxy: (galaxyId) => this.discoveriesForGalaxy(galaxyId),
       discoveriesForSystem: (galaxyId, systemId) => this.discoveriesForSystem(galaxyId, systemId),
       discoveriesForPlanet: (planetKey) => this.discoveriesForPlanet(planetKey),
+      planetRecordsFor: (planetKey) => this.planetRecordsFor(planetKey),
       planetAvailable: (p) => this.planetAvailable(p),
       planetsOf: (sys) => this.planetsOf(sys),
       currentGalaxyFor: (loc) => {

@@ -741,6 +741,31 @@ html.nf-immersive body {
 .results-hero-cell .v { font-family: Consolas, monospace; font-size: clamp(20px, 3.4vw, 32px); font-weight: 800; line-height: 1; }
 .results-hero-cell .k { margin-top: 6px; font-size: 9.5px; letter-spacing: 0.16em; color: var(--muted); }
 
+/* ---- SOLO record block (user ask 2026-09-30): the run against the planet's board — the
+   gold "NEW PLANET RECORD!" banner can't be missed. Shown above the hero row. */
+.results-record {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  width: min(560px, 94vw); margin: 16px 0 2px; padding: 12px 16px 14px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(150, 110, 255, 0.12), rgba(20, 12, 38, 0.6));
+  border: 1px solid rgba(150, 110, 255, 0.32);
+}
+.results-record .rr-line { font-size: 11px; font-weight: 900; letter-spacing: 0.28em; color: var(--muted); }
+.results-record .rr-row { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+.results-record .rr-cell { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 86px; }
+.results-record .rr-v { font-family: Consolas, monospace; font-size: clamp(18px, 3vw, 26px); font-weight: 800; color: #e9e2ff; }
+.results-record .rr-k { font-size: 8.5px; letter-spacing: 0.2em; color: var(--muted); }
+.results-record.new {
+  border-color: rgba(255, 209, 102, 0.65);
+  box-shadow: 0 0 34px rgba(255, 209, 102, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 209, 102, 0.14), rgba(30, 18, 44, 0.62));
+  animation: solo-rr-pop 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
+.results-record.new .rr-line { color: #ffd166; text-shadow: 0 0 18px rgba(255, 209, 102, 0.55); }
+.results-record .rr-cell.hot .rr-v { color: #ffd166; }
+@keyframes solo-rr-pop { from { opacity: 0; transform: scale(0.85); } to { opacity: 1; transform: none; } }
+
 .results-grid { position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; width: min(880px, 94vw); }
 /* The base .panel is 760px wide and scrolls on its own — inside the report grid that width
    overflows the column (and was being clipped off the right edge). Full track width, no second

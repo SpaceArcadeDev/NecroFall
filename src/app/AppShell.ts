@@ -17,8 +17,8 @@ import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthPro
 import { isAuthCallbackUrl } from './auth/authCallback';
 import { ClientCache } from './spacetimedb/cache';
 import { clearStoredDbToken, hasStoredDbToken, SpacetimeConnection, storedDbTokenExpired, type ConnectionState } from './spacetimedb/connection';
-import { reportMatchStats, chooseColony, setPlayerName, discoverLocation } from './spacetimedb/reducers';
-import { COLONY_NONE, hexOf } from './spacetimedb/rows';
+import { reportMatchStats, chooseColony, setPlayerName, discoverLocation, recordPlanetPlay, submitPlanetRecord } from './spacetimedb/reducers';
+import { COLONY_NONE, hexOf, RECORD_MODE_SPEEDRUN, RECORD_MODE_SURVIVAL } from './spacetimedb/rows';
 import { subscribeAccount, subscribeMatchmaking, subscribePlayer } from './spacetimedb/subscriptions';
 import { OfficialMultiplayerProvider } from './multiplayer/OfficialMultiplayerProvider';
 import { ProviderGameEvent } from './multiplayer/MultiplayerProvider';
@@ -42,14 +42,17 @@ import { button, clear, el } from './ui/dom';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
+import { SoloPage } from './lobby/SoloPage';
+import { CustomPage } from './lobby/CustomPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
 import { showRankResultOverlay } from './rank/RankResultOverlay';
 import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../rankmap/procedural/SeedHash';
+import type { PlanetDescriptor } from '../rankmap/procedural/GalaxyTypes';
 import { LOCATION_GALAXY, LOCATION_PLANET, LOCATION_SYSTEM, galaxyLocationKey, planetLocationKey, systemLocationKey } from '../rankmap/DiscoveryTypes';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'room' | 'rank' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'room' | 'rank' | 'solo' | 'custom' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -122,6 +125,19 @@ export class AppShell implements ShellContext {
   private pendingLobbyExit = '';
   /** `?room=CODE` invite link (legacy `?party=CODE` still accepted) — consumed once ready. */
   private invitedRoomCode = '';
+  /** `?custom=CODE` invite link for a CUSTOM lobby (user ask 2026-09-30). */
+  private invitedCustomCode = '';
+  /** The room screen's flavour: the official party lobby or a CUSTOM lobby. */
+  private roomFlavour: 'party' | 'custom' = 'party';
+  /** The CUSTOM lobby room state (the reused lobby screen wears P2P rules there). */
+  private customLobbyActive = false;
+  private customLobbySince = 0;
+  private customLobbySig = '';
+  /** A SOLO run (speedrun / survival) owns the screen until its results are dismissed. */
+  private soloRunActive = false;
+  private lastSoloMode: 'speedrun' | 'survival' = 'speedrun';
+  /** The arg the current screen was rendered with (mode screens re-render on a mode switch). */
+  private screenArg = '';
   /** The last matchmaking queue we saw was RANKED — return there, not the lobby (plan §48). */
   private lastQueueRanked = false;
   /** Ranked-result overlays already shown (match ids). */
@@ -216,6 +232,8 @@ export class AppShell implements ShellContext {
     // `?room=CODE` invite link — the lobby room's twin of the P2P `?lobby=CODE`.
     const params = new URLSearchParams(window.location.search);
     this.invitedRoomCode = (params.get('room') ?? params.get('party') ?? '').trim().toUpperCase();
+    // `?custom=CODE` — the CUSTOM lobby's invite link (user ask 2026-09-30).
+    this.invitedCustomCode = (params.get('custom') ?? '').trim().toUpperCase();
 
     this.unsubs.push(
       this.official.onGameEvent((event) => this.onProviderEvent(event)),
@@ -282,11 +300,21 @@ export class AppShell implements ShellContext {
     // Remember where we CAME FROM so the room's BACK returns there, not to a
     // hardcoded lobby: rank → rank, lobby → lobby, play → play.
     if (this.screen !== 'room' && this.screen !== 'queue') this.roomReturnScreen = this.screen;
+    this.roomFlavour = 'party';
     this.navigateTo({ name: 'room' });
   }
 
   /** Leave the lobby room for the screen that opened it (its BACK / LEAVE answer). */
   goBackFromLobbyRoom(): void {
+    // A CUSTOM lobby's back = LEAVE the lobby (server-side seat removal), then the setup screen.
+    if (this.roomFlavour === 'custom') {
+      this.official.leaveCustomLobby();
+      this.customLobbyActive = false;
+      this.game?.ui.updateOfficialLobby(null);
+      this.roomFlavour = 'party';
+      this.navigateTo({ name: 'custom' });
+      return;
+    }
     switch (this.roomReturnScreen) {
       case 'rank':
         this.goRank();
@@ -334,6 +362,94 @@ export class AppShell implements ShellContext {
     this.navigateTo({ name: 'graphics' });
   }
 
+  // ------------------------------------------------------------ solo + custom (user ask 2026-09-30)
+
+  /** The SOLO picker (speedrun / survival) — the rank map as a run picker. */
+  goSolo(mode: 'speedrun' | 'survival'): void {
+    this.navigateTo({ name: 'solo', mode });
+  }
+
+  /** The CUSTOM lobby setup screen (create / join by code). */
+  goCustom(): void {
+    this.navigateTo({ name: 'custom' });
+  }
+
+  /** The reused LOBBY screen, wearing CUSTOM (P2P rules on the hybrid server). */
+  goCustomRoom(): void {
+    if (this.screen !== 'room' && this.screen !== 'queue') this.roomReturnScreen = this.screen;
+    this.roomFlavour = 'custom';
+    this.navigateTo({ name: 'room' });
+  }
+
+  /** CREATE a custom lobby: the room opens once its rows land. */
+  createCustomLobby(): void {
+    this.roomFlavour = 'custom';
+    this.official.createCustomLobby();
+    this.goCustomRoom();
+  }
+
+  /** JOIN a custom lobby by code: the room opens once its rows land. */
+  joinCustomLobbyByCode(code: string): void {
+    this.roomFlavour = 'custom';
+    this.official.joinCustomLobbyByCode(code);
+    this.goCustomRoom();
+  }
+
+  /**
+   * START A SOLO RUN on one planet: the record board loads here (so the end screen can beat
+   * it), the game takes the screen, and the finish reports through the record reducers.
+   */
+  startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor): void {
+    const game = this.ensureGame();
+    const cache = ClientCache.shared;
+    const me = cache.me(this.myHex());
+    if (!me || me.colony === COLONY_NONE || !me.playerName) {
+      this.toast('Finish onboarding first.');
+      return;
+    }
+    const season = cache.rankedSeason();
+    const universeSeed = season ? Number(season.universeSeed % 4294967296n) >>> 0 : DEFAULT_UNIVERSE_SEED;
+    const rec = cache.planetRecord(planet.key, mode === 'speedrun' ? RECORD_MODE_SPEEDRUN : RECORD_MODE_SURVIVAL);
+    this.soloRunActive = true;
+    this.lastSoloMode = mode;
+    this.hideShell(true);
+    try {
+      game.startSoloRun({
+        mode,
+        planetKey: planet.key,
+        ring: planet.ring,
+        universeSeed,
+        seed: planet.seed,
+        colony: me.colony,
+        bestMs: rec ? Number(rec.timeMs) : 0,
+        bestName: rec?.playerName ?? '',
+        onStart: () => recordPlanetPlay(planet.key),
+        onFinish: (info) =>
+          submitPlanetRecord(
+            info.mode === 'speedrun' ? RECORD_MODE_SPEEDRUN : RECORD_MODE_SURVIVAL,
+            info.planetKey,
+            info.timeMs
+          ),
+      });
+    } catch (err) {
+      this.soloRunActive = false;
+      this.showShell('solo', mode);
+      this.toast(err instanceof Error ? err.message : 'Could not start the run.');
+    }
+  }
+
+  private renderSolo(mode: 'speedrun' | 'survival'): void {
+    const page = new SoloPage(this, mode);
+    this.page = { onHide: () => page.onHide(), update: () => page.update() };
+    this.screenHost.appendChild(page.element);
+  }
+
+  private renderCustom(): void {
+    const page = new CustomPage(this);
+    this.page = { update: () => undefined };
+    this.screenHost.appendChild(page.element);
+  }
+
   /** The saved graphics choice — the live game's, or the stored one before it boots. */
   currentGraphicsPref(): QualityPref {
     return this.game?.graphicsChoice ?? loadQualityPref();
@@ -377,7 +493,7 @@ export class AppShell implements ShellContext {
   /** The chevron: the LOBBY ROOM returns to whatever opened it, the setup to the format menu. */
   private onBack(): void {
     if (this.screen === 'room') this.goBackFromLobbyRoom();
-    else if (this.screen === 'lobby') this.goPlay();
+    else if (this.screen === 'lobby' || this.screen === 'solo' || this.screen === 'custom') this.goPlay();
     else this.goHome();
   }
 
@@ -431,8 +547,9 @@ export class AppShell implements ShellContext {
       // (where the player launched it) — never the legacy main menu.
       if (name === 'menu' && previous === 'lobby' && this.shellHidden && this.accountReady) {
         // The OFFICIAL lobby rides this same screen: return to whatever OPENED it —
-        // rank → rank, play → play, lobby → lobby (user ask 2026-09-29).
-        if (this.officialLobbyActive) {
+        // rank → rank, play → play, lobby → lobby (user ask 2026-09-29). CUSTOM lobbies
+        // return to their own setup screen.
+        if (this.officialLobbyActive || this.customLobbyActive) {
           this.returnFromOfficialLobby();
           return;
         }
@@ -491,6 +608,24 @@ export class AppShell implements ShellContext {
    * so a refresh never re-fires a stale invite.
    */
   private consumeInvite(): void {
+    // CUSTOM lobby invite (`?custom=CODE`, user ask 2026-09-30): same rules as `?room=` — join
+    // once the account can, open the room, strip the param so a refresh never re-fires it.
+    const customCode = this.invitedCustomCode;
+    if (customCode) {
+      const hex = this.myHex();
+      const me = hex ? ClientCache.shared.me(hex) : null;
+      if (!hex || !me || me.colony === COLONY_NONE || !me.playerName) return; // login/onboarding first
+      if (this.officialMatchActive || this.screen === 'loading') return; // a live match owns the screen
+      if (ClientCache.shared.activeMatchFor(hex)) return; // a mid-match rejoin wins
+      this.invitedCustomCode = '';
+      const url = new URL(window.location.href);
+      url.searchParams.delete('custom');
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+      this.toast(`Joining lobby ${customCode}…`);
+      this.official.joinCustomLobbyByCode(customCode);
+      this.goCustomRoom(); // the room gathers as the rows land
+      return;
+    }
     const code = this.invitedRoomCode;
     if (!code) return;
     const hex = this.myHex();
@@ -678,8 +813,8 @@ export class AppShell implements ShellContext {
     const hexNow = this.myHex();
     if (hexNow) Keybinds.hydrate(ClientCache.shared.settingsByHex(hexNow)?.keybinds ?? null);
 
-    // A pending `?room=CODE` invite fires as soon as the account can join one.
-    if (this.invitedRoomCode) this.consumeInvite();
+    // A pending `?room=CODE` / `?custom=CODE` invite fires as soon as the account can join one.
+    if (this.invitedRoomCode || this.invitedCustomCode) this.consumeInvite();
 
     const me = this.myHex() ? ClientCache.shared.me(this.myHex()) : null;
     // The customize stage's avatar wears the ACCOUNT colony (user ask) — pushed on every data
@@ -697,6 +832,8 @@ export class AppShell implements ShellContext {
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'room') this.showShell('room');
       else if (route.name === 'rank') this.showShell('rank');
+      else if (route.name === 'solo') this.showShell('solo', route.mode);
+      else if (route.name === 'custom') this.showShell('custom');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
@@ -716,6 +853,8 @@ export class AppShell implements ShellContext {
       else if (route.name === 'lobby') this.showShell('lobby');
       else if (route.name === 'room') this.showShell('room');
       else if (route.name === 'rank') this.showShell('rank');
+      else if (route.name === 'solo') this.showShell('solo', route.mode);
+      else if (route.name === 'custom') this.showShell('custom');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
@@ -725,13 +864,15 @@ export class AppShell implements ShellContext {
 
   private onRoute(): void {
     if (!this.accountReady || this.shellHidden) return;
-    if (this.officialMatchActive) return;
+    if (this.officialMatchActive || this.soloRunActive) return;
     const route = parseRoute();
     if (route.name === 'profile') this.showShell('profile', route.hex);
     else if (route.name === 'play') this.showShell('play');
     else if (route.name === 'lobby') this.showShell('lobby');
     else if (route.name === 'room') this.showShell('room');
     else if (route.name === 'rank') this.showShell('rank');
+    else if (route.name === 'solo') this.showShell('solo', route.mode);
+    else if (route.name === 'custom') this.showShell('custom');
     else if (route.name === 'graphics') this.showShell('graphics');
     else if (route.name === 'match') this.showShell('match', String(route.id));
     else if (this.screen !== 'queue' && this.screen !== 'onboarding' && this.screen !== 'loading') this.showShell('home');
@@ -843,7 +984,8 @@ export class AppShell implements ShellContext {
     this.shellHidden = false;
     // Re-entering the SAME screen is a no-op — except when we carry a message
     // that must actually surface (e.g. "could not reach the server" on login).
-    if (this.screen === screen && screen !== 'profile' && message === undefined) {
+    // MODE screens (solo) compare their ARG too: switching speedrun↔survival is a re-render.
+    if (this.screen === screen && screen !== 'profile' && message === undefined && (arg ?? '') === this.screenArg) {
       this.page?.update?.();
       return;
     }
@@ -864,6 +1006,7 @@ export class AppShell implements ShellContext {
     this.screenHost.scrollTop = 0;
     this.screenHost.scrollLeft = 0;
     this.screen = screen;
+    this.screenArg = arg ?? '';
     this.root.classList.remove('hidden');
     // The friends bar rides back into its OWN column beside the page (it floated over a
     // game screen otherwise — user ask: never overlaying the page).
@@ -897,7 +1040,7 @@ export class AppShell implements ShellContext {
       }, 50);
     }
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
-    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
+    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'solo' || screen === 'custom' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
     this.nav.element.classList.toggle('hidden', screen !== 'home');
     this.backBtn.classList.toggle('hidden', !childScreen);
     this.root.classList.toggle('no-nav', screen !== 'home');
@@ -945,6 +1088,14 @@ export class AppShell implements ShellContext {
       case 'rank':
         this.nav.setActive('play');
         this.renderRank();
+        break;
+      case 'solo':
+        this.nav.setActive('play');
+        this.renderSolo(arg === 'survival' ? 'survival' : 'speedrun');
+        break;
+      case 'custom':
+        this.nav.setActive('play');
+        this.renderCustom();
         break;
       case 'graphics':
         this.nav.setActive(null);
@@ -1275,6 +1426,12 @@ export class AppShell implements ShellContext {
   }
 
   private renderLobbyRoom(): void {
+    // CUSTOM lobbies reuse the SAME screen with P2P rules (user ask 2026-09-30): READY in
+    // every seat, HOST starts. The mapping lives below; the DOM is byte-for-byte the P2P lobby.
+    if (this.roomFlavour === 'custom') {
+      this.renderCustomRoom();
+      return;
+    }
     // The OFFICIAL LOBBY is the game's OWN P2P lobby screen (user ask 2026-09-29: "delete
     // [the lookalike], reuse the exact same lobby as P2P — correct tags, text, logic"):
     // the shell maps party rows in and swaps the actions, while the DOM, avatar rail and
@@ -1374,20 +1531,127 @@ export class AppShell implements ShellContext {
 
   /** Leave the reused lobby screen back into the shell (the screen observer routes here). */
   private returnFromOfficialLobby(): void {
-    if (!this.officialLobbyActive) return;
+    if (!this.officialLobbyActive && !this.customLobbyActive) return;
+    const wasCustom = this.customLobbyActive;
     this.officialLobbyActive = false;
+    this.customLobbyActive = false;
     const message = this.pendingLobbyExit;
     this.pendingLobbyExit = '';
     this.game?.ui.updateOfficialLobby(null);
-    const target: ShellScreen =
-      this.roomReturnScreen === 'rank' ? 'rank' : this.roomReturnScreen === 'play' ? 'play' : 'lobby';
+    const target: ShellScreen = wasCustom
+      ? 'custom'
+      : this.roomReturnScreen === 'rank'
+        ? 'rank'
+        : this.roomReturnScreen === 'play'
+          ? 'play'
+          : 'lobby';
+    this.roomFlavour = 'party';
     const url = new URL(window.location.href);
     url.searchParams.delete('lobby');
     url.searchParams.delete('room');
-    url.hash = target === 'rank' ? '#/rank' : target === 'play' ? '#/play' : '#/lobby';
+    url.searchParams.delete('custom');
+    url.hash = wasCustom ? '#/custom' : target === 'rank' ? '#/rank' : target === 'play' ? '#/play' : '#/lobby';
     window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
     this.showShell(target);
     if (message) this.toast(message);
+  }
+
+  // ------------------------------------------------------------ CUSTOM lobby (2026-09-30)
+
+  /**
+   * The CUSTOM lobby on the reused lobby screen: the same DOM, the P2P handshake (READY +
+   * host START MATCH) and the custom match's seats mapped in. The screen observer and the
+   * data tick keep it fresh until the match starts (the ordinary official boot path takes over).
+   */
+  private renderCustomRoom(): void {
+    const game = this.game;
+    if (!game) {
+      window.setTimeout(() => {
+        if (this.screen === 'room' && this.roomFlavour === 'custom' && !this.shellHidden) this.renderCustomRoom();
+      }, 400);
+      return;
+    }
+    this.customLobbyActive = true;
+    this.customLobbySince = performance.now();
+    this.customLobbySig = '';
+    this.pendingLobbyExit = '';
+    game.ui.officialLobby = {
+      findMatch: () => undefined, // custom lobbies never queue — the host starts directly
+      leave: () => {
+        this.official.leaveCustomLobby();
+        // The screen observer returns the shell to the CUSTOM setup screen.
+        game.ui.show('menu');
+      },
+      kick: (hex: string) => this.official.kickCustomSeat(hex),
+      ready: (ready: boolean) => {
+        this.official.setCustomReady(ready);
+        this.customLobbySig = ''; // repaint on the next tick even before the row lands
+      },
+      start: () => this.official.startCustomMatch(),
+    };
+    this.hideShell(true); // the game owns the screen now — exactly like a P2P lobby
+    game.ui.show('lobby');
+    this.updateCustomRoom();
+  }
+
+  /** Push the custom lobby's rows into the reused lobby screen (sig-guarded). */
+  private updateCustomRoom(): void {
+    const game = this.game;
+    if (!game || !this.customLobbyActive) return;
+    const state = this.official.customLobby();
+    if (!state) {
+      // Gathering: rows land a beat after CREATE / a code join. Past the grace with nothing,
+      // hand the screen back instead of standing in a lobby that is not there.
+      const gathering = performance.now() - this.customLobbySince < 4000;
+      const sig = `gathering:${gathering}`;
+      if (sig !== this.customLobbySig) {
+        this.customLobbySig = sig;
+        if (gathering) {
+          game.ui.updateOfficialLobby({
+            code: '',
+            format: 'CUSTOM',
+            players: [],
+            leader: false,
+            ready: true,
+            gathering: true,
+            custom: true,
+            myReady: false,
+            canStart: false,
+          });
+        }
+      }
+      if (!gathering) {
+        this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
+        game.ui.show('menu'); // the observer routes back into the shell
+      }
+      return;
+    }
+    const players = state.players.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ready: p.ready,
+      colony: p.colony,
+      nt: p.nt,
+      isHost: p.isHost,
+      me: p.me,
+      acc: p.acc,
+    }));
+    const sig =
+      `${state.code}|${state.hostHex}|${state.myReady ? 1 : 0}|${state.canStart ? 1 : 0}|` +
+      players.map((p) => `${p.id}:${p.name}:${p.colony}:${p.ready ? 1 : 0}:${p.isHost ? 1 : 0}`).join(';');
+    if (sig === this.customLobbySig) return;
+    this.customLobbySig = sig;
+    game.ui.updateOfficialLobby({
+      code: state.code,
+      format: 'CUSTOM',
+      players,
+      leader: state.host,
+      ready: true,
+      gathering: false,
+      custom: true,
+      myReady: state.myReady,
+      canStart: state.canStart,
+    });
   }
 
   private renderRank(): void {
@@ -1637,6 +1901,18 @@ export class AppShell implements ShellContext {
     // The reused official lobby screen (no data tick arrives while nothing changes — the
     // GATHERING grace still has to expire).
     if (this.officialLobbyActive) this.updateOfficialLobby();
+    if (this.customLobbyActive) this.updateCustomRoom();
+
+    if (this.soloRunActive) {
+      // A SOLO run owns the screen until its results are dismissed (Game.returnToMenu) —
+      // then back to the picker for another attempt (user ask 2026-09-30).
+      if (game.phase === 'menu') {
+        this.soloRunActive = false;
+        this.showShell('solo', this.lastSoloMode);
+      }
+      this.pill.classList.add('hidden');
+      return;
+    }
 
     if (this.officialMatchActive) {
       // Interim combat reporting until the server sim owns damage (plan §74).
@@ -1680,6 +1956,12 @@ export class AppShell implements ShellContext {
       this.officialLobbyActive = false;
       this.game?.ui.updateOfficialLobby(null);
     }
+    // A CUSTOM lobby's START dissolves it the same way (the match boot path takes over).
+    if (this.customLobbyActive) {
+      this.customLobbyActive = false;
+      this.game?.ui.updateOfficialLobby(null);
+    }
+    this.roomFlavour = 'party';
     this.loadingSince = performance.now();
     this.showShell('loading');
 

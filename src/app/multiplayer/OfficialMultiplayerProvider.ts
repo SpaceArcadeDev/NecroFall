@@ -36,6 +36,15 @@ import {
   sendMatchMsg,
   reportViolation,
 } from '../spacetimedb/reducers';
+import {
+  createCustomLobby as createCustomLobbyReducer,
+  joinCustomLobby as joinCustomLobbyReducer,
+  leaveCustomLobby as leaveCustomLobbyReducer,
+  kickCustomSeat as kickCustomSeatReducer,
+  setCustomReady as setCustomReadyReducer,
+  setCustomSeat as setCustomSeatReducer,
+  startCustomMatch as startCustomMatchReducer,
+} from '../spacetimedb/reducers';
 import { hexOf, Identity, MatchMsgRow, MatchPlayerRow } from '../spacetimedb/rows';
 import { subscribeMatch, subscribePlayer, releaseMatch } from '../spacetimedb/subscriptions';
 import { loadSelection, selectionToWire } from '../../customization/CustomizationStore';
@@ -390,6 +399,92 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   /** FIND RANKED MATCH — queue solo for one planet (plan §5/§53). */
   findRankedMatch(ring: number, galaxyId: number, systemId: number, planetId: number): void {
     findRankedMatchReducer(ring, galaxyId, systemId, planetId);
+  }
+
+  // ------------------------------------------------------------ custom lobbies (2026-09-30)
+
+  /** CREATE A CUSTOM LOBBY (user ask 2026-09-30): I become its host; the room opens on the rows. */
+  createCustomLobby(): void {
+    createCustomLobbyReducer();
+  }
+
+  /** JOIN a custom lobby by its share code. */
+  joinCustomLobbyByCode(code: string): void {
+    joinCustomLobbyReducer(code.trim().toUpperCase());
+  }
+
+  /** LEAVE a custom lobby: before START removes the seat, after START tombstones it. */
+  leaveCustomLobby(): void {
+    if (this.matchId) this.leaveMatch();
+    else leaveCustomLobbyReducer();
+  }
+
+  /** Host only: remove one seat from the custom lobby. */
+  kickCustomSeat(hex: string): void {
+    const target = ClientCache.shared.playerByHex(hex)?.identity;
+    if (target) kickCustomSeatReducer(target);
+  }
+
+  /** Custom lobby: toggle my READY seat. */
+  setCustomReady(ready: boolean): void {
+    setCustomReadyReducer(ready);
+  }
+
+  /** Custom lobby: pick my colony (and starter class). */
+  setCustomSeat(colony: number, necrotech: number): void {
+    setCustomSeatReducer(colony, necrotech);
+  }
+
+  /** Custom lobby, host only: press START (every other seat must be ready). */
+  startCustomMatch(): void {
+    startCustomMatchReducer();
+  }
+
+  /**
+   * The shell's view of MY waiting custom lobby (the room screen's data source): code, roster,
+   * readiness and whether the host may start. Null when I am not in one.
+   */
+  customLobby(): {
+    matchId: number;
+    code: string;
+    hostHex: string;
+    host: boolean;
+    canStart: boolean;
+    myReady: boolean;
+    players: { id: string; name: string; ready: boolean; colony: number; nt: number; isHost: boolean; me: boolean; acc: string }[];
+  } | null {
+    const hex = this.myHex;
+    const m = hex ? ClientCache.shared.myCustomLobby(hex) : null;
+    if (!m) return null;
+    const seats = ClientCache.shared.matchPlayers(m.matchId).filter(r => !r.left);
+    const host = m.hostHex === hex;
+    const players = seats.map(r => {
+      const rh = hexOf(r.identity);
+      if (rh && rh !== hex) subscribePlayer(rh);
+      return {
+        id: rh,
+        name: r.name || 'Survivor',
+        ready: r.ready,
+        colony: r.colony,
+        nt: r.necrotech,
+        isHost: rh === m.hostHex,
+        me: rh === hex,
+        // The seat carries no outfit yet: my own seat dresses from the local selection so the
+        // room shows the player's real figure; peers render on the default dress.
+        acc: rh === hex ? selectionToWire(loadSelection()) : '',
+      };
+    });
+    const othersReady = players.every(p => p.me || p.isHost || p.ready);
+    const mine = players.find(p => p.me);
+    return {
+      matchId: m.matchId,
+      code: m.roomCode,
+      hostHex: m.hostHex,
+      host,
+      canStart: host && players.length >= 1 && othersReady,
+      myReady: Boolean(mine?.ready),
+      players,
+    };
   }
 
   cancelFindMatch(): void {

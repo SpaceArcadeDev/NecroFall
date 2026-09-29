@@ -32,6 +32,31 @@ const ICON_LADDER =
   '<path d="M7.4 13.4h9.2"/>' +
   '<path d="M5.7 17h12.6"/></svg>';
 
+/** SPEEDRUN — a stopwatch: the clock IS the mode. */
+const ICON_STOPWATCH =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="12" cy="13.4" r="7.2"/>' +
+  '<path d="M12 9.6v3.8l2.6 1.9"/>' +
+  '<path d="M9.4 2.8h5.2"/>' +
+  '<path d="M12 2.8v3.4"/></svg>';
+
+/** SURVIVAL — a wave that never ends under a lone skull. */
+const ICON_HORDE =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M12 3.2a5.4 5.4 0 0 0-5.4 5.4c0 1.9 1 3 2 3.8v2.2a1.4 1.4 0 0 0 1.4 1.4h4a1.4 1.4 0 0 0 1.4-1.4v-2.2c1-.8 2-1.9 2-3.8A5.4 5.4 0 0 0 12 3.2z"/>' +
+  '<circle cx="10.1" cy="8.9" r="0.9" fill="currentColor" stroke="none"/>' +
+  '<circle cx="13.9" cy="8.9" r="0.9" fill="currentColor" stroke="none"/>' +
+  '<path d="M4 19.4c2.2-1.6 4.6-1.6 6.8 0"/>' +
+  '<path d="M13.2 19.4c2.2-1.6 4.6-1.6 6.8 0"/></svg>';
+
+/** CUSTOM — two figures plus a code tag: the invite-only lobby. */
+const ICON_CUSTOM =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="9" cy="8.4" r="3"/>' +
+  '<path d="M3.6 19.4c.6-3 2.8-4.6 5.4-4.6s4.8 1.6 5.4 4.6"/>' +
+  '<path d="M16.4 5.6a3 3 0 0 1 0 5.9"/>' +
+  '<path d="M17.4 14.6c1.7.5 2.8 2.1 3.2 4.5"/></svg>';
+
 export class PlayPage {
   readonly element: HTMLElement;
   private classicCard: HTMLElement;
@@ -91,6 +116,52 @@ export class PlayPage {
       if ((k.key === 'Enter' || k.key === ' ') && !k.repeat) openRank();
     });
     modes.appendChild(rankCard);
+
+    // ---- SOLO + CUSTOM (user ask 2026-09-30): three new formats beside CLASSIC / RANK.
+    const mkCard = (cls: string, icon: string, name: string, desc: string, tag: string, aria: string, go: () => void): void => {
+      const card = el('div', `mode-card ${cls}`);
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-label', aria);
+      card.innerHTML =
+        `<div class="mode-ico">${icon}</div>` +
+        `<div class="mode-name">${name}</div>` +
+        `<div class="mode-desc">${desc}</div>` +
+        `<div class="mode-tag">${tag}</div>`;
+      card.addEventListener('click', go);
+      card.addEventListener('keydown', (e) => {
+        const k = e as KeyboardEvent;
+        if ((k.key === 'Enter' || k.key === ' ') && !k.repeat) go();
+      });
+      modes.appendChild(card);
+    };
+    mkCard(
+      'solo-mode-card speedrun-card',
+      ICON_STOPWATCH,
+      'SPEEDRUN',
+      'A planet from your band, classic objectives, one clock — take the Nexus as fast as you can.',
+      'SOLO',
+      'Speedrun — race a planet for the fastest time',
+      () => this.ctx.goSolo('speedrun')
+    );
+    mkCard(
+      'solo-mode-card survival-card',
+      ICON_HORDE,
+      'SURVIVAL',
+      'Endless swarm, no beacons, no Nexus. Enemies grow without mercy — survive as long as you can.',
+      'SOLO',
+      'Survival — hold out against the endless swarm',
+      () => this.ctx.goSolo('survival')
+    );
+    mkCard(
+      'custom-mode-card',
+      ICON_CUSTOM,
+      'CUSTOM',
+      'Lobby up with a code — P2P rules on the hybrid server. Everyone readies, the host starts.',
+      'INVITE',
+      'Custom — a lobby on the hybrid server',
+      () => this.ctx.goCustom()
+    );
     col.appendChild(modes);
 
     // ---- the setup, revealed by the pick (same beat as the shrink). Only the

@@ -69,7 +69,7 @@ export interface OfficialLobbySeat {
 /** Everything the official lobby screen needs for one paint. */
 export interface OfficialLobbyState {
   code: string;
-  /** 'CLASSIC' | 'RANK' — the tag chip beside the title. */
+  /** 'CLASSIC' | 'RANK' | 'CUSTOM' — the tag chip beside the title. */
   format: string;
   players: OfficialLobbySeat[];
   /** Am I the party leader (only they can FIND MATCH — the server enforces it too). */
@@ -78,6 +78,12 @@ export interface OfficialLobbyState {
   ready: boolean;
   /** Rows not landed yet (a just-created lobby / a join in flight). */
   gathering: boolean;
+  /** CUSTOM lobby (user ask 2026-09-30): P2P rules — READY + host START MATCH. */
+  custom?: boolean;
+  /** Custom lobby: my seat's ready flag. */
+  myReady?: boolean;
+  /** Custom lobby: every non-host seat is ready (the host's start gate). */
+  canStart?: boolean;
 }
 
 /** The shell's hooks behind the official lobby's own buttons. */
@@ -85,6 +91,10 @@ export interface OfficialLobbyHooks {
   findMatch(): void;
   leave(): void;
   kick(hex: string): void;
+  /** CUSTOM lobbies only: toggle my READY seat. */
+  ready?(ready: boolean): void;
+  /** CUSTOM lobbies only: the host starts the match (P2P rules). */
+  start?(): void;
 }
 
 export interface UICallbacks {
@@ -810,6 +820,8 @@ export class UI {
    * FIND MATCH instead of READY/START, ?room= invite links, party kicks.
    */
   private officialLobbyOn = false;
+  /** True while the reused lobby screen wears the CUSTOM flavour (P2P rules, hybrid server). */
+  private lobbyCustomOn = false;
   /** The shell's callbacks while an official lobby owns the screen. */
   officialLobby: OfficialLobbyHooks | null = null;
   /** The roster last pushed to the rail (kept so re-opening the screen rebuilds it at once). */
@@ -1646,14 +1658,16 @@ export class UI {
     copyBtn.setAttribute('aria-label', 'Copy the lobby code');
     const shareBtn = button(ICON_SHARE, 'lobby-icon', () => {
       const code = this.lobbyCode.textContent ?? '';
-      // OFFICIAL lobbies are joined through the `?room=` invite (AppShell.consumeInvite); the
-      // P2P `?lobby=` deep link keeps booting the legacy WebRTC session.
+      // OFFICIAL parties are joined through the `?room=` invite (AppShell.consumeInvite) and
+      // CUSTOM lobbies through `?custom=` (user ask 2026-09-30); the P2P `?lobby=` deep link
+      // keeps booting the legacy WebRTC session.
       const url = this.officialLobbyOn
-        ? `${location.origin}${location.pathname}?room=${code}`
+        ? `${location.origin}${location.pathname}?${this.lobbyCustomOn ? 'custom' : 'room'}=${code}`
         : `${location.origin}${location.pathname}?lobby=${code}`;
       const nav = navigator as Navigator & { share?: (data: { title: string; text: string; url: string }) => Promise<void> };
+      const what = this.officialLobbyOn ? (this.lobbyCustomOn ? 'custom lobby' : 'lobby') : 'match';
       if (nav.share) {
-        void nav.share({ title: 'NECROFALL', text: `Join my Necrofall ${this.officialLobbyOn ? 'lobby' : 'match'}: ${code}`, url });
+        void nav.share({ title: 'NECROFALL', text: `Join my Necrofall ${what}: ${code}`, url });
       } else {
         void navigator.clipboard?.writeText(url);
         this.toast('Invite link copied', 1600);
@@ -1692,12 +1706,21 @@ export class UI {
     panel.appendChild(this.lobbyHint);
 
     const actions = el('div', 'lobby-actions');
-    this.lobbyReady = button('READY', 'btn', () => this.cbs.toggleReady());
+    this.lobbyReady = button('READY', 'btn', () => {
+      // CUSTOM lobbies ready-up through the server (user ask 2026-09-30); the P2P path keeps
+      // the legacy local toggle.
+      if (this.officialLobbyOn) this.officialLobby?.ready?.(!this.lobbyReady.classList.contains('on'));
+      else this.cbs.toggleReady();
+    });
     this.lobbyStart = button('START MATCH', 'btn primary', () => {
-      // The SAME button runs FIND MATCH for an official lobby (user ask: reuse the P2P
-      // lobby "with the correct tags, text, logic").
-      if (this.officialLobbyOn) this.officialLobby?.findMatch();
-      else this.cbs.startMatch();
+      // The SAME button runs FIND MATCH for an official party lobby, START MATCH for a custom
+      // lobby (user ask: reuse the P2P lobby "with the correct tags, text, logic").
+      if (this.officialLobbyOn) {
+        if (this.officialLobby?.start) this.officialLobby.start();
+        else this.officialLobby?.findMatch();
+      } else {
+        this.cbs.startMatch();
+      }
     });
     const leave = button('LEAVE', 'btn ghost', () => {
       if (this.officialLobbyOn) this.officialLobby?.leave();
@@ -1721,18 +1744,20 @@ export class UI {
     isHost: boolean,
     status: string,
     canStart = true,
-    opts?: { official?: boolean; format?: string; gathering?: boolean }
+    opts?: { official?: boolean; format?: string; gathering?: boolean; custom?: boolean; myReady?: boolean }
   ): void {
     this.officialLobbyOn = Boolean(opts?.official);
+    const custom = Boolean(this.officialLobbyOn && opts?.custom);
+    this.lobbyCustomOn = custom;
     // The format chip only. (The SEASON pill was removed from the lobby — user ask
     // 2026-09-29: "in lobby no need season pill".)
     this.lobbyMode.textContent = this.officialLobbyOn ? opts?.format || 'CLASSIC' : 'CLASSIC';
     this.lobbyCode.textContent = code || '-----';
 
     // ---- OPEN SLOTS (user ask): the room always shows its full roster shape —
-    // CONFIG.maxPlayers lit platforms for a P2P room, THREE for an official party.
+    // CONFIG.maxPlayers lit platforms for a P2P room or a CUSTOM lobby, THREE for an official party.
     // At most FIVE seats stand fully on screen; the rest extend the track sideways.
-    const slots = this.officialLobbyOn ? 3 : Math.max(1, CONFIG.maxPlayers);
+    const slots = this.officialLobbyOn && !custom ? 3 : Math.max(1, CONFIG.maxPlayers);
     this.lobbyCodeCap.textContent = this.officialLobbyOn
       ? `UP TO ${slots} SURVIVORS · ${players.length} IN LOBBY`
       : `UP TO ${slots} SURVIVORS · ${CONFIG.maxPerColony} PER COLONY`;
@@ -1790,11 +1815,22 @@ export class UI {
         chips.appendChild(el('span', 'seat-chip dim', 'NO COLONY'));
       }
       if (p.nt >= 0) chips.appendChild(el('span', 'seat-chip', NECROTECHS[p.nt] ? NECROTECHS[p.nt].name : 'MUTATED'));
-      // OFFICIAL parties run under a LEADER (the P2P room's HOST — same seat authority).
-      if (p.isHost) chips.appendChild(el('span', 'seat-chip host', this.officialLobbyOn ? 'LEADER' : 'HOST'));
+      // OFFICIAL parties run under a LEADER; a CUSTOM lobby runs under the P2P-style HOST
+      // (the seat authority — same word the P2P room uses).
+      if (p.isHost) chips.appendChild(el('span', 'seat-chip host', this.officialLobbyOn && !custom ? 'LEADER' : 'HOST'));
       if (p.me) chips.appendChild(el('span', 'seat-chip you', 'YOU'));
       card.appendChild(chips);
-      card.appendChild(el('div', 'seat-state', this.officialLobbyOn ? 'IN LOBBY' : p.ready ? 'READY \u2713' : 'WAITING'));
+      card.appendChild(
+        el(
+          'div',
+          'seat-state',
+          this.officialLobbyOn
+            ? custom
+              ? p.ready ? 'READY \u2713' : 'WAITING'
+              : 'IN LOBBY'
+            : p.ready ? 'READY \u2713' : 'WAITING'
+        )
+      );
       // The host runs the room: it can remove anyone but itself, straight from the seat card.
       if (isHost && !p.me) {
         const kick = button('\u2715', 'seat-kick', () => {
@@ -1811,9 +1847,22 @@ export class UI {
     }
 
     if (this.officialLobbyOn) {
+      const gathering = Boolean(opts?.gathering);
+      if (custom) {
+        // ---- CUSTOM LOBBY (user ask 2026-09-30): the P2P handshake on the official dress —
+        // everyone READYs and the HOST starts the match once every other seat is ready.
+        const myReady = Boolean(opts?.myReady);
+        this.lobbyReady.classList.toggle('hidden', isHost);
+        this.lobbyReady.textContent = myReady ? 'READY \u2713' : 'READY';
+        this.lobbyReady.classList.toggle('on', myReady);
+        this.lobbyStart.classList.toggle('hidden', !isHost || gathering);
+        this.lobbyStart.disabled = !canStart;
+        this.lobbyStart.textContent = canStart ? 'START MATCH' : 'WAITING FOR READY\u2026';
+        this.lobbyHint.textContent = status;
+        return;
+      }
       // ---- OFFICIAL: members are simply IN the lobby (no READY handshake) — the LEADER
       // runs the search. The one button flips word by state, exactly like the P2P START does.
-      const gathering = Boolean(opts?.gathering);
       this.lobbyReady.classList.add('hidden');
       this.lobbyStart.classList.toggle('hidden', gathering);
       this.lobbyStart.disabled = !canStart;
@@ -1854,15 +1903,25 @@ export class UI {
       this.lobbyMode.textContent = 'CLASSIC';
       return;
     }
-    const status = state.gathering
-      ? 'GATHERING YOUR LOBBY\u2026'
-      : state.leader
-        ? 'You lead this lobby — FIND MATCH queues everyone together.'
-        : 'Only the leader can search for a match.';
-    this.updateLobby(state.code, state.players, state.leader, status, state.leader && state.ready, {
+    // CUSTOM lobby (user ask 2026-09-30): same screen, P2P rules — READY handshake + host START.
+    const status = state.custom
+      ? state.leader
+        ? state.canStart
+          ? 'Every survivor is ready — START MATCH.'
+          : 'Waiting for every survivor to ready up.'
+        : 'Ready up — the host starts the match.'
+      : state.gathering
+        ? 'GATHERING YOUR LOBBY\u2026'
+        : state.leader
+          ? 'You lead this lobby — FIND MATCH queues everyone together.'
+          : 'Only the leader can search for a match.';
+    const canStart = state.custom ? Boolean(state.canStart) : state.leader && state.ready;
+    this.updateLobby(state.code, state.players, state.leader, status, canStart, {
       official: true,
       format: state.format,
       gathering: state.gathering,
+      custom: state.custom,
+      myReady: state.myReady,
     });
   }
 
@@ -2549,7 +2608,9 @@ export class UI {
 
   updateHud(d: HudData): void {
     // ---- timer
-    setText(this.timerVal, formatTime(d.remaining));
+    // SURVIVAL counts UP (user ask 2026-09-30): floor the elapsed seconds (`formatTime`
+    // rounds the classic countdown UP, which would inflate a survival clock by a second).
+    setText(this.timerVal, d.countUp ? formatTime(Math.floor(d.remaining)) : formatTime(d.remaining));
     // SURVIVAL counts UP (user ask 2026-09-30): no "low time" flash and the rail shows the
     // elapsed-within-an-hour sweep instead of the classic countdown's remaining slice.
     setClass(this.timerVal, 'low', !d.countUp && d.remaining < 60);

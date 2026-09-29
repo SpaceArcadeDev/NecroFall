@@ -1521,3 +1521,116 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-terr-when { display: none; }
 }
 
+
+/* ============================================================ SOLO picker (SPEEDRUN / SURVIVAL — user ask 2026-09-30)
+   The rank page's dress, worn without the rail/quick columns: map + planet panel.
+   One accent per mode (speedrun green, survival amber) drives the toggle and CTA. */
+.solo-page .rk-main { grid-template-columns: minmax(0, 1fr) 340px; }
+.solo-page .rk-map-wrap { grid-column: 1; grid-row: 1; }
+.solo-page .rk-side { grid-column: 2; grid-row: 1; }
+.solo-strip { --rk-accent: #7ef0b0; gap: 14px; }
+.solo-speedrun { --solo-accent: #7ef0b0; }
+.solo-survival { --solo-accent: #ffd166; }
+.solo-toggle {
+  display: flex; gap: 5px; padding: 4px; flex: none;
+  border-radius: 12px; background: rgba(12, 8, 24, 0.6);
+  border: 1px solid rgba(170, 130, 255, 0.22);
+}
+.solo-toggle-btn {
+  appearance: none; border: none; cursor: pointer;
+  padding: 8px 14px; border-radius: 9px;
+  background: transparent; color: var(--ui-text-muted);
+  font: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.16em;
+  touch-action: manipulation;
+}
+.solo-toggle-btn.on {
+  color: #100a1e;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--solo-accent) 92%, #fff 8%), var(--solo-accent));
+  box-shadow: 0 6px 18px -6px var(--solo-accent);
+}
+.solo-strip-note { min-width: 0; font-size: 12px; line-height: 1.45; color: var(--ui-text-muted); }
+
+.solo-kicker { font-size: 9.5px; font-weight: 800; letter-spacing: 0.22em; color: var(--ui-text-muted); }
+.solo-title { font-size: clamp(20px, 3.4vmin, 30px); font-weight: 900; letter-spacing: 0.12em; color: #efe7ff; }
+.solo-line, .solo-hint { font-size: 12px; line-height: 1.55; color: var(--ui-text-muted); }
+.solo-rec { display: flex; flex-direction: column; gap: 6px; }
+.solo-rec-row {
+  display: flex; align-items: baseline; gap: 8px; padding: 8px 10px;
+  border-radius: 10px; background: rgba(18, 12, 33, 0.55);
+  border: 1px solid rgba(148, 120, 220, 0.2);
+}
+.solo-rec-row.hot { border-color: color-mix(in srgb, var(--solo-accent) 55%, transparent); }
+.solo-rec-label { font-size: 9px; font-weight: 800; letter-spacing: 0.18em; color: var(--ui-text-muted); }
+.solo-rec-time { margin-left: auto; font-family: Consolas, monospace; font-weight: 800; color: #fff; }
+.solo-rec-row.hot .solo-rec-time { color: var(--solo-accent); }
+.solo-rec-name { max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ui-text-muted); }
+.solo-disc { display: flex; flex-direction: column; gap: 4px; }
+.solo-disc-title { font-size: 9.5px; font-weight: 800; letter-spacing: 0.22em; color: var(--ui-text-muted); }
+.solo-disc-list { font-size: 11.5px; letter-spacing: 0.06em; color: #cdbfe8; }
+.solo-disc-list.muted { color: var(--ui-text-muted); }
+.solo-start {
+  appearance: none; cursor: pointer; margin-top: 4px;
+  padding: 13px 16px; border-radius: var(--rk-corner, 12px);
+  border: 1px solid color-mix(in srgb, var(--solo-accent) 70%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--solo-accent) 26%, rgba(20, 12, 38, 0.6)), rgba(16, 10, 30, 0.7));
+  color: color-mix(in srgb, var(--solo-accent) 80%, #fff 20%);
+  font: inherit; font-size: 14px; font-weight: 900; letter-spacing: 0.22em;
+  transition: transform 0.12s ease, box-shadow 0.2s ease;
+  touch-action: manipulation;
+}
+.solo-start:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 10px 26px -10px var(--solo-accent); }
+.solo-start:disabled { opacity: 0.55; cursor: default; }
+.solo-note { font-size: 9.5px; letter-spacing: 0.1em; color: var(--ui-text-muted); }
+
+/* ≤900px follows the rank page's one-column flow automatically (map then panel). */
+@media (max-width: 900px) {
+  .solo-page .rk-side { max-height: 46%; }
+  .solo-strip { flex-wrap: wrap; gap: 8px 10px; }
+}
+/* Landscape phones: the squircle map + the details column, exactly like RANK. */
+@media (orientation: landscape) and (max-width: 959px) and (max-height: 560px) {
+  .solo-page .rk-main { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .solo-page .rk-map-wrap { aspect-ratio: 1 / 1; height: 100%; width: auto; margin: 0; border-radius: var(--rk-corner, 12px); }
+  .solo-page .rk-side { grid-column: 2; grid-row: 1; overflow-y: auto; }
+  .solo-strip { padding: 4px 8px 6px; gap: 8px; margin-bottom: 6px; }
+  .solo-strip-note { display: none; }
+  .solo-toggle { padding: 3px; }
+  .solo-toggle-btn { padding: 6px 10px; font-size: 11px; }
+  .solo-rec-row { padding: 6px 8px; }
+  .solo-start { padding: 10px 12px; font-size: 12px; }
+}
+
+/* ============================================================ PLANET RECORDS (user ask 2026-09-30)
+   Solo boards — fastest speedrun + longest survival — on the planet card AND the
+   fullscreen info overlay. `.rk-record` (the strip's drawer) is a different thing;
+   these names are deliberately distinct. */
+.rk-records { display: flex; flex-direction: column; gap: 6px; }
+.rk-records-head { font-size: 9.5px; font-weight: 800; letter-spacing: 0.22em; color: var(--ui-text-muted); }
+.rk-record-row {
+  display: flex; align-items: baseline; gap: 8px; padding: 7px 10px;
+  border-radius: 10px; background: rgba(18, 12, 33, 0.5);
+  border: 1px solid rgba(148, 120, 220, 0.2);
+}
+.rk-record-row.set { border-color: color-mix(in srgb, var(--rk-record, #ffd166) 50%, transparent); }
+.rk-record-label { font-size: 9px; font-weight: 800; letter-spacing: 0.18em; color: var(--ui-text-muted); }
+.rk-record-time { margin-left: auto; font-family: Consolas, monospace; font-weight: 800; color: #fff; }
+.rk-record-row.set .rk-record-time { color: var(--rk-record, #ffd166); }
+.rk-record-name {
+  font-size: 10px; letter-spacing: 0.06em; color: var(--ui-text-muted);
+  max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (orientation: landscape) and (max-width: 959px) and (max-height: 560px) {
+  .rk-record-row { padding: 5px 8px; }
+  .rk-record-name { max-width: 36%; }
+}
+
+
+/* SOLO CTA pins to the panel's bottom edge on the scrollable phone layouts — the same
+   sticky-primary-action rule the rank cards use (user pattern, 2026-09-29/30). */
+@media (max-width: 900px) {
+  .solo-panel .solo-start { position: sticky; bottom: 4px; z-index: 2; }
+}
+@media (orientation: landscape) and (max-width: 959px) and (max-height: 560px) {
+  .solo-panel .solo-start { position: sticky; bottom: 2px; z-index: 2; padding: 9px 12px; }
+}
+

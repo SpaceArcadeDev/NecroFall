@@ -1,6 +1,7 @@
 // NECROFALL — the P2P entry (plan §34/§35/§56): the classic play controls in
 // the OFFICIAL setup's dress — [LOBBY CODE][JOIN][CREATE LOBBY] on one line,
-// PLAY SOLO on its own row below, and the same button colours throughout.
+// and the same button colours throughout. There is deliberately NO "PLAY SOLO /
+// OFFLINE" entry (user ask 2026-09-29): classic play needs a lobby or a code.
 // (user ask 2026-09-29: restored — CLASSIC offers OFFICIAL and P2P side by
 // side; P2P boots the existing WebRTC game, where its lobby lives.)
 import { ClientCache } from '../spacetimedb/cache';
@@ -78,10 +79,6 @@ export class P2PLobby {
     );
     this.element.appendChild(lobbyRow);
 
-    // ---- PLAY SOLO — its own full-width row below, matching FIND MATCH's dress
-    const soloRow = el('div', 'nf-play-actions');
-    soloRow.appendChild(button('PLAY SOLO / OFFLINE', 'btn primary nf-small', () => this.ctx.launchLegacy({})));
-    this.element.appendChild(soloRow);
     this.element.appendChild(
       el('p', 'muted', 'P2P games never grant official rank or currency — community stats only.')
     );

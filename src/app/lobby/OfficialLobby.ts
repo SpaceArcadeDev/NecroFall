@@ -58,14 +58,12 @@ export class OfficialLobby {
     partyRow.append(this.codeInput, this.joinBtn, this.primaryBtn);
     this.element.appendChild(partyRow);
 
-    // ---- FIND MATCH — the solo queue, on its own full-width row below
+    // ---- FIND MATCH — the solo queue, on its own full-width row below. There is
+    // deliberately NO "PLAY SOLO / OFFLINE" entry (user ask 2026-09-29): classic
+    // play goes through a lobby or the match finder, never a roomless world.
     this.soloRow = el('div', 'nf-play-actions');
     this.findBtn = button('FIND MATCH', 'btn primary nf-small', () => this.ctx.official.findMatch());
     this.soloRow.appendChild(this.findBtn);
-    // OFFLINE stays reachable (the P2P entry that used to carry it is gone): the
-    // legacy world boots alone, with no room link at all.
-    const offline = button('PLAY SOLO / OFFLINE', 'btn nf-small', () => this.ctx.launchLegacy({}));
-    this.soloRow.appendChild(offline);
     this.element.appendChild(this.soloRow);
 
     this.update();

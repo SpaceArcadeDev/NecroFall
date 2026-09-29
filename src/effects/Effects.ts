@@ -463,6 +463,12 @@ export class Effects {
   private lashes: LashFX[] = [];
   private lashIdx = 0;
   private ringIdx = 0;
+  /** Independent cursor for the 10 DISK slots (plan: ring() reads `rings[0..15]`, disk() reads
+   *  `rings[16..25]`). They shared `ringIdx` before, which let disk() push the cursor past the
+   *  pool: after enough disks in a row the next ring() read `rings[26+]` = undefined and threw
+   *  "Cannot read properties of undefined (reading 'mesh')" INSIDE the frame loop (caught by the
+   *  frame-error guard, so the ring silently vanished — reported live 2026-09-29). */
+  private diskIdx = 0;
   private beamIdx = 0;
   private dmgIdx = 0;
   private vortexIdx = 0;
@@ -1164,8 +1170,8 @@ export class Effects {
   }
 
   disk(pos: THREE.Vector3, up: THREE.Vector3, radius: number, color: number, life = 0.6, grow = 1.1, alpha = 0.35, delay = 0): void {
-    const fx = this.rings[16 + (this.ringIdx % 10)];
-    this.ringIdx = (this.ringIdx + 1) % 1000;
+    const fx = this.rings[16 + this.diskIdx];
+    this.diskIdx = (this.diskIdx + 1) % 10; // the last 10 slots are disks
     fx.mesh.visible = false;
     fx.life = life;
     fx.max = life;

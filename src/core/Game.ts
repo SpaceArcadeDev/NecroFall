@@ -3886,6 +3886,16 @@ export class Game {
       killer.kills++;
       const xp = e.xpValue;
       this.awardXp(killer.id, xp, killer.mods.lifesteal);
+      // ALLY XP SHARE (user ask 2026-09-29): a same-colony ally standing inside the KILLER'S
+      // auto-attack ring earns the kill's XP too — the ring is the squad's footprint, so a
+      // colony pushing together levels together. The killer keeps its own award (and lifesteal);
+      // a share needs the ally ALIVE, in the same colony and within `autoRange` of the killer.
+      const ring = killer.autoRange * killer.autoRange;
+      for (const ally of this.players.values()) {
+        if (ally === killer || !ally.alive || ally.colony !== killer.colony) continue;
+        if (ally.position.distanceToSquared(killer.position) > ring) continue;
+        this.awardXp(ally.id, xp);
+      }
       // Fused loadout trait: the killer's rounds leave a corpse burst — fire, toxin or raw force —
       // that catches whatever was standing next to the kill. Cadaver Bloom (Necromutation) stacks
       // its own blast on top, so the perk and a detonating fusion add up instead of replacing.

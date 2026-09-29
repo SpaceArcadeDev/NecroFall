@@ -547,6 +547,27 @@ export interface QualitySettings {
    * and a hot back glass.
    */
   grassDensity: number;
+
+  // ---- Folio environment axes (plan §92). The environment is instanced and shader-driven, so
+  // every one of these is a uniform/budget change — never a rebuild during play.
+  /** Master multiplier for tree/bush/rock/scenery placement budgets. */
+  environmentDensity: number;
+  /** How many trees the forest budget grows (relative). */
+  treeDensity: number;
+  /** Flower clusters; 0 disables them entirely (plan §16: LOW ships none). */
+  flowerDensity: number;
+  /** Metres: longest distance foliage (leaves/canopies) is drawn at. */
+  foliageDistance: number;
+  /** 0..1 water surface treatment quality (0 hides the surface). */
+  waterQuality: number;
+  /** Allow the environment to cast shadow-map shadows (plan §36). */
+  environmentShadows: boolean;
+  /** Environmental particle budget: spores, dust, corrupted motes (plan §75). */
+  environmentParticles: number;
+  /** Metres: the distance objects get real Rapier bodies (plan §14/§88). */
+  objectPhysicsDistance: number;
+  /** 0..1 strength of the camera→player look-through fade (0 = off, plan §23). */
+  occlusionQuality: number;
 }
 
 /**
@@ -564,13 +585,13 @@ export function qualitySettings(name: QualityName): QualitySettings {
       // The top rung is about POPULATION and budget, not another terrain subdivision: `planetDetail`
       // stays at HIGH's 6 (7 quadruples the icosphere build/triangles for a silhouette gain nobody
       // sees at gameplay range), and the resolution is already at the device cap for both classes.
-      return { name, planetDetail: 6, particles: 1500, maxEnemies: 180, decorations: 620, pixelRatio: 2, maxProjectiles: 320, damageNumbers: true, grassDensity: 1 };
+      return { name, planetDetail: 6, particles: 1500, maxEnemies: 180, decorations: 620, pixelRatio: 2, maxProjectiles: 320, damageNumbers: true, grassDensity: 1, environmentDensity: 1.35, treeDensity: 1.3, flowerDensity: 1.35, foliageDistance: 165, waterQuality: 1, environmentShadows: true, environmentParticles: 2200, objectPhysicsDistance: 34, occlusionQuality: 1 };
     case 'high':
-      return { name, planetDetail: 6, particles: 1100, maxEnemies: 150, decorations: 420, pixelRatio: 2, maxProjectiles: 260, damageNumbers: true, grassDensity: 1 };
+      return { name, planetDetail: 6, particles: 1100, maxEnemies: 150, decorations: 420, pixelRatio: 2, maxProjectiles: 260, damageNumbers: true, grassDensity: 1, environmentDensity: 1, treeDensity: 1, flowerDensity: 1, foliageDistance: 135, waterQuality: 0.85, environmentShadows: true, environmentParticles: 1150, objectPhysicsDistance: 28, occlusionQuality: 1 };
     case 'medium':
-      return { name, planetDetail: 5, particles: 650, maxEnemies: 110, decorations: 260, pixelRatio: 1.5, maxProjectiles: 190, damageNumbers: true, grassDensity: 0.6 };
+      return { name, planetDetail: 5, particles: 650, maxEnemies: 110, decorations: 260, pixelRatio: 1.5, maxProjectiles: 190, damageNumbers: true, grassDensity: 0.6, environmentDensity: 0.65, treeDensity: 0.7, flowerDensity: 0.55, foliageDistance: 95, waterQuality: 0.55, environmentShadows: false, environmentParticles: 560, objectPhysicsDistance: 20, occlusionQuality: 0.6 };
     default:
-      return { name, planetDetail: 4, particles: 320, maxEnemies: 72, decorations: 110, pixelRatio: 1.25, maxProjectiles: 130, damageNumbers: false, grassDensity: 0.3 };
+      return { name, planetDetail: 4, particles: 320, maxEnemies: 72, decorations: 110, pixelRatio: 1.25, maxProjectiles: 130, damageNumbers: false, grassDensity: 0.3, environmentDensity: 0.4, treeDensity: 0.45, flowerDensity: 0, foliageDistance: 62, waterQuality: 0.3, environmentShadows: false, environmentParticles: 240, objectPhysicsDistance: 14, occlusionQuality: 0 };
   }
 }
 

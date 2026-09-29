@@ -64,6 +64,12 @@ function contentStableHotUpdate(): Plugin {
 
 export default defineConfig({
   plugins: [wasm(), topLevelAwait(), contentStableHotUpdate()],
+  resolve: {
+    // Folio 2025's import map: the bare `three` specifier resolves to the WebGPU build, which
+    // re-exports the whole core. Addons that `import 'three'` therefore share ONE module instance
+    // with the game — mixing `three` and `three/webgpu` in one bundle would duplicate every class.
+    alias: [{ find: /^three$/, replacement: 'three/webgpu' }],
+  },
   server: {
     host: true,
     port: 5173,

@@ -9,7 +9,19 @@
 //
 // Deliberately separate from the F1 overlay: F1 is a developer readout on screen, this logs to
 // the console, so a phone (or a remote-debug session) can be watched without pressing keys.
-import { Vector2, type WebGLRenderer } from 'three';
+import { Vector2 } from 'three';
+import type { WebGPURenderer } from 'three/webgpu';
+
+/**
+ * Both renderer generations expose the fields this monitor reads (info counters, DPR and the
+ * drawing buffer size) — the WebGPU renderer is the game's main one, the WebGL types only kept
+ * for callers that still hold the legacy type.
+ */
+type RendererLike = WebGPURenderer | {
+  info: { render: { calls: number; triangles: number; points: number; lines: number }; memory: { geometries: number; textures: number } };
+  getPixelRatio(): number;
+  getDrawingBufferSize(target: Vector2): Vector2;
+};
 
 export class PerformanceMonitor {
   /** Set by `init()` when `?debug=true` is present. Everything below is a no-op otherwise. */
@@ -57,7 +69,7 @@ export class PerformanceMonitor {
     PerformanceMonitor.renderStart = now;
   }
 
-  static endRender(renderer: WebGLRenderer, phase: string, quality: string): void {
+  static endRender(renderer: RendererLike, phase: string, quality: string): void {
     if (!PerformanceMonitor.enabled) return;
     const now = performance.now();
     PerformanceMonitor.renderMs += (now - PerformanceMonitor.renderStart - PerformanceMonitor.renderMs) * 0.2;

@@ -27,6 +27,10 @@ import {
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
+import { createGameRenderer } from './RendererService';
+import { FolioWorld } from '../world/folio/FolioWorld';
+import { FolioResources } from '../world/folio/FolioResources';
+import type { WebGPURenderer } from 'three/webgpu';
 import { Effects } from '../effects/Effects';
 import { TelegraphSystem } from '../effects/Telegraphs';
 import { CombatSystem } from '../combat/Combat';
@@ -252,7 +256,16 @@ const _tmpEnemies: Enemy[] = [];
 
 export class Game {
   scene = new THREE.Scene();
-  renderer: THREE.WebGLRenderer;
+  /** The canonical renderer: Three.js WebGPU (Folio architecture), WebGL2 fallback backend. */
+  renderer: WebGPURenderer;
+  /** 'webgpu' | 'webgl' — which backend actually came up (telemetry / debug overlay). */
+  rendererBackend: 'webgpu' | 'webgl' = 'webgl';
+  /** The world's sun: the single shadow caster the Folio materials catch (plan §35/§36). */
+  private sunLight: THREE.DirectionalLight | null = null;
+  /** The Folio world (vegetation/scenery/water/physics/occlusion) for the CURRENT planet. */
+  folioWorld: FolioWorld | null = null;
+  /** One loader/cache for the Folio assets, shared by every planet rebuild. */
+  private folioResources: FolioResources | null = null;
   cam: GameCamera;
   planet: Planet;
   effects: Effects;
@@ -603,23 +616,39 @@ export class Game {
     this.qualityPref = loadQualityPref();
     this.fpsPref = loadFpsPref();
     this.settings = qualitySettings(resolveQuality(this.qualityPref));
-    this.renderer = new THREE.WebGLRenderer({
-      antialias: this.settings.name !== 'low',
-      powerPreference: 'high-performance',
+    const rendererHandle = createGameRenderer({ antialias: this.settings.name !== 'low' });
+    this.renderer = rendererHandle.renderer;
+    this.rendererBackend = rendererHandle.backend;
+    void rendererHandle.ready.then(() => {
+      this.rendererBackend = rendererHandle.backend;
     });
+    // Shadows: the Folio materials catch the shadow map through `receivedShadowNode`; the single
+    // directional light below is the caster. Environment shadow depth is a quality tier (plan §36).
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // NEVER the raw devicePixelRatio on a phone: a 3x panel would triple the shaded pixels for no
     // visible gain at arm's length. See `baseDpr` / `currentDpr` and DPR_CAP in Config.ts.
     this.renderer.setPixelRatio(this.currentDpr());
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setClearColor(0x09060f);
     this.app.appendChild(this.renderer.domElement);
+    this.folioResources = new FolioResources(this.renderer);
 
     this.scene.fog = new THREE.FogExp2(0x171029, 0.0012);
     const hemi = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
     this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff0d8, 1.5);
     sun.position.set(1, 0.85, 0.6).multiplyScalar(400);
+    sun.castShadow = this.settings.environmentShadows;
+    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.camera.near = 200;
+    sun.shadow.camera.far = 620;
+    sun.shadow.camera.left = -70;
+    sun.shadow.camera.right = 70;
+    sun.shadow.camera.top = 70;
+    sun.shadow.camera.bottom = -70;
     this.scene.add(sun);
+    this.sunLight = sun;
     const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
     rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
     this.scene.add(rim);
@@ -627,6 +656,7 @@ export class Game {
 
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
     this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
+    this.wireFolioWorld(null);
     this.effects = new Effects(this.scene, this.settings);
     this.cosmeticFx = new CosmeticFxRunner(this.scene);
     this.telegraphs = new TelegraphSystem(this.scene);
@@ -1200,8 +1230,59 @@ export class Game {
       this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
       this.telegraphs.setPlanet(this.planet);
       this.effects.setPlanet(this.planet);
+      if (this.sunLight) this.sunLight.castShadow = this.settings.environmentShadows;
+      this.wireFolioWorld(null);
       old.dispose();
     }
+  }
+
+  /** Where the environment focuses are (players + camera) — streaming/physics follow these. */
+  private collectEnvFocuses(): THREE.Vector3[] {
+    const focuses: THREE.Vector3[] = [];
+    for (const p of this.players.values()) {
+      if (focuses.length >= 8) break;
+      focuses.push(p.position);
+    }
+    return focuses;
+  }
+
+  /**
+   * Build the Folio environment layer for the CURRENT planet (plan §3/§56). Everything async
+   * (assets, Rapier wasm) resolves behind a handle guard: if the planet changed again while
+   * loading, the stale world is thrown away instead of attaching itself to the new planet.
+   */
+  private wireFolioWorld(focusDir: THREE.Vector3 | null): void {
+    if (!this.folioResources) return;
+    this.folioWorld?.dispose();
+    this.folioWorld = null;
+
+    const world = new FolioWorld({
+      scene: this.scene,
+      planet: this.planet,
+      quality: this.settings,
+      resources: this.folioResources,
+      projectToScreen: (worldPosition, out) => {
+        const projected = _v4.copy(worldPosition).project(this.cam.camera);
+        if (projected.z > 1) return null;
+        out.set((projected.x * 0.5 + 0.5) * window.innerWidth, (-projected.y * 0.5 + 0.5) * window.innerHeight);
+        return out;
+      },
+      localFocus: () => this.localPlayer?.position ?? null,
+    });
+    this.folioWorld = world;
+
+    void world
+      .load()
+      .then(() => {
+        if (this.folioWorld !== world) return;
+        const towers = this.players.size > 0 && this.towers.towers.length > 0 ? this.towers.towers.map((t) => t.position) : [];
+        world.growGrass(towers, focusDir);
+        world.setRescueLevel(this.rescueLevel);
+        world.setActive(this.phase === 'playing' || this.phase === 'ended');
+      })
+      .catch((error) => {
+        console.warn('[NECROFALL] Folio world failed to load', error);
+      });
   }
 
   start(): void {
@@ -2350,9 +2431,9 @@ export class Game {
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
     this.planet.aimSunAt(this.towers.centerDir);
-    // Dense grass is grown once, around the tower zones where the fighting happens, and then left
-    // alone for the whole match — generated at match start, never re-grown while you move.
-    this.planet.growGrass(this.towers.towers.map(t => t.position));
+    // The Folio world is rebuilt per planet; the dense grass is grown once the tower zones exist
+    // (plan §10 — generated at match start, never re-grown while you move).
+    this.wireFolioWorld(this.towers.centerDir);
     this.ui.show('game');
     this.input.setEnabled(true);
     this.cam.snap();
@@ -5026,10 +5107,10 @@ export class Game {
   private applyRescueLevel(): void {
     const level = Math.min(this.rescueLevel, 3);
     this.effects.setBudget([1, 0.65, 0.65, 0.4][level]);
-    this.planet.setAmbienceBudget([1, 0.6, 0.35, 0.35][level]);
-    // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
-    // the one players actually see, which is why every path back up must restore it.
-    this.planet.setDecorationsVisible(this.rescueLevel < 2);
+    // The environment trims FIRST (plan §94/§95): particles → flowers → grass → foliage shadows →
+    // water → resolution, all read through the Folio visibility table. Gameplay systems are never
+    // sacrificed before every environment knob is spent.
+    this.folioWorld?.setRescueLevel(this.rescueLevel);
   }
 
   /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */
@@ -5189,6 +5270,10 @@ export class Game {
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
     this.planet.update(dt, this.cam.camera.position);
+    // The Folio environment: shared globals, occlusion, water, particles, physics LOD. Menus keep
+    // the world visible but put its animation to sleep (plan §106/§107 — the phone stays cool).
+    this.folioWorld?.setActive(this.phase === 'playing' || this.phase === 'ended');
+    this.folioWorld?.update(dt, this.cam.camera.position, this.collectEnvFocuses(), this.clock);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());
     this.updateIndicators(dt);
     this.updateModalTimers(dt);

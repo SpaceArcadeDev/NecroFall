@@ -1,25 +1,21 @@
-// NECROFALL — profile STATISTICS pane (user ask 2026-09-29: the old flat grid
-// became one compact block inside the new tabbed profile).
+// NECROFALL — profile STATISTICS pane (reworked 2026-09-29, pass 2: the flat tile grid
+// became a profile-website layout — headline numbers, then a clean key/value table).
 //
-// All values are the SERVER's numbers (player + player_stats rows); the client
-// never computes wins or currency locally. Values are patched in place — the
-// page repaints on every data tick, and rebuilding 13 tiles each time was
-// pointless churn.
+// All values are the SERVER's numbers (player + player_stats rows); the client never
+// computes wins or currency locally. Every value is patched in place — the page repaints
+// on every data tick and rebuilding the DOM each time was pointless churn.
 import { ClientCache } from '../spacetimedb/cache';
 import { ShellContext } from '../ShellContext';
 import { subscribePlayer } from '../spacetimedb/subscriptions';
 import { clear, el, formatDuration, setText } from '../ui/dom';
 import { ProfileCard } from '../ui/ProfileCard';
 
-interface Tile {
-  key: string;
-  node: HTMLElement;
-}
-
 export class ProfileStats {
   readonly element: HTMLElement;
+  private countEl: HTMLElement;
+  private headline: Array<{ key: string; node: HTMLElement }> = [];
+  private rows: Array<{ key: string; node: HTMLElement }> = [];
   private socialVals: HTMLElement[] = [];
-  private tiles: Tile[] = [];
   private viewers: HTMLElement;
   private viewersRow: HTMLElement;
   private viewersSig = '';
@@ -27,48 +23,74 @@ export class ProfileStats {
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('section', 'nf-p-pane nf-p-stats');
 
-    // ---- the three social counters, as quiet chips above the grid
-    const social = el('div', 'nf-p-social');
-    for (const label of ['Followers', 'Following', 'Views']) {
-      const chip = el('div', 'nf-p-soc');
-      const value = el('b', 'nf-p-soc-v', '0');
-      chip.appendChild(value);
-      chip.appendChild(el('span', 'nf-p-soc-k', label));
-      this.socialVals.push(value);
-      social.appendChild(chip);
-    }
-    this.element.appendChild(social);
+    // ---- pane header
+    const head = el('header', 'nf-p-pane-head');
+    head.appendChild(el('h3', 'nf-p-pane-title', 'CAREER'));
+    this.countEl = el('span', 'nf-p-pane-count', '');
+    head.appendChild(this.countEl);
+    this.element.appendChild(head);
 
-    // ---- the career grid
-    const grid = el('div', 'nf-p-grid');
-    const KEYS: Array<[string, string]> = [
+    // ---- headline numbers: the four figures a profile site puts on top
+    const hero = el('div', 'nf-p-hstats');
+    const HEADLINE: Array<[string, string]> = [
       ['matches', 'Matches'],
       ['wins', 'Wins'],
-      ['losses', 'Losses'],
       ['winrate', 'Win rate'],
       ['kills', 'Kills'],
+    ];
+    for (const [key, label] of HEADLINE) {
+      const cell = el('div', 'nf-p-hstat');
+      const value = el('b', 'nf-p-hstat-v', '—');
+      cell.appendChild(value);
+      cell.appendChild(el('span', 'nf-p-hstat-k', label));
+      this.headline.push({ key, node: value });
+      hero.appendChild(cell);
+    }
+    this.element.appendChild(hero);
+
+    // ---- the detail table: label … value, two columns of hairlines
+    const kv = el('div', 'nf-p-kv');
+    const DETAIL: Array<[string, string]> = [
+      ['losses', 'Losses'],
       ['deaths', 'Deaths'],
       ['boss', 'Boss kills'],
-      ['beacons', 'Beacons'],
-      ['nexus', 'Nexus takes'],
+      ['beacons', 'Beacons taken'],
+      ['nexus', 'Nexus captures'],
       ['damage', 'Damage dealt'],
       ['taken', 'Damage taken'],
       ['time', 'Play time'],
-      ['p2p', 'P2P played'],
+      ['p2p', 'P2P matches'],
     ];
-    for (const [key, label] of KEYS) {
-      const tile = el('div', 'nf-p-tile');
-      tile.appendChild(el('span', 'nf-p-tile-k', label));
-      const value = el('b', 'nf-p-tile-v', '—');
-      tile.appendChild(value);
-      this.tiles.push({ key, node: value });
-      grid.appendChild(tile);
+    for (const [key, label] of DETAIL) {
+      const item = el('div', 'nf-p-kvi');
+      item.appendChild(el('span', 'nf-p-kvi-k', label));
+      const value = el('b', 'nf-p-kvi-v', '—');
+      item.appendChild(value);
+      this.rows.push({ key, node: value });
+      kv.appendChild(item);
     }
-    this.element.appendChild(grid);
+    this.element.appendChild(kv);
+
+    // ---- social counters (followers / following / views)
+    const socialTitle = el('div', 'nf-p-sub');
+    socialTitle.appendChild(el('span', '', 'SOCIAL'));
+    this.element.appendChild(socialTitle);
+    const social = el('div', 'nf-p-social');
+    for (const label of ['Followers', 'Following', 'Views']) {
+      const cell = el('div', 'nf-p-soc');
+      const value = el('b', 'nf-p-soc-v', '0');
+      cell.appendChild(value);
+      cell.appendChild(el('span', 'nf-p-soc-k', label));
+      this.socialVals.push(value);
+      social.appendChild(cell);
+    }
+    this.element.appendChild(social);
 
     // ---- recent visitors (hidden while none — a fresh profile has no audience)
     this.viewers = el('section', 'nf-p-viewers hidden');
-    this.viewers.appendChild(el('h3', 'nf-p-sub-title', 'RECENT VISITORS'));
+    const visTitle = el('div', 'nf-p-sub');
+    visTitle.appendChild(el('span', '', 'RECENT VISITORS'));
+    this.viewers.appendChild(visTitle);
     this.viewersRow = el('div', 'nf-p-viewer-row');
     this.viewers.appendChild(this.viewersRow);
     this.element.appendChild(this.viewers);
@@ -87,9 +109,9 @@ export class ProfileStats {
     const values: Record<string, string> = {
       matches: `${played}`,
       wins: `${wins}`,
-      losses: `${losses}`,
       winrate: played > 0 ? `${Math.round((wins / played) * 100)}%` : '—',
       kills: `${stats?.kills ?? 0}`,
+      losses: `${losses}`,
       deaths: `${stats?.deaths ?? 0}`,
       boss: `${stats?.bossKills ?? 0}`,
       beacons: `${stats?.beaconsCaptured ?? 0}`,
@@ -99,7 +121,9 @@ export class ProfileStats {
       time: formatDuration(Number(stats?.playTimeSeconds ?? 0n)) || '0:00',
       p2p: `${stats?.p2pMatches ?? 0}`,
     };
-    for (const tile of this.tiles) setText(tile.node, values[tile.key] ?? '—');
+    for (const cell of this.headline) setText(cell.node, values[cell.key] ?? '—');
+    for (const row of this.rows) setText(row.node, values[row.key] ?? '—');
+    setText(this.countEl, `${played} ${played === 1 ? 'match' : 'matches'} played`);
 
     setText(this.socialVals[0], `${player?.followersCount ?? 0}`);
     setText(this.socialVals[1], `${player?.followingCount ?? 0}`);

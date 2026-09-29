@@ -1,10 +1,11 @@
-// NECROFALL — the profile HERO (user ask 2026-09-29: the profile page was
-// "too cluttered"; the identity block is now ONE glass card).
+// NECROFALL — the profile HERO (user ask 2026-09-29, pass 2: "make it look like a
+// 100k profile website"). One identity block: a cover-lit card with the avatar (colony
+// ring + gender glyph), the name in display type over a colony glow, @handle with
+// colony/level tags, the bio — and a right rail with the shareable friend code and the
+// EDIT / FOLLOW action.
 //
-// Shows: the avatar (colony ring + gender glyph), name, colony + level badges,
-// handle, bio, the shareable friend code — and, on the OWN profile, an EDIT
-// sheet (name / bio / gender / colony). The avatar+icon pickers are GONE on
-// purpose (user ask: "no need avatar switch or icon switching").
+// The avatar + profile-icon pickers are GONE on purpose (user ask); everything the owner
+// can change lives in one EDIT sheet: name, bio, gender, colony.
 import { COLONIES } from '../../core/Config';
 import { ClientCache } from '../spacetimedb/cache';
 import { chooseColony, setBio, setGender, setPlayerName } from '../spacetimedb/reducers';
@@ -14,16 +15,17 @@ import { button, el, setText } from '../ui/dom';
 
 /** The 3-state gender glyph shown beside the avatar (0 = hidden). */
 const GENDERS = ['', '♂', '♀'] as const;
+const GENDER_LABELS = ['', 'MALE', 'FEMALE'] as const;
 
 export class ProfileHero {
   readonly element: HTMLElement;
-  private card: HTMLElement;
   private avatar: HTMLElement;
   private initial: HTMLElement;
   private genderBadge: HTMLElement;
   private nameEl: HTMLElement;
   private colonyChip: HTMLElement;
   private levelChip: HTMLElement;
+  private genderTag: HTMLElement;
   private handleEl: HTMLElement;
   private bioEl: HTMLElement;
   private codeEl: HTMLElement;
@@ -43,46 +45,37 @@ export class ProfileHero {
     const isMe = hex === ctx.myHex();
     this.element = el('section', 'nf-hero');
 
-    // ---- one row: avatar | who | actions
-    this.card = el('div', 'nf-hero-main');
-
+    // ---- identity: avatar | name / handle + tags / bio
+    const id = el('div', 'nf-hero-id');
     this.avatar = el('div', 'nf-hero-avatar');
     this.initial = el('span', 'nf-hero-initial', '?');
     this.avatar.appendChild(this.initial);
     this.genderBadge = el('span', 'nf-hero-gender hidden', '');
     this.avatar.appendChild(this.genderBadge);
-    this.card.appendChild(this.avatar);
+    id.appendChild(this.avatar);
 
     const who = el('div', 'nf-hero-who');
-    const nameRow = el('div', 'nf-hero-namerow');
     this.nameEl = el('h1', 'nf-hero-name', '…');
-    nameRow.appendChild(this.nameEl);
-    this.colonyChip = el('span', 'nf-hero-chip colony', '—');
-    nameRow.appendChild(this.colonyChip);
-    this.levelChip = el('span', 'nf-hero-chip level', 'LV 1');
-    nameRow.appendChild(this.levelChip);
-    who.appendChild(nameRow);
-    this.handleEl = el('div', 'nf-hero-handle', '');
-    who.appendChild(this.handleEl);
+    who.appendChild(this.nameEl);
+    const sub = el('div', 'nf-hero-sub');
+    this.handleEl = el('span', 'nf-hero-handle', '');
+    sub.appendChild(this.handleEl);
+    this.colonyChip = el('span', 'nf-tag colony', '');
+    this.levelChip = el('span', 'nf-tag', 'LV 1');
+    this.genderTag = el('span', 'nf-tag gender hidden', '');
+    sub.appendChild(this.colonyChip);
+    sub.appendChild(this.levelChip);
+    sub.appendChild(this.genderTag);
+    who.appendChild(sub);
     this.bioEl = el('p', 'nf-hero-bio', '');
     who.appendChild(this.bioEl);
-    this.card.appendChild(who);
+    id.appendChild(who);
+    this.element.appendChild(id);
 
-    const actions = el('div', 'nf-hero-actions');
-    if (isMe) {
-      this.editBtn = button('EDIT', 'nf-btn small nf-hero-edit-btn', () => this.toggleEditor());
-      actions.appendChild(this.editBtn);
-    } else {
-      this.editBtn = null as unknown as HTMLButtonElement;
-      this.follow = new FollowButton(ctx.myHex(), hex);
-      actions.appendChild(this.follow.element);
-    }
-    this.card.appendChild(actions);
-    this.element.appendChild(this.card);
-
-    // ---- code row: one tap copies the code; SHARE opens the share sheet (own profile only)
-    const codeRow = el('div', 'nf-hero-code');
-    codeRow.appendChild(el('span', 'nf-hero-code-label', 'FRIEND CODE'));
+    // ---- right rail: the shareable code + the primary action
+    const side = el('div', 'nf-hero-side');
+    const codeWrap = el('div', 'nf-hero-code');
+    codeWrap.appendChild(el('span', 'nf-hero-code-label', 'FRIEND CODE'));
     const codeBtn = el('button', 'nf-hero-codebox') as HTMLButtonElement;
     codeBtn.type = 'button';
     codeBtn.title = 'Copy friend code';
@@ -92,16 +85,31 @@ export class ProfileHero {
     this.codeEl = el('span', 'nf-hero-codeval', '——————');
     codeBtn.appendChild(this.codeEl);
     codeBtn.addEventListener('click', () => void this.copyCode());
-    codeRow.appendChild(codeBtn);
+    codeWrap.appendChild(codeBtn);
     this.shareBtn = button('', 'nf-btn small nf-hero-share', () => void this.shareCode());
     this.shareBtn.setAttribute('aria-label', 'Share friend code');
     this.shareBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
       '<circle cx="6" cy="12" r="2.6"/><circle cx="17.5" cy="6" r="2.6"/><circle cx="17.5" cy="18" r="2.6"/>' +
       '<path d="M8.4 10.8 15.2 7.3M8.4 13.2l6.8 3.5"/></svg>';
-    if (isMe) codeRow.appendChild(this.shareBtn);
-    else this.shareBtn.classList.add('hidden');
-    this.element.appendChild(codeRow);
+    if (isMe) codeWrap.appendChild(this.shareBtn);
+    side.appendChild(codeWrap);
+
+    const actions = el('div', 'nf-hero-actions');
+    if (isMe) {
+      // A SMALL icon button (user ask 2026-09-29): the pencil opens the sheet, becomes an X.
+      this.editBtn = button('', 'nf-btn nf-hero-edit-btn', () => this.toggleEditor());
+      this.editBtn.title = 'Edit profile';
+      this.editBtn.setAttribute('aria-label', 'Edit profile');
+      this.paintEditIcon();
+      actions.appendChild(this.editBtn);
+    } else {
+      this.editBtn = null as unknown as HTMLButtonElement;
+      this.follow = new FollowButton(ctx.myHex(), hex);
+      actions.appendChild(this.follow.element);
+    }
+    side.appendChild(actions);
+    this.element.appendChild(side);
 
     // ---- the editor sheet (own profile only)
     this.editor = el('div', 'nf-hero-editor');
@@ -146,9 +154,19 @@ export class ProfileHero {
   private toggleEditor(): void {
     this.open = !this.open;
     this.editor.classList.toggle('open', this.open);
-    this.editBtn.textContent = this.open ? 'CLOSE' : 'EDIT';
     this.editBtn.classList.toggle('on', this.open);
+    this.editBtn.title = this.open ? 'Close the editor' : 'Edit profile';
+    this.editBtn.setAttribute('aria-label', this.editBtn.title);
+    this.paintEditIcon();
+    this.element.classList.toggle('editing', this.open);
     if (this.open) this.refill();
+  }
+
+  /** The icon button flips between a pencil and a close cross. */
+  private paintEditIcon(): void {
+    this.editBtn.innerHTML = this.open
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4.2L19.4 8.8a2.1 2.1 0 0 0 0-3L18.2 4.6a2.1 2.1 0 0 0-3 0L4 15.8V20z"/></svg>';
   }
 
   private refill(): void {
@@ -264,23 +282,25 @@ export class ProfileHero {
     const hasColony = player.colony < COLONIES.length;
     const col = hasColony ? COLONIES[player.colony] : null;
     setText(this.colonyChip, col ? `${col.symbol} ${col.name}` : 'UNALIGNED');
-    this.colonyChip.style.setProperty('--nf-colony', col?.css ?? 'var(--ui-text-muted)');
-    this.avatar.style.setProperty('--nf-colony', col?.css ?? 'var(--ui-accent)');
+    // ONE accent for the whole card: the avatar ring, the name glow and the colony chip.
+    this.element.style.setProperty('--nf-colony', col?.css ?? 'var(--ui-accent)');
 
     const glyph = GENDERS[player.gender] ?? '';
     setText(this.genderBadge, glyph);
     this.genderBadge.classList.toggle('hidden', !glyph);
     this.genderBadge.classList.toggle('female', player.gender === 2);
+    setText(this.genderTag, `${glyph} ${GENDER_LABELS[player.gender] ?? ''}`.trim());
+    this.genderTag.classList.toggle('hidden', !glyph);
 
     const isMe = this.hex === this.ctx.myHex();
     const bio = (player.bio || '').trim();
     // Own profile: the empty bio is an invitation (EDIT). Someone else's: hide the line.
     this.bioEl.classList.toggle('hidden', !bio && !isMe);
-    setText(this.bioEl, bio || 'Tap EDIT to add a bio.');
+    setText(this.bioEl, bio || 'Tap EDIT PROFILE to add a bio.');
     this.bioEl.classList.toggle('empty', !bio);
 
     this.follow?.update();
-    // Live mirror of the editor chips (skipped into fields being typed in).
+    // Live mirror of the editor chips (skipped while the user is typing in the sheet).
     if (this.open) return;
     this.genderChips.forEach((chip, i) => chip.classList.toggle('on', player.gender === i));
     this.colonyChips.forEach((chip, i) => chip.classList.toggle('on', player.colony === i));

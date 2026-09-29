@@ -1,25 +1,33 @@
-// NECROFALL — profile MATCH HISTORY pane (user ask 2026-09-29: history now
-// shows WHICH PLANET each match was fought on).
+// NECROFALL — profile MATCH HISTORY pane (reworked 2026-09-29, pass 2: a clean results
+// list in the profile-website language; the planet each ranked match was fought on is
+// shown by name).
 //
-// The planet is regenerated from the row's `planetKey` + the active season
-// seed (PlanetNames), never stored as text — classic matches have no
-// persistent planet and say so. Rows rebuild only when the underlying data
-// changes (a signature check), the relative time refreshes with it.
+// The planet is regenerated from the row's `planetKey` + the active season seed
+// (PlaceNames), never stored as text — classic matches have no persistent planet and say
+// so. Rows rebuild only when the underlying data changes (a signature check).
 import { ClientCache } from '../spacetimedb/cache';
 import { relativeTime } from '../../rankmap/DiscoveryTypes';
-import { clear, el, formatDuration } from '../ui/dom';
+import { clear, el, formatDuration, setText } from '../ui/dom';
 import { activeUniverseSeed, planetLabelFromKey } from './PlaceNames';
 
 const MAX_ROWS = 12;
 
 export class ProfileHistory {
   readonly element: HTMLElement;
+  private countEl: HTMLElement;
   private list: HTMLElement;
   private empty: HTMLElement;
   private sig = '';
 
   constructor(private hex: string) {
     this.element = el('section', 'nf-p-pane');
+
+    const head = el('header', 'nf-p-pane-head');
+    head.appendChild(el('h3', 'nf-p-pane-title', 'MATCH HISTORY'));
+    this.countEl = el('span', 'nf-p-pane-count', '');
+    head.appendChild(this.countEl);
+    this.element.appendChild(head);
+
     this.list = el('div', 'nf-p-rows');
     this.element.appendChild(this.list);
     this.empty = el('p', 'nf-p-empty', 'No matches yet — the arena awaits.');
@@ -39,6 +47,10 @@ export class ProfileHistory {
     this.sig = sig;
     clear(this.list);
     this.empty.classList.toggle('hidden', rows.length > 0);
+
+    const all = cache.historyFor(this.hex);
+    const wins = all.filter((r) => r.won).length;
+    setText(this.countEl, `${all.length} played · ${wins} won`);
     if (rows.length === 0) return;
 
     const seed = activeUniverseSeed();
@@ -51,8 +63,7 @@ export class ProfileHistory {
       const place = el('span', 'nf-p-row-place');
       const planet = row.planetKey ? planetLabelFromKey(seed, row.planetKey) : null;
       if (planet) {
-        const glyph = el('i', 'nf-p-row-planet-ico', '◆');
-        place.appendChild(glyph);
+        place.appendChild(el('i', 'nf-p-row-planet-ico', '◆'));
         place.appendChild(el('b', 'nf-p-row-planet', planet.name.toUpperCase()));
         place.appendChild(el('em', 'nf-p-row-ring', `R${planet.ring}`));
       } else {
@@ -69,8 +80,8 @@ export class ProfileHistory {
       item.appendChild(mid);
 
       const right = el('div', 'nf-p-row-right');
-      right.appendChild(el('span', 'nf-p-row-ago', relativeTime(Number(row.endedAt.microsSinceUnixEpoch), now)));
       right.appendChild(el('span', 'nf-p-row-reward', `+${row.softCurrencyEarned}`));
+      right.appendChild(el('span', 'nf-p-row-ago', relativeTime(Number(row.endedAt.microsSinceUnixEpoch), now)));
       item.appendChild(right);
 
       this.list.appendChild(item);

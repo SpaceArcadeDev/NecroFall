@@ -1,12 +1,12 @@
-// NECROFALL — profile DISCOVERIES pane (user ask 2026-09-29): the player's own
-// first-footfall log (galaxies, systems and planets they charted first in the
-// ranked universe), newest first.
+// NECROFALL — profile DISCOVERIES pane (reworked 2026-09-29, pass 2): the player's own
+// first-footfall log (galaxies, systems and planets they charted first in the ranked
+// universe), newest first, as a clean profile-website list.
 //
-// The server keeps only the coordinates; names are regenerated from the season
-// seed (PlaceNames) exactly like the galactic map does.
+// The server keeps only the coordinates; names are regenerated from the season seed
+// (PlaceNames) exactly like the galactic map does.
 import { ClientCache } from '../spacetimedb/cache';
 import { relativeTime } from '../../rankmap/DiscoveryTypes';
-import { clear, el } from '../ui/dom';
+import { clear, el, setText } from '../ui/dom';
 import { activeUniverseSeed, discoveryPlace } from './PlaceNames';
 
 const MAX_ROWS = 40;
@@ -20,12 +20,20 @@ function ordinal(n: number): string {
 
 export class ProfileDiscoveries {
   readonly element: HTMLElement;
+  private countEl: HTMLElement;
   private list: HTMLElement;
   private empty: HTMLElement;
   private sig = '';
 
   constructor(private hex: string, private self: boolean) {
     this.element = el('section', 'nf-p-pane');
+
+    const head = el('header', 'nf-p-pane-head');
+    head.appendChild(el('h3', 'nf-p-pane-title', 'FIRST FOOTFALLS'));
+    this.countEl = el('span', 'nf-p-pane-count', '');
+    head.appendChild(this.countEl);
+    this.element.appendChild(head);
+
     this.list = el('div', 'nf-p-rows');
     this.element.appendChild(this.list);
     this.empty = el(
@@ -41,12 +49,16 @@ export class ProfileDiscoveries {
 
   update(): void {
     const cache = ClientCache.shared;
-    const rows = cache.discoveriesByPlayer(this.hex).slice(0, MAX_ROWS);
+    const all = cache.discoveriesByPlayer(this.hex);
+    const rows = all.slice(0, MAX_ROWS);
     const sig = rows.map((r) => `${r.id}:${r.discoveryIndex}:${r.locationKey}`).join('|');
     if (sig === this.sig) return;
     this.sig = sig;
     clear(this.list);
     this.empty.classList.toggle('hidden', rows.length > 0);
+
+    const firsts = all.filter((r) => r.discoveryIndex === 1).length;
+    setText(this.countEl, `${all.length} charted · ${firsts} first`);
     if (rows.length === 0) return;
 
     const seed = activeUniverseSeed();

@@ -821,6 +821,22 @@ export class AppShell implements ShellContext {
     this.root.classList.toggle('on-home', screen === 'home');
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
+    // OWNERSHIP (user report 2026-09-29: the customize screen stayed visible UNDER the
+    // profile page, so its "CUSTOMIZE" header read as the profile's own title):
+    //   • a pending shell-launched game screen is moot — the shell owns the screen now;
+    //   • the game may reveal its UI layer in the same tick (a boot race, or a delayed
+    //     `ui.show()`), so the takeover is re-asserted on the next frame as well.
+    this.pendingGameScreen = null;
+    if (this.gameScreenWatch) {
+      window.clearInterval(this.gameScreenWatch);
+      this.gameScreenWatch = 0;
+    }
+    const takeover = this.game;
+    if (takeover) {
+      window.setTimeout(() => {
+        if (!this.shellHidden) takeover.ui.setShellMode(true);
+      }, 50);
+    }
     // The floating nav belongs to the MAIN menu only; child screens get the chevron.
     const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
     this.nav.element.classList.toggle('hidden', screen !== 'home');

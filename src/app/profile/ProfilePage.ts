@@ -52,7 +52,13 @@ export class ProfilePage {
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('div', 'nf-page profile-page');
 
-    // ---- head: the identity card and the rank cards (side by side on wide-short frames)
+    // ---- the page band: the floating back chevron lives on CLEAN background above an
+    // eyebrow + hairline (user ask 2026-09-29: "the back button shouldn't have UI behind it").
+    const top = el('header', 'nf-p-top');
+    top.appendChild(el('span', 'nf-p-eyebrow', 'PROFILE'));
+    this.element.appendChild(top);
+
+    // ---- head: the player card — identity left, the rank plates right (one visual card)
     const head = el('div', 'nf-p-head');
     this.hero = new ProfileHero(ctx, hex);
     head.appendChild(this.hero.element);

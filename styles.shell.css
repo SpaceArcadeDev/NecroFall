@@ -1185,108 +1185,140 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-confirm-btn { min-height: 50px; font-size: 16px; border-radius: 14px; }
 }
 
-/* ---------------------------------------------------------------- profile (reworked 2026-09-29) */
-/* User ask: the old page was "too cluttered". The new one is ONE screen: the head
-   (identity card + CURRENT/HIGHEST rank cards) over a tabbed body — the tab rail sits on
-   the LEFT edge (landscape's free axis) and only the ACTIVE pane scrolls. The avatar and
-   icon pickers are gone; name / bio / gender / colony live in one EDIT sheet. */
-.profile-page { flex: 1 1 auto; min-height: 0; gap: 10px; padding-bottom: 0; overflow: hidden; }
-/* head: identity left, the two rank cards right (stacks only in portrait) */
-.nf-p-head { flex: 0 0 auto; display: flex; align-items: stretch; gap: 10px; min-width: 0; }
+/* ---------------------------------------------------------------- profile (reworked 2026-09-29, pass 2) */
+/* User ask: "make it look like a 100k profile website" + "the back button shouldn't have
+   any other UI behind it". So the page opens with a reserved BAND (eyebrow + hairline)
+   that the floating chevron sits over on clean background, then ONE player card: a
+   cover-lit identity block + two rank badge plates. Below it a slim tab rail and panes
+   dressed like site content (headline numbers, hairline tables, result lists). Only the
+   active pane scrolls; the page always fits the frame. */
+.profile-page { flex: 1 1 auto; min-height: 0; gap: 10px; padding-bottom: 0; overflow: hidden; max-width: 1180px; }
 
-/* ---- identity card */
+/* ---- the page band (chevron corridor above the card) */
+.nf-p-top { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; padding: 0 4px; min-height: 20px; }
+.nf-p-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+.nf-p-top::after {
+  content: '';
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(148, 120, 220, 0.42), rgba(148, 120, 220, 0));
+}
+
+/* ---- the player card: identity + rank plates read as ONE surface */
+.nf-p-head { flex: 0 0 auto; display: flex; align-items: stretch; gap: 0; min-width: 0; }
 .nf-hero {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px 11px;
-  border-radius: 18px;
-  border: 1px solid var(--ui-border);
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 14px 16px;
+  border-radius: 20px 0 0 20px;
+  border: 1px solid rgba(148, 120, 220, 0.3);
+  border-right: 0;
   background:
-    radial-gradient(120% 150% at 0% 0%, color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 20%, transparent), transparent 58%),
-    var(--ui-panel);
+    radial-gradient(130% 200% at 0% 0%, color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 24%, transparent), transparent 56%),
+    linear-gradient(180deg, rgba(31, 21, 50, 0.9), rgba(15, 10, 26, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.nf-hero-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.nf-hero-id { display: flex; align-items: center; gap: 16px; min-width: 0; flex: 1 1 auto; }
 .nf-hero-avatar {
   position: relative;
   flex: 0 0 auto;
-  width: 64px;
-  height: 64px;
+  width: 78px;
+  height: 78px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 900;
   color: #fff;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.38));
-  border: 2px solid var(--nf-colony, var(--ui-accent));
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.65);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.45));
+  border: 2px solid color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 70%, #fff);
   box-shadow:
-    0 0 22px color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 42%, transparent),
-    inset 0 0 18px rgba(0, 0, 0, 0.35);
+    0 12px 30px rgba(0, 0, 0, 0.5),
+    0 0 34px color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 42%, transparent),
+    inset 0 0 22px rgba(0, 0, 0, 0.4);
 }
 /* the gender glyph rides the avatar's corner */
 .nf-hero-gender {
   position: absolute;
-  right: -4px;
-  bottom: -4px;
-  width: 22px;
-  height: 22px;
+  right: -3px;
+  bottom: -3px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   background: #191231;
   border: 1px solid rgba(140, 190, 255, 0.55);
   color: #9bd0ff;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
 }
 .nf-hero-gender.female { border-color: rgba(255, 155, 214, 0.55); color: #ff9bd6; }
-.nf-hero-who { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.nf-hero-namerow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
-.nf-hero-name { margin: 0; font-size: clamp(20px, 3.4vw, 30px); letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(50ch, 100%); }
-.nf-hero-chip {
-  font-size: 10px;
+.nf-hero-who { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.nf-hero-name {
+  margin: 0;
+  font-size: clamp(20px, 3vw, 34px);
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  line-height: 1.05;
+  color: #fff;
+  text-shadow: 0 0 30px color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 55%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.nf-hero-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.nf-hero-handle { color: var(--ui-text-muted); font-size: 12.5px; font-weight: 600; }
+.nf-tag {
+  font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
   padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--ui-border);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--ui-text-muted);
   white-space: nowrap;
 }
-.nf-hero-chip.colony {
-  color: var(--nf-colony, var(--ui-text-muted));
-  border-color: color-mix(in srgb, var(--nf-colony, var(--ui-border)) 55%, transparent);
-}
-.nf-hero-handle { color: var(--ui-text-muted); font-size: 12.5px; }
-.nf-hero-bio { margin: 3px 0 0; font-size: 13px; line-height: 1.38; color: var(--ui-text); max-width: 72ch; }
+.nf-tag.colony { color: var(--nf-colony, var(--ui-text-muted)); background: color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 16%, transparent); }
+.nf-tag.gender { color: #9bd0ff; background: rgba(155, 208, 255, 0.1); }
+.nf-hero-bio { margin: 7px 0 0; font-size: 12.5px; line-height: 1.45; color: #cfc6e8; max-width: 66ch; }
 .nf-hero-bio.empty { color: var(--ui-text-muted); font-style: italic; }
-.nf-hero-actions { flex: 0 0 auto; margin-left: auto; display: flex; gap: 8px; align-self: flex-start; }
-.nf-hero-actions .nf-btn { min-width: 74px; justify-content: center; }
 
-/* friend code: ONE tap copies it */
-.nf-hero-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.nf-hero-code-label { font-size: 9.5px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
+/* ---- the card's action cluster: friend code + share + the small EDIT icon */
+.nf-hero-side { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nf-hero-code { display: flex; align-items: center; gap: 8px; }
+.nf-hero-code-label { font-size: 9px; letter-spacing: 0.26em; color: var(--ui-text-muted); }
 .nf-hero-codebox {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 40px;
+  min-height: 38px;
   padding: 6px 12px;
   border-radius: 11px;
-  border: 1px dashed rgba(170, 130, 255, 0.42);
-  background: rgba(10, 6, 20, 0.55);
+  border: 1px solid rgba(70, 224, 200, 0.28);
+  background: rgba(9, 26, 24, 0.5);
   color: var(--ui-accent-2);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease, box-shadow 0.18s ease;
 }
-.nf-hero-codebox:hover { border-color: rgba(70, 224, 200, 0.6); background: rgba(20, 14, 33, 0.7); }
+.nf-hero-codebox:hover { border-color: rgba(70, 224, 200, 0.65); box-shadow: 0 0 18px rgba(70, 224, 200, 0.18); }
 .nf-hero-codebox:active { transform: scale(0.97); }
 .nf-hero-codebox svg { width: 15px; height: 15px; opacity: 0.8; flex: 0 0 auto; }
 .nf-hero-codeval {
@@ -1295,11 +1327,25 @@ html.nf-onb-colony .count-badge { display: none; }
   font-weight: 800;
   letter-spacing: 0.28em;
 }
-.nf-hero-share { min-width: 40px; min-height: 40px; padding: 0; display: grid; place-items: center; }
+.nf-hero-share { min-width: 38px; min-height: 38px; padding: 0; display: grid; place-items: center; }
 .nf-hero-share svg { width: 17px; height: 17px; }
+.nf-hero-actions { display: flex; gap: 8px; }
+/* the owner's EDIT control is a SMALL SQUARE icon button (user ask: it must not eat a row) */
+.nf-hero-edit-btn {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+}
+.nf-hero-edit-btn svg { width: 17px; height: 17px; display: block; }
+.nf-hero-edit-btn.on { border-color: var(--ui-accent); color: #fff; background: linear-gradient(160deg, rgba(154, 107, 255, 0.9), rgba(84, 34, 150, 0.9)); }
 
-/* ---- the EDIT sheet (own profile): toggled by the EDIT button */
-.nf-hero-editor { display: none; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(148, 120, 220, 0.18); }
+/* ---- the EDIT sheet (own profile): toggled by the EDIT PROFILE button */
+.nf-hero-editor { display: none; flex-direction: column; gap: 10px; flex-basis: 100%; padding-top: 12px; margin-top: 2px; border-top: 1px solid rgba(148, 120, 220, 0.2); }
 .nf-hero-editor.open { display: flex; animation: nf-drop 0.26s ease-out backwards; }
 .nf-edit-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .nf-edit-bio { align-items: flex-start; }
@@ -1352,70 +1398,86 @@ html.nf-onb-colony .count-badge { display: none; }
   box-shadow: 0 0 16px color-mix(in srgb, var(--nf-colony) 45%, transparent);
 }
 
-/* ---- CURRENT / HIGHEST rank cards */
-.nf-ranks { flex: 0 0 clamp(340px, 34vw, 520px); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-width: 0; }
-.nf-rank-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px 12px 11px 15px;
-  border-radius: 16px;
-  border: 1px solid var(--ui-border);
-  background: var(--ui-panel);
-  overflow: hidden;
+/* ---- the rank plates (right half of the card) */
+.nf-ranks {
+  flex: 0 0 clamp(340px, 36vw, 480px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: center;
+  padding: 12px 14px;
+  border-radius: 0 20px 20px 0;
+  border: 1px solid rgba(148, 120, 220, 0.3);
+  background:
+    radial-gradient(120% 170% at 100% 0%, rgba(154, 107, 255, 0.16), transparent 62%),
+    linear-gradient(180deg, rgba(28, 19, 45, 0.9), rgba(15, 10, 26, 0.94));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
   animation-delay: 0.06s;
 }
-.nf-rank-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--rk, var(--ui-accent));
-  box-shadow: 0 0 16px var(--rk, var(--ui-accent));
+.nf-rank-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 11px 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(10, 6, 20, 0.5), rgba(10, 6, 20, 0.26));
 }
-.nf-rank-k { font-size: 9.5px; letter-spacing: 0.22em; color: var(--ui-text-muted); }
-.nf-rank-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.nf-rank-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.nf-rank-emblem {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: #140b26;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--rk, var(--ui-accent)) 62%, #fff), var(--rk, var(--ui-accent)));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--rk, var(--ui-accent)) 55%, transparent);
+}
+.nf-rank-k { font-size: 8.5px; font-weight: 800; letter-spacing: 0.22em; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nf-rank-v {
-  font-size: clamp(16px, 2.5vw, 23px);
+  font-size: clamp(15px, 2.1vw, 21px);
   font-weight: 900;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
+  line-height: 1.12;
   color: var(--rk, var(--ui-text));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 0 22px color-mix(in srgb, var(--rk, transparent) 55%, transparent);
 }
-.nf-rank-stars { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
-.nf-rank-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.nf-rank-row { display: flex; align-items: center; gap: 8px; min-height: 14px; }
+.nf-rank-starrow { font-size: 11px; letter-spacing: 2px; color: var(--ui-gold); text-shadow: 0 0 10px rgba(255, 209, 102, 0.45); white-space: nowrap; }
+.nf-rank-stars { margin-left: auto; font-size: 11px; font-weight: 800; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.nf-rank-bar { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
 .nf-rank-fill {
   display: block;
   height: 100%;
   width: 0;
   border-radius: inherit;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--rk, var(--ui-accent)) 55%, #fff), var(--rk, var(--ui-accent)));
-  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk, var(--ui-accent)) 50%, #fff), var(--rk, var(--ui-accent)));
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.nf-rank-sub { font-size: 11px; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-rank-sub { font-size: 10px; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nf-rank-card.unplaced { border-style: dashed; }
-.nf-rank-card.unplaced::before { opacity: 0.4; box-shadow: none; }
+.nf-rank-card.unplaced .nf-rank-emblem { background: rgba(255, 255, 255, 0.08); color: var(--ui-text-muted); box-shadow: none; }
+.nf-rank-card.is-peak .nf-rank-k { color: var(--ui-gold); }
 
-/* ---- tabbed body: rail on the LEFT, panes beside it */
+/* ---- tabbed body: a slim nav rail on the LEFT, content panes beside it */
 .nf-p-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
 .nf-p-tabs {
   flex: 0 0 auto;
-  width: 134px;
+  width: 168px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 6px;
-  border-radius: 16px;
-  border: 1px solid var(--ui-border);
-  background: rgba(14, 9, 26, 0.5);
+  padding: 7px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 120, 220, 0.24);
+  background: linear-gradient(180deg, rgba(24, 16, 40, 0.62), rgba(13, 8, 24, 0.55));
   backdrop-filter: blur(8px);
   animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
   animation-delay: 0.1s;
@@ -1423,14 +1485,12 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-p-tab {
   position: relative;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  min-height: 62px;
-  padding: 10px 10px 10px 15px;
-  border-radius: 12px;
+  min-height: 54px;
+  padding: 8px 10px 8px 13px;
+  border-radius: 13px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--ui-text-muted);
@@ -1442,7 +1502,7 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-p-tab::before {
   content: '';
   position: absolute;
-  left: 4px;
+  left: 3px;
   top: 50%;
   width: 3px;
   height: 0;
@@ -1451,23 +1511,37 @@ html.nf-onb-colony .count-badge { display: none; }
   transform: translateY(-50%);
   transition: height 0.24s cubic-bezier(0.3, 1.3, 0.4, 1);
 }
-.nf-p-tab:hover { color: var(--ui-text); background: rgba(90, 60, 150, 0.18); }
+.nf-p-tab:hover { color: var(--ui-text); background: rgba(90, 60, 150, 0.16); }
 .nf-p-tab:active { transform: scale(0.98); }
-.nf-p-tab.on { color: var(--ui-text); background: var(--ui-panel); border-color: var(--ui-border); }
-.nf-p-tab.on::before { height: 62%; }
-.nf-p-tab-ico { display: grid; place-items: center; width: 22px; height: 22px; }
-.nf-p-tab-ico svg { width: 100%; height: 100%; display: block; }
-.nf-p-tab.on .nf-p-tab-ico { color: var(--ui-accent); filter: drop-shadow(0 0 8px rgba(154, 107, 255, 0.7)); }
-.nf-p-tab-lbl { font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; }
+.nf-p-tab.on { color: var(--ui-text); background: rgba(255, 255, 255, 0.045); border-color: rgba(148, 120, 220, 0.22); }
+.nf-p-tab.on::before { height: 58%; }
+.nf-p-tab-ico {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ui-text-muted);
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+.nf-p-tab-ico svg { width: 17px; height: 17px; display: block; }
+.nf-p-tab.on .nf-p-tab-ico {
+  color: #fff;
+  background: linear-gradient(160deg, rgba(154, 107, 255, 0.95), rgba(84, 34, 150, 0.95));
+  box-shadow: 0 0 16px rgba(154, 107, 255, 0.5);
+}
+.nf-p-tab-lbl { font-size: 10.5px; font-weight: 800; letter-spacing: 0.12em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .nf-p-panes {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
-  border-radius: 16px;
-  border: 1px solid var(--ui-border);
-  background: rgba(14, 9, 26, 0.42);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 120, 220, 0.24);
+  background: linear-gradient(180deg, rgba(19, 13, 32, 0.6), rgba(11, 7, 20, 0.5));
   overflow: hidden;
 }
 .nf-p-pane {
@@ -1476,11 +1550,25 @@ html.nf-onb-colony .count-badge { display: none; }
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
+  padding: 0 12px 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
 }
+/* the pane's own title bar — sticky, so a long list always says what it is */
+.nf-p-pane-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 0 8px;
+  background: linear-gradient(180deg, rgba(18, 12, 30, 0.97), rgba(18, 12, 30, 0.82));
+  backdrop-filter: blur(6px);
+}
+.nf-p-pane-title { margin: 0; font-size: 11px; font-weight: 800; letter-spacing: 0.26em; color: var(--ui-text); }
+.nf-p-pane-count { margin-left: auto; font-size: 10px; letter-spacing: 0.12em; color: var(--ui-text-muted); white-space: nowrap; }
 .nf-pane-in { animation: nf-pane-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 @keyframes nf-pane-in {
   from { opacity: 0; transform: translateY(9px); }
@@ -1491,165 +1579,209 @@ html.nf-onb-colony .count-badge { display: none; }
   to { opacity: 1; transform: none; }
 }
 
-/* ---- stats pane */
-.nf-p-social { display: flex; gap: 8px; flex: 0 0 auto; }
-.nf-p-soc {
-  flex: 1 1 0;
+/* ---- stats: headline numbers, then a hairline table */
+.nf-p-hstats { display: flex; padding: 2px 0 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); }
+.nf-p-hstat { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 0 11px; }
+.nf-p-hstat:first-child { padding-left: 2px; }
+.nf-p-hstat + .nf-p-hstat { border-left: 1px solid rgba(255, 255, 255, 0.07); }
+.nf-p-hstat-v { font-size: clamp(17px, 2.3vw, 24px); font-weight: 900; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.nf-p-hstat-k { font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ui-text-muted); }
+.nf-p-kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; }
+.nf-p-kvi { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 2px; border-bottom: 1px solid rgba(255, 255, 255, 0.05); }
+.nf-p-kvi-k { font-size: 11px; color: var(--ui-text-muted); }
+.nf-p-kvi-v { font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.nf-p-sub {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 8px 6px;
-  border-radius: 12px;
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ui-text-muted);
 }
-.nf-p-soc-v { font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }
-.nf-p-soc-k { font-size: 9.5px; letter-spacing: 0.12em; color: var(--ui-text-muted); text-transform: uppercase; }
-.nf-p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
-.nf-p-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
-}
-.nf-p-tile-k { font-size: 10px; color: var(--ui-text-muted); }
-.nf-p-tile-v { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.nf-p-sub::after { content: ''; flex: 1 1 auto; height: 1px; background: rgba(255, 255, 255, 0.06); }
+.nf-p-social { display: flex; }
+.nf-p-soc { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 6px 0 2px; }
+.nf-p-soc + .nf-p-soc { border-left: 1px solid rgba(255, 255, 255, 0.07); }
+.nf-p-soc-v { font-size: 18px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.nf-p-soc-k { font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ui-text-muted); }
 .nf-p-viewers { display: flex; flex-direction: column; gap: 8px; }
-.nf-p-sub-title { margin: 4px 0 0; font-size: 10.5px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
 .nf-p-viewer-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-/* ---- list rows (history + discoveries) */
-.nf-p-rows { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+/* ---- result / discovery lists: hairlines, not boxes */
+.nf-p-rows { display: flex; flex-direction: column; }
 .nf-p-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
-  border-left: 3px solid rgba(255, 255, 255, 0.14);
+  padding: 8px 6px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  background: transparent;
+  transition: background 0.15s ease;
 }
-.nf-p-row.win { border-left-color: var(--ui-accent-2); }
-.nf-p-row.loss { border-left-color: #ff5c7a; }
-.nf-p-row.disc.first { border-left-color: var(--ui-gold); }
-.nf-p-row-res { flex: 0 0 42px; font-size: 10.5px; font-weight: 900; letter-spacing: 0.12em; }
-.nf-p-row.win .nf-p-row-res { color: var(--ui-accent-2); }
-.nf-p-row.loss .nf-p-row-res { color: #ff8797; }
-.nf-p-disc-ix {
-  flex: 0 0 38px;
+.nf-p-row:last-child { border-bottom: 0; }
+.nf-p-row:hover { background: rgba(255, 255, 255, 0.03); }
+.nf-p-row-res {
+  flex: 0 0 auto;
+  min-width: 46px;
   text-align: center;
-  font-size: 10px;
+  font-size: 9.5px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  padding: 3px 7px;
+  border-radius: 7px;
+}
+.nf-p-row.win .nf-p-row-res { color: #6ff0d6; background: rgba(70, 224, 200, 0.12); }
+.nf-p-row.loss .nf-p-row-res { color: #ff9bae; background: rgba(255, 92, 122, 0.12); }
+.nf-p-disc-ix {
+  flex: 0 0 auto;
+  min-width: 42px;
+  text-align: center;
+  font-size: 9.5px;
   font-weight: 900;
   letter-spacing: 0.08em;
-  padding: 3px 0;
-  border-radius: 8px;
+  padding: 3px 6px;
+  border-radius: 7px;
   background: rgba(255, 255, 255, 0.06);
   color: var(--ui-text-muted);
 }
-.nf-p-row.disc.first .nf-p-disc-ix { background: rgba(255, 209, 102, 0.16); color: var(--ui-gold); }
+.nf-p-row.disc.first .nf-p-disc-ix { background: rgba(255, 209, 102, 0.14); color: var(--ui-gold); }
 .nf-p-row-mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nf-p-row-place { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; }
-.nf-p-row-planet { font-weight: 800; letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-p-row-planet { font-weight: 800; letter-spacing: 0.05em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nf-p-row-planet-ico { font-style: normal; font-size: 10px; color: var(--ui-accent); flex: 0 0 auto; }
 .nf-p-row.disc.first .nf-p-row-planet-ico { color: var(--ui-gold); }
 .nf-p-row-ring {
   flex: 0 0 auto;
   font-style: normal;
-  font-size: 9.5px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.1em;
   color: var(--ui-gold);
-  border: 1px solid rgba(255, 209, 102, 0.4);
+  border: 1px solid rgba(255, 209, 102, 0.38);
   padding: 1px 6px;
   border-radius: 6px;
 }
 .nf-p-row-classic { color: var(--ui-text-muted); font-size: 12px; letter-spacing: 0.08em; }
-.nf-p-row-meta { font-size: 11px; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.nf-p-row-meta { font-size: 10.5px; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
 .nf-p-row-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
-.nf-p-row-ago { font-size: 10.5px; color: var(--ui-text-muted); }
-.nf-p-row-reward { font-size: 12.5px; font-weight: 800; color: var(--ui-gold); }
-.nf-p-empty { margin: 16px auto; max-width: 42ch; text-align: center; color: var(--ui-text-muted); font-size: 12.5px; }
+.nf-p-row-ago { font-size: 10px; color: var(--ui-text-muted); }
+.nf-p-row-reward { font-size: 12.5px; font-weight: 800; color: var(--ui-gold); font-variant-numeric: tabular-nums; }
+.nf-p-empty { margin: 24px auto; max-width: 42ch; text-align: center; color: var(--ui-text-muted); font-size: 12px; line-height: 1.5; }
 
-/* Landscape phones (the game's home shape): the head becomes ONE row — identity left,
-   rank cards right — and the tabbed body takes every leftover pixel. The pane is the
-   ONLY scroll surface; the page itself always fits the frame. */
+/* Landscape phones (the game's home shape): the head keeps the same composition but
+   compacts; the panes take every leftover pixel and remain the ONLY scroll surface. */
 @media (orientation: landscape) and (max-height: 640px) {
   .profile-page { gap: 8px; }
-  .nf-p-head { flex-direction: row; align-items: stretch; gap: 8px; }
-  .nf-hero { flex: 1 1 auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 14px; }
-  .nf-hero-main { flex: 1 1 240px; min-width: 0; gap: 10px; }
-  .nf-hero-avatar { width: 44px; height: 44px; font-size: 17px; }
-  .nf-hero-gender { width: 18px; height: 18px; font-size: 11px; right: -3px; bottom: -3px; }
-  .nf-hero-who { gap: 1px; }
-  .nf-hero-name { font-size: clamp(15px, 2.3vw, 21px); }
+  .nf-p-top { min-height: 16px; }
+  .nf-p-eyebrow { font-size: 9px; letter-spacing: 0.3em; }
+  .nf-hero { gap: 8px 10px; padding: 10px 12px; border-radius: 16px 0 0 16px; }
+  .nf-hero-id { gap: 12px; }
+  .nf-hero-avatar { width: 56px; height: 56px; font-size: 22px; }
+  .nf-hero-gender { width: 19px; height: 19px; font-size: 11px; }
+  .nf-hero-name { font-size: clamp(17px, 2.5vw, 24px); }
+  .nf-hero-sub { margin-top: 3px; gap: 5px; }
   .nf-hero-handle { font-size: 11px; }
-  .nf-hero-bio { margin: 1px 0 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nf-hero-actions { align-self: center; }
-  .nf-hero-code { flex: 0 0 auto; }
+  .nf-tag { font-size: 8.5px; padding: 2px 7px; }
+  .nf-hero-bio { margin: 4px 0 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nf-hero-codebox { min-height: 34px; padding: 4px 9px; }
+  .nf-hero-codeval { font-size: 13px; letter-spacing: 0.14em; }
+  .nf-hero-code { gap: 6px; }
+  .nf-hero-share { min-width: 34px; min-height: 34px; }
+  .nf-hero-edit-btn { width: 34px; min-width: 34px; height: 34px; min-height: 34px; }
+  .nf-hero-edit-btn svg { width: 15px; height: 15px; }
   .nf-hero-code-label { display: none; }
-  .nf-hero-codebox { min-height: 36px; padding: 4px 10px; }
-  .nf-hero-codeval { font-size: 13px; letter-spacing: 0.22em; }
-  .nf-hero-share { min-width: 36px; min-height: 36px; }
-  .nf-hero-editor.open { flex-basis: 100%; max-height: 42vh; overflow-y: auto; }
-  .nf-ranks { flex: 0 0 clamp(270px, 36vw, 420px); gap: 8px; }
-  .nf-rank-card { padding: 8px 10px 9px 13px; border-radius: 13px; gap: 4px; }
-  .nf-rank-k { font-size: 8.5px; }
-  .nf-rank-v { font-size: clamp(12px, 1.8vw, 18px); letter-spacing: 0.03em; }
-  .nf-rank-sub { font-size: 10px; }
-  .nf-p-tabs { width: 106px; padding: 5px; gap: 5px; border-radius: 13px; }
-  .nf-p-tab { min-height: 0; flex: 1 1 0; padding: 6px 8px 6px 13px; gap: 3px; }
-  .nf-p-tab-lbl { font-size: 9.5px; }
-  .nf-p-tab-ico { width: 18px; height: 18px; }
+  .nf-hero-editor.open { max-height: 42vh; overflow-y: auto; }
+  .nf-ranks { flex: 0 0 clamp(300px, 37vw, 440px); gap: 8px; padding: 10px 12px; border-radius: 0 16px 16px 0; }
+  .nf-rank-card { padding: 7px 9px 8px; border-radius: 12px; gap: 3px; }
+  .nf-rank-emblem { width: 21px; height: 21px; border-radius: 7px; font-size: 11px; }
+  .nf-rank-k { font-size: 8px; }
+  .nf-rank-v { font-size: clamp(13px, 1.9vw, 18px); }
+  .nf-rank-starrow { font-size: 10px; letter-spacing: 1.5px; }
+  .nf-rank-sub { font-size: 9.5px; }
+  .nf-p-tabs { width: 126px; padding: 5px; gap: 5px; border-radius: 14px; }
+  .nf-p-tab { min-height: 0; flex: 1 1 0; padding: 6px 8px 6px 11px; gap: 8px; border-radius: 11px; }
+  .nf-p-tab-ico { width: 24px; height: 24px; border-radius: 8px; }
+  .nf-p-tab-ico svg { width: 14px; height: 14px; }
+  .nf-p-tab-lbl { font-size: 9.5px; letter-spacing: 0.08em; }
   .nf-p-body { gap: 8px; }
-  .nf-p-panes { border-radius: 13px; }
-  .nf-p-pane { padding: 8px; gap: 6px; }
-  .nf-p-grid { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
-  .nf-p-tile { padding: 6px 8px; }
-  .nf-p-tile-v { font-size: 14px; }
-  .nf-p-row { padding: 6px 9px; }
+  .nf-p-panes { border-radius: 14px; }
+  .nf-p-pane { padding: 0 10px 10px; gap: 6px; }
+  .nf-p-pane-head { padding: 9px 0 6px; }
+  .nf-p-hstat-v { font-size: clamp(15px, 2vw, 19px); }
+  .nf-p-hstats { padding-bottom: 8px; }
+  .nf-p-kvi { padding: 5px 2px; }
+  .nf-p-social { margin-top: 2px; }
+  .nf-p-soc-v { font-size: 16px; }
+  .nf-p-row { padding: 6px 5px; }
+  /* while the EDIT sheet is open the panes step aside instead of shrinking to a slit */
+  .profile-page:has(.nf-hero.editing) .nf-p-body { display: none; }
 }
-/* 320-tall phones (568x320 … 640x360): the head keeps identity + rank names only —
-   the pane needs the pixels. */
+/* 320-tall phones (568x320 … 915x412): the identity tightens a notch — the handle goes,
+   the tags shrink — but the rank meter stays. */
 @media (orientation: landscape) and (max-height: 420px) {
-  .nf-hero { padding: 6px 8px; gap: 4px 8px; }
-  .nf-hero-avatar { width: 38px; height: 38px; font-size: 15px; }
+  .profile-page { --nf-band: 46px; }
+  .nf-hero { padding: 8px 10px; gap: 6px 8px; }
+  .nf-hero-avatar { width: 52px; height: 52px; font-size: 20px; }
   .nf-hero-gender { width: 16px; height: 16px; font-size: 10px; }
+  .nf-hero-name { font-size: clamp(16px, 2.2vw, 20px); }
   .nf-hero-handle { display: none; }
-  .nf-hero-chip.level { display: none; }
-  .nf-hero-bio { font-size: 11px; }
-  .nf-hero-codebox { min-height: 32px; padding: 3px 8px; }
-  .nf-hero-codeval { font-size: 12px; letter-spacing: 0.18em; }
-  .nf-hero-share { min-width: 32px; min-height: 32px; }
-  .nf-rank-sub { display: none; }
-  .nf-rank-card { padding: 6px 8px 7px 12px; gap: 3px; }
-  .nf-p-tabs { width: 96px; }
-  .nf-p-tab-lbl { font-size: 9px; letter-spacing: 0.1em; }
-  .nf-p-tab { padding: 5px 6px 5px 11px; }
+  .nf-hero-bio { font-size: 10.5px; }
+  .nf-hero-codebox { min-height: 30px; padding: 3px 8px; }
+  .nf-hero-codeval { font-size: 11.5px; letter-spacing: 0.18em; }
+  .nf-hero-share { min-width: 30px; min-height: 30px; }
+  .nf-hero-edit-btn { width: 30px; min-width: 30px; height: 30px; min-height: 30px; border-radius: 9px; }
+  .nf-hero-edit-btn svg { width: 14px; height: 14px; }
+  .nf-ranks { flex: 0 0 clamp(250px, 34vw, 360px); padding: 8px 10px; }
+  .nf-rank-card { padding: 6px 8px 7px; }
+  .nf-p-tabs { width: 124px; }
+  .nf-p-tab { padding: 6px 8px 6px 9px; gap: 7px; }
+  .nf-p-tab-ico { width: 22px; height: 22px; }
+  .nf-p-tab-lbl { font-size: 8.5px; letter-spacing: 0.06em; }
   .nf-pane-in { animation: none; }
 }
-/* Portrait / narrow-but-tall frames: the rail turns into a top strip and the head stacks.
-   (A SHORT landscape frame — a phone in fullscreen — keeps the row + side rail from the
-   query above even when it is narrower than 720px; that is the game's own shape.) */
+/* NARROW 320-tall frames (568x320-class): the action cluster drops to its own row
+   (deterministic), so the identity keeps a single line and the panes keep the pixels. */
+@media (orientation: landscape) and (max-height: 420px) and (max-width: 660px) {
+  .nf-hero-avatar { width: 40px; height: 40px; font-size: 15px; }
+  .nf-hero-name { font-size: 15px; }
+  /* too narrow for one row: the action cluster drops below the identity */
+  .nf-hero { flex-wrap: wrap; }
+  .nf-hero-side { flex-basis: 100%; }
+  .nf-p-tabs { width: 124px; }
+}
+/* Portrait / narrow-but-tall frames: the card STACKS (identity over the plates, one
+   surface) and the rail turns into a top strip. (A short landscape frame — a phone in
+   fullscreen — keeps the side-by-side card even under 720px; that is the game's shape.) */
 @media (orientation: portrait), (max-width: 720px) and (min-height: 500px) {
-  .nf-p-head { flex-direction: column; gap: 10px; }
-  .nf-ranks { flex: 0 0 auto; }
+  .nf-p-head { flex-direction: column; }
+  .nf-hero { border-radius: 18px 18px 0 0; border-right: 1px solid rgba(148, 120, 220, 0.3); border-bottom: 0; flex-wrap: wrap; }
+  .nf-hero-side { flex-basis: 100%; flex-wrap: wrap; gap: 8px; }
+  .nf-ranks { flex: 0 0 auto; border-radius: 0 0 18px 18px; }
   .nf-p-body { flex-direction: column; gap: 8px; }
   .nf-p-tabs { width: auto; flex-direction: row; }
-  .nf-p-tab { flex: 1 1 0; min-height: 52px; flex-direction: row; align-items: center; justify-content: center; padding: 8px 6px; gap: 7px; }
+  .nf-p-tab { flex: 1 1 0; min-height: 50px; justify-content: center; padding: 8px 4px; gap: 6px; }
   .nf-p-tab::before { left: 50%; top: auto; bottom: 3px; width: 0; height: 3px; transform: translateX(-50%); }
   .nf-p-tab.on::before { width: 54%; height: 3px; }
-  .nf-p-tab-lbl { font-size: 10px; }
+  .nf-p-tab-ico { width: 26px; height: 26px; }
+  .nf-p-tab-lbl { font-size: 9px; letter-spacing: 0.06em; }
 }
-/* The floating back chevron overlaps the top-left corner whenever the page is not
-   centred far away from it — give the first row a corridor instead of hiding content. */
+/* The back chevron owns the TOP-LEFT corner: below 1200px the profile page reserves a
+   band above the card (user ask: "the back button shouldn't have any other UI behind
+   it"), and the graphics title keeps its own corridor. */
 @media (max-width: 1200px) {
-  .nf-hero { padding-left: 58px; }
+  .profile-page { padding-top: var(--nf-band, 50px); }
   .nf-gfx-head { padding-left: 58px; }
+}
+/* Tablet / small-window widths: the rank plates give the identity block a little more
+   room so the name and tags never have to truncate. */
+@media (min-width: 721px) and (max-width: 1200px) {
+  .nf-ranks { flex: 0 0 clamp(300px, 30vw, 440px); }
+  .nf-rank-v { font-size: clamp(14px, 1.8vw, 19px); }
 }
 
 /* ---------------------------------------------------------------- friends */

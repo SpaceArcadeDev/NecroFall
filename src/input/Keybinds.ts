@@ -3,9 +3,9 @@
 // `player_settings` row persists it, and the controls sheet edits it.
 // Codes are KeyboardEvent.code strings ('KeyW', 'Space', 'ShiftLeft', ...).
 
-export type BindAction = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'skill' | 'ult' | 'beacon';
+export type BindAction = 'up' | 'down' | 'left' | 'right' | 'jump' | 'dash' | 'skill' | 'ult' | 'beacon' | 'recall';
 
-export const BIND_ORDER: BindAction[] = ['up', 'down', 'left', 'right', 'jump', 'dash', 'skill', 'ult', 'beacon'];
+export const BIND_ORDER: BindAction[] = ['up', 'down', 'left', 'right', 'jump', 'dash', 'skill', 'ult', 'beacon', 'recall'];
 
 export const BIND_LABELS: Record<BindAction, string> = {
   up: 'Move forward',
@@ -17,6 +17,7 @@ export const BIND_LABELS: Record<BindAction, string> = {
   skill: 'Skill',
   ult: 'Ultimate',
   beacon: 'Beacon ability',
+  recall: 'Recall',
 };
 
 export const DEFAULT_BINDS: Record<BindAction, string> = {
@@ -29,6 +30,8 @@ export const DEFAULT_BINDS: Record<BindAction, string> = {
   skill: 'KeyE',
   ult: 'KeyQ',
   beacon: 'KeyF',
+  // RECALL on the keyboard (user ask 2026-09-30): R, next to the movement cluster.
+  recall: 'KeyR',
 };
 
 /** Friendly label for a key code: 'KeyW' → 'W', 'Space' → 'SPACE', 'ArrowUp' → 'UP'. */

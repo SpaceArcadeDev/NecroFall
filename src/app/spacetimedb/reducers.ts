@@ -168,6 +168,12 @@ export const reportNexusCapture = (colony: number): void => callReducer('reportN
  */
 export const reportNecrophageVictory = (): void => callReducer('reportNecrophageVictory');
 
+/**
+ * REPORT SURRENDER (user ask 2026-09-30) — a RANKED colony's vote to forfeit passed: the whole
+ * colony is tombstoned and counted as a recorded loss. Idempotent (a teammate's report wins).
+ */
+export const reportSurrender = (): void => callReducer('reportSurrender');
+
 export interface SyncPoseArgs {
   x: number;
   y: number;

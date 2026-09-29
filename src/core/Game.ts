@@ -242,6 +242,12 @@ const miniEnemyRow = (): MiniData['enemies'][number] => ({ x: 0, y: 0, z: 0, bos
 const BERSERK_SEGS = 30;
 const BERSERK_RINGS = 5;
 const BERSERK_RADIUS = 2.2;
+/**
+ * RANKED SURRENDER VOTE (user ask 2026-09-30): how long the colony has to answer before the vote
+ * lapses (no majority = the fight goes on). Matches how long a careful team can take to reply
+ * while never letting an abandoned vote pin the panel on screen forever.
+ */
+const SURRENDER_VOTE_SECONDS = 60;
 const _tmpEnemies: Enemy[] = [];
 
 export class Game {
@@ -327,6 +333,36 @@ export class Game {
    * results screen with the finalized usage summary instead of dropping the numbers on the floor.
    */
   private lastEnd: { winner: number | null; tiles: { label: string; owner: number }[]; reason?: string } | null = null;
+  /**
+   * RANKED SURRENDER VOTE (user ask 2026-09-30) for the LOCAL player's colony — null when none is
+   * open. Started by the Esc menu's INITIATE SURRENDER button; the colony answers it from the
+   * left-centre panel. Majority of the colony's live seats ends the run as a recorded loss.
+   */
+  private surrenderVote: {
+    colony: number;
+    initiatorName: string;
+    startedAt: number;
+    /** game id → yes/no. A seat counts once it has cast; the initiator confirms like everyone. */
+    votes: Map<string, boolean>;
+  } | null = null;
+  /**
+   * Casts that arrived BEFORE their colony's `start` (different senders can overtake each other
+   * on the wire): held for a beat and replayed when the start lands, so a fast voter is never
+   * silently dropped and the majority the other clients saw is the majority this one counts.
+   */
+  private surrenderEarlyCasts: { colony: number; pid: string; yes: boolean }[] = [];
+  /**
+   * Colonies that forfeited THIS match (user ask 2026-09-30). Once surrendered a colony is gone
+   * for the rest of the fight: the id also keeps a LATE pose packet from resurrecting a body on
+   * every other client (`st` is streamed per seat, and a member's stream can outlive the vote by
+   * a frame), and makes a duplicate `srend` a no-op.
+   */
+  private surrenderedColonies = new Set<number>();
+  /**
+   * The local colony SURRENDERED in the match being shown: the results screen — and any LATE
+   * server-verdict repaint of it — must keep the SURRENDERED verdict instead of the match winner.
+   */
+  private surrenderLost = false;
   /**
    * Starter-class pick bookkeeping for OFFICIAL matches: the selection phase runs while the match
    * is already live server-side, so the world boots with the payload's seed and a clock read NOW
@@ -617,6 +653,8 @@ export class Game {
       toggleReady: () => this.toggleReady(),
       resume: () => this.togglePauseMenu(),
       leaveMatch: () => this.leaveMatch(),
+      surrender: () => this.initiateSurrenderVote(),
+      surrenderVote: yes => this.castSurrenderVote(yes),
       openMenu: () => this.togglePauseMenu(),
       closeMenu: () => this.closePauseMenu(),
       setGraphics: pref => this.setGraphicsPref(pref),
@@ -2207,6 +2245,11 @@ export class Game {
     this.phase = 'playing';
     this.seed = seed;
     this.rng = new Rand(seed ^ 0x5eed);
+    // A fresh world starts from a clean vote slate: no surrender state survives a new match.
+    this.surrenderVote = null;
+    this.surrenderEarlyCasts = [];
+    this.surrenderedColonies.clear();
+    this.surrenderLost = false;
     // The battlefield centre is a pure function of the seed: pinning it here means the spawn
     // points below (and every peer's copy of them) are already computed from this match's world.
     battlefieldCenterDir(seed, this.towers.centerDir);
@@ -2772,10 +2815,13 @@ export class Game {
     this.effects.burst(to, 0xffffff, { count: 16, speed: 12, life: 0.5, size: 0.5, gravity: 0, dir: upTo, jitter: 0.5 });
     if (p?.isLocal) this.cam.snap();
   }
-  endMatch(winner: number | null, reason?: string, fromServer = false): void {
+  endMatch(winner: number | null, reason?: string, fromServer = false, surrendered = false): void {
     if (this.phase === 'ended') return;
     this.phase = 'ended';
     this.lateSelect = null;
+    if (surrendered) this.surrenderLost = true;
+    this.surrenderVote = null;
+    this.surrenderEarlyCasts = [];
     if (this.recall) this.recall.p.recallHold = false;
     this.recall = null;
     this.paused = false;
@@ -2797,8 +2843,13 @@ export class Game {
     // ends the match for EVERY seat at once — a Nexus capture with its winner, a Necrophage
     // victory (null) as a no-winner finish (user report: the row kept saying "already in a
     // match" after the end screen, and a reload dragged the player back in). A server-projected
-    // end (`fromServer`) reports nothing: it IS the finish landing.
-    if (this.officialMatch && !fromServer) this.officialMatch.bridge.reportVictory(winner);
+    // end (`fromServer`) reports nothing: it IS the finish landing. A SURRENDERED colony reports
+    // the forfeit instead — the server tombstones every seat of the colony and counts them all
+    // as losses when the match concludes (the match itself continues for the other colonies).
+    if (this.officialMatch && !fromServer) {
+      if (surrendered) this.officialMatch.bridge.reportSurrender();
+      else this.officialMatch.bridge.reportVictory(winner);
+    }
     // SOLO runs settle their record BEFORE the results screen builds its numbers.
     if (this.soloRun) this.finishSoloRun(winner);
     const tiles = this.towers.towers.map((t, i) => ({
@@ -2806,7 +2857,10 @@ export class Game {
       owner: t.owner,
     }));
     this.lastEnd = { winner, tiles, reason };
-    if (this.isHost) {
+    // A surrender NEVER ends the match for everyone: the colony walks out and the survivors keep
+    // fighting, so this client must not broadcast an `end` others would obey (the authority seat
+    // may well be ours).
+    if (this.isHost && !surrendered) {
       this.net.broadcast({ t: 'end', winner, tiles, reason: reason ?? '' });
     }
     this.showResults(winner, tiles, reason);
@@ -2914,14 +2968,22 @@ export class Game {
       hero,
       standings,
       matchTime,
-      title: solo ? (solo.run.mode === 'survival' ? 'THE SWARM CONSUMED YOU' : solo.res.victory ? 'SPEEDRUN COMPLETE' : 'SPEEDRUN FAILED') : undefined,
-      subtitle: solo
-        ? (solo.res.submitted
-            ? `RUN RECORDED ${formatRunTime(solo.res.timeMs)}${solo.res.isNew ? ' — NEW PLANET RECORD' : ''}`
-            : solo.run.mode === 'speedrun'
-              ? 'THE CLOCK RAN OUT — NO RECORD SUBMITTED'
-              : undefined)
-        : undefined,
+      // A surrendered colony's verdict is final: the local end and any LATE authoritative repaint
+      // both read SURRENDERED, never the winner another colony produced.
+      title: this.surrenderLost
+        ? 'SURRENDERED'
+        : solo
+          ? (solo.run.mode === 'survival' ? 'THE SWARM CONSUMED YOU' : solo.res.victory ? 'SPEEDRUN COMPLETE' : 'SPEEDRUN FAILED')
+          : undefined,
+      subtitle: this.surrenderLost
+        ? (reason ?? 'YOUR COLONY VOTED TO SURRENDER — COUNTED AS A LOSS')
+        : solo
+          ? (solo.res.submitted
+              ? `RUN RECORDED ${formatRunTime(solo.res.timeMs)}${solo.res.isNew ? ' — NEW PLANET RECORD' : ''}`
+              : solo.run.mode === 'speedrun'
+                ? 'THE CLOCK RAN OUT — NO RECORD SUBMITTED'
+                : undefined)
+          : undefined,
       record: solo
         ? {
             value: solo.res.submitted ? formatRunTime(solo.res.timeMs) : '—',
@@ -2940,6 +3002,10 @@ export class Game {
     this.isHost = true;
     this.soloRun = null;
     this.soloResult = null;
+    this.surrenderVote = null;
+    this.surrenderEarlyCasts = [];
+    this.surrenderedColonies.clear();
+    this.surrenderLost = false;
     this.survivalMode = false;
     this.enemyRampMul = 1;
     this.phase = 'menu';
@@ -3100,6 +3166,9 @@ export class Game {
         if (!this.isHost && !this.officialMatch) return;
         const net = msg.state as PlayerNet;
         if (!net) return;
+        // A surrendered colony is GONE (user ask 2026-09-30): a late pose from one of its members
+        // (their client applies the vote a frame later) must not resurrect a body on this screen.
+        if (this.surrenderedColonies.has(Number(net.col))) return;
         let p = this.players.get(net.id);
         if (!p) {
           const r = this.roster.get(net.id);
@@ -3553,6 +3622,70 @@ export class Game {
         const tiles = (msg.tiles ?? []) as { label: string; owner: number }[];
         this.showResults(msg.winner === null ? null : Number(msg.winner), tiles, msg.reason ? String(msg.reason) : undefined);
         this.audio.sfx('defeat');
+        return;
+      }
+      case 'svote': {
+        // RANKED SURRENDER VOTE (user ask 2026-09-30): start / cast / fail. Every colony member
+        // answers from the left-centre panel; the tally is deterministic, so each client resolves
+        // the same strict majority from the same broadcasts it received.
+        if (!this.officialMatch?.match.ranked) return;
+        const kind = String(msg.a);
+        if (kind === 'start') {
+          if (this.phase !== 'playing' || this.surrenderVote) return; // the first start wins
+          const col = Number(msg.col);
+          if (!(col >= 0 && col < COLONIES.length)) return;
+          if (!this.colonyMemberIds(col).includes(String(msg.pid))) return;
+          this.surrenderVote = {
+            colony: col,
+            initiatorName: String(msg.name ?? 'A survivor').slice(0, 16),
+            startedAt: nowSec(),
+            votes: new Map(),
+          };
+          // Casts from other senders can overtake the start: replay what was held for this colony.
+          const early = this.surrenderEarlyCasts.filter(e => e.colony === col);
+          this.surrenderEarlyCasts = [];
+          for (const e of early) this.surrenderVote.votes.set(e.pid, e.yes);
+          const me = this.localPlayer;
+          if (me && me.colony === col) this.ui.toast('SURRENDER VOTE OPENED — ANSWER IN THE PANEL', 3800);
+          if (early.length) this.resolveSurrenderVote();
+          return;
+        }
+        const v = this.surrenderVote;
+        if (kind === 'cast') {
+          const pid = String(msg.pid);
+          const yes = msg.yes === 1 || msg.yes === true;
+          if (!v) {
+            // Held until its colony's start lands (per-sender order is not a global order).
+            if (this.surrenderEarlyCasts.length < 16) {
+              this.surrenderEarlyCasts.push({ colony: Number(msg.col), pid, yes });
+            }
+            return;
+          }
+          if (Number(msg.col) !== v.colony) return;
+          // Only a live seat of the colony being voted on has a vote.
+          if (!this.colonyMemberIds(v.colony).includes(pid)) return;
+          v.votes.set(pid, yes);
+          this.resolveSurrenderVote();
+          return;
+        }
+        if (kind === 'fail' && v && Number(msg.col) === v.colony) {
+          this.surrenderVote = null;
+          this.ui.toast('SURRENDER DECLINED — THE COLONY FIGHTS ON', 3200);
+        }
+        return;
+      }
+      case 'srend': {
+        // A colony forfeited the ranked match: remove it here too. The surrendered colony's own
+        // clients get the SURRENDERED results screen; everyone else simply lost opponents.
+        if (!this.officialMatch?.match.ranked) return;
+        const col = Number(msg.col);
+        if (!(col >= 0 && col < COLONIES.length)) return;
+        // Only MY colony's surrender closes MY vote — another colony's forfeit is unrelated.
+        if (this.surrenderVote && this.surrenderVote.colony === col) {
+          this.surrenderVote = null;
+          this.surrenderEarlyCasts = [];
+        }
+        this.applySurrender(col);
         return;
       }
       default:
@@ -4594,6 +4727,130 @@ export class Game {
     setTimeout(() => this.returnToMenu(), 260);
   }
 
+  // ------------------------------------------------------------ ranked surrender (user ask 2026-09-30)
+
+  /**
+   * The Esc menu's RANKED action (it REPLACES leave match there, user ask 2026-09-30): open a
+   * colony-wide SURRENDER VOTE. Every seat of the colony — the initiator included — answers it
+   * from the left-centre panel; a strict majority (2 seats need both, 3 need 2…) forfeits the
+   * whole colony: it is removed from the game and counted as a recorded loss, while the match
+   * continues for the remaining colonies. Anywhere else the button still leaves directly.
+   */
+  initiateSurrenderVote(): void {
+    const p = this.localPlayer;
+    if (!this.officialMatch?.match.ranked) { this.leaveMatch(); return; }
+    if (!p || this.phase !== 'playing') return;
+    if (this.surrenderVote) {
+      this.ui.toast('A SURRENDER VOTE IS ALREADY OPEN', 2200);
+      return;
+    }
+    this.surrenderVote = { colony: p.colony, initiatorName: p.name, startedAt: nowSec(), votes: new Map() };
+    this.net.broadcast({ t: 'svote', a: 'start', pid: p.id, name: p.name, col: p.colony });
+    this.audio.sfx('ui');
+    this.ui.banner(`${COLONIES[p.colony]?.name ?? 'COLONY'} — SURRENDER VOTE OPENED`, 2800);
+  }
+
+  /** The vote panel's ✓ / ✕: one vote per seat, and the initiator confirms like everyone else. */
+  private castSurrenderVote(yes: boolean): void {
+    const v = this.surrenderVote;
+    const p = this.localPlayer;
+    if (!v || !p || this.phase !== 'playing' || v.colony !== p.colony) return;
+    if (v.votes.has(p.id)) return; // one seat, one vote
+    v.votes.set(p.id, yes);
+    this.net.broadcast({ t: 'svote', a: 'cast', pid: p.id, yes: yes ? 1 : 0, col: v.colony });
+    this.resolveSurrenderVote();
+  }
+
+  /** The colony's live seats. The server-seeded roster is the count that matters (players map
+   *  bodies can lag a seat that has not spawned a copy on this client yet). */
+  private colonyMemberIds(colony: number): string[] {
+    const ids = new Set<string>();
+    for (const r of this.roster.values()) if (r.colony === colony) ids.add(r.id);
+    if (ids.size === 0) for (const p of this.players.values()) if (p.colony === colony) ids.add(p.id);
+    return [...ids];
+  }
+
+  /**
+   * The vote is deterministic from the broadcasts everyone received, so every member resolves the
+   * same majority the moment it forms: strict majority → forfeit now; enough NO votes that no
+   * majority can ever form → the colony fights on.
+   */
+  private resolveSurrenderVote(): void {
+    const v = this.surrenderVote;
+    if (!v || this.phase !== 'playing') return;
+    const members = this.colonyMemberIds(v.colony);
+    const n = members.length;
+    if (n === 0) { this.surrenderVote = null; return; }
+    // STRICT majority: a 2-seat colony needs both votes (1/2 is not a majority).
+    const need = Math.floor(n / 2) + 1;
+    let yes = 0;
+    let no = 0;
+    for (const id of members) {
+      const vote = v.votes.get(id);
+      if (vote === true) yes++;
+      else if (vote === false) no++;
+    }
+    if (yes >= need) {
+      this.surrenderVote = null;
+      this.net.broadcast({ t: 'srend', col: v.colony });
+      this.applySurrender(v.colony);
+      return;
+    }
+    if (no > n - need) {
+      this.surrenderVote = null;
+      this.net.broadcast({ t: 'svote', a: 'fail', col: v.colony });
+      this.ui.toast('SURRENDER DECLINED — THE COLONY FIGHTS ON', 3200);
+    }
+  }
+
+  /** The vote lapsed unanswered (see SURRENDER_VOTE_SECONDS): everything goes back to the fight. */
+  private updateSurrenderVote(): void {
+    const v = this.surrenderVote;
+    if (!v || this.phase !== 'playing') return;
+    if (nowSec() - v.startedAt < SURRENDER_VOTE_SECONDS) return;
+    this.surrenderVote = null;
+    this.net.broadcast({ t: 'svote', a: 'fail', col: v.colony });
+    this.ui.toast('SURRENDER VOTE LAPSED', 3000);
+  }
+
+  /**
+   * A colony's surrender RESOLVED: remove its survivors from the world for everyone. The
+   * surrendered colony's own clients then show the SURRENDERED results screen (a recorded loss);
+   * everyone else keeps fighting — the match only ends when the remaining colonies do.
+   */
+  private applySurrender(colony: number): void {
+    if (this.phase !== 'playing') return;
+    if (this.surrenderedColonies.has(colony)) return; // a duplicate `srend` is a no-op
+    this.surrenderedColonies.add(colony);
+    const mine = this.localPlayer !== null && this.localPlayer.colony === colony;
+    const color = COLONIES[colony]?.css ?? '#fff';
+    let removed = 0;
+    for (const p of [...this.players.values()]) {
+      if (p.colony !== colony) continue;
+      removed++;
+      // The LOCAL body stays where it stands: the results screen takes over the frame anyway,
+      // and keeping it avoids a one-frame world flicker before the overlay paints.
+      if (p.isLocal) continue;
+      this.ui.killFeed(`${p.name} surrendered`, color);
+      p.dispose();
+      this.players.delete(p.id);
+      this.peerSync.delete(p.id);
+    }
+    for (const id of [...this.roster.keys()]) {
+      if (this.roster.get(id)?.colony === colony) this.roster.delete(id);
+    }
+    if (removed > 0) {
+      this.ui.banner(`${COLONIES[colony]?.name ?? 'A COLONY'} SURRENDERED — COLONY ELIMINATED`, 4600);
+    }
+    if (mine) {
+      this.ui.hidePauseMenu();
+      this.paused = false;
+      // `endMatch` handles the freeze, the local results screen (SURRENDERED) and the server
+      // report; it deliberately does NOT broadcast an `end` to the other colonies.
+      this.endMatch(null, 'YOUR COLONY VOTED TO SURRENDER — COUNTED AS A LOSS', false, true);
+    }
+  }
+
   // ------------------------------------------------------------ host migration
 
   /**
@@ -4881,6 +5138,14 @@ export class Game {
         this.updateRespawns(dt);
       }
 
+      // R KEY RECALL (user ask 2026-09-30): the keyboard mirror of the HUD home button. A fresh
+      // press with no channel RUNS one; a press DURING the channel cancels it — the channel's
+      // own edge watch breaks it anyway, and letting the queued flag restart it would make the
+      // key read as "nothing happened".
+      if (this.input.consumeRecall()) {
+        if (this.recall) this.cancelRecall(this.recall.p, 'input');
+        else this.requestRecall();
+      }
       // the recall channel's input watch runs BEFORE anyone simulates, so the frame that breaks
       // the channel is also the frame the player gets control back (they can move/act at once)
       this.watchRecallInput();
@@ -4903,6 +5168,7 @@ export class Game {
       this.abilities.update(dt);
       this.updatePickups(dt);
       this.updateRecall(dt);
+      this.updateSurrenderVote();
 
       for (const buff of this.colonyBuffs) {
         if (buff.time > 0) buff.time = Math.max(0, buff.time - dt);
@@ -5371,6 +5637,38 @@ export class Game {
     d.prompt = prompt;
     d.promptKey = promptKey;
     d.conn = this.connectionText();
+    // RANKED (user ask 2026-09-30): the Esc panel swaps LEAVE MATCH for INITIATE SURRENDER.
+    d.ranked = Boolean(this.officialMatch?.match.ranked);
+    d.paused = this.paused;
+    // RANKED surrender vote: the left-centre panel is for the colony BEING VOTED ON only. The
+    // rows are one dash per live seat, so the tally reads at a glance (green = yes, red = no).
+    const vote = this.surrenderVote;
+    if (vote && p && vote.colony === p.colony && this.phase === 'playing') {
+      const members = this.colonyMemberIds(vote.colony);
+      const need = Math.floor(members.length / 2) + 1;
+      let yes = 0;
+      let no = 0;
+      const rows: ('yes' | 'no' | 'pending')[] = [];
+      for (const id of members) {
+        const mine = vote.votes.get(id);
+        if (mine === true) { yes++; rows.push('yes'); }
+        else if (mine === false) { no++; rows.push('no'); }
+        else rows.push('pending');
+      }
+      const myVote = vote.votes.get(p.id);
+      d.surrender = {
+        colonyName: COLONIES[vote.colony]?.name ?? '',
+        fromName: vote.initiatorName,
+        votes: rows,
+        yes,
+        no,
+        need,
+        mine: myVote === true ? 'yes' : myVote === false ? 'no' : null,
+        seconds: Math.max(0, SURRENDER_VOTE_SECONDS - (nowSec() - vote.startedAt)),
+      };
+    } else {
+      d.surrender = null;
+    }
     // The Esc menu shows this so friends can drop into a match that is already running. An
     // OFFICIAL match is not hosted by anyone — there is no room code to share, so the same row
     // shows the server match's id and its join link instead ("it says offline game" report:

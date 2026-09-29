@@ -168,6 +168,7 @@ export const create_custom_lobby = spacetimedb.reducer((ctx) => {
     stats_reported_at: 0n,
     updated_at: now,
     left: false,
+    surrendered: false,
     kick_reason: '',
     ready: true, // the host is ready by definition
   });
@@ -245,6 +246,7 @@ export const join_custom_lobby = spacetimedb.reducer(
       stats_reported_at: 0n,
       updated_at: now,
       left: false,
+      surrendered: false,
       kick_reason: '',
       ready: false,
     });

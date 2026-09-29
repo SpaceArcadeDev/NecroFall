@@ -110,6 +110,12 @@ export interface OfficialGameBridge {
   /** The player pressed LEAVE MATCH: abandon the seat server-side (never auto-rejoin). */
   leaveMatch(): void;
   /**
+   * RANKED: the local colony's surrender vote passed (user ask 2026-09-30). The provider
+   * tombstones the whole colony server-side (`report_surrender`, idempotent) and latches the
+   * match id so the still-RUNNING row can never pull this client back in.
+   */
+  reportSurrender(): void;
+  /**
    * The LOCAL simulation concluded the match. A non-null `colony` = a Nexus capture: the provider
    * also reports it to the server (`report_nexus_capture`) so the match finishes for everyone at
    * once. Either way it latches the id so the still-RUNNING row cannot pull the player back in

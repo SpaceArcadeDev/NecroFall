@@ -94,12 +94,14 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
 
   for (const p of [...ctx.db.match_player.match_id.filter(matchId)]) {
     if (p.left) {
-      // Abandoned seats earn nothing — only clear their in-match presence flag.
+      // Abandoned seats earn nothing — only clear their in-match presence flag. A SURRENDERED
+      // seat (whole-colony forfeit, user ask 2026-09-30) is NOT an abandon: it falls through
+      // and is recorded as a LOSS below.
       const presence = ctx.db.player_presence.identity.find(p.identity);
       if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_ONLINE, last_seen: now });
-      continue;
+      if (!p.surrendered) continue;
     }
-    const won = winnerColony !== null && p.colony === winnerColony;
+    const won = !p.left && winnerColony !== null && p.colony === winnerColony;
     const soft =
       (won ? REWARD_SOFT_WIN : REWARD_SOFT_LOSS) +
       p.kills * REWARD_SOFT_KILL +
@@ -131,7 +133,11 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
       if (m.ranked) {
         const season = ensureActiveSeason(ctx);
         const oldInfo = getRankFromStars(account.rank_points);
-        const result = won ? RANK_RESULT_WIN : winnerColony === null ? RANK_RESULT_DRAW : RANK_RESULT_LOSS;
+        // A surrendered seat is ALWAYS a recorded loss: the forfeit is the result (and it can
+        // never be the winner — tombstoned seats cannot report the Nexus).
+        const result = p.surrendered
+          ? RANK_RESULT_LOSS
+          : won ? RANK_RESULT_WIN : winnerColony === null ? RANK_RESULT_DRAW : RANK_RESULT_LOSS;
         const applied = applyRankResult(account.rank_points, result);
         const newInfo = getRankFromStars(applied.stars);
         rankFields = {
@@ -152,7 +158,7 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
           new_tier: newInfo.tier,
           new_division: newInfo.division,
           new_stars: newInfo.stars,
-          cause: won ? RANK_CAUSE_WIN : winnerColony === null ? RANK_CAUSE_DRAW : RANK_CAUSE_LOSS,
+          cause: p.surrendered ? RANK_CAUSE_LOSS : won ? RANK_CAUSE_WIN : winnerColony === null ? RANK_CAUSE_DRAW : RANK_CAUSE_LOSS,
           match_id: matchId,
           planet_key: m.planet_key ?? '',
           delta: applied.delta,

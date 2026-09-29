@@ -95,6 +95,14 @@ export const match_player = table(
     kick_reason: t.string().default(''),
     /** Custom lobbies: this seat is ready (the host's START gate). */
     ready: t.bool().default(false),
+    /**
+     * True when the seat was tombstoned by a COLONY SURRENDER instead of a plain leave (user ask
+     * 2026-09-30): the sim skips it exactly like `left`, but `finishMatchInternal` still counts
+     * it — a whole-colony forfeit is a recorded LOSS (rank star, W/L record, history), never a
+     * silent abandon. New columns MUST be appended after the existing ones: SpacetimeDB treats an
+     * inserted column as a reorder and aborts the auto-migration.
+     */
+    surrendered: t.bool().default(false),
   }
 );
 

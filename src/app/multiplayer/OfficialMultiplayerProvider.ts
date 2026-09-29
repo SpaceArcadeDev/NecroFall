@@ -31,6 +31,7 @@ import {
   joinMatch as joinMatchReducer,
   reportNexusCapture,
   reportNecrophageVictory,
+  reportSurrender as reportSurrenderReducer,
   findRankedMatch as findRankedMatchReducer,
   sendMatchMsg,
   reportViolation,
@@ -526,6 +527,18 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.latchEnded(this.matchId);
     if (colony !== null) reportNexusCapture(colony);
     else reportNecrophageVictory();
+  }
+
+  /**
+   * RANKED: the local colony's surrender vote passed (user ask 2026-09-30). Latch FIRST (same
+   * reason as reportVictory — the still-RUNNING row must never pull this client back in), then
+   * tombstone the whole colony server-side. `report_surrender` is idempotent, so every member
+   * of the colony may report; the first one wins and the rest are no-ops.
+   */
+  reportSurrender(): void {
+    if (!this.matchId) return;
+    this.latchEnded(this.matchId);
+    reportSurrenderReducer();
   }
 
   /** True when this session already concluded the given match locally (never re-enter it). */

@@ -61,6 +61,8 @@ export const EVENT_BEACON_CAPTURED = 7;
 export const EVENT_NEXUS_CAPTURED = 8;
 export const EVENT_MATCH_STARTED = 9;
 export const EVENT_MATCH_ENDED = 10;
+/** A whole ranked colony forfeited (user ask 2026-09-30): the surrender vote passed. */
+export const EVENT_SURRENDER = 11;
 
 // ------------------------------------------------------------ timers (microseconds)
 /** One server simulation tick at 10 Hz (plan §17/§40). */

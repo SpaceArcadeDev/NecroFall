@@ -49,6 +49,7 @@ export class InputManager {
   private qSkill = false;
   private qUlt = false;
   private qBeacon = false;
+  private qRecall = false;
 
   private joyActive = false;
   private joyX = 0;
@@ -114,6 +115,9 @@ export class InputManager {
       // the Skill and the Ultimate also cast from the keyboard (mouse: left = skill, right = ultimate)
       else if (action === 'skill') this.qSkill = true;
       else if (action === 'ult') this.qUlt = true;
+      // RECALL (user ask 2026-09-30): a keyboard edge like any other action — Game turns it into
+      // a channel start, or a cancel while one is already running.
+      else if (action === 'recall') this.qRecall = true;
       if (code === 'Escape') this.qMenu = true; // always available (pause menu)
     });
     on(window, 'keyup', (e: KeyboardEvent) => {
@@ -205,7 +209,7 @@ export class InputManager {
       // A menu eats the held buttons too: the next release must not cast into the world.
       this.lmbDown = this.rmbDown = false;
       this.keys.clear();
-      this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = false;
+      this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = this.qRecall = false;
     }
   }
 
@@ -258,6 +262,7 @@ export class InputManager {
   queueSkill(): void { this.qSkill = true; this.markEdge(); }
   queueUlt(): void { this.qUlt = true; this.markEdge(); }
   queueBeacon(): void { this.qBeacon = true; this.markEdge(); }
+  queueRecall(): void { this.qRecall = true; this.markEdge(); }
 
   // ---- consumed edges ---------------------------------------------------
   consumeJump(): boolean { const v = this.qJump; this.qJump = false; return v && this.enabled; }
@@ -265,6 +270,7 @@ export class InputManager {
   consumeSkill(): boolean { const v = this.qSkill; this.qSkill = false; return v && this.enabled; }
   consumeUlt(): boolean { const v = this.qUlt; this.qUlt = false; return v && this.enabled; }
   consumeBeacon(): boolean { const v = this.qBeacon; this.qBeacon = false; return v && this.enabled; }
+  consumeRecall(): boolean { const v = this.qRecall; this.qRecall = false; return v && this.enabled; }
 
   /** Mouse-wheel steps since the last call (positive = zoom out). */
   consumeWheel(): number {
@@ -291,7 +297,7 @@ export class InputManager {
    * picker closes or the respawn lands.
    */
   clearActions(): void {
-    this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = false;
+    this.qJump = this.qDash = this.qSkill = this.qUlt = this.qBeacon = this.qRecall = false;
     this.aimHold = null;
     this.lmbDown = this.rmbDown = false;
   }

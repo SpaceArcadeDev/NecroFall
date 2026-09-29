@@ -67,6 +67,7 @@ export {
   join_match,
   report_nexus_capture,
   report_necrophage_victory,
+  report_surrender,
 } from './game/simulation';
 export { send_match_msg } from './game/relay';
 export { report_violation } from './game/verification';

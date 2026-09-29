@@ -215,6 +215,7 @@ export const MatchPlayer = __t.object("MatchPlayer", {
   left: __t.bool(),
   kickReason: __t.string(),
   ready: __t.bool(),
+  surrendered: __t.bool(),
 });
 export type MatchPlayer = __Infer<typeof MatchPlayer>;
 

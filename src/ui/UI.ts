@@ -105,6 +105,13 @@ export interface UICallbacks {
   toggleReady(): void;
   resume(): void;
   leaveMatch(): void;
+  /**
+   * RANKED (user ask 2026-09-30): the Esc panel's INITIATE SURRENDER — opens the colony-wide
+   * forfeit vote. Anywhere else the panel keeps LEAVE MATCH (Game routes the fallback itself).
+   */
+  surrender(): void;
+  /** The surrender vote panel's ✓ (yes) / ✕ (no): the local seat's answer to the vote. */
+  surrenderVote(yes: boolean): void;
   /** The HUD settings cog — opens the same panel Esc does. */
   openMenu(): void;
   /**
@@ -182,6 +189,30 @@ export interface HudData {
   prompt: string;
   promptKey: string;
   conn: string;
+  /** RANKED match (user ask 2026-09-30): the Esc panel offers INITIATE SURRENDER, not LEAVE. */
+  ranked?: boolean;
+  /**
+   * Esc menu open right now. The surrender panel docks to the RIGHT edge while it is, so the two
+   * never fight over the same slice of screen.
+   */
+  paused?: boolean;
+  /**
+   * RANKED surrender vote for the LOCAL colony (user ask 2026-09-30): the left-centre panel.
+   * One dash per live seat — green voted to surrender, red voted to fight on, dim not yet voted.
+   */
+  surrender?: {
+    colonyName: string;
+    fromName: string;
+    votes: ('yes' | 'no' | 'pending')[];
+    yes: number;
+    no: number;
+    /** Yes-votes needed for the strict majority. */
+    need: number;
+    /** The local player's own vote (null = still to vote). */
+    mine: 'yes' | 'no' | null;
+    /** Seconds left before the vote lapses. */
+    seconds: number;
+  } | null;
   /** Room code of the running match (empty offline) — shown in the Esc menu so friends can join. */
   roomCode: string;
   /** Official server matches have no room code: the share row shows these instead (match id label,
@@ -559,6 +590,22 @@ const ICON_EXIT =
   '<path d="M13.5 4.5h-7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7"/>' +
   '<path d="M16.5 8.5 20 12l-3.5 3.5"/><path d="M20 12H9.5"/></svg>';
 
+/** INITIATE SURRENDER (ranked) — a white flag: the colony is offering the field. */
+const ICON_FLAG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M6.2 21.4V3.2"/>' +
+  '<path d="M6.2 4.2c2.3-1.5 4.8-1.6 7.1-.5 1.9.9 3.9 1 6.3.2v7.4c-2.4.8-4.4.7-6.3-.2-2.3-1.1-4.8-1-7.1.5z"/></svg>';
+
+/** The surrender vote's YES answer. */
+const ICON_CHECK =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M4.6 12.7l5 5L19.4 7.3"/></svg>';
+
+/** The surrender vote's NO answer. */
+const ICON_VOTE_X =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round">' +
+  '<path d="M6.4 6.4l11.2 11.2M17.6 6.4 6.4 17.6"/></svg>';
+
 /** LOBBY — copy: two stacked cards, the universal "duplicate" mark. */
 const ICON_COPY =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
@@ -706,6 +753,25 @@ export class UI {
   private respawnModal!: HTMLElement;
   private respawnKiller!: HTMLElement;
   private respawnTimer!: HTMLElement;
+  // RANKED surrender vote (user ask 2026-09-30): the left-centre panel — built once, patched
+  // from HudData every frame, never rebuilt (the flicker rule the other modals learned).
+  private votePanel!: HTMLElement;
+  private voteSub!: HTMLElement;
+  private voteDashes!: HTMLElement;
+  private voteCount!: HTMLElement;
+  private voteTimer!: HTMLElement;
+  private voteBtnYes!: HTMLButtonElement;
+  private voteBtnNo!: HTMLButtonElement;
+  private voteSig = '';
+  private voteDashSig = '';
+  /** Last docked state of the vote panel (see HudData.paused). */
+  private voteDocked = false;
+  /** The Esc panel's exit button and its RANKED twin (label/icon swap, see renderPausePanel). */
+  private leaveBtn!: HTMLButtonElement;
+  private leaveLbl!: HTMLElement;
+  private leaveIco!: HTMLElement;
+  private pauseRanked = false;
+  private pauseLeaveSig = '';
   private pauseModal!: HTMLElement;
   private pauseStats!: HTMLElement;
   private pausePerks!: HTMLElement;
@@ -2495,6 +2561,14 @@ export class UI {
         : 0;
     setStyle(this.timerRail, 'width', `${timeFrac * 100}%`);
 
+    // ---- RANKED surrender vote: the left-centre panel (user ask 2026-09-30)
+    const docked = Boolean(d.paused);
+    if (docked !== this.voteDocked) {
+      this.voteDocked = docked;
+      this.votePanel.classList.toggle('docked', docked);
+    }
+    this.updateSurrenderPanel(d.surrender ?? null);
+
     // ---- tower symbols: owner ink + capture arc + single status glyph
     for (let i = 0; i < this.towerWidget.length; i++) {
       const sym = this.towerWidget[i];
@@ -3611,6 +3685,33 @@ export class UI {
     this.respawnModal.appendChild(rcard);
     this.root.appendChild(this.respawnModal);
 
+    // ---- RANKED surrender vote (user ask 2026-09-30): the colony-wide forfeit vote pinned at
+    // the LEFT CENTRE, over the fight — one green/red dash per live seat, with ✓ / ✕ to answer.
+    // Removed from the flow the moment the vote resolves or lapses; `updateSurrenderPanel`
+    // patches it (never rebuilds) from HudData.surrender.
+    const sv = el('div', 'svote hidden');
+    sv.appendChild(el('div', 'svote-head', 'SURRENDER VOTE'));
+    this.voteSub = el('div', 'svote-sub', '');
+    sv.appendChild(this.voteSub);
+    const svRow = el('div', 'svote-row');
+    this.voteDashes = el('div', 'svote-dashes');
+    svRow.appendChild(this.voteDashes);
+    this.voteCount = el('div', 'svote-count', '');
+    svRow.appendChild(this.voteCount);
+    sv.appendChild(svRow);
+    const svBtns = el('div', 'svote-btns');
+    this.voteBtnYes = button('', 'svote-btn yes', () => this.cbs.surrenderVote(true));
+    this.voteBtnYes.innerHTML = ICON_CHECK;
+    this.voteBtnNo = button('', 'svote-btn no', () => this.cbs.surrenderVote(false));
+    this.voteBtnNo.innerHTML = ICON_VOTE_X;
+    svBtns.appendChild(this.voteBtnYes);
+    svBtns.appendChild(this.voteBtnNo);
+    sv.appendChild(svBtns);
+    this.voteTimer = el('div', 'svote-timer', '');
+    sv.appendChild(this.voteTimer);
+    this.votePanel = sv;
+    this.root.appendChild(sv);
+
     // ---- Esc menu: a slim side panel so the match stays visible and keeps running.
     this.pauseModal = el('div', 'modal hidden pause');
     const pcard = el('div', 'modal-card pause-card');
@@ -3663,6 +3764,7 @@ export class UI {
       <div class="pc"><span class="kbd">W A S D</span> move</div>
       <div class="pc"><span class="kbd">SPACE</span> jump</div>
       <div class="pc"><span class="kbd">SHIFT</span> dash</div>
+      <div class="pc"><span class="kbd">R</span> recall</div>
       <div class="pc"><span class="kbd">SKILL</span> left mouse / E</div>
       <div class="pc"><span class="kbd">ULTIMATE</span> right mouse / Q</div>
       <div class="pc"><span class="kbd">ARROWS</span> aim (replaces cursor)</div>
@@ -3689,7 +3791,15 @@ export class UI {
     // with no way at all to reclaim the screen (ui/Fullscreen.ts).
     this.fsBtn = mkPauseBtn('pb-fs', ICON_EXPAND, 'FULLSCREEN', () => void this.onFullscreenToggle());
     pbtns.appendChild(this.fsBtn);
-    pbtns.appendChild(mkPauseBtn('pb-leave', ICON_EXIT, 'LEAVE MATCH', () => this.cbs.leaveMatch()));
+    // RANKED replaces the exit with the surrender vote (user ask 2026-09-30): the same seat in
+    // the panel flips between LEAVE MATCH (red — gone now) and INITIATE SURRENDER (amber — the
+    // colony votes). The click routes by the flag the HUD data set this frame.
+    this.leaveBtn = mkPauseBtn('pb-leave', ICON_EXIT, 'LEAVE MATCH', () =>
+      this.pauseRanked ? this.cbs.surrender() : this.cbs.leaveMatch()
+    );
+    this.leaveLbl = this.leaveBtn.querySelector('.pb-lbl') as HTMLElement;
+    this.leaveIco = this.leaveBtn.querySelector('.pb-ico') as HTMLElement;
+    pbtns.appendChild(this.leaveBtn);
     pbody.appendChild(pbtns);
     // Filled in by refreshFullscreenHint(): says why fullscreen cannot work, instead of the button
     // silently doing nothing (which is what "fullscreen is broken on Safari" always was).
@@ -3791,8 +3901,63 @@ export class UI {
     if (ico) ico.innerHTML = mode === 'none' ? ICON_EXPAND : ICON_COLLAPSE;
   }
 
+  /**
+   * The ranked SURRENDER VOTE panel (user ask 2026-09-30): a notice pinned at the left centre
+   * while the local colony's vote is open — the caller's name, one dash per live seat (green =
+   * voted to surrender, red = voted to fight, dim = still to answer), the yes/needed count and
+   * the ✓ / ✕ answers. Diff-gated so the per-frame HUD write never rebuilds the DOM.
+   */
+  private updateSurrenderPanel(d: HudData['surrender']): void {
+    const panel = this.votePanel;
+    if (!panel) return;
+    if (!d) {
+      if (this.voteSig !== '') {
+        this.voteSig = '';
+        this.voteDashSig = '';
+        panel.classList.add('hidden');
+      }
+      return;
+    }
+    panel.classList.remove('hidden');
+    const sig = `${d.fromName}|${d.votes.join(',')}|${d.mine ?? ''}|${Math.ceil(d.seconds)}|${d.yes}|${d.need}`;
+    if (sig === this.voteSig) return;
+    this.voteSig = sig;
+    setText(this.voteSub, `${d.fromName} calls a surrender — ${d.colonyName} votes`);
+    const dashSig = d.votes.join(',');
+    if (dashSig !== this.voteDashSig) {
+      this.voteDashSig = dashSig;
+      this.voteDashes.textContent = '';
+      for (const v of d.votes) {
+        const dash = document.createElement('i');
+        dash.className = v === 'yes' ? 'yes' : v === 'no' ? 'no' : '';
+        this.voteDashes.appendChild(dash);
+      }
+    }
+    setText(this.voteCount, `${d.yes} / ${d.need} TO FORFEIT`);
+    const answered = d.mine !== null;
+    this.voteBtnYes.disabled = answered;
+    this.voteBtnNo.disabled = answered;
+    this.voteBtnYes.classList.toggle('on', d.mine === 'yes');
+    this.voteBtnNo.classList.toggle('on', d.mine === 'no');
+    setText(this.voteTimer, `VOTES CLOSE IN ${Math.max(0, Math.ceil(d.seconds))}s`);
+  }
+
   /** Live snapshot of the player's run, rendered into the Esc panel every frame. */
   private renderPausePanel(d: HudData): void {
+    // RANKED (user ask 2026-09-30): the exit button becomes the surrender vote opener — and it
+    // locks itself while a vote is open, so nobody can start a second one by accident.
+    const ranked = Boolean(d.ranked);
+    const voteOpen = ranked && Boolean(d.surrender);
+    const leaveSig = `${ranked}|${voteOpen}`;
+    if (leaveSig !== this.pauseLeaveSig) {
+      this.pauseLeaveSig = leaveSig;
+      this.pauseRanked = ranked;
+      this.leaveBtn.classList.toggle('pb-surrender', ranked);
+      this.leaveBtn.classList.toggle('pb-leave', !ranked);
+      this.leaveBtn.disabled = voteOpen;
+      this.leaveLbl.textContent = voteOpen ? 'SURRENDER VOTE OPEN' : ranked ? 'INITIATE SURRENDER' : 'LEAVE MATCH';
+      this.leaveIco.innerHTML = ranked ? ICON_FLAG : ICON_EXIT;
+    }
     // Room code first: it is the one line that matters to the friends waiting to drop in. An
     // official server match has no room at all — it shows its match id and join link instead
     // (HudData.roomLabel/roomHint/roomCopy, filled by Game.updateHud).

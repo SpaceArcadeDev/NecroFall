@@ -20,6 +20,7 @@ import {
   COLONY_CAP,
   EVENT_NEXUS_CAPTURED,
   EVENT_PLAYER_SPAWNED,
+  EVENT_SURRENDER,
   MATCH_EMPTY_GRACE_US,
   MATCH_FINISHED,
   MATCH_MAX_DURATION_US,
@@ -416,6 +417,7 @@ export const join_match = spacetimedb.reducer(
       stats_reported_at: 0n,
       updated_at: now,
       left: false,
+      surrendered: false,
       kick_reason: '',
       ready: false,
     });
@@ -429,8 +431,10 @@ export const join_match = spacetimedb.reducer(
  * LEAVE MATCH (plan §27/§71) — abandon my live seat. The row stays as a tombstone: the sim
  * skips it (exactly like a disconnect), it stops counting for "you are already in a match",
  * and `finishMatchInternal` earns it no rewards or history. The match itself is NOT concluded
- * here: the tick's rejoin grace decides (30 s with zero connected players = necrophages win),
- * so a friend who only dropped can still come back.
+ * here UNLESS this was the LAST seat (user ask 2026-09-30): the 30 s rejoin grace exists for
+ * DROPPED sockets, and every seat that pressed the button can never come back — so a match
+ * whose last player leaves by choice ends at once (a friend who only dropped still gets the
+ * full grace to rejoin).
  */
 export const leave_match = spacetimedb.reducer((ctx) => {
   let seat: any | undefined;
@@ -449,6 +453,12 @@ export const leave_match = spacetimedb.reducer((ctx) => {
   // match row finally finished. Leaving IS the exit — flip it here.)
   const presence = ctx.db.player_presence.identity.find(ctx.sender);
   if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_ONLINE, last_seen: ctx.timestamp });
+  // EVERY seat is a tombstone now: nobody can ever rejoin (rejoin refuses `left` seats), so the
+  // rejoin grace would just keep a dead sim alive for 30 s after the last player walked out.
+  const remaining = [...ctx.db.match_player.match_id.filter(seat.match_id)].filter((p: any) => !p.left);
+  if (remaining.length === 0) {
+    finishMatchInternal(ctx, seat.match_id, null, 'ALL PLAYERS LEFT — MATCH ENDED');
+  }
 });
 
 /**
@@ -508,4 +518,47 @@ export const report_necrophage_victory = spacetimedb.reducer((ctx) => {
   if (!target) throw new SenderError('You are not in a running match.');
   // `finishMatchInternal` writes the MATCH ENDED event itself (winner 255 = nobody).
   finishMatchInternal(ctx, target.match_id, null, 'NECROPHAGES WIN');
+});
+
+/**
+ * REPORT SURRENDER (user ask 2026-09-30) — a RANKED colony's vote to forfeit passed: the whole
+ * colony leaves the fight at once. The caller must hold a live seat of the match; every non-left
+ * seat OF THE CALLER'S COLONY is tombstoned with `surrendered = true`, so unlike a plain leave it
+ * is counted by `finishMatchInternal` as a recorded LOSS (rank star, W/L record, history) while
+ * the match itself keeps running for the remaining colonies. The vote itself is client-side
+ * (majority of the colony, exactly like the client-reported Nexus capture) — the server verifies
+ * the caller IS a member and that the match is ranked, and is idempotent: a second report from a
+ * teammate finds no live seat and returns.
+ */
+export const report_surrender = spacetimedb.reducer((ctx) => {
+  let seat: any | undefined;
+  for (const s of ctx.db.match_player.identity.filter(ctx.sender)) {
+    if (s.left) continue;
+    const m = ctx.db.match.match_id.find(s.match_id);
+    if (m && m.status === MATCH_RUNNING) { seat = s; break; }
+  }
+  if (!seat) return; // idempotent — a surrendered team-mate reports first and wins
+  const m = ctx.db.match.match_id.find(seat.match_id);
+  if (!m || !m.ranked) throw new SenderError('Surrender is a ranked-match vote.');
+  for (const p of [...ctx.db.match_player.match_id.filter(seat.match_id)]) {
+    if (p.left || p.colony !== seat.colony) continue;
+    ctx.db.match_player.id.update({ ...p, left: true, connected: false, surrendered: true, updated_at: ctx.timestamp });
+    const presence = ctx.db.player_presence.identity.find(p.identity);
+    if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_ONLINE, last_seen: ctx.timestamp });
+  }
+  ctx.db.match_event.insert({
+    id: 0,
+    match_id: seat.match_id,
+    kind: EVENT_SURRENDER,
+    a: seat.colony,
+    b: 0,
+    x: 0, y: 0, z: 0,
+    at: ctx.timestamp,
+  });
+  // The surrender EMPTIED the field (nobody is left to fight): conclude at once — the tick's
+  // zero-connection grace would otherwise sit on a match no one can ever rejoin.
+  const remaining = [...ctx.db.match_player.match_id.filter(seat.match_id)].filter((p: any) => !p.left);
+  if (remaining.length === 0) {
+    finishMatchInternal(ctx, seat.match_id, null, 'SURRENDER — THE FIELD IS EMPTY');
+  }
 });

@@ -41,4 +41,5 @@ export default __t.row({
   left: __t.bool(),
   kickReason: __t.string().name("kick_reason"),
   ready: __t.bool(),
+  surrendered: __t.bool(),
 });

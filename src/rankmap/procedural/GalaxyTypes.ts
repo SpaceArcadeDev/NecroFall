@@ -53,14 +53,23 @@ export const MORPHOLOGY_LABELS: Record<GalaxyMorphology, string> = {
   FLOCCULENT: 'FLOCCULENT',
 };
 
+/**
+ * Flavour labels (user 2026-09-29: "some of the poi icons name very confusing... why
+ * is there a colony stronghold when it's an undiscovered planet?"). Every name is a
+ * trait of the GALAXY ITSELF — never a claim about occupation, discovery or content
+ * (the halo tints already speak the state language; these are seeded flavour only).
+ * Old names implied things: COLONY STRONGHOLD → a player colony, DISCOVERY CLUSTER →
+ * undiscovered worlds, NECROPHAGE SWARM → an active infestation. 'STANDARD GALAXY'
+ * deliberately names the no-icon case so an icon-less galaxy reads as intentional.
+ */
 export const POI_LABELS: Record<GalaxyPoi, string> = {
-  NORMAL: 'OPEN CLUSTER',
-  NEBULA: 'NEBULA FIELD',
-  DEAD: 'DEAD GALAXY',
-  CORRUPTED: 'CORRUPTED SPIRAL',
-  STRONGHOLD: 'COLONY STRONGHOLD',
-  SWARM: 'NECROPHAGE SWARM',
-  DISCOVERY: 'DISCOVERY CLUSTER',
+  NORMAL: 'STANDARD GALAXY',
+  NEBULA: 'NEBULA',
+  DEAD: 'DEAD CORE',
+  CORRUPTED: 'CORRUPTED',
+  STRONGHOLD: 'ANCIENT BASTION',
+  SWARM: 'SWARM REMNANTS',
+  DISCOVERY: 'FRONTIER CLUSTER',
 };
 
 /**

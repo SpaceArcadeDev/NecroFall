@@ -122,7 +122,7 @@ function descriptorFor(universeSeed: number, ring: number, galaxyId: number): Ga
       name: galaxyName(seed),
       starType: 'YELLOW', starColor: '#ffe08a',
       systemCount: ringConfig(ring).systemsMin,
-      nebula: 'NONE', nebulaColor: null, poi: 'NORMAL', poiLabel: 'OPEN CLUSTER',
+      nebula: 'NONE', nebulaColor: null, poi: 'NORMAL', poiLabel: 'STANDARD GALAXY',
       radius: 30, morphology: 'SPIRAL', rotation: r() * TAU, armCount: 2 + Math.floor(r() * 3),
       armTightness: 3, bulgeStrength: 1, discThickness: 0.06, axisRatio: 1, brightness: 1,
     };

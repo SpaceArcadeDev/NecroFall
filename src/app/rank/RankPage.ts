@@ -430,7 +430,7 @@ export class RankPage {
     return galaxyAt(this.universeSeed(), home.gx, home.gy) ?? {
       ring: this.myRing(), gx: home.gx, gy: home.gy, galaxyId: 0, seed: 0, name: 'FRONTIER',
       starType: 'YELLOW', starColor: '#ffe08a', systemCount: 6, nebula: 'NONE', nebulaColor: null,
-      poi: 'NORMAL', poiLabel: 'OPEN CLUSTER', radius: 40,
+      poi: 'NORMAL', poiLabel: 'STANDARD GALAXY', radius: 40,
       morphology: 'SPIRAL', rotation: 0, armCount: 2, armTightness: 3,
       bulgeStrength: 1, discThickness: 0.06, axisRatio: 1, brightness: 1,
     };

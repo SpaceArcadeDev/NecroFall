@@ -1322,7 +1322,9 @@ export class Game {
    * Adopt the P2P role the authority implies: authority = host (simulates + broadcasts),
    * anyone else = client (reports to the authority). Runs on every provider push, so a
    * mid-match authority move (the old authority dropped) flips the roles exactly like a P2P
-   * host migration: clocks reset, the new authority starts snapshotting immediately.
+   * host migration: clocks reset, the new authority starts snapshotting immediately. The flip
+   * is SILENT in official matches (user ask 2026-09-29): no banner, no toast — whoever ends up
+   * carrying the match simply keeps playing.
    */
   private applyOfficialAuthority(id: string): void {
     if (!this.officialMatch) return;
@@ -1337,14 +1339,9 @@ export class Game {
       this.resetClocks();
       this.snapshotT = 0; // became the authority: push a full snapshot at once
       this.relaySig = ''; // became a client: the next pose goes out immediately
-      if (this.phase === 'playing') {
-        if (amAuthority) {
-          this.ui.banner('YOU ARE NOW THE AUTHORITY', 2600);
-          this.ui.toast('The other survivor dropped — you carry this match now.', 4200);
-        } else {
-          this.ui.banner('AUTHORITY MOVED — MATCH CONTINUES', 2400);
-        }
-      }
+      // SILENT handover (user ask 2026-09-29): official matches get no "you are now the
+      // authority" banner, no "the other survivor dropped" toast and no "authority moved"
+      // callout — the roles flip seamlessly and the match just continues.
     }
   }
 

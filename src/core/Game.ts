@@ -2912,7 +2912,9 @@ export class Game {
         return;
       }
       case 'st': {
-        if (!this.isHost) return;
+        // P2P: only the host receives client reports (clients get poses via snapshots).
+        // OFFICIAL: every seat broadcasts its stream to everyone, so clients apply it here too.
+        if (!this.isHost && !this.officialMatch) return;
         const net = msg.state as PlayerNet;
         if (!net) return;
         let p = this.players.get(net.id);
@@ -3329,6 +3331,11 @@ export class Game {
         if (Number.isFinite(sent)) this.hostSync.observe(sent, arrival);
         const list = (msg.pl ?? []) as PlayerNet[];
         for (const net of list) {
+          // OFFICIAL: remote seats are driven by their OWN 15 Hz streams over the relay (see
+          // networkTick), so the snapshot only reconciles the RECEIVER'S OWN seat (hp/alive/
+          // shields) — applying remote entries too would run every pose through a second,
+          // slower stream and resample the motion twice.
+          if (this.officialMatch && net.id !== this.net.myId) continue;
           let p = this.players.get(net.id);
           if (!p) {
             const r = this.roster.get(net.id);
@@ -4751,12 +4758,30 @@ export class Game {
     // timeline that network delay does not distort.
     const now = nowSec();
     if (this.officialMatch) {
-      // OFFICIAL (2026-09-29): the transport is the SpacetimeDB relay but the ROLES are P2P's.
-      // The authority broadcasts the same `s` snapshot a P2P host does (through `net.broadcast`
-      // → relay); clients stream their full pose+stats (`toNet` — hp, level, mutations, shields
-      // included) into the authority at CONFIG.netTickOfficialPose, skipping unchanged frames
-      // and falling back to a 1 Hz heartbeat. `sendLocalState` keeps feeding the server's own
-      // record (input validation + the seat's liveness) at its throttled cadence.
+      // OFFICIAL (2026-09-29 v2): EVERY seat — authority included — broadcasts its own full
+      // pose+stats stream (`toNet` — hp, level, mutations, shields included) straight to the
+      // whole relay channel at CONFIG.netTickOfficialPose: ONE SpacetimeDB hop, like a P2P
+      // client's report to the host but delivered to every peer at once. The authority's
+      // snapshots then only reconcile each receiver's OWN seat (see the `s` handler). The old
+      // route — client → authority, then the authority's next 12 Hz snapshot → peers — cost a
+      // second round trip plus the snapshot tick on top, which read as "very delayed" movement.
+      // `sendLocalState` keeps feeding the server's own record (input validation + liveness).
+      if (this.localPlayer) {
+        this.stateT -= dt;
+        if (this.stateT <= 0) {
+          this.stateT = 1 / CONFIG.netTickOfficialPose;
+          const state = this.localPlayer.toNet(now);
+          // Sends when anything the other side renders CHANGED — pose, hp, level, mutations,
+          // shields, frozen/blitz — plus a 1 Hz idle heartbeat. That is what keeps hp/level/
+          // mutation live on every other screen the frame they change.
+          const sig = `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
+          if (sig !== this.relaySig || now - this.relaySentAt > 1) {
+            this.relaySig = sig;
+            this.relaySentAt = now;
+            this.net.broadcast({ t: 'st', time: now, state });
+          }
+        }
+      }
       if (this.isHost) {
         this.snapshotT -= dt;
         if (this.snapshotT <= 0) {
@@ -4772,21 +4797,6 @@ export class Game {
             tw: this.towers.serialize(),
             pk: this.pickups.map(pk => ({ id: pk.id, x: pk.mesh.position.x, y: pk.mesh.position.y, z: pk.mesh.position.z, nt: pk.nt, rare: pk.rare ? 1 : 0, tk: pk.taken ? 1 : 0 })),
           });
-        }
-      } else {
-        this.stateT -= dt;
-        if (this.stateT <= 0 && this.localPlayer) {
-          this.stateT = 1 / CONFIG.netTickOfficialPose;
-          const state = this.localPlayer.toNet(now);
-          // Sends when anything the other side renders CHANGED — pose, hp, level, mutations,
-          // shields, frozen/blitz — plus a 1 Hz idle heartbeat. That is what keeps hp/level/
-          // mutation live on every other screen the frame they change.
-          const sig = `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
-          if (sig !== this.relaySig || now - this.relaySentAt > 1) {
-            this.relaySig = sig;
-            this.relaySentAt = now;
-            this.net.sendToHost({ t: 'st', time: now, state });
-          }
         }
       }
       // Server-side record / liveness feed (the bridge throttles `submitInput` + `syncPose`).

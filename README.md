@@ -101,9 +101,10 @@ MAIN MENU → CREATE/JOIN LOBBY → LOBBY → HOST STARTS
 generations deep** — and each generation is smaller, frailer, hits softer and is worth less XP, so
   a broke-apart Ooze line ends after 14 bodies instead of growing forever. The *Brood* ability works
 the same way: it bursts into swarmlings once, and those swarmlings cannot brood again.
-* **Necromutation** level-ups give a choice of 3 perks (5s, you are invulnerable and frozen while
-  choosing) and pay off like a Necrotech upgrade: an **energy burst at auto-attack range** (not the
-  doubled Necrotech Burst radius), a **full heal** and a **full Skill / Ultimate / dash refresh**.
+* **Necromutation** level-ups give a choice of 3 perks (5s — you are invulnerable and **keep your
+  momentum and trajectory** while choosing) and pay off like a Necrotech upgrade: an **energy burst
+  at auto-attack range** (not the doubled Necrotech Burst radius), a **full heal** and a **full
+  Skill / Ultimate / dash refresh**.
   Perks include mobility and defensive picks such as **Winged Sinew** (+1 jump), **Split
   Chamber** (+1 projectile per volley), **Necrotic Ward** (a regenerating damage-soaking shield)
   and **Ward Mastery** (bigger shield).

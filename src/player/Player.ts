@@ -1591,17 +1591,25 @@ export class Player {
     }
 
     if (this.frozen) {
-      // invulnerable selection state: hover in place. The picker eats gameplay input while it is
-      // up: a click aimed at a card must not still be sitting in the queue when the menu closes,
-      // or the player would fire an ability the instant control comes back.
+      // Invulnerable selection state (Necromutation perk picker / Necrotech offer). The picker
+      // eats gameplay INPUT while it is up — a click aimed at a card must not still be sitting in
+      // the queue when the menu closes — but it no longer eats the BODY'S MOTION (user ask
+      // 2026-09-30: a runner or a mid-air body used to stop dead / get yanked straight down the
+      // moment a picker opened). The trajectory simply keeps running: gravity and the surface
+      // handling below act on the velocity UNTOUCHED, so a run keeps gliding and a jump keeps its
+      // arc for as long as the choice is up. Steering, dashes, jumps and attacks stay suspended.
       g.input.clearActions();
-      this.slam = null;
-      this.velocity.multiplyScalar(Math.max(0, 1 - dt * 5));
-      this.integrate(dt);
-      this.tickSkillCharges(dt);
-      this.ultCd = Math.max(0, this.ultCd - dt);
-      this.tickBuffs(dt);
-      return;
+      // A committed Siegebreaker arc is the one exception that still runs (the slam block below):
+      // its impact is already scheduled, so the dive flies on to its own landing instead of
+      // hovering and then dropping.
+      if (!this.slam) {
+        this.velocity.addScaledVector(this.up, -CONFIG.player.gravity * dt);
+        this.integrate(dt);
+        this.tickSkillCharges(dt);
+        this.ultCd = Math.max(0, this.ultCd - dt);
+        this.tickBuffs(dt);
+        return;
+      }
     }
 
     // RECALL lock (user ask 2026-09-29): anything queued while the channel holds is STALE — the
@@ -2028,8 +2036,10 @@ export class Player {
         if (this.isLocal && this.airTime > 0.9) g.effects.shake(0.12);
         // QUAKEFALL (Necromutation): a genuine leap ends in a shockwave, not just a puff of dust.
         // Fired from the OWNING peer, so a client's landing still takes the normal
-        // host-authoritative damage route (see AbilitySystem 'quakefall').
-        if (this.isLocal && this.mods.landShock > 0 && this.airTime > 0.45) {
+        // host-authoritative damage route (see AbilitySystem 'quakefall'). A frozen picker never
+        // borrows the passive: the arc may LAND while a choice is open (the body keeps flying),
+        // but the landing itself deals no damage.
+        if (this.isLocal && !this.frozen && this.mods.landShock > 0 && this.airTime > 0.45) {
           g.abilities.fireEvent(this, 'quakefall');
         }
       }

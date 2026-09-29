@@ -193,6 +193,17 @@ export function subscribePlanetDetail(planetKey: string): void {
   ensureScope(`rank-planet:${planetKey}`, [`SELECT * FROM planet_control_history WHERE planet_key = '${planetKey}'`]);
 }
 
+/**
+ * EVERY colony-held world of the season (user ask 2026-09-29: "see a list of all
+ * planets in the 3 colonies' control along with timer"). Controlled rows are the
+ * bounded meaningful subset (each match can only take one world, 72 h shields) —
+ * the per-galaxy scopes alone only ever held the galaxies the client visited, so
+ * a roster that answers "where is my territory" needs this ONE filtered query.
+ */
+export function subscribeTerritory(): void {
+  ensureScope('rank-territory', ['SELECT * FROM ranked_planet WHERE state = 1']);
+}
+
 // ------------------------------------------------------------ scoped discovery (plan §43)
 
 /**

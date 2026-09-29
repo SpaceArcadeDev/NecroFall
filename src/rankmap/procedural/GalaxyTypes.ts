@@ -63,6 +63,23 @@ export const POI_LABELS: Record<GalaxyPoi, string> = {
   DISCOVERY: 'DISCOVERY CLUSTER',
 };
 
+/**
+ * CANVAS GLYPH + COLOUR per POI (plan §55). ONE table: the map draws its markers
+ * from it and the fullscreen info overlay (POI line + legend) reads it too — the
+ * key can never drift from the map. SWARM/DEAD share the red alarm glyph;
+ * STRONGHOLD is the gold flag; CORRUPTED / DISCOVERY / NEBULA wear the teal star
+ * (the hover tooltip's `poiLabel` names which one); NORMAL draws nothing.
+ */
+export function poiVisual(poi: GalaxyPoi): { glyph: string; color: string } {
+  switch (poi) {
+    case 'SWARM': return { glyph: '☣', color: '#ff5d73' };
+    case 'DEAD': return { glyph: '✝', color: '#ff5d73' };
+    case 'STRONGHOLD': return { glyph: '⚑', color: '#ffd166' };
+    case 'NORMAL': return { glyph: '', color: '#7be0c8' };
+    default: return { glyph: '✦', color: '#7be0c8' };
+  }
+}
+
 export interface GalaxyDescriptor {
   ring: number;
   gx: number;

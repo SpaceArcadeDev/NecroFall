@@ -17,6 +17,7 @@ import {
   subscribePlanetDetail,
   subscribeRank,
   subscribeRankGalaxy,
+  subscribeTerritory,
 } from '../spacetimedb/subscriptions';
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
@@ -29,15 +30,17 @@ import { systemAt } from '../../rankmap/procedural/SolarSystemGenerator';
 import { systemPlanetCount as generatedPlanetCount } from '../../rankmap/procedural/SolarSystemGenerator';
 import { galaxyAt } from '../../rankmap/procedural/GalaxyGenerator';
 import { RING_CONFIGS, ringConfig } from '../../rankmap/procedural/RankRingConfig';
-import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from '../../rankmap/procedural/GalaxyTypes';
+import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, POI_LABELS, poiVisual } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankDisplayName, getRankFromStars, rankLabel, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
 import {
   galaxyLocationKey,
   planetLocationKey,
+  relativeTime,
   systemLocationKey,
   toDiscoveryEntry,
   type DiscoveryEntry,
 } from '../../rankmap/DiscoveryTypes';
+import { planetNameFromKey } from '../profile/PlaceNames';
 import {
   buildGalaxyPanel,
   buildPlanetPanel,
@@ -48,7 +51,7 @@ import {
   shieldCountdownText,
   type LocationPanelHost,
 } from './LocationInfoPanel';
-import { calculateDominance } from '../../rankmap/LocationControlSummary';
+import { calculateDominance, COLONY_NONE } from '../../rankmap/LocationControlSummary';
 import {
   createCenterIcon,
   createFullscreenExitIcon,
@@ -57,6 +60,15 @@ import {
 
 /** Live countdown ticks (display only — the server owns expiry). */
 const HOUR_US = 3_600_000_000;
+
+/** A world claimed within the last day still shows > 48 h of its 72 h shield. */
+const FRESH_CAPTURE_REMAIN_US = 48 * HOUR_US;
+
+/** Compact shield timer for the territory list (H:MM:SS → MM:SS → FALLEN). */
+function territoryCountdown(expiresUs: number, nowUs: number): string {
+  const text = shieldCountdownText(expiresUs, nowUs);
+  return text === 'PLANETARY SHIELD FALLEN' ? 'FALLEN' : text;
+}
 
 export class RankPage {
   readonly element: HTMLElement;
@@ -74,6 +86,12 @@ export class RankPage {
   private mapInfoSig = '';
   private statsEl: HTMLElement;
   private boardEl: HTMLElement | null = null;
+  /** TERRITORY overlay (user ask 2026-09-29): all held worlds + live timers. */
+  private territoryEl: HTMLElement | null = null;
+  private territorySig = '';
+  private territoryFilter: 'ALL' | 'MINE' | 'FALLING' = 'ALL';
+  /** The open overlay's countdown spans (one write per changed second). */
+  private territoryCd: { el: HTMLElement; expires: number }[] = [];
   private selection: MapSelection = { level: 'galactic', galaxy: null, system: null, planet: null, selected: null };
   private unsubscribe: () => void = () => undefined;
   private statsTimer = 0;
@@ -260,6 +278,12 @@ export class RankPage {
       discoveriesForPlanet: (planetKey) => this.discoveriesForPlanet(planetKey),
       currentPlayerId: this.ctx.myHex(),
       currentPlayerName: this.me()?.playerName ?? 'SURVIVOR',
+      // "my territory" emphasis (user ask 2026-09-29): every tier rings MY colony's
+      // worlds/motes in the player's own colony colour — resolved ONCE here.
+      myColony: (() => {
+        const mine = this.me();
+        return mine && mine.colony < 3 ? mine.colony : COLONY_NONE;
+      })(),
     };
     this.mapData = data;
     this.map = new GalacticMap(
@@ -272,6 +296,7 @@ export class RankPage {
 
     // ---- subscriptions + render loops
     subscribeRank();
+    subscribeTerritory(); // every held world (the TERRITORY overlay's source)
     subscribeRankGalaxy(this.myGalaxy().galaxyId || 0);
     this.unsubscribe = ClientCache.shared.onChange(() => this.onData());
     this.renderHead();
@@ -292,6 +317,8 @@ export class RankPage {
       this.renderBreadcrumb();
       this.renderRail(); // the viewed band changes as the camera pans (sig-guarded)
       this.renderMapInfo(); // …and so does the fullscreen info card
+      if (this.territoryEl) this.renderTerritory(); // new rows land while it's open
+      this.refreshTerritoryCountdowns();
     }, 500);
   }
 
@@ -307,6 +334,7 @@ export class RankPage {
     }
     this.map.dispose();
     this.boardEl?.remove();
+    this.closeTerritory();
   }
 
   update(): void {
@@ -537,12 +565,49 @@ export class RankPage {
       const cfg = RING_CONFIGS[galaxy.ring] ?? RING_CONFIGS[0];
       card.appendChild(el('div', 'rk-mapinfo-kicker', `${galaxy.morphology.replace(/_/g, ' ')} · ${cfg.name} BAND`));
       card.appendChild(el('div', 'rk-mapinfo-title', galaxy.name.toUpperCase()));
+      // the selected galaxy's OWN POI, named (user 2026-09-29: "so that users can
+      // better understand") — the glyph matches the marker over its face, the
+      // label spells out what the icon means.
+      if (galaxy.poi !== 'NORMAL') {
+        const pv = poiVisual(galaxy.poi);
+        const line = el('div', 'rk-mapinfo-poi');
+        line.innerHTML = `<b style="color:${pv.color}">${pv.glyph}</b> ${galaxy.poiLabel}`;
+        card.appendChild(line);
+      }
       const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names });
       card.appendChild(controlBlock(summary, { kicker: 'TERRITORY', compact: true }));
       card.appendChild(
         discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs(), max: MAX_ROWS })
       );
     }
+    // MAP ICON LEGEND (user 2026-09-29): the glyphs drawn above galaxy faces,
+    // spelled out in small text — colours come from the SAME `poiVisual` table the
+    // canvas draws with, so the key can never drift from the map.
+    const legend = el('div', 'rk-mapinfo-legend');
+    legend.appendChild(el('div', 'rk-mapinfo-legend-head', 'MAP ICONS'));
+    const legendRows = [
+      { poi: 'SWARM', label: POI_LABELS.SWARM },
+      { poi: 'DEAD', label: POI_LABELS.DEAD },
+      { poi: 'STRONGHOLD', label: POI_LABELS.STRONGHOLD },
+      { poi: 'NEBULA', label: 'NEBULA · CORRUPTED · DISCOVERY' },
+    ] as const;
+    for (const row of legendRows) {
+      const pv = poiVisual(row.poi);
+      const line = el('div', 'rk-mapinfo-legend-row');
+      line.innerHTML = `<b style="color:${pv.color}">${pv.glyph}</b><span>${row.label}</span>`;
+      legend.appendChild(line);
+    }
+    // MY TERRITORY spelling-out (user ask 2026-09-29): the pulsing rings and the
+    // fresh-conquest pennant have meanings — name them in my own colony colour.
+    const mc = this.me();
+    if (mc && mc.colony < 3) {
+      const line = el('div', 'rk-mapinfo-legend-row');
+      line.innerHTML =
+        `<b style="color:${COLONIES[mc.colony].css}">${COLONIES[mc.colony].symbol}</b>` +
+        `<span>YOUR COLONY — RINGED WORLDS · FRESH CONQUESTS</span>`;
+      legend.appendChild(line);
+    }
+    card.appendChild(legend);
     this.mapInfoEl.appendChild(card);
     this.mapInfoEl.classList.remove('hidden');
   }
@@ -574,7 +639,10 @@ export class RankPage {
     const last = history[0];
     const lastTxt = last ? `${last.delta > 0 ? '+' : ''}${last.delta} ★` : '—';
     const lastCls = last ? (last.delta > 0 ? 'up' : last.delta < 0 ? 'down' : 'flat') : 'flat';
-    const sig = `${stars}|${seasonId}|${streak}|${record}|${lastTxt}`;
+    // LAST-WORLD deep link (user ask 2026-09-29: "if I've won a game, it's hard to
+    // find back that planet") — the match's planet key is stored on the history row.
+    const lastKey = last?.planetKey && parsePlanetKey(last.planetKey) ? last.planetKey : '';
+    const sig = `${stars}|${seasonId}|${streak}|${record}|${lastTxt}|${lastKey}|${history.length}`;
     if (sig === this.headSig) return;
     this.headSig = sig;
     // The header (user ask): the gradient wordmark reads RANK — like the PLAY title —
@@ -609,20 +677,33 @@ export class RankPage {
       `<span class="rk-colony-ico" data-colony-ico>◆</span>` +
       `<b data-colony-name>—</b>` +
       `</div>` +
+      `<button class="rk-btn rk-btn-ico" data-act="territory" title="Territory — every held world with its timer" aria-label="Territory list">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8"/><path d="M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/></svg>` +
+      `</button>` +
       `<button class="rk-btn rk-btn-ico" data-act="board" title="Colony leaderboard" aria-label="Colony leaderboard">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11"/><path d="M12 20V4"/><path d="M19 20v-6"/></svg>` +
       `</button>` +
       `</div>`;
-    // The expandable details: win/loss record, last match, stars to next rank.
+    // The expandable details: win/loss record, last match, stars to next rank — plus
+    // a one-tap flight back to the world of the newest battle (user ask).
     this.recordEl.innerHTML =
       `<div class="rk-record-grid">` +
       `<div class="rk-record-cell"><span>RECORD</span><b>${record}</b></div>` +
       `<div class="rk-record-cell"><span>LAST MATCH</span><b class="${lastCls}">${lastTxt}</b></div>` +
       `<div class="rk-record-cell"><span>TO NEXT RANK</span><b>${toNext}</b></div>` +
       `<div class="rk-record-cell"><span>BATTLES</span><b>${history.length}</b></div>` +
-      `</div>`;
+      `</div>` +
+      (lastKey
+        ? `<button class="rk-record-jump" data-act="lastworld">` +
+          `VIEW ${(planetNameFromKey(this.universeSeed(), lastKey) ?? 'LAST WORLD').toUpperCase()} ▸</button>`
+        : '');
+    this.stripEl.querySelector('[data-act="territory"]')?.addEventListener('click', () => this.toggleTerritory());
     this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());
     this.stripEl.querySelector('[data-act="record"]')?.addEventListener('click', () => this.toggleRecord());
+    this.recordEl.querySelector('[data-act="lastworld"]')?.addEventListener('click', () => {
+      this.closeRecord();
+      this.jumpToPlanetKey(lastKey);
+    });
     this.colonySig = '';
     this.renderColony();
   }
@@ -651,6 +732,11 @@ export class RankPage {
   private toggleRecord(): void {
     const open = this.recordEl.classList.toggle('open');
     this.stripEl.querySelector('[data-act="record"]')?.classList.toggle('open', open);
+  }
+
+  private closeRecord(): void {
+    if (!this.recordEl.classList.contains('open')) return;
+    this.toggleRecord();
   }
 
   /** JOIN · CREATE PARTY · FIND MATCH — labels follow the party/queue state. */
@@ -1015,6 +1101,13 @@ export class RankPage {
     this.statsEl.innerHTML = '';
     const head = el('div', 'rk-colonies-head');
     head.innerHTML = `<span>COLONY DOMINANCE</span><b>${this.stats.totalPlanets} PLANETS · ${this.stats.totalSystems} SYSTEMS</b>`;
+    // VIEW ALL (user ask): the totals head opens the full TERRITORY roster — every
+    // held world of every colony with its live shield timer.
+    const viewAll = el('button', 'rk-colonies-all', 'VIEW ALL ▸') as HTMLButtonElement;
+    viewAll.type = 'button';
+    viewAll.title = 'All held worlds with live shield timers';
+    viewAll.addEventListener('click', () => this.toggleTerritory());
+    head.appendChild(viewAll);
     this.statsEl.appendChild(head);
     for (const c of this.stats.colonies) {
       const rowEl = el('div', 'rk-colony-row');
@@ -1031,6 +1124,207 @@ export class RankPage {
       const c = this.stats.colonies[mine.colony];
       this.statsEl.appendChild(el('div', 'rk-colony-you', `YOUR COLONY · ${COLONIES[mine.colony].name} — ${c?.planets ?? 0} PLANETS HELD`));
     }
+  }
+
+  // ------------------------------------------------------------ territory overlay (user ask 2026-09-29)
+
+  /**
+   * THE TERRITORY CENSUS: every colony-held world of the season, grouped by colony
+   * (mine first), sorted by the shield that falls first, with LIVE countdowns and
+   * tap-to-fly. Rows come from the `rank-territory` scope (`ranked_planet WHERE
+   * state = 1`) — the same server truth every other surface reads.
+   */
+  private toggleTerritory(): void {
+    if (this.territoryEl) {
+      this.closeTerritory();
+      return;
+    }
+    const overlay = el('div', 'rk-board-overlay');
+    const panel = el('div', 'rk-board rk-terr');
+    overlay.appendChild(panel);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) this.closeTerritory();
+    });
+    this.element.appendChild(overlay);
+    this.territoryEl = overlay;
+    this.territorySig = '';
+    this.renderTerritory();
+  }
+
+  private closeTerritory(): void {
+    this.territoryEl?.remove();
+    this.territoryEl = null;
+    this.territoryCd = [];
+  }
+
+  /** Rebuild the roster — sig-guarded, so the 500 ms tick only pays on real change. */
+  private renderTerritory(): void {
+    const overlay = this.territoryEl;
+    if (!overlay) return;
+    const panel = overlay.querySelector<HTMLElement>('.rk-terr');
+    if (!panel) return;
+    const mine = this.me();
+    const myColony = mine && mine.colony < 3 ? mine.colony : -1;
+    const now = this.serverNowUs();
+    const held = ClientCache.shared
+      .rankedPlanetsAll()
+      .filter((r) => r.state === RANKED_PLANET_CONTROLLED && r.controllingColony < 3);
+    const history = ClientCache.shared.myRankHistory(this.ctx.myHex()).slice(0, 6);
+    const sig =
+      `${this.territoryFilter}|${myColony}|` +
+      held.map((r) => `${r.planetKey}:${r.controllingColony}:${r.controlExpiresAt}`).join(',') +
+      '|' + history.map((h) => `${h.id}:${h.delta}`).join(',');
+    if (sig === this.territorySig) return;
+    this.territorySig = sig;
+    this.territoryCd = [];
+    panel.innerHTML = '';
+    const fallingCount = held.filter((r) => Number(r.controlExpiresAt) - now < HOUR_US).length;
+    const head = el('div', 'rk-board-head');
+    head.innerHTML =
+      `<span class="rk-board-title">TERRITORY</span>` +
+      `<span class="rk-board-sub">${held.length} WORLDS · ${fallingCount} FALLING WITHIN THE HOUR</span>`;
+    const close = el('button', 'rk-board-close', '✕') as HTMLButtonElement;
+    close.type = 'button';
+    close.addEventListener('click', () => this.closeTerritory());
+    head.appendChild(close);
+    panel.appendChild(head);
+
+    // FILTERS: ALL · MY COLONY · FALLING (< 1 h — the same rule colony stats use).
+    const filters = el('div', 'rk-terr-filters');
+    const defs: { id: 'ALL' | 'MINE' | 'FALLING'; label: string }[] = [
+      { id: 'ALL', label: 'ALL' },
+      { id: 'MINE', label: 'MY COLONY' },
+      { id: 'FALLING', label: 'FALLING' },
+    ];
+    for (const def of defs) {
+      const b = el('button', `rk-terr-filter${this.territoryFilter === def.id ? ' on' : ''}`, def.label) as HTMLButtonElement;
+      b.type = 'button';
+      b.addEventListener('click', () => {
+        this.territoryFilter = def.id;
+        this.renderTerritory();
+      });
+      filters.appendChild(b);
+    }
+    panel.appendChild(filters);
+
+    // Rows — expiry ASCENDING, grouped by colony, my colony's group first.
+    const filtered = held
+      .map((r) => ({ r, remain: Number(r.controlExpiresAt) - now }))
+      .filter(({ r, remain }) => {
+        if (this.territoryFilter === 'MINE') return r.controllingColony === myColony;
+        if (this.territoryFilter === 'FALLING') return remain < HOUR_US;
+        return true;
+      })
+      .sort((a, b) => a.remain - b.remain);
+    const groups = new Map<number, typeof filtered>();
+    for (const item of filtered) {
+      const list = groups.get(item.r.controllingColony) ?? [];
+      list.push(item);
+      groups.set(item.r.controllingColony, list);
+    }
+    const order = [...groups.keys()].sort((a, b) => {
+      if (a === myColony) return b === myColony ? 0 : -1;
+      if (b === myColony) return 1;
+      return (groups.get(b)?.length ?? 0) - (groups.get(a)?.length ?? 0);
+    });
+    if (!order.length) {
+      panel.appendChild(
+        el('p', 'rk-terr-empty', this.territoryFilter === 'ALL'
+          ? 'No worlds are held this season yet — win a ranked match to plant the first flag.'
+          : 'Nothing matches this filter right now.')
+      );
+    }
+    const seed = this.universeSeed();
+    for (const colony of order) {
+      const list = groups.get(colony) ?? [];
+      const group = el('div', 'rk-terr-group');
+      group.style.setProperty('--rk-colony', COLONIES[colony]?.css ?? '#999');
+      const gHead = el('div', 'rk-terr-group-head');
+      gHead.innerHTML =
+        `<span>${COLONIES[colony]?.symbol ?? '◆'} ${COLONIES[colony]?.name ?? '—'}</span>` +
+        `<b>${list.length} WORLDS</b>` +
+        (colony === myColony ? `<i class="rk-terr-you">YOUR COLONY</i>` : '');
+      group.appendChild(gHead);
+      for (const { r, remain } of list) {
+        const pd = planetAt(seed, r.ring, r.galaxyId, r.systemId, r.planetId);
+        const { gx, gy } = decodeGalaxyId(r.galaxyId);
+        const gal = galaxyAt(seed, gx, gy);
+        const sys = gal ? systemAt(seed, r.ring, r.galaxyId, r.systemId, gal.systemCount) : null;
+        const row = el('button', `rk-terr-row${colony === myColony ? ' mine' : ''}`) as HTMLButtonElement;
+        row.type = 'button';
+        row.title = `Fly to ${pd.name.toUpperCase()}`;
+        const main = el('span', 'rk-terr-main');
+        const name = el('span', 'rk-terr-name');
+        // FRESH CONQUEST pill — the same < 24 h window the map pennant draws from.
+        name.innerHTML =
+          `${pd.name.toUpperCase()}${remain > FRESH_CAPTURE_REMAIN_US ? '<i class="rk-terr-new">NEW</i>' : ''}`;
+        const sub = el(
+          'span',
+          'rk-terr-sub',
+          `${sys ? sys.name.toUpperCase() : `SYSTEM ${r.systemId}`} · ${gal ? gal.name.toUpperCase() : 'GALAXY'} · ${RING_CONFIGS[r.ring]?.name ?? '?'} BAND`
+        );
+        main.append(name, sub);
+        const cd = el('span', 'rk-terr-cd', territoryCountdown(Number(r.controlExpiresAt), now));
+        cd.classList.toggle('low', remain > 0 && remain < HOUR_US);
+        cd.classList.toggle('gone', remain <= 0);
+        this.territoryCd.push({ el: cd, expires: Number(r.controlExpiresAt) });
+        row.append(main, cd);
+        row.addEventListener('click', () => {
+          this.closeTerritory();
+          this.jumpTo(pd);
+        });
+        group.appendChild(row);
+      }
+      panel.appendChild(group);
+    }
+
+    // MY RECENT BATTLES — every ranked match stores its planet key, so a win is ONE
+    // tap from becoming a place on the map (user ask: "hard to find back that planet").
+    if (history.length) {
+      const recent = el('div', 'rk-terr-recent');
+      recent.appendChild(el('div', 'rk-terr-recent-head', 'MY RECENT BATTLES'));
+      for (const h of history) {
+        const cls = h.delta > 0 ? 'up' : h.delta < 0 ? 'down' : 'flat';
+        const label = h.delta > 0 ? `WIN +${h.delta}★` : h.delta < 0 ? `LOSS ${h.delta}★` : 'DRAW';
+        const name = planetNameFromKey(seed, h.planetKey) ?? h.planetKey;
+        const when = relativeTime(Number(h.createdAt.microsSinceUnixEpoch), now);
+        const row = el('button', 'rk-terr-recent-row') as HTMLButtonElement;
+        row.type = 'button';
+        row.append(
+          el('span', `rk-terr-res ${cls}`, label),
+          el('span', 'rk-terr-rname', name.toUpperCase()),
+          el('span', 'rk-terr-when', when),
+          el('span', 'rk-terr-rgo', 'VIEW ▸')
+        );
+        row.addEventListener('click', () => {
+          this.closeTerritory();
+          this.jumpToPlanetKey(h.planetKey);
+        });
+        recent.appendChild(row);
+      }
+      panel.appendChild(recent);
+    }
+  }
+
+  /** One DOM write per changed second for the open territory list (plan §15). */
+  private refreshTerritoryCountdowns(): void {
+    if (!this.territoryEl || !this.territoryCd.length) return;
+    const now = this.serverNowUs();
+    for (const item of this.territoryCd) {
+      const txt = territoryCountdown(item.expires, now);
+      if (item.el.textContent !== txt) item.el.textContent = txt;
+      const remain = item.expires - now;
+      item.el.classList.toggle('low', remain > 0 && remain < HOUR_US);
+      item.el.classList.toggle('gone', remain <= 0);
+    }
+  }
+
+  /** Fly to a planet from its stored key (history / roster deep links). */
+  private jumpToPlanetKey(key: string): void {
+    const parsed = parsePlanetKey(key);
+    if (!parsed) return;
+    const pd = planetAt(this.universeSeed(), parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
+    this.jumpTo(pd);
   }
 
   // ------------------------------------------------------------ leaderboard (plan §78)

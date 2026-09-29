@@ -15,7 +15,7 @@
 // season seed (plan §0). Discovery is EARNED IN MATCHES (AppShell records it when a ranked
 // match ends); the map only READS it back off the scoped subscriptions (plan §6/§47).
 // the server decides, and the DOM panels render what came back.
-import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from './procedural/GalaxyTypes';
+import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, poiVisual } from './procedural/GalaxyTypes';
 import { planetsInSystem, ringHome } from './procedural/UniverseGenerator';
 import { galaxyAt } from './procedural/GalaxyGenerator';
 import { systemAt, systemsInGalaxy } from './procedural/SolarSystemGenerator';
@@ -80,6 +80,9 @@ export interface MapData {
   /** The signed-in player (plan §7) — used to mark "you" and gate requests. */
   currentPlayerId: string;
   currentPlayerName: string;
+  /** The signed-in player's colony index (0..2), or COLONY_NONE — every tier
+   *  emphasises MY colony's territory with it (user ask 2026-09-29). */
+  myColony: number;
   /** Ask the SERVER to record first contact (plan §6/§47). Optional for tests. */
 }
 
@@ -161,6 +164,11 @@ function withAlpha(color: string, a: number): string {
 
 const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
+/** The 72 h planetary control lifetime (plan §39) and the FRESH CONQUEST window:
+ *  a world claimed within the last day still has > 48 h of its shield left, so the
+ *  "new conquest" pennant is computed from `controlExpiresAt` alone (user ask). */
+const SHIELD_TOTAL_US = 72 * 3600 * 1e6;
+const FRESH_CAPTURE_REMAIN_US = 48 * 3600 * 1e6;
 /** Face-sprite caches (user 2026-09-29: the dot transition stuttered): the FULL face
  *  bakes at 160², the transition-band mip at 96² (≤128px draws). At the cap the caches
  *  drop their oldest quarter instead of clearing — a clear re-bakes hundreds of sprites
@@ -429,6 +437,17 @@ export class GalacticMap {
     if (row && row.state === RANKED_PLANET_CONTROLLED) return false;
     if (this.data.reservedKeys().has(p.key)) return false;
     return true;
+  }
+
+  /** The signed-in player's colony colour — null when unaligned (user ask 2026-09-29). */
+  private myColor(): string | null {
+    const c = this.data.myColony;
+    return c >= 0 && c < this.data.colonyColors.length ? this.data.colonyColors[c] : null;
+  }
+
+  /** Is this territory visual MY colony's single-owner territory? (user ask 2026-09-29) */
+  private isMine(terr: TerritoryVisual | null | undefined, my: string | null): boolean {
+    return Boolean(my && terr && terr.kind === 'SINGLE' && terr.color === my);
   }
 
   // ------------------------------------------------------------ galaxy field
@@ -1254,6 +1273,7 @@ export class GalacticMap {
   private drawGalaxyField(t: number, deep: number): void {
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
+    const my = this.myColor();
     const field = 1 - deep * 0.45;
     const pad = 60 / this.cam.zoom;
     const minW = this.screen2world(-pad, -pad);
@@ -1297,14 +1317,17 @@ export class GalacticMap {
         // while the mote rises out of nothing. Focused / hovered galaxies keep their
         // full face (they are what the player is looking at).
         const transit = isFocus || isHover ? 1 : ramp01(radius, GALAXY_DOT_RADIUS * 0.45, GALAXY_DOT_RADIUS * 1.25);
+        const mine = this.isMine(terr, my);
         if (transit < 1) {
           // past ~0.97 the mote contributes <3% of its glow — skipping the path is
           // invisible and saves hundreds of arcs per frame in the far field
           if (transit < 0.97) {
-            ctx.globalAlpha = 0.78 * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5) * (1 - transit);
+            // MY TERRITORY (user ask 2026-09-29): my colony's motes read larger and
+            // brighter even from the widest frames — the empire is visible zoomed out.
+            ctx.globalAlpha = (mine ? 1 : 0.78) * field2 * (0.75 + 0.25 * pulse) * (1 - inside * 0.5) * (1 - transit);
             ctx.fillStyle = terr?.color ?? g.starColor;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
+            ctx.arc(p.x, p.y, mine ? 1.6 : 1.15, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
             ctx.fill();
             ctx.globalAlpha = 1;
           }
@@ -1362,18 +1385,40 @@ export class GalacticMap {
             const coreR = faceR * 0.85;
             ctx.globalAlpha = (terr.kind === 'NECROPHAGE' ? 0.5 : 0.3) * field2 * (1 - withdraw) * faceMix;
             ctx.drawImage(this.glow(terr.color, 64), p.x - coreR, p.y - coreR, coreR * 2, coreR * 2);
+            // MY TERRITORY RING (user ask 2026-09-29): one slow pulsing ring around
+            // galaxies my colony dominates — the "where is MY empire" answer at the
+            // galactic tier, where the emission tint alone was too subtle.
+            if (mine && faceR > 7) {
+              const ringR = faceR * 1.42 + Math.sin(t * 2.4 + (g.seed % 60)) * 1.6;
+              ctx.globalAlpha = 0.55 * field2 * haze * faceMix * (1 - withdraw * 0.88);
+              ctx.strokeStyle = terr.color;
+              ctx.lineWidth = 1.2;
+              ctx.beginPath();
+              ctx.arc(p.x, p.y, ringR, 0, Math.PI * 2);
+              ctx.stroke();
+            }
           }
           ctx.globalAlpha = 1;
         }
-        // POI marker (plan §55) — attached to the FACE, so it retires with it in the
-        // dot transition instead of floating over a mote
-        if (g.poi !== 'NORMAL' && zoom > 16 && radius > 3.4 && faceMix > 0.35) {
-          ctx.globalAlpha = 0.8 * field;
-          ctx.fillStyle = g.poi === 'SWARM' || g.poi === 'DEAD' ? '#ff5d73' : g.poi === 'STRONGHOLD' ? '#ffd166' : '#7be0c8';
-          ctx.font = '9px Rajdhani, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(g.poi === 'SWARM' ? '☣' : g.poi === 'DEAD' ? '✝' : g.poi === 'STRONGHOLD' ? '⚑' : '✦', p.x, p.y - radius - 3);
-          ctx.globalAlpha = 1;
+        // POI marker (plan §55) — user 2026-09-29 v2: "the icons still pop instead of
+        // fading in and out with the galaxies". The alpha rides the galaxy's OWN
+        // on-screen size — the exact band the face crossfades in on
+        // (GALAXY_DOT_RADIUS*0.45 → *1.25) — and deliberately IGNORES the focus/hover
+        // face boost and any zoom threshold: no state flip (hover, soft lock, wheel)
+        // can switch the glyph on or off; it only ever ramps with the size the galaxy
+        // is actually drawn at, so it fades in AND out with the body, never pops.
+        const poiT = ramp01(radius, GALAXY_DOT_RADIUS * 0.45, GALAXY_DOT_RADIUS * 1.25);
+        if (g.poi !== 'NORMAL' && poiT > 0.02) {
+          const poiA = Math.min(0.9, 0.8 * pulse * field2 * haze * (1 - withdraw * 0.88) * poiT);
+          if (poiA > 0.015) {
+            const pv = poiVisual(g.poi);
+            ctx.globalAlpha = poiA;
+            ctx.fillStyle = pv.color;
+            ctx.font = '9px Rajdhani, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(pv.glyph, p.x, p.y - radius - 3);
+            ctx.globalAlpha = 1;
+          }
         }
         if (isHover) {
           ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -1532,6 +1577,7 @@ export class GalacticMap {
     if (!galaxy || sysAlpha <= 0.01) return;
     const ctx = this.ctx;
     const zoom = this.cam.zoom;
+    const my = this.myColor();
     // per-system ownership comes from the LAZY cache (plan §58): rows change on
     // match ends, never per frame, so this is at most one rebuild every ~2.5 s.
     const systemTerr = this.systemTerrFor(galaxy);
@@ -1563,12 +1609,23 @@ export class GalacticMap {
       // system stays a light mote, which is also what keeps hundreds of them cheap.
       // OWNED systems keep their owner's colour even as motes (plan §33).
       const terr = systemTerr.get(sys.systemId);
+      const mine = this.isMine(terr, my);
       if (!front && !isHover && !isSel) {
-        ctx.globalAlpha = 0.9 * a * twinkle;
+        // MY TERRITORY (user ask 2026-09-29): my systems stay RINGED motes — bigger,
+        // brighter, circled — while everyone else's is a plain dot at this LOD.
+        ctx.globalAlpha = (mine ? 1 : 0.9) * a * twinkle;
         ctx.fillStyle = terr?.color ?? '#dfe9ff';
         ctx.beginPath();
-        ctx.arc(p.x, p.y, 1.3, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
+        ctx.arc(p.x, p.y, mine ? 1.9 : 1.3, 0, Math.PI * 2); // round dot (user 2026-09-29: no cubes)
         ctx.fill();
+        if (mine && terr?.color) {
+          ctx.globalAlpha = 0.55 * a * twinkle;
+          ctx.strokeStyle = terr.color;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3.4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
         ctx.globalAlpha = 1;
         continue;
       }
@@ -1623,6 +1680,14 @@ export class GalacticMap {
           ctx.beginPath();
           ctx.arc(p.x, p.y, ringR, 0, Math.PI * 2);
           ctx.stroke();
+          // MY TERRITORY (user ask 2026-09-29): my systems add the slow outer pulse.
+          if (mine) {
+            ctx.globalAlpha = (0.35 + 0.3 * Math.sin(t * 2.6)) * a;
+            ctx.lineWidth = 1.1;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, ringR * 1.55, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           ctx.globalAlpha = 1;
         }
       }
@@ -1692,6 +1757,7 @@ export class GalacticMap {
     const reserved = this.data.reservedKeys();
     const nowUs = this.data.serverNowUs();
     const planets = this.planetsFor(system);
+    const my = this.myColor();
 
     for (const p of planets) {
       const row = rows.find((r) => r.planetKey === p.key);
@@ -1748,19 +1814,47 @@ export class GalacticMap {
       // infested-and-mapped worlds wear the Necrophage red ring; the BIOME body
       // colour underneath is never replaced. Contested does not exist at planet
       // level — a planet has exactly one owner (plan §12).
+      const mine = controlled && row?.colony === this.data.myColony && this.data.myColony < 3;
       if (ownerColor) {
-        ctx.globalAlpha = 0.55 * pa;
+        // MY TERRITORY (user ask 2026-09-29): my colony's worlds wear a BRIGHTER,
+        // thicker ring plus a slow outer pulse — "which of these are MINE" must be
+        // readable on the map before the panel is even opened.
+        ctx.globalAlpha = (mine ? 0.9 : 0.55) * pa;
         ctx.strokeStyle = ownerColor;
-        ctx.lineWidth = 1.6;
+        ctx.lineWidth = mine ? 2.2 : 1.6;
         ctx.beginPath();
         ctx.arc(px, py, pr + 3.4, 0, Math.PI * 2);
         ctx.stroke();
+        if (mine) {
+          ctx.globalAlpha = (0.3 + 0.25 * Math.sin(t * 3.2)) * pa;
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(px, py, pr + 7.4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
+      // FRESH CONQUEST (user ask 2026-09-29): a world claimed in the last 24 h wears a
+      // pennant — "the planet I just won" is findable instead of anonymous. Mine burns
+      // bright, another colony's stays muted.
+      if (controlled && row && row.controlExpiresAt - nowUs > FRESH_CAPTURE_REMAIN_US) {
+        const fa = (mine ? 0.7 + 0.3 * Math.sin(t * 4) : 0.38) * pa;
+        const fy = py - pr - 8;
+        ctx.globalAlpha = fa;
+        ctx.fillStyle = ownerColor ?? '#ffd166';
+        ctx.beginPath();
+        ctx.moveTo(px, fy - 3.6);
+        ctx.lineTo(px + 3.6, fy);
+        ctx.lineTo(px, fy + 3.6);
+        ctx.lineTo(px - 3.6, fy);
+        ctx.closePath();
+        ctx.fill();
         ctx.globalAlpha = 1;
       }
       // shield arc (plan §39): colony ring drains with the 72 h countdown
       if (controlled && row.controlExpiresAt > 0) {
         const remain = Math.max(0, row.controlExpiresAt - nowUs);
-        const total = 72 * 3600 * 1e6;
+        const total = SHIELD_TOTAL_US;
         const frac = Math.min(1, remain / total);
         const low = remain < 10 * 60 * 1e6;
         const alpha = low ? 0.55 + 0.45 * Math.sin(t * 6) : 1;

@@ -333,6 +333,13 @@
 .rk-mapinfo .rk-disc-dot { width: 6px; height: 6px; }
 .rk-mapinfo .rk-disc-colony { font-size: 8px; letter-spacing: 0.1em; }
 .rk-mapinfo .rk-disc-when { font-size: 8px; }
+/* POI line (the selected galaxy's own icon, named) + the icon legend (user 2026-09-29) */
+.rk-mapinfo-poi { font-size: 8.5px; font-weight: 800; letter-spacing: 0.14em; color: #cfc6e6; margin-top: -2px; }
+.rk-mapinfo-poi b { font-size: 10px; margin-right: 1px; }
+.rk-mapinfo-legend { margin-top: 2px; padding-top: 5px; border-top: 1px solid rgba(165, 140, 235, 0.16); display: grid; gap: 2px; }
+.rk-mapinfo-legend-head { font-size: 7.5px; letter-spacing: 0.22em; color: var(--ui-text-muted); font-weight: 800; }
+.rk-mapinfo-legend-row { display: flex; align-items: baseline; gap: 5px; font-size: 8.5px; letter-spacing: 0.07em; color: #b6adcd; line-height: 1.25; }
+.rk-mapinfo-legend-row b { font-size: 10px; line-height: 1; flex: none; }
 @media (orientation: portrait) {
   .rank-page.map-full .rk-mapinfo { top: calc(52px + env(safe-area-inset-top, 0px)); max-height: 38vh; width: min(240px, 68vw); }
 }
@@ -1260,5 +1267,153 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .nf-shell.no-nav:has(.rank-page) .nf-main {
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
+}
+
+/* ============================================================ territory overlay (user ask 2026-09-29)
+   ALL held worlds of every colony, live shield timers, tap-to-fly — opened from
+   the strip's globe button or the colony panel's VIEW ALL. Reuses the
+   leaderboard's overlay/panel shell (`.rk-board-*`); everything below is its own. */
+.rk-terr { width: min(560px, 94vw); }
+.rk-colonies-all {
+  border: none;
+  background: none;
+  color: #7be0c8;
+  font: inherit;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0 0 0 8px;
+  white-space: nowrap;
+}
+.rk-colonies-all:hover { color: #ffd166; }
+
+.rk-terr-filters { display: flex; gap: 6px; margin-bottom: 12px; }
+.rk-terr-filter {
+  border: 1px solid rgba(148, 120, 220, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ui-text-muted);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.rk-terr-filter:hover { color: #e9e2ff; }
+.rk-terr-filter.on { color: #ffd166; border-color: rgba(255, 209, 102, 0.45); background: rgba(255, 209, 102, 0.08); }
+
+.rk-terr-group { margin-bottom: 14px; }
+.rk-terr-group-head {
+  --rk-colony: #999;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: color-mix(in srgb, var(--rk-colony) 78%, #fff 22%);
+}
+.rk-terr-group-head b { font-size: 9.5px; color: var(--ui-text-muted); letter-spacing: 0.14em; font-weight: 600; }
+.rk-terr-group-head .rk-terr-you { margin-left: auto; font-style: normal; font-size: 9px; letter-spacing: 0.18em; color: #ffd166; }
+
+.rk-terr-row {
+  --rk-colony: #999;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ui-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.15s ease, border-color 0.2s ease, transform 0.12s ease;
+}
+.rk-terr-row:hover { background: rgba(255, 255, 255, 0.07); transform: translateX(3px); }
+.rk-terr-row.mine { border-color: color-mix(in srgb, var(--rk-colony) 55%, transparent); background: color-mix(in srgb, var(--rk-colony) 9%, rgba(255, 255, 255, 0.02)); }
+.rk-terr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rk-terr-name { font-weight: 700; letter-spacing: 0.04em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-terr-new {
+  font-style: normal;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: #0b0616;
+  background: #ffd166;
+  border-radius: 5px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.rk-terr-sub { font-size: 9.5px; letter-spacing: 0.08em; color: var(--ui-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-terr-cd {
+  flex: none;
+  min-width: 66px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #cfe3ff;
+}
+.rk-terr-cd.low { color: #ffb35c; }
+.rk-terr-cd.gone { color: #ff5d73; }
+.rk-terr-empty { font-size: 11px; letter-spacing: 0.08em; color: var(--ui-text-muted); padding: 8px 2px 12px; }
+
+.rk-terr-recent { margin-top: 16px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 12px; }
+.rk-terr-recent-head { font-size: 10px; font-weight: 800; letter-spacing: 0.24em; color: #ffd166; margin-bottom: 8px; }
+.rk-terr-recent-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ui-text);
+  font: inherit;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.rk-terr-recent-row:hover { background: rgba(255, 255, 255, 0.07); transform: translateX(3px); }
+.rk-terr-res { flex: none; font-size: 10px; font-weight: 800; letter-spacing: 0.1em; }
+.rk-terr-res.up { color: #5ef0a8; }
+.rk-terr-res.down { color: #ff5d73; }
+.rk-terr-res.flat { color: var(--ui-text-muted); }
+.rk-terr-rname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; letter-spacing: 0.04em; }
+.rk-terr-when { flex: none; font-size: 9px; letter-spacing: 0.06em; color: var(--ui-text-muted); }
+.rk-terr-rgo { flex: none; font-size: 9.5px; letter-spacing: 0.14em; font-weight: 800; color: #7be0c8; }
+
+/* LAST-WORLD deep link (the record drawer's one-tap flight back) */
+.rk-record-jump {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  background: rgba(255, 209, 102, 0.06);
+  color: #ffd166;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  font-weight: 800;
+  padding: 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.rk-record-jump:hover { background: rgba(255, 209, 102, 0.14); border-color: rgba(255, 209, 102, 0.55); }
+
+@media (max-width: 520px) {
+  .rk-terr-cd { font-size: 11px; min-width: 54px; }
+  .rk-terr-when { display: none; }
 }
 

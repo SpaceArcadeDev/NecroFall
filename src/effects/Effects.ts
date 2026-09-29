@@ -420,6 +420,13 @@ interface DomeFX {
 }
 
 export class Effects {
+  /**
+   * Gameplay→environment destruction seam (rework plan §24): every shockwave an ability, boss or
+   * death emits notifies this hook. The game forwards it to the planet's environment, which
+   * damages trees/crates inside the radius. Purely visual — no rigid-body simulation.
+   */
+  onWave: ((pos: THREE.Vector3, up: THREE.Vector3, radius: number) => void) | null = null;
+
   private scene: THREE.Scene;
   /** Buffer capacity — always the top preset, so the particle ceiling can move at runtime. */
   private max: number;
@@ -1533,6 +1540,8 @@ export class Effects {
     fx.acc = 0;
     fx.t = 0;
     fx.spin = Math.random() * Math.PI * 2;
+    // The environment reacts to genuine explosions only (small waves are cosmetic sparks).
+    if (this.onWave && fx.radius >= 2.2) this.onWave(pos, up, fx.radius);
   }
 
   /**

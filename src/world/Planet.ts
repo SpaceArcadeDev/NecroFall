@@ -1,8 +1,9 @@
 // NECROFALL — procedural spherical mini-planet: heightfield terrain, analytic
-// collision surface, terrain normals, ray casting and instanced decorations.
+// collision surface, terrain normals, ray casting — with the environment rework
+// (`WorldEnvironment`, plan §1/§87) providing every decoration, prop, water and weather system.
 import * as THREE from 'three';
 import { CONFIG, QualitySettings } from '../core/Config';
-import { Rand, clamp, fbm, orientToSurface, randomUnitVector, smoothstep, tangentBasis, dirFromAngles } from '../utils/Utils';
+import { clamp, orientToSurface, tangentBasis, dirFromAngles } from '../utils/Utils';
 import {
   SHADER_GLOBALS,
   nfUniforms,
@@ -11,31 +12,23 @@ import {
   NF_FOG_GLSL,
   updateShaderGlobals,
 } from './ShaderGlobals';
-import { buildGrassField, type GrassField } from './GrassField';
 import { createAmbience, type Ambience } from './Ambience';
 import { deriveArchetype, type PlanetArchetype } from './PlanetArchetypes';
 import { TerrainGenerator } from './TerrainGenerator';
 import { BiomeGenerator } from './BiomeGenerator';
+import { WorldEnvironment, type EnvironmentFrame } from './WorldEnvironment';
+import type { FocusInput } from './interaction/VegetationInteraction';
 import type { Landmark } from './LandmarkGenerator';
-import {
-  createWindUniforms,
-  createBladeMaterial,
-  createFlowerMaterial,
-  createPlantMaterial,
-  bladeGeometry,
-  flowerGeometry,
-  plantGeometry,
-  createSwayScatter,
-  applySwayAttributes,
-  createFieldGrassMaterial,
-  dirtAmount,
-  isLush,
-  geometryHeight,
-  type WindUniforms,
-  type SwayScatter,
-} from './Vegetation';
+import { createWindUniforms, type WindUniforms } from './Vegetation';
 
 const _upY = new THREE.Vector3(0, 1, 0);
+
+/** The game's scene lights, handed to the environment so its atmosphere can drive them. */
+export interface PlanetLights {
+  sun: THREE.DirectionalLight;
+  hemi: THREE.HemisphereLight;
+  rim: THREE.DirectionalLight;
+}
 
 const _up = new THREE.Vector3();
 const _t1 = new THREE.Vector3();
@@ -224,104 +217,9 @@ const TERRAIN_FRAG = /* glsl */ `
 `;
 
 // ---------------------------------------------------------------- prop shaders
-// One shared shader pair powers rocks, peaks, crystals, trunks and canopies. It supports
-// instancing (matrix + per-instance colour), flat faceting, emissive glow and alpha, so the
-// whole decoration field is lit exactly like the terrain instead of by three's standard material.
-
-const PROP_VERT = /* glsl */ `
-  varying vec3 vColor;
-  varying vec3 vNormalW;
-  varying vec3 vWorld;
-  varying float vLocalY;
-  void main() {
-    #ifdef USE_INSTANCING
-      vec4 inst = instanceMatrix * vec4(position, 1.0);
-      mat3 nrm = mat3(modelMatrix * instanceMatrix);
-    #else
-      vec4 inst = vec4(position, 1.0);
-      mat3 nrm = mat3(modelMatrix);
-    #endif
-    vec4 wp = modelMatrix * inst;
-    vWorld = wp.xyz;
-    vLocalY = position.y;
-    vNormalW = normalize(nrm * normal);
-    vec3 col = vec3(1.0);
-    #ifdef USE_INSTANCING_COLOR
-      col *= instanceColor;
-    #endif
-    #ifdef USE_COLOR
-      col *= color;
-    #endif
-    vColor = col;
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-const PROP_FRAG = /* glsl */ `
-  ${NF_UNIFORMS_GLSL}
-  uniform float uFacet;
-  uniform float uNoise;
-  uniform float uEmissive;
-  uniform float uFresnel;
-  uniform float uAlpha;
-  varying vec3 vColor;
-  varying vec3 vNormalW;
-  varying vec3 vWorld;
-  varying float vLocalY;
-  ${NF_LIGHTING_GLSL}
-  ${NF_FOG_GLSL}
-
-  float hash3(vec3 p) {
-    return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
-  }
-
-  void main() {
-    vec3 n = normalize(vNormalW);
-    // faceted low-poly look reconstructed from screen-space derivatives
-    vec3 facet = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-    if (dot(facet, facet) > 0.001) n = normalize(mix(n, facet * sign(dot(facet, n)), uFacet));
-
-    vec3 up = normalize(vWorld);
-    float grit = hash3(floor(vWorld * 3.1)) * 0.5 + hash3(floor(vWorld * 11.3)) * 0.5;
-    vec3 base = vColor * (1.0 - uNoise * 0.5 + uNoise * (0.6 + grit * 0.8));
-    vec3 lit = nfLight(base, n, up, vWorld, 0.28);
-
-    // crystal / energy glow
-    vec3 viewDir = normalize(uCamPos - vWorld);
-    float fres = pow(1.0 - clamp(dot(n, viewDir), 0.0, 1.0), 2.2);
-    lit += vColor * uEmissive * (0.45 + fres * (0.6 + uFresnel));
-    lit += vColor * fres * uFresnel * 0.35;
-
-    lit = mix(lit, uFogColor, nfFog(vWorld));
-    gl_FragColor = vec4(lit, uAlpha);
-  }
-`;
-
-interface PropOpts {
-  facet?: number;
-  noise?: number;
-  emissive?: number;
-  fresnel?: number;
-  alpha?: number;
-  transparent?: boolean;
-}
-
-function createPropMaterial(o: PropOpts = {}): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: PROP_VERT,
-    fragmentShader: PROP_FRAG,
-    transparent: o.transparent ?? false,
-    depthWrite: (o.alpha ?? 1) > 0.95,
-    side: THREE.FrontSide,
-    uniforms: nfUniforms({
-      uFacet: { value: o.facet ?? 0.7 },
-      uNoise: { value: o.noise ?? 0.4 },
-      uEmissive: { value: o.emissive ?? 0 },
-      uFresnel: { value: o.fresnel ?? 0.15 },
-      uAlpha: { value: o.alpha ?? 1 },
-    }),
-  });
-}
+// The old single-file prop shader family has moved to the environment rework:
+// see `rendering/EnvironmentMaterials.ts` (instanced grass/tree/rock/prop/water shaders with
+// wind, player interaction, LOD bands and dither fades — plan §7-§11/§54).
 
 const SKY_VERT = /* glsl */ `
   varying vec3 vDir;
@@ -364,7 +262,8 @@ export class Planet {
   private readonly quality: QualitySettings;
   /** The terrain: one mesh per sector (see `buildTerrainChunks`) so the far side can be skipped. */
   mesh: THREE.Group;
-  private group = new THREE.Group();
+  /** The reworked environment composition root (plan §1/§87): cells, foliage, water, physics. */
+  readonly environment: WorldEnvironment;
   private terrainChunks: THREE.Mesh[] = [];
   private chunkCenters: THREE.Vector3[] = [];
   private chunkRadii: number[] = [];
@@ -372,9 +271,7 @@ export class Planet {
   private sky: THREE.Mesh;
   private sunBase = new THREE.Vector3(1, 0.85, 0.6).normalize();
   private sunAxis = new THREE.Vector3(0, 0, 1);
-  /** Region that receives most of the scenery (the battlefield). */
-  private focusDir: THREE.Vector3 | null = null;
-  /** Actual terrain relief of THIS planet (filled while baking vertices) — see `buildDecorations`. */
+  /** Actual terrain relief of THIS planet (filled while baking vertices). */
   private reliefMin = Infinity;
   private reliefMax = -Infinity;
   private terrainMat: THREE.ShaderMaterial;
@@ -394,16 +291,18 @@ export class Planet {
   /** Shared wind state: grass, flowers and plants all read these uniforms. */
   private wind = createWindUniforms();
   private windTime = 0;
-  /** Dense static grass, grown around the tower zones once the match is laid out. */
-  private grass: GrassField | null = null;
-  /** A second dense field over seeded WILD meadows, so the far side of the planet is not bare. */
-  private wildGrass: GrassField | null = null;
-  private grassMat: THREE.ShaderMaterial | null = null;
-  private grassGeo: THREE.BufferGeometry | null = null;
   /** Drifting motes + ground glints. */
   private ambience: Ambience | null = null;
   /** Particle budget multiplier from the watchdog. */
   private ambienceMul = 1;
+  /** Reusable frame bundle for the environment update (no per-frame allocation). */
+  private readonly envFrame: EnvironmentFrame = {
+    cameraPos: new THREE.Vector3(),
+    cameraQuat: new THREE.Quaternion(),
+    elapsed: 0,
+    focuses: [],
+    localFocus: null,
+  };
   /** The planet's archetype (plan §11 step 1) — climate, relief parameters, palette, sky. */
   readonly archetype: PlanetArchetype;
   /** The height-field pipeline (plan §11). */
@@ -417,16 +316,27 @@ export class Planet {
   readonly fogColor = new THREE.Color(0x171029);
   readonly fogDensity = 0.00125;
 
-  constructor(scene: THREE.Scene, quality: QualitySettings, seed: number, focusDir?: THREE.Vector3, ring = 0) {
+  constructor(
+    scene: THREE.Scene,
+    quality: QualitySettings,
+    seed: number,
+    focusDir?: THREE.Vector3,
+    ring = 0,
+    lights?: PlanetLights
+  ) {
     this.seed = seed;
     this.quality = quality;
-    if (focusDir) this.focusDir = focusDir.clone().normalize();
 
     // ---- the world pipeline: seed (+rank ring) → archetype → terrain fields → biome
     this.archetype = deriveArchetype(seed, ring);
-    this.terrain = new TerrainGenerator(seed, this.radius, this.archetype, ring, this.focusDir ?? undefined);
+    this.terrain = new TerrainGenerator(seed, this.radius, this.archetype, ring, focusDir?.clone().normalize());
     this.biome = new BiomeGenerator(this.archetype, this.terrain);
     this.fogColor.setHex(this.archetype.sky.fog);
+
+    // ---- the environment rework (plan §1/§87): cells, foliage, water, physics and atmosphere.
+    // Built BEFORE the terrain mesh so every height sample (here and in gameplay) goes through
+    // the provider — macro field + the versioned §5 detail layers.
+    this.environment = this.createEnvironment(scene, quality, seed, lights);
 
     // ---- sky dome (nebula + star shader), tinted by the archetype's sky
     this.skyMat = new THREE.ShaderMaterial({
@@ -498,7 +408,6 @@ export class Planet {
     this.buildTerrainChunks(geo);
     scene.add(this.mesh);
     this.buildMeshLookup(geo);
-    this.buildDecorations(scene, quality, seed);
   }
 
   /**
@@ -613,8 +522,18 @@ export class Planet {
     this.sunAxis.copy(_t2).normalize();
   }
 
-  /** Per-frame uniform updates (shared by the terrain, sky and creature shaders). */
-  update(dt: number, cameraPos: THREE.Vector3): void {
+  /**
+   * Per-frame updates. `focuses`/`localFocus`/`elapsed` come from the game each frame and feed
+   * the environment (vegetation reaction, streaming foci, shadows, weather — plan §34/§55).
+   */
+  update(
+    dt: number,
+    cameraPos: THREE.Vector3,
+    cameraQuat?: THREE.Quaternion,
+    focuses: readonly FocusInput[] = [],
+    localFocus: THREE.Vector3 | null = null,
+    elapsed = 0
+  ): void {
     updateShaderGlobals(dt, cameraPos);
     // slow sun drift keeps highlights moving across the surface
     const time = SHADER_GLOBALS.uTime.value;
@@ -638,6 +557,15 @@ export class Planet {
     // The planet hides its own far side from a low camera: skip the terrain sectors the horizon
     // cannot possibly show (see `updateTerrainChunks`).
     this.updateTerrainChunks(cameraPos);
+
+    // ---- the environment rework: one bundled update (plan §71 frequencies live inside).
+    const frame = this.envFrame;
+    frame.cameraPos.copy(cameraPos);
+    if (cameraQuat) frame.cameraQuat.copy(cameraQuat);
+    frame.elapsed = elapsed;
+    frame.focuses = focuses;
+    frame.localFocus = localFocus;
+    this.environment.update(dt, frame);
   }
 
   /** Scales the ambient point clouds (watchdog hook, same idea as Effects.setBudget). */
@@ -649,7 +577,7 @@ export class Planet {
   /** Grows the twinkling ground glints over the given zones (called with growGrass). */
   private buildAmbience(zones: THREE.Vector3[]): void {
     this.ambience?.dispose();
-    this.ambience = createAmbience(this.group, this, this.seed, {
+    this.ambience = createAmbience(this.environment.root, this, this.seed, {
       motes: Math.round(clamp(this.quality.particles * 0.22, 60, 260)),
       glints: Math.round(clamp(this.quality.decorations * 1.6, 260, 1200)),
       zones,
@@ -658,70 +586,19 @@ export class Planet {
   }
 
   /**
-   * Grows the dense grass around the given surface points (the tower zones). Everything is built
-   * in one shot at match start and then never moves, so grass cannot pop in while you play.
+   * Called by the game once the match's towers/pads exist: their feet become gameplay keep-out
+   * zones (plan §61), active cells are rebuilt so nothing pokes into a Beacon pad, and the
+   * ambience glints are re-grown over the same zones.
    */
   growGrass(zones: THREE.Vector3[]): void {
-    if (!this.grassMat || !this.grassGeo || zones.length === 0) return;
-    this.grass?.dispose();
-    this.wildGrass?.dispose();
-    // Density is its OWN preset axis (`grassDensity` 1 / 0.6 / 0.3), not a second reading of
-    // `decorations`: the field is one instanced draw but tens of thousands of wind-shaded blades,
-    // so it is the first thing a phone needs less of. A full field is 54,600 blades (the old
-    // HIGH value); MEDIUM grows ~33 k and LOW ~16 k.
-    const total = Math.round(clamp(FULL_GRASS_BLADES * this.quality.grassDensity, 3000, FULL_GRASS_BLADES));
-    const perZone = Math.round(clamp(total / zones.length, 400, 12000));
-    this.grass = buildGrassField(this, this.grassMat, this.grassGeo, {
-      seed: this.seed,
-      zones,
-      bladesPerZone: perZone,
-      radius: 38,
-    });
-    this.group.add(this.grass.mesh);
-    // ---- wild meadows: the SAME dense field, grown over seeded patches spread around the WHOLE
-    // planet (the tower zones above only cover the battlefield). Their own budget — the tower
-    // patches keep their exact density — sized off the same grassDensity axis.
-    const wildZones = this.wildGrassZones(zones);
-    if (wildZones.length > 0) {
-      const wildTotal = Math.round(total * 0.45);
-      const wildPerZone = Math.round(clamp(wildTotal / wildZones.length, 400, 12000));
-      this.wildGrass = buildGrassField(this, this.grassMat, this.grassGeo, {
-        seed: this.seed ^ 0x5747,
-        zones: wildZones,
-        bladesPerZone: wildPerZone,
-        radius: 30,
-      });
-      this.group.add(this.wildGrass.mesh);
-    }
-    this.buildAmbience([...zones, ...wildZones]);
+    if (zones.length === 0) return;
+    this.environment.setGameplayZones(zones);
+    this.buildAmbience(zones);
   }
 
-  /**
-   * Seeded meadow centres for the wild grass field: uniformly spread over the sphere, kept clear
-   * of the battlefield cap (already thick with grass) and of every tower patch, and spaced apart
-   * from each other so the planet gets several distinct meadows instead of one clump.
-   */
-  private wildGrassZones(towerZones: THREE.Vector3[]): THREE.Vector3[] {
-    const COUNT = 7;
-    const MIN_SEP = Math.cos(0.62);      // ~70 m of arc between meadow centres
-    const TOO_CLOSE = Math.cos(0.32);    // never on top of a tower patch
-    const towers = towerZones.map(z => z.clone().normalize());
-    const out: THREE.Vector3[] = [];
-    let guard = 0;
-    while (out.length < COUNT && guard++ < COUNT * 80) {
-      const dir = randomUnitVector(new THREE.Vector3());
-      // leave the battlefield cap to its tower patches (same 1.05 rad cap the props focus on)
-      if (this.focusDir && dir.dot(this.focusDir) > Math.cos(1.05)) continue;
-      if (towers.some(t => t.dot(dir) > TOO_CLOSE)) continue;
-      if (out.some(o => o.dot(dir) > MIN_SEP)) continue;
-      out.push(dir);
-    }
-    return out;
-  }
-
-  /** Live blade count of the static grass fields (debug readout). */
+  /** Live blade count of the streamed grass (debug readout). */
   get grassBlades(): number {
-    return (this.grass ? this.grass.blades : 0) + (this.wildGrass ? this.wildGrass.blades : 0);
+    return this.environment.grass.stats().instances;
   }
 
   /** The shared wind state, so gameplay code can read or nudge it. */
@@ -730,13 +607,13 @@ export class Planet {
   }
 
   /**
-   * Hides or restores every instanced decoration (rocks, crystals, trees, grass, puddles). Used by
-   * the performance watchdog: scenery is the cheapest thing to drop when frames get tight.
+   * Hides or restores the whole environment (foliage, props, water, weather). Used by the
+   * performance watchdog: scenery is the cheapest thing to drop when frames get tight.
    */
   setDecorationsVisible(visible: boolean): void {
     if (this.decorationsVisible === visible) return;
     this.decorationsVisible = visible;
-    this.group.visible = visible;
+    this.environment.setVisible(visible);
   }
 
   /** Tears down every GPU resource so a freshly seeded planet can take its place. */
@@ -751,19 +628,7 @@ export class Planet {
     this.sky.removeFromParent();
     this.sky.geometry.dispose();
     this.skyMat.dispose();
-    for (const child of [...this.group.children]) {
-      const im = child as THREE.InstancedMesh;
-      im.geometry?.dispose();
-      const mat = im.material as THREE.Material | THREE.Material[];
-      if (Array.isArray(mat)) mat.forEach(m => m.dispose());
-      else mat?.dispose();
-    }
-    this.group.removeFromParent();
-    this.group.clear();
-    this.grass?.dispose();
-    this.grass = null;
-    this.wildGrass?.dispose();
-    this.wildGrass = null;
+    this.environment.dispose();
     this.ambience?.dispose();
     this.ambience = null;
     // the rendered-surface lookup holds nothing on the GPU, but drop the (multi-MB) buffers
@@ -775,9 +640,14 @@ export class Planet {
 
   // ------------------------------------------------------------ heightfield
 
-  /** Terrain radius (distance from planet centre) along a unit direction. */
+  /**
+   * Terrain radius (distance from planet centre) along a unit direction — the PLANET TERRAIN
+   * PROVIDER's field (macro + §5 detail layers). Every consumer — mesh, collision, raycasts,
+   * placement — reads this one function, so the drawn surface and the simulated one can never
+   * drift apart (plan §4).
+   */
   heightAtDir(x: number, y: number, z: number): number {
-    return this.terrain.sample(x, y, z);
+    return this.environment.provider.getHeight(x, y, z);
   }
 
   heightAt(p: THREE.Vector3): number {
@@ -1033,243 +903,39 @@ export class Planet {
     return dirFromAngles(latDeg, lonDeg, out);
   }
 
-  // ------------------------------------------------------------ decorations
+  // ------------------------------------------------------------ environment (plan §1/§87)
 
-  private buildDecorations(scene: THREE.Scene, quality: QualitySettings, seed: number): void {
-    const rand = new Rand(seed ^ 0x51ac);
-    const total = quality.decorations;
+  /**
+   * Builds the reworked environment composition root (`WorldEnvironment`). The old per-planet
+   * decoration pass is replaced by the cell-streamed systems under `world/`: deterministic,
+   * instanced and budgeted (plan §19/§20/§43).
+   */
+  private createEnvironment(
+    scene: THREE.Scene,
+    quality: QualitySettings,
+    seed: number,
+    lights?: PlanetLights
+  ): WorldEnvironment {
+    const sun = lights?.sun ?? new THREE.DirectionalLight(0xfff0d8, 1.5);
+    const hemi = lights?.hemi ?? new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
+    const rim = lights?.rim ?? new THREE.DirectionalLight(0x7a5cff, 0.35);
+    const env = new WorldEnvironment({
+      parent: scene,
+      seed,
+      qualityName: quality.name,
+      radius: this.radius,
+      terrain: this.terrain,
+      biomeGen: this.biome,
+      wind: this.wind,
+      sun,
+      hemi,
+      rim,
+      sceneForFog: scene,
+    });
 
-    const dummy = new THREE.Object3D();
-    const dir = new THREE.Vector3();
-    const pos = new THREE.Vector3();
-    const world = new THREE.Vector3();
-    const up = new THREE.Vector3();
-    const tmpColor = new THREE.Color();
-
-    /**
-     * Normalized biome value: 0 = this planet's deepest ground, 1 = its highest peak. The bands
-     * used to be ABSOLUTE (`(h - radius + 13) / 40`), so a low-relief archetype could never reach
-     * the peak band and dropped every spike, crystal and forest on the whole planet — the "most
-     * of the planet is missing rocks/spikes/trees" report. Each prop class now lives on its own
-     * band of the ACTUAL relief, so every seed grows the full spread of scenery.
-     */
-    const minH = Number.isFinite(this.reliefMin) ? this.reliefMin : this.radius - 8;
-    const maxH = Number.isFinite(this.reliefMax) ? this.reliefMax : this.radius + 20;
-    const span = Math.max(6, maxH - minH);
-    const biome = (h: number): number => clamp((h - minH) / span, 0, 1);
-
-    // Every prop now shares the game's custom lighting so instanced scenery matches the terrain.
-    const rockMat = createPropMaterial({ facet: 0.85, noise: 0.5, fresnel: 0.1 });
-    const crystalMat = createPropMaterial({ facet: 0.6, noise: 0.25, emissive: 0.55, fresnel: 0.5, alpha: 0.92, transparent: true });
-    const trunkMat = createPropMaterial({ facet: 0.35, noise: 0.55, fresnel: 0.06 });
-    const canopyMat = createPropMaterial({ facet: 0.5, noise: 0.45, emissive: 0.16, fresnel: 0.2 });
-    // Stylized vegetation: far-field instanced scatter (grass, flowers, plants) plus a dense
-    // static grass field grown around the tower zones once the towers exist, all sharing one wind.
-    const wind = this.wind;
-    const bladeMat = createBladeMaterial(wind, 0x4c9c60, 0xc4f2cc);
-    const flowerMat = createFlowerMaterial(wind, 0xd08cf0);
-    const plantMat = createPlantMaterial(wind, 0x357a45, 0x93dfa0);
-    // The dense field uses the game's necrotic green (same family as the terrain's uGrassColor) with
-    // dark roots, so a full screen of grass still reads as *this* planet instead of pale mint.
-    const fieldGrassMat = createFieldGrassMaterial(wind, 0x2c5238, 0x86cc92);
-    const bladeGeo = bladeGeometry();
-    // Instance counts: the focus bias below keeps the battlefield at its old density (0.45 × 1.6 ≈
-    // the old 0.75 share of the same budget) while the REST of the planet gets ~3.5× the props —
-    // the "most of the planet is empty" report. The extra instances are one instanced draw each.
-    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, Math.max(1, Math.floor(total * 3.5)));
-    const peaks = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 4, 5), rockMat, Math.max(1, Math.floor(total * 0.5)));
-    const crystals = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), crystalMat, Math.max(1, Math.floor(total * 0.8)));
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 1, 5), trunkMat, Math.max(1, Math.floor(total * 1.6)));
-    const canopies = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), canopyMat, Math.max(1, Math.floor(total * 1.6)));
-    // Far-field scatter: reads at distance and across the whole planet.
-    const blades = new THREE.InstancedMesh(bladeGeo, bladeMat, Math.max(1, Math.floor(total * 19)));
-    const flowers = new THREE.InstancedMesh(flowerGeometry(), flowerMat, Math.max(1, Math.floor(total * 8)));
-    const plants = new THREE.InstancedMesh(plantGeometry(), plantMat, Math.max(1, Math.floor(total * 3.8)));
-    const bladeSway = createSwayScatter(blades.count);
-    const flowerSway = createSwayScatter(flowers.count);
-    const plantSway = createSwayScatter(plants.count);
-
-    const setColor = (mesh: THREE.InstancedMesh, i: number, color: number, vary: number): void => {
-      tmpColor.setHex(color);
-      tmpColor.offsetHSL(rand.range(-0.035, 0.035), rand.range(-0.05, 0.05), rand.range(-vary, vary));
-      mesh.setColorAt(i, tmpColor);
-    };
-
-    /**
-     * three only allocates `instanceColor` on the first setColorAt call, so it has to be created
-     * explicitly here — otherwise every instanced prop renders pure white.
-     */
-    const allocColors = (mesh: THREE.InstancedMesh): void => {
-      if (mesh.instanceColor === null) {
-        const n = mesh.instanceMatrix.count;
-        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
-      }
-    };
-
-    interface PropOpts {
-      min: number;
-      max: number;
-      flat: number; // maximum slope
-      color: number;
-      vary: number;
-      stretch: number;
-      lift: number;
-      minBiome?: number;
-      maxBiome?: number;
-      cluster?: number;
-      offsetY?: (s: number) => number;
-      /** Only scatter on open ground (no dirt mask). */
-      lush?: boolean;
-      /** How tightly a cluster bunches up (tangent distance, in radians of the sphere). */
-      clusterSpread?: number;
-      /** Radius (in radians) of the focus-biased disc for props that aim at the battlefield. */
-      focusRadius?: number;
-      /**
-       * Share of this prop type aimed at the battlefield cap (the rest goes planet-wide). The cap
-       * is ~25% of the sphere, so 0.45 puts roughly 2.9× uniform density in the battlefield and
-       * ~1.2× everywhere else — items everywhere, with the contested region still the liveliest.
-       */
-      focusChance?: number;
-    }
-
-    /** Scatters a prop type in clusters, filtered by slope and biome band. */
-    const place = (
-      mesh: THREE.InstancedMesh,
-      count: number,
-      o: PropOpts,
-      second?: { mesh: THREE.InstancedMesh; y: (s: number) => number; color?: number; vary?: number },
-      /** Called after each instance is written, for systems that need the final transform. */
-      onInstance?: (i: number, dummy: THREE.Object3D, world: THREE.Vector3) => void
-    ): void => {
-      let placed = 0;
-      let guard = 0;
-      const focus = this.focusDir;
-      while (placed < count && guard++ < count * 40) {
-        // A bias — not a monopoly — toward the contested region: the battlefield stays the most
-        // detailed area, but most of every prop type still lands across the whole planet.
-        if (focus && rand.chance(o.focusChance ?? 0.45)) {
-          tangentBasis(focus, _t1, _t2);
-          const a = rand.range(0, Math.PI * 2);
-          const r = Math.sqrt(rand.range(0, 1)) * (o.focusRadius ?? 1.05);
-          dir.copy(focus).multiplyScalar(Math.cos(r))
-            .addScaledVector(_t1, Math.cos(a) * Math.sin(r))
-            .addScaledVector(_t2, Math.sin(a) * Math.sin(r)).normalize();
-        } else {
-          randomUnitVector(dir);
-        }
-        const clusterSize = o.cluster ?? 1 + Math.floor(rand.range(0, 3.99));
-        for (let k = 0; k < clusterSize && placed < count; k++) {
-          tangentBasis(dir, _t1, _t2);
-          const a = rand.range(0, Math.PI * 2);
-          const r = rand.range(0, o.clusterSpread ?? 0.05);
-          const d2 = pos.copy(dir).addScaledVector(_t1, Math.cos(a) * r).addScaledVector(_t2, Math.sin(a) * r).normalize();
-          const h = this.heightAtDir(d2.x, d2.y, d2.z);
-          world.copy(d2).multiplyScalar(h);
-          const t = biome(h);
-          if (o.minBiome !== undefined && t < o.minBiome) continue;
-          if (o.maxBiome !== undefined && t > o.maxBiome) continue;
-          if (this.slopeAt(world) > o.flat) continue;
-          if (o.lush && !isLush(world.x, world.z)) continue;
-          const s = rand.range(o.min, o.max);
-          up.copy(d2);
-          dummy.position.copy(world).addScaledVector(up, s * o.lift);
-          dummy.scale.set(s * rand.range(0.78, 1.3), s * rand.range(o.stretch * 0.7, o.stretch * 1.5), s * rand.range(0.78, 1.3));
-          dummy.quaternion.setFromUnitVectors(_upY, up);
-          dummy.rotateY(rand.range(0, Math.PI * 2));
-          if (o.flat > 0.5) dummy.rotateZ(rand.range(-0.12, 0.12));
-          dummy.updateMatrix();
-          mesh.setMatrixAt(placed, dummy.matrix);
-          setColor(mesh, placed, o.color, o.vary);
-          if (onInstance) onInstance(placed, dummy, world);
-          if (second) {
-            dummy.position.copy(world).addScaledVector(up, s * o.lift + second.y(s));
-            dummy.updateMatrix();
-            second.mesh.setMatrixAt(placed, dummy.matrix);
-            setColor(second.mesh, placed, second.color ?? o.color, second.vary ?? o.vary);
-          }
-          placed++;
-        }
-      }
-      mesh.count = placed;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      // Static scatter: keep the default frustum culling. three derives the instance bounds from
-      // the placed matrices, so looking away skips the whole draw — and because the bounds cover
-      // every placed instance there can be no pop-in.
-      mesh.frustumCulled = true;
-      this.group.add(mesh);
-      if (second) {
-        second.mesh.count = placed;
-        second.mesh.instanceMatrix.needsUpdate = true;
-        if (second.mesh.instanceColor) second.mesh.instanceColor.needsUpdate = true;
-        second.mesh.frustumCulled = true;
-        this.group.add(second.mesh);
-      }
-    };
-
-    // Allocate per-instance colours up-front (three only creates the attribute on the first
-    // setColorAt call, which previously left every prop rendering pure white).
-    for (const m of [rocks, peaks, crystals, trunks, canopies, blades, flowers, plants]) allocColors(m);
-
-    // scattered rocks (everywhere) — small and half-buried so they read as rubble, not monoliths
-    place(rocks, rocks.count, { min: 0.5, max: 1.7, flat: 1.6, color: 0x6a6478, vary: 0.1, stretch: 0.85, lift: 0.08, cluster: 1 + Math.floor(rand.range(0, 4.99)) });
-    // jagged peaks on the high ground
-    place(peaks, peaks.count, { min: 1.5, max: 3.4, flat: 2.2, color: 0x8c8aa0, vary: 0.1, stretch: 2.6, lift: 0.7, minBiome: 0.62 });
-    // necrotic crystals on rocky mid ground
-    place(crystals, crystals.count, { min: 0.4, max: 1.25, flat: 1.2, color: 0x9a6bff, vary: 0.12, stretch: 2.3, lift: 0.3, minBiome: 0.3 });
-    // trees: trunks + floating canopies (forests in the mid band)
-    place(
-      trunks,
-      trunks.count,
-      { min: 1.6, max: 3.6, flat: 0.85, color: 0x4a3b4a, vary: 0.08, stretch: 2.6, lift: 1.2, minBiome: 0.22, maxBiome: 0.66, cluster: 1 + Math.floor(rand.range(1, 5.99)) },
-      { mesh: canopies, y: s => s * 3.1, color: 0x466f5d, vary: 0.12 }
-    );
-    // ---- stylized field: grass blades, flowers and leafy plants, all wind-blown
-    // Each prop records its own sway data (tint, height, trample, phase). Trample comes straight
-    // from the same ground-dirt mask the blades are thinned by, so bare patches look trodden.
-    const swayFill = (scatter: SwayScatter, geomHeight: number, trampleMul: number, tintLo: number, tintHi: number) =>
-      (i: number, d: THREE.Object3D, w: THREE.Vector3): void => {
-        scatter.tint[i] = rand.range(tintLo, tintHi);
-        scatter.height[i] = geomHeight * d.scale.y;
-        scatter.trample[i] = dirtAmount(w.x, w.z) * trampleMul;
-        scatter.phase[i] = rand.range(0, Math.PI * 2);
-      };
-
-    place(
-      blades,
-      blades.count,
-      { min: 0.78, max: 1.15, flat: 1.05, color: 0xa9e8b6, vary: 0.16, stretch: 1, lift: 0.05, minBiome: 0.12, maxBiome: 0.84, lush: true, cluster: 5 + Math.floor(rand.range(0, 6.99)), clusterSpread: 0.017, focusRadius: 0.75 },
-      undefined,
-      swayFill(bladeSway, geometryHeight(blades.geometry), 0.9, 0.8, 1.25)
-    );
-    applySwayAttributes(blades, bladeSway, blades.count);
-
-    place(
-      flowers,
-      flowers.count,
-      { min: 0.75, max: 1.15, flat: 1.05, color: 0xe6b4ff, vary: 0.14, stretch: 1, lift: 0.04, minBiome: 0.14, maxBiome: 0.82, lush: true, cluster: 3 + Math.floor(rand.range(0, 3.99)), clusterSpread: 0.028, focusRadius: 0.8 },
-      undefined,
-      swayFill(flowerSway, geometryHeight(flowers.geometry), 0.5, 0.85, 1.2)
-    );
-    applySwayAttributes(flowers, flowerSway, flowers.count);
-
-    place(
-      plants,
-      plants.count,
-      { min: 0.85, max: 1.5, flat: 1.1, color: 0x8ecf9b, vary: 0.15, stretch: 1, lift: 0.04, minBiome: 0.16, maxBiome: 0.88, lush: true, cluster: 1 + Math.floor(rand.range(0, 2.99)), clusterSpread: 0.05, focusRadius: 0.85 },
-      undefined,
-      swayFill(plantSway, geometryHeight(plants.geometry), 0.7, 0.8, 1.25)
-    );
-    applySwayAttributes(plants, plantSway, plants.count);
-
-    // ---- dense grass: grown once around the tower zones by `growGrass()` (called by the game
-    // after the towers are laid out). It never moves, so nothing pops in while you play.
-    this.grassMat = fieldGrassMat;
-    this.grassGeo = bladeGeo;
-    const fallbackZones = [this.focusDir ?? new THREE.Vector3(0, 1, 0)];
-    this.growGrass(fallbackZones);
-
-    scene.add(this.group);
+    // The environment streams its own content from cells (plan §19/§72); the game only declares
+    // its gameplay keep-out zones later, via `growGrass()` → `setGameplayZones()`.
+    return env;
   }
 
   alignOnSurface(obj: THREE.Object3D, dir: THREE.Vector3, forwardHint?: THREE.Vector3): THREE.Vector3 {

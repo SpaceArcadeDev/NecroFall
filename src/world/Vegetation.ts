@@ -165,7 +165,7 @@ export function geometryHeight(g: THREE.BufferGeometry): number {
 }
 
 /** Minimal merge for our own single-attribute geometries (indexed, position + uv + normal). */
-function mergeSimple(list: THREE.BufferGeometry[]): THREE.BufferGeometry {
+export function mergeSimple(list: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
   const nrm: number[] = [];

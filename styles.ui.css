@@ -817,9 +817,8 @@
   box-shadow: 0 0 18px rgba(150, 90, 255, 0.5);
   pointer-events: none;
 }
-/* (user ask 2026-09-29) NO bottom gradient line in the LOBBY — the lit rule read as a
-   seam sliced across the roster stage. The rank header keeps its own copy of the rule. */
-.lobby-screen .lobby-head::after { display: none; }
+/* (user ask 2026-09-29 PM) The lit rule lives UNDER THE TITLE, like the rank menu —
+   the line that used to slice across the roster (`.lobby-lineup::after`) is gone. */
 /* the LOBBY wordmark wears the NECROFALL dress: same gradient, weight and tracking */
 .lobby-title {
   font-size: clamp(30px, 6.4vh, 54px);
@@ -901,14 +900,6 @@
   border-radius: 999px;
   padding: 2px 9px;
 }
-/* OFFICIAL lobbies only (user ask: the reused P2P lobby "with the correct tags"): the
-   live SEASON tag beside the format chip. P2P rooms keep the single CLASSIC chip. */
-.lobby-mode.lobby-season {
-  color: #ffd166;
-  border-color: rgba(255, 209, 102, 0.42);
-  background: rgba(255, 209, 102, 0.07);
-  letter-spacing: 0.16em;
-}
 .lobby-lineup {
   position: relative;
   flex: 1 1 auto;
@@ -918,18 +909,9 @@
   flex-direction: column;
   justify-content: flex-end;
 }
-/* the stage: a lit rule the whole line-up stands on */
-.lobby-lineup::after {
-  content: '';
-  position: absolute;
-  left: 2%;
-  right: 2%;
-  bottom: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(150, 90, 255, 0.7), var(--accent2), rgba(150, 90, 255, 0.7), transparent);
-  box-shadow: 0 0 16px rgba(150, 90, 255, 0.45);
-  pointer-events: none;
-}
+/* the stage's lit rule is RETIRED (user ask 2026-09-29 PM): the green/purple gradient
+   now sits under the LOBBY title (`.lobby-head::after`), not under the seat cards. */
+.lobby-lineup::after { display: none; }
 .lobby-track {
   flex: 1 1 auto;
   min-height: 0;

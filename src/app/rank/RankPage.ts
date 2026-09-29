@@ -117,7 +117,6 @@ export class RankPage {
   private quickJoin!: HTMLButtonElement;
   private quickCreate!: HTMLButtonElement;
   private quickFind!: HTMLButtonElement;
-  private quickJoinRow!: HTMLElement;
   private quickInput!: HTMLInputElement;
   private quickSig = '';
   private colonySig = '';
@@ -205,28 +204,22 @@ export class RankPage {
     sideCol.appendChild(this.statsEl);
     main.appendChild(sideCol);
 
-    // ---- quick actions (user ask): JOIN · CREATE PARTY · FIND MATCH. In landscape
-    // these own the right column; in portrait they are a compact row under the panel.
+    // ---- quick actions (user ask 2026-09-29 PM): the RIGHT column of the three-column
+    // layout — a vertical stack: [LOBBY CODE][JOIN][CREATE LOBBY][FIND MATCH]. The code
+    // input is ALWAYS on top of the section; JOIN reads it directly (no reveal step).
     this.quickEl = el('div', 'rk-quick');
+    this.quickInput = el('input', 'rk-join-input') as HTMLInputElement;
+    this.quickInput.maxLength = 8;
+    this.quickInput.placeholder = 'LOBBY CODE';
+    this.quickInput.autocapitalize = 'characters';
+    this.quickInput.autocomplete = 'off';
     this.quickJoin = el('button', 'rk-btn', 'JOIN') as HTMLButtonElement;
     this.quickJoin.type = 'button';
     this.quickCreate = el('button', 'rk-btn', 'CREATE LOBBY') as HTMLButtonElement;
     this.quickCreate.type = 'button';
     this.quickFind = el('button', 'rk-btn primary', 'FIND MATCH') as HTMLButtonElement;
     this.quickFind.type = 'button';
-    this.quickJoinRow = el('div', 'rk-join-row hidden');
-    this.quickInput = el('input', 'rk-join-input') as HTMLInputElement;
-    this.quickInput.maxLength = 8;
-    this.quickInput.placeholder = 'LOBBY CODE';
-    this.quickInput.autocapitalize = 'characters';
-    this.quickInput.autocomplete = 'off';
-    const quickGo = el('button', 'rk-btn primary', 'GO') as HTMLButtonElement;
-    quickGo.type = 'button';
-    this.quickJoin.addEventListener('click', () => {
-      this.quickJoinRow.classList.toggle('hidden');
-      if (!this.quickJoinRow.classList.contains('hidden')) this.quickInput.focus();
-    });
-    quickGo.addEventListener('click', () => {
+    const joinNow = (): void => {
       const code = this.quickInput.value.trim().toUpperCase();
       if (code.length < 4) {
         this.ctx.toast('Enter a valid lobby code.');
@@ -235,9 +228,10 @@ export class RankPage {
       // same rule as the lobby setup: JOINing opens the room only once it lands
       this.ctx.setLobbyFormat('RANK');
       this.ctx.joinLobbyByCode(code);
-    });
+    };
+    this.quickJoin.addEventListener('click', joinNow);
     this.quickInput.addEventListener('keydown', (e) => {
-      if ((e as KeyboardEvent).key === 'Enter') quickGo.click();
+      if ((e as KeyboardEvent).key === 'Enter') joinNow();
     });
     this.quickCreate.addEventListener('click', () => {
       const hex = this.ctx.myHex();
@@ -252,8 +246,7 @@ export class RankPage {
       this.ctx.goLobbyRoom(); // CREATE LOBBY opens the room
     });
     this.quickFind.addEventListener('click', () => this.quickRankedSearch());
-    this.quickJoinRow.append(this.quickInput, quickGo);
-    this.quickEl.append(this.quickJoin, this.quickCreate, this.quickFind, this.quickJoinRow);
+    this.quickEl.append(this.quickInput, this.quickJoin, this.quickCreate, this.quickFind);
     main.appendChild(this.quickEl);
 
     this.element.appendChild(main);
@@ -732,7 +725,7 @@ export class RankPage {
     this.toggleRecord();
   }
 
-  /** JOIN · CREATE PARTY · FIND MATCH — labels follow the party/queue state. */
+  /** LOBBY CODE · JOIN · CREATE LOBBY · FIND MATCH — labels follow the party/queue state. */
   private renderQuick(): void {
     const hex = this.ctx.myHex();
     const party = hex ? ClientCache.shared.myParty(hex) : null;
@@ -740,7 +733,8 @@ export class RankPage {
     const sig = `${party ? 1 : 0}|${queue?.ranked ? 1 : queue ? 2 : 0}`;
     if (sig === this.quickSig) return;
     this.quickSig = sig;
-    this.quickJoinRow.classList.add('hidden');
+    // Standing in a lobby: the join half steps away, the button becomes OPEN LOBBY.
+    this.quickInput.classList.toggle('hidden', Boolean(party));
     this.quickJoin.classList.toggle('hidden', Boolean(party));
     this.quickCreate.textContent = party ? 'OPEN LOBBY' : 'CREATE LOBBY';
     this.quickFind.classList.toggle('searching', Boolean(queue?.ranked));

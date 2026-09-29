@@ -1788,6 +1788,10 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-rail:not(.floating) { margin-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
 }
 .nf-rail.open { border-color: color-mix(in srgb, var(--ui-accent) 65%, transparent); }
+/* BARE screens collapse the chrome to height 0 (wordmark rises to the top) — the bar
+   keeps the MAIN MENU's top offset (chrome 72px + its own 6px) so its position and
+   height are IDENTICAL on every shell screen (user ask 2026-09-29). */
+.nf-shell.bare-mode .nf-rail:not(.floating) { margin-top: 78px; }
 .nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes nf-panel-in {
   from { opacity: 0; transform: translateX(14px); }

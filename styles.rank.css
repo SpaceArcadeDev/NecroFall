@@ -141,10 +141,11 @@
 .rk-record-cell b.down { color: #ff6b81; }
 .rk-record-cell b.flat { color: var(--ui-text-muted); }
 
-/* quick actions (JOIN · CREATE PARTY · FIND MATCH) */
+/* quick actions (user ask 2026-09-29 PM): the code input FIRST, then JOIN ·
+   CREATE LOBBY · FIND MATCH. Desktop + landscape stack them in the right column;
+   portrait wraps: input on its own line, the three buttons share the next. */
 .rk-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 2px; }
 .rk-quick .rk-btn { flex: 1 1 0; justify-content: center; padding: 9px 8px; font-size: 11px; letter-spacing: 0.08em; white-space: nowrap; }
-.rk-join-row { display: flex; flex: 1 1 100%; gap: 6px; }
 .rk-join-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -478,14 +479,24 @@
 .rk-rail { grid-column: 1; grid-row: 1; }
 .rk-map-wrap { grid-column: 2; grid-row: 1; }
 .rk-side { grid-column: 3; grid-row: 1; }
-/* DESKTOP quick actions (user report 2026-09-29: "desktop doesn't show the join/create
-   lobby and find match buttons"): the grid only placed rail/map/side in row 1, so
-   `.rk-quick` was auto-placed into a second row of the ZERO-width rail column and was
-   clipped away. Desktop gets a real second row under the side column; every other
-   viewport keeps its own placement rules (≤900 flex order 3, landscape col 3). */
+/* DESKTOP quick actions (user ask 2026-09-29 PM): THREE columns like the landscape
+   layout — map | details | quick actions. The right column stacks the lobby-code
+   input on top, then JOIN, CREATE LOBBY, FIND MATCH. (It used to be auto-placed into
+   the zero-width rail cell and clipped, then docked under the side panel.) */
 @media (min-width: 901px) {
-  .rk-main { grid-template-rows: minmax(0, 1fr) auto; }
-  .rk-quick { grid-column: 3; grid-row: 2; margin: 10px 14px 14px; }
+  .rk-main { grid-template-columns: minmax(0, 1fr) 340px 190px; grid-template-rows: minmax(0, 1fr); }
+  .rk-map-wrap { grid-column: 1; }
+  .rk-side { grid-column: 2; }
+  .rk-quick {
+    grid-column: 3;
+    grid-row: 1;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 6px;
+    margin: 14px 14px 20px 0;
+  }
+  .rk-quick .rk-btn { flex: 0 0 auto; width: 100%; }
+  .rk-join-input { flex: 0 0 auto; width: 100%; }
 }
 /* RANK SELECTION pills live ONLY on the EXPANDED map (user 2026-09-29): in the rank
    menu the rail row was eating frame space — the map's own band highlight + label
@@ -1103,8 +1114,9 @@
     scrollbar-width: none;
   }
   .rk-side::-webkit-scrollbar { display: none; }
-  /* quick actions ride under the panel in portrait */
+  /* quick actions ride under the panel in portrait — the code input takes its own line */
   .rk-quick { order: 3; flex: 0 0 auto; }
+  .rk-quick .rk-join-input { flex: 1 1 100%; }
   .rk-map-expand { width: 42px; height: 42px; }
   /* TOUCH TARGETS (plan §55): the BUTTON is 44px, the glyph stays ~20px */
   .rk-zoom-btn { width: 44px; height: 44px; }
@@ -1241,8 +1253,7 @@ body.nf-touch .rk-hover-tip { display: none !important; }
     padding: 0;
   }
   .rk-quick .rk-btn { flex: 0 0 auto; width: 100%; padding: 9px 6px; font-size: 11px; }
-  .rk-join-row { flex-direction: column; }
-  .rk-join-input { width: 100%; }
+  .rk-join-input { flex: 0 0 auto; width: 100%; }
 
   /* …and with the rail hidden (user 2026-09-29: pills only on the EXPANDED map)
      the three columns ride in ROW 1 — no empty rail row above the squircle */

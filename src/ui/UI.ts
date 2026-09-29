@@ -71,7 +71,6 @@ export interface OfficialLobbyState {
   code: string;
   /** 'CLASSIC' | 'RANK' — the tag chip beside the title. */
   format: string;
-  season: number;
   players: OfficialLobbySeat[];
   /** Am I the party leader (only they can FIND MATCH — the server enforces it too). */
   leader: boolean;
@@ -721,7 +720,6 @@ export class UI {
   // lobby refs
   private lobbyCode!: HTMLElement;
   private lobbyMode!: HTMLElement;
-  private lobbySeason!: HTMLElement;
   private lobbyCodeCap!: HTMLElement;
   /** The avatar rail: one live 3D figure per seat, standing above the seat cards. */
   // (see also the necrotech detail overlay fields further down)
@@ -1554,10 +1552,6 @@ export class UI {
     head.appendChild(el('div', 'menu-title lobby-title', 'LOBBY'));
     this.lobbyMode = el('span', 'lobby-mode', 'CLASSIC');
     head.appendChild(this.lobbyMode);
-    // The OFFICIAL lobby hangs the live SEASON tag beside the format chip (user ask:
-    // "enhance it to use the correct tags"); P2P rooms never show it.
-    this.lobbySeason = el('span', 'lobby-mode lobby-season hidden', '');
-    head.appendChild(this.lobbySeason);
     s.appendChild(head);
 
     // No `.panel` slab: the roster stands on the screen's own backdrop, on a lit stage (see the
@@ -1654,16 +1648,12 @@ export class UI {
     isHost: boolean,
     status: string,
     canStart = true,
-    opts?: { official?: boolean; format?: string; season?: number; gathering?: boolean }
+    opts?: { official?: boolean; format?: string; gathering?: boolean }
   ): void {
     this.officialLobbyOn = Boolean(opts?.official);
+    // The format chip only. (The SEASON pill was removed from the lobby — user ask
+    // 2026-09-29: "in lobby no need season pill".)
     this.lobbyMode.textContent = this.officialLobbyOn ? opts?.format || 'CLASSIC' : 'CLASSIC';
-    if (this.officialLobbyOn) {
-      this.lobbySeason.textContent = `SEASON ${opts?.season ?? 1}`;
-      this.lobbySeason.classList.remove('hidden');
-    } else {
-      this.lobbySeason.classList.add('hidden');
-    }
     this.lobbyCode.textContent = code || '-----';
 
     // ---- OPEN SLOTS (user ask): the room always shows its full roster shape —
@@ -1788,7 +1778,6 @@ export class UI {
     if (!state) {
       this.officialLobbyOn = false;
       this.officialLobby = null;
-      this.lobbySeason.classList.add('hidden');
       this.lobbyMode.textContent = 'CLASSIC';
       return;
     }
@@ -1800,7 +1789,6 @@ export class UI {
     this.updateLobby(state.code, state.players, state.leader, status, state.leader && state.ready, {
       official: true,
       format: state.format,
-      season: state.season,
       gathering: state.gathering,
     });
   }

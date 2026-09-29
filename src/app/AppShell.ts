@@ -887,6 +887,9 @@ export class AppShell implements ShellContext {
     this.nav.element.classList.toggle('hidden', screen !== 'home');
     this.backBtn.classList.toggle('hidden', !childScreen);
     this.root.classList.toggle('no-nav', screen !== 'home');
+    // NOTE: the friends bar's visibility belongs to `refreshRail()` ALONE. The old
+    // `noChrome` hide here turned it off on play/lobby and the next data tick turned it
+    // back on — the "friends list pops in after a delay" report (user ask 2026-09-29).
     // The CLASSIC flow (play, setup, lobby room) wears the in-game menu dress: the
     // account chrome steps away (no profile button, currencies, ? or settings)
     // so the wordmark is the header, with the back chevron floating over the
@@ -896,11 +899,8 @@ export class AppShell implements ShellContext {
     // The header chrome now belongs to the MAIN MENU ONLY (user ask 2026-09-28):
     // every other screen — play, lobby, room, rank, queue, profile, graphics —
     // runs chrome-less, wordmark or not.
-    const bareScreen = screen === 'play' || screen === 'lobby' || screen === 'room';
-    const noChrome = bareScreen || screen === 'login' || screen === 'onboarding';
     const noTopBar = screen !== 'home' && screen !== 'loading' && screen !== 'boot';
     this.topBar.element.classList.toggle('hidden', noTopBar);
-    this.rail.element.classList.toggle('hidden', noChrome);
     this.root.classList.toggle('bare-mode', noTopBar);
 
     switch (screen) {
@@ -1312,7 +1312,6 @@ export class AppShell implements ShellContext {
         game.ui.updateOfficialLobby({
           code: '',
           format: this.currentLobbyFormat,
-          season: cache.rankedSeason()?.seasonId ?? 1,
           players: [],
           leader: false,
           ready: false,
@@ -1352,7 +1351,6 @@ export class AppShell implements ShellContext {
     game.ui.updateOfficialLobby({
       code: party.joinCode,
       format: this.currentLobbyFormat,
-      season: cache.rankedSeason()?.seasonId ?? 1,
       players,
       leader,
       ready,

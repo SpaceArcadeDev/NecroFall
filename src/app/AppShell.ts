@@ -42,7 +42,6 @@ import { button, clear, el } from './ui/dom';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
-import { LobbyRoomPage } from './lobby/LobbyRoomPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
@@ -63,6 +62,9 @@ export class AppShell implements ShellContext {
   readonly p2p: P2PMultiplayerProvider;
 
   private root: HTMLElement;
+  /** The row that carries the page pane and the friends bar SIDE BY SIDE (user ask:
+   *  "the collapsed friends list has its own relative area, not an overlay"). */
+  private bodyRow: HTMLElement;
   private screenHost: HTMLElement;
   private chrome: HTMLElement;
   private topBar: CurrencyBar;
@@ -106,6 +108,16 @@ export class AppShell implements ShellContext {
   private gameScreenWatch = 0;
   /** Last in-game screen seen — leaving the P2P LOBBY must return to the shell, not the legacy menu. */
   private lastGameScreen: ScreenName = 'menu';
+  /**
+   * The OFFICIAL lobby is standing on the game's own P2P lobby screen (user ask 2026-09-29).
+   * The shell owns the screen though — the flag routes the screen-change observer and feeds
+   * `game.ui.updateOfficialLobby` from the data ticks.
+   */
+  private officialLobbyActive = false;
+  private officialLobbySince = 0;
+  private officialLobbySig = '';
+  /** Toast shown by the observer when the official lobby hands the screen back. */
+  private pendingLobbyExit = '';
   /** `?room=CODE` invite link (legacy `?party=CODE` still accepted) — consumed once ready. */
   private invitedRoomCode = '';
   /** The last matchmaking queue we saw was RANKED — return there, not the lobby (plan §48). */
@@ -135,8 +147,12 @@ export class AppShell implements ShellContext {
     this.root = el('div', 'nf-shell hidden');
     this.chrome = el('div', 'nf-chrome');
     this.screenHost = el('main', 'nf-main');
+    // The pages and the friends bar share ONE flex row: the bar owns its column
+    // (it never overlays the page — user ask 2026-09-29).
+    this.bodyRow = el('div', 'nf-body');
+    this.bodyRow.appendChild(this.screenHost);
     this.root.appendChild(this.chrome);
-    this.root.appendChild(this.screenHost);
+    this.root.appendChild(this.bodyRow);
     this.toastEl = el('div', 'nf-toasts');
     this.root.appendChild(this.toastEl);
     (document.body ?? app).appendChild(this.root);
@@ -152,10 +168,15 @@ export class AppShell implements ShellContext {
 
     this.topBar = new CurrencyBar(() => this.myHex(), () => this.openProfile(this.myHex()));
     this.nav = new MobileBottomNav((key) => this.onNav(key));
-    this.rail = new FriendRail(() => this.myHex(), (hex) => this.openProfile(hex), () => this.openPlayerSearch());
+    this.rail = new FriendRail(this);
     this.chrome.appendChild(this.topBar.element);
-    this.chrome.appendChild(this.rail.element);
     this.chrome.appendChild(this.nav.element);
+    // The bar sits in the body row's own column (the page never renders under it).
+    this.bodyRow.appendChild(this.rail.element);
+    // The friends OVERLAY + the notifications live OUTSIDE the shell root: the shell moves
+    // them (and the collapsed bar) over the game whenever a P2P / official lobby hides it.
+    (document.body ?? app).appendChild(this.rail.overlay);
+    (document.body ?? app).appendChild(this.rail.notifications);
 
     // The chevron that returns from child screens (play, lobby, party, queue, profile).
     this.backBtn = button('', 'nf-back hidden', () => this.onBack());
@@ -396,10 +417,19 @@ export class AppShell implements ShellContext {
   private handleGameScreenChange(name: ScreenName): void {
     const previous = this.lastGameScreen;
     this.lastGameScreen = name;
+    // The friends bar's visibility follows the GAME's screen too (customize/how-to step
+    // aside, lobby/menu wear it — user ask).
+    this.refreshRail();
     if (!this.pendingGameScreen) {
       // Leaving the in-game P2P LOBBY hands the screen back to the account shell
       // (where the player launched it) — never the legacy main menu.
       if (name === 'menu' && previous === 'lobby' && this.shellHidden && this.accountReady) {
+        // The OFFICIAL lobby rides this same screen: return to whatever OPENED it —
+        // rank → rank, play → play, lobby → lobby (user ask 2026-09-29).
+        if (this.officialLobbyActive) {
+          this.returnFromOfficialLobby();
+          return;
+        }
         // Drop the room link (a refresh must not rejoin a lobby that was left)
         // and put the route back on the CLASSIC setup the player came from.
         const url = new URL(window.location.href);
@@ -425,8 +455,8 @@ export class AppShell implements ShellContext {
     this.controlsModal.open(this.root);
   }
 
-  /** The find-survivors sheet: search the roster by name or friend code. */
-  private openPlayerSearch(): void {
+  /** The find-survivors sheet (ADD FRIEND in the friends overlay): search by name or player id. */
+  openPlayerSearch(): void {
     if (!this.playerSearch) {
       this.playerSearch = new PlayerSearch(
         () => this.myHex(),
@@ -620,7 +650,10 @@ export class AppShell implements ShellContext {
   private onData(): void {
     this.topBar.update();
     this.rail.update();
+    this.refreshRail();
     this.page?.update?.();
+    // The reused official lobby screen follows the party rows on every data settle.
+    if (this.officialLobbyActive) this.updateOfficialLobby();
 
     // A join-by-code lands asynchronously: the moment the lobby's rows exist, walk in.
     if (this.pendingRoomJoin) {
@@ -704,6 +737,13 @@ export class AppShell implements ShellContext {
       const status = e.status;
       if (status === 'idle') {
         if (this.screen === 'queue') this.returnFromQueue();
+      } else if (this.officialLobbyActive) {
+        // The lobby leader pressed FIND MATCH: the queue owns the screen while the
+        // whole party waits (user ask: the lobby keeps its own buttons, the search
+        // switches the screen exactly like a solo FIND MATCH does).
+        this.lastQueueRanked = Boolean(ClientCache.shared.myQueue()?.ranked);
+        this.game?.ui.show('menu'); // the observer returns the shell first
+        this.showShell('queue');
       } else if (this.screen !== 'queue' && this.screen !== 'loading' && !this.shellHidden) {
         // Remember the MODE: a ranked search must return to the map, not the lobby.
         this.lastQueueRanked = Boolean(ClientCache.shared.myQueue()?.ranked);
@@ -811,6 +851,11 @@ export class AppShell implements ShellContext {
     this.screenHost.scrollLeft = 0;
     this.screen = screen;
     this.root.classList.remove('hidden');
+    // The friends bar rides back into its OWN column beside the page (it floated over a
+    // game screen otherwise — user ask: never overlaying the page).
+    if (this.rail.element.parentElement !== this.bodyRow) this.bodyRow.appendChild(this.rail.element);
+    this.rail.element.classList.remove('floating');
+    this.refreshRail();
     // The boot spinner is for the LOADING screen only — any real screen hides it.
     this.setBootSpinner(screen === 'loading', screen === 'loading' ? 'LOADING PLANET…' : 'CONNECTING…');
     // MAIN MENU HEADER (plan §38/§39): the wordmark shares the HEADER ROW with the
@@ -1216,13 +1261,121 @@ export class AppShell implements ShellContext {
   }
 
   private renderLobbyRoom(): void {
-    // The line-up wears each member's outfit from the party rows — refresh ours
-    // first so the page shows the current customization (no-op with no party).
+    // The OFFICIAL LOBBY is the game's OWN P2P lobby screen (user ask 2026-09-29: "delete
+    // [the lookalike], reuse the exact same lobby as P2P — correct tags, text, logic"):
+    // the shell maps party rows in and swaps the actions, while the DOM, avatar rail and
+    // mobile scaling stay byte-for-byte the P2P screen.
     this.official.refreshPartyLoadout();
-    const page = new LobbyRoomPage(this);
-    this.page = page;
-    this.screenHost.appendChild(page.element);
-    page.update();
+    const game = this.game;
+    if (!game) {
+      // The shared world boots behind the shell; wait it out like the colony takeover does.
+      window.setTimeout(() => {
+        if (this.screen === 'room' && !this.shellHidden) this.renderLobbyRoom();
+      }, 400);
+      return;
+    }
+    this.officialLobbyActive = true;
+    this.officialLobbySince = performance.now();
+    this.officialLobbySig = '';
+    this.pendingLobbyExit = '';
+    game.ui.officialLobby = {
+      findMatch: () => this.official.findMatch(),
+      leave: () => {
+        this.official.leaveParty();
+        // The screen observer returns the shell to whatever opened the lobby (rank → rank).
+        game.ui.show('menu');
+      },
+      kick: (hex: string) => {
+        const target = ClientCache.shared.playerByHex(hex)?.identity;
+        if (target) this.official.kickFromParty(target);
+      },
+    };
+    this.hideShell(true); // the game owns the screen now — exactly like a P2P lobby
+    game.ui.show('lobby');
+    this.updateOfficialLobby();
+  }
+
+  /** Push the party rows into the reused lobby screen (sig-guarded: no needless re-renders). */
+  private updateOfficialLobby(): void {
+    const game = this.game;
+    if (!game || !this.officialLobbyActive) return;
+    const hex = this.myHex();
+    const cache = ClientCache.shared;
+    const party = hex ? cache.myParty(hex) : null;
+    if (!party) {
+      // Gathering: rows land a beat after CREATE / a code join. Past the grace with nothing,
+      // hand the screen back instead of standing in a lobby that is not there.
+      const gathering = performance.now() - this.officialLobbySince < 4000;
+      const sig = `gathering:${gathering}`;
+      if (sig !== this.officialLobbySig) {
+        this.officialLobbySig = sig;
+        game.ui.updateOfficialLobby({
+          code: '',
+          format: this.currentLobbyFormat,
+          season: cache.rankedSeason()?.seasonId ?? 1,
+          players: [],
+          leader: false,
+          ready: false,
+          gathering,
+        });
+      }
+      if (!gathering) {
+        this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
+        game.ui.show('menu'); // the observer routes back into the shell
+      }
+      return;
+    }
+    const members = cache.partyMembers(party.partyId);
+    const leader = party.leader.toHexString() === hex;
+    const me = cache.playerByHex(hex);
+    const ready = Boolean(me && me.playerName && me.colony < 3);
+    const players = members.map((m) => {
+      const mh = m.identity.toHexString();
+      subscribePlayer(mh);
+      const p = cache.playerByHex(mh);
+      return {
+        id: mh,
+        name: p?.playerName || 'Recruit',
+        ready: true,
+        colony: p && p.colony < 3 ? p.colony : -1,
+        nt: -1,
+        isHost: party.leader.toHexString() === mh,
+        me: mh === hex,
+        acc: m.acc ?? '',
+      };
+    });
+    const sig =
+      `${party.partyId}|${party.joinCode}|${this.currentLobbyFormat}|${leader ? 1 : 0}|${ready ? 1 : 0}|` +
+      players.map((p) => `${p.id}:${p.name}:${p.colony}:${p.acc}:${p.isHost ? 1 : 0}`).join(';');
+    if (sig === this.officialLobbySig) return;
+    this.officialLobbySig = sig;
+    game.ui.updateOfficialLobby({
+      code: party.joinCode,
+      format: this.currentLobbyFormat,
+      season: cache.rankedSeason()?.seasonId ?? 1,
+      players,
+      leader,
+      ready,
+      gathering: false,
+    });
+  }
+
+  /** Leave the reused lobby screen back into the shell (the screen observer routes here). */
+  private returnFromOfficialLobby(): void {
+    if (!this.officialLobbyActive) return;
+    this.officialLobbyActive = false;
+    const message = this.pendingLobbyExit;
+    this.pendingLobbyExit = '';
+    this.game?.ui.updateOfficialLobby(null);
+    const target: ShellScreen =
+      this.roomReturnScreen === 'rank' ? 'rank' : this.roomReturnScreen === 'play' ? 'play' : 'lobby';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('lobby');
+    url.searchParams.delete('room');
+    url.hash = target === 'rank' ? '#/rank' : target === 'play' ? '#/play' : '#/lobby';
+    window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    this.showShell(target);
+    if (message) this.toast(message);
   }
 
   private renderRank(): void {
@@ -1469,6 +1622,10 @@ export class AppShell implements ShellContext {
     const game = this.game;
     if (!game) return;
 
+    // The reused official lobby screen (no data tick arrives while nothing changes — the
+    // GATHERING grace still has to expire).
+    if (this.officialLobbyActive) this.updateOfficialLobby();
+
     if (this.officialMatchActive) {
       // Interim combat reporting until the server sim owns damage (plan §74).
       if (game.phase === 'playing' && game.localPlayer) {
@@ -1506,6 +1663,11 @@ export class AppShell implements ShellContext {
     // An official match that is already live owns the screen: a stray match-start must never
     // re-enter the loading path (it used to be able to re-boot a playing instance and reload-loop).
     if (this.officialMatchActive) return;
+    // A queued lobby dissolves into the match — the lobby screen is done.
+    if (this.officialLobbyActive) {
+      this.officialLobbyActive = false;
+      this.game?.ui.updateOfficialLobby(null);
+    }
     this.loadingSince = performance.now();
     this.showShell('loading');
 
@@ -1551,12 +1713,50 @@ export class AppShell implements ShellContext {
     this.avatarStageHost = null;
     this.avatarStageArgs = null;
     this.game?.ui.setShellMode(false);
+    // The friends bar FOLLOWS the player out of the shell (user ask: "show the collapsed
+    // friends bar in classic, rank, p2p, lobby") — floating above the game UI (there is no
+    // page layout to share there; the bar is the only shell element on screen).
+    if (this.accountReady && this.rail.element.parentElement !== document.body) {
+      document.body.appendChild(this.rail.element);
+      this.rail.element.classList.add('floating');
+    }
+    this.refreshRail();
     if (andReset) {
       this.page?.onHide?.();
       this.page = null;
       this.screen = 'hidden';
       clear(this.screenHost);
     }
+  }
+
+  /**
+   * The collapsed friends bar is visible on every menu — shell screens AND the in-game P2P /
+   * official lobby — and steps aside only where it would obstruct: the auth screens, the
+   * matchmaking modal, the full-bleed profile/graphics pages and a live match.
+   */
+  private refreshRail(): void {
+    const g = this.game;
+    const inSession = !!g && (g.phase === 'playing' || g.phase === 'colony' || g.phase === 'necrotech');
+    const excluded =
+      this.screen === 'login' ||
+      this.screen === 'onboarding' ||
+      this.screen === 'boot' ||
+      this.screen === 'loading' ||
+      this.screen === 'queue' ||
+      this.screen === 'profile' ||
+      this.screen === 'graphics';
+    // While the GAME owns the screen (shell hidden), the bar only shows on the menu-ish
+    // screens — the P2P / official lobby, the legacy menu and play setup (user ask).
+    const gameScreen = g?.ui.currentScreen ?? 'menu';
+    const menuishGame = gameScreen === 'menu' || gameScreen === 'lobby' || gameScreen === 'play';
+    const show =
+      this.accountReady &&
+      !excluded &&
+      !inSession &&
+      (!this.shellHidden || menuishGame) &&
+      !(this.officialMatchActive && (gameScreen === 'game' || gameScreen === 'results'));
+    this.rail.element.classList.toggle('hidden', !show);
+    if (!show) this.rail.collapse();
   }
 
   private toggleSettings(): void {

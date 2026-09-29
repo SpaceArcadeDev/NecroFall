@@ -39,6 +39,7 @@ import ChooseColonyReducer from "./choose_colony_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ConfirmMatchReducer from "./confirm_match_reducer";
 import CreatePartyReducer from "./create_party_reducer";
+import DeclineInviteReducer from "./decline_invite_reducer";
 import DeclineMatchReducer from "./decline_match_reducer";
 import DiscoverLocationReducer from "./discover_location_reducer";
 import DiscoverPlanetReducer from "./discover_planet_reducer";
@@ -48,6 +49,7 @@ import FindRankedMatchReducer from "./find_ranked_match_reducer";
 import FollowPlayerReducer from "./follow_player_reducer";
 import GrantCurrencyAdminReducer from "./grant_currency_admin_reducer";
 import GrantItemAdminReducer from "./grant_item_admin_reducer";
+import InviteToPartyReducer from "./invite_to_party_reducer";
 import JoinMatchReducer from "./join_match_reducer";
 import JoinPartyReducer from "./join_party_reducer";
 import JoinPartyByCodeReducer from "./join_party_by_code_reducer";
@@ -91,6 +93,7 @@ import MyCandidatePlayersRow from "./my_candidate_players_table";
 import MyMatchUsageRow from "./my_match_usage_table";
 import MyQueueEntryRow from "./my_queue_entry_table";
 import PartyRow from "./party_table";
+import PartyInviteRow from "./party_invite_table";
 import PartyMemberRow from "./party_member_table";
 import PlanetControlHistoryRow from "./planet_control_history_table";
 import PlanetDiscoveryRow from "./planet_discovery_table";
@@ -240,6 +243,23 @@ const tablesSchema = __schema({
       { name: 'party_party_id_key', constraint: 'unique', columns: ['partyId'] },
     ],
   }, PartyRow),
+  partyInvite: __table({
+    name: 'party_invite',
+    indexes: [
+      { accessor: 'id', name: 'party_invite_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'party_id', name: 'party_invite_party_id_idx_btree', algorithm: 'btree', columns: [
+        'partyId',
+      ] },
+      { accessor: 'to_identity', name: 'party_invite_to_identity_idx_btree', algorithm: 'btree', columns: [
+        'toIdentity',
+      ] },
+    ],
+    constraints: [
+      { name: 'party_invite_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PartyInviteRow),
   partyMember: __table({
     name: 'party_member',
     indexes: [
@@ -518,6 +538,7 @@ const reducersSchema = __reducers(
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("confirm_match", ConfirmMatchReducer),
   __reducerSchema("create_party", CreatePartyReducer),
+  __reducerSchema("decline_invite", DeclineInviteReducer),
   __reducerSchema("decline_match", DeclineMatchReducer),
   __reducerSchema("discover_location", DiscoverLocationReducer),
   __reducerSchema("discover_planet", DiscoverPlanetReducer),
@@ -527,6 +548,7 @@ const reducersSchema = __reducers(
   __reducerSchema("follow_player", FollowPlayerReducer),
   __reducerSchema("grant_currency_admin", GrantCurrencyAdminReducer),
   __reducerSchema("grant_item_admin", GrantItemAdminReducer),
+  __reducerSchema("invite_to_party", InviteToPartyReducer),
   __reducerSchema("join_match", JoinMatchReducer),
   __reducerSchema("join_party", JoinPartyReducer),
   __reducerSchema("join_party_by_code", JoinPartyByCodeReducer),
@@ -573,6 +595,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "match_objective": Omit<typeof tablesSchema.schemaType.tables["matchObjective"], "accessorName"> & { readonly accessorName: "match_objective" };
     /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */
     readonly "match_player": Omit<typeof tablesSchema.schemaType.tables["matchPlayer"], "accessorName"> & { readonly accessorName: "match_player" };
+    /** @deprecated Use `partyInvite` instead. This alias will be removed in the next major version. */
+    readonly "party_invite": Omit<typeof tablesSchema.schemaType.tables["partyInvite"], "accessorName"> & { readonly accessorName: "party_invite" };
     /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
     readonly "party_member": Omit<typeof tablesSchema.schemaType.tables["partyMember"], "accessorName"> & { readonly accessorName: "party_member" };
     /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */
@@ -639,6 +663,7 @@ const tableAccessorAliases = {
   "match_msg": "matchMsg",
   "match_objective": "matchObjective",
   "match_player": "matchPlayer",
+  "party_invite": "partyInvite",
   "party_member": "partyMember",
   "planet_control_history": "planetControlHistory",
   "planet_discovery": "planetDiscovery",
@@ -692,6 +717,8 @@ export type DbView = __DbViewBase & {
   readonly "match_objective": __DbViewBase["matchObjective"];
   /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */
   readonly "match_player": __DbViewBase["matchPlayer"];
+  /** @deprecated Use `partyInvite` instead. This alias will be removed in the next major version. */
+  readonly "party_invite": __DbViewBase["partyInvite"];
   /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
   readonly "party_member": __DbViewBase["partyMember"];
   /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */
@@ -750,6 +777,8 @@ export type Tables = __TablesBase & {
   readonly "match_objective": __TablesBase["matchObjective"];
   /** @deprecated Use `matchPlayer` instead. This alias will be removed in the next major version. */
   readonly "match_player": __TablesBase["matchPlayer"];
+  /** @deprecated Use `partyInvite` instead. This alias will be removed in the next major version. */
+  readonly "party_invite": __TablesBase["partyInvite"];
   /** @deprecated Use `partyMember` instead. This alias will be removed in the next major version. */
   readonly "party_member": __TablesBase["partyMember"];
   /** @deprecated Use `planetControlHistory` instead. This alias will be removed in the next major version. */

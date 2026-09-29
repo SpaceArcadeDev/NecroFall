@@ -1,7 +1,7 @@
 // NECROFALL — the profile page (reworked 2026-09-29, user ask: the old page was
 // "too cluttered and sucks"; this is a modern, minimalist, touch-first layout).
 //
-//   hero          identity: avatar + gender glyph, name, colony/level, bio, code
+//   hero          identity: avatar + gender glyph, name, colony/level, bio, id
 //   ranks         CURRENT RANK + HIGHEST RANK cards
 //   tabs (left)   STATS · HISTORY · DISCOVERIES switch the pane beside them
 //

@@ -182,6 +182,17 @@ export interface PartyMemberRow {
   acc: string;
 }
 
+/** A live lobby invite addressed to one player (friends rail ▸ INVITE, user ask 2026-09-29). */
+export interface PartyInviteRow {
+  id: number;
+  partyId: number;
+  fromIdentity: Identity;
+  toIdentity: Identity;
+  /** The party's join code at invite time (JOIN runs joinPartyByCode). */
+  code: string;
+  createdAt: Timestamp;
+}
+
 export interface QueueEntryRow {
   identity: Identity;
   partyId?: number | null;

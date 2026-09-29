@@ -59,6 +59,10 @@ export const joinPartyByCode = (code: string, acc: string): void => callReducer(
 export const leaveParty = (): void => callReducer('leaveParty');
 export const setPartyLoadout = (acc: string): void => callReducer('setPartyLoadout', { acc });
 export const kickFromParty = (target: Identity): void => callReducer('kickFromParty', { target });
+/** Invite a player into the caller's lobby (friends rail ▸ INVITE — target gets a JOIN notification). */
+export const inviteToParty = (target: Identity): void => callReducer('inviteToParty', { target });
+/** Dismiss a lobby invite notification (the row is the caller's own). */
+export const declineInvite = (id: number): void => callReducer('declineInvite', { id }, true);
 
 // ------------------------------------------------------------ matchmaking
 export const findMatch = (): void => callReducer('findMatch');
@@ -181,7 +185,7 @@ export const reportMatchStats = (kills: number, deaths: number, objectives: numb
 
 /**
  * Survivor search (plan §8/§64). A PROCEDURE: nothing is subscribed, the server
- * ranks by friend code / name and returns a compact projection. Returns null when
+ * ranks by player id / name and returns a compact projection. Returns null when
  * the connection or the bindings are unavailable (offline shell).
  */
 export async function searchPlayers(term: string): Promise<PlayerSearchHitRow[] | null> {

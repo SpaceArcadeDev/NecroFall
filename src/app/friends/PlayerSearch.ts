@@ -1,10 +1,11 @@
 // NECROFALL — find-survivors sheet (plan §8/§64): search by player name OR the
-// short friend code, then jump straight to that profile. The lookup is a server
+// short PLAYER ID, then jump straight to that profile. The lookup is a server
 // PROCEDURE (`searchPlayers`): nothing is replicated, the whole-table `player`
-// subscription is gone, and the server ranks + caps the results (code exact →
-// code prefix → name exact → name prefix → substring).
+// subscription is gone, and the server ranks + caps the results (id exact →
+// id prefix → name exact → name prefix → substring).
 import { COLONIES } from '../../core/Config';
-import { searchPlayers } from '../spacetimedb/reducers';
+import { ClientCache } from '../spacetimedb/cache';
+import { followPlayer, searchPlayers } from '../spacetimedb/reducers';
 import { PlayerSearchHitRow } from '../spacetimedb/rows';
 import { button, clear, el } from '../ui/dom';
 
@@ -32,7 +33,7 @@ export class PlayerSearch {
     card.appendChild(head);
 
     this.input = el('input', 'nf-input') as HTMLInputElement;
-    this.input.placeholder = 'Player name or friend code';
+    this.input.placeholder = 'Player name or player id';
     this.input.maxLength = 24;
     this.input.addEventListener('input', () => this.onInput());
     this.input.addEventListener('keydown', (e) => {
@@ -41,7 +42,7 @@ export class PlayerSearch {
     card.appendChild(this.input);
 
     card.appendChild(
-      el('p', 'nf-muted nf-search-hint', 'Every survivor has a short code — copy yours from your profile and share it.')
+      el('p', 'nf-muted nf-search-hint', 'Every survivor has a short player id — copy yours from your profile and share it.')
     );
 
     this.results = el('div', 'nf-search-results');
@@ -58,7 +59,7 @@ export class PlayerSearch {
     this.overlay.classList.remove('hidden');
     this.input.value = '';
     this.hits = [];
-    this.showMessage('Start typing a name or a friend code.');
+    this.showMessage('Start typing a name or a player id.');
     this.input.focus();
   }
 
@@ -78,7 +79,7 @@ export class PlayerSearch {
     if (!query) {
       this.reqToken++;
       this.hits = [];
-      this.showMessage('Start typing a name or a friend code.');
+      this.showMessage('Start typing a name or a player id.');
       return;
     }
     this.timer = window.setTimeout(() => {
@@ -121,7 +122,9 @@ export class PlayerSearch {
     for (const p of this.hits) {
       const hex = p.identity.toHexString();
       if (hex === mine) continue; // the server already skips self — belt and braces
-      const row = button('', 'nf-search-row', () => this.openProfile(hex));
+      const row = el('div', 'nf-search-row');
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
       row.appendChild(el('span', 'nf-search-avatar', (p.playerName[0] || '?').toUpperCase()));
       const col = el('span', 'nf-search-col');
       col.appendChild(el('span', 'nf-search-name', p.playerName));
@@ -130,6 +133,26 @@ export class PlayerSearch {
         el('span', 'nf-search-meta', `${p.playerCode || '——————'} · ${colony ? colony.name : 'NO COLONY'} · LV ${p.level}`)
       );
       row.appendChild(col);
+      // ADD = follow straight from the search (ADD FRIEND's whole point — user ask);
+      // mutual follow is what registers the friendship, so the profile stop is optional.
+      const following = ClientCache.shared.isFollowing(mine, hex);
+      const add = button(following ? 'ADDED ✓' : '+ ADD', 'nf-btn small nf-search-add', () => {
+        if (add.disabled) return;
+        add.disabled = true;
+        add.textContent = 'ADDED ✓';
+        followPlayer(p.identity);
+      });
+      add.disabled = following;
+      row.appendChild(add);
+      const open = (): void => this.openProfile(hex);
+      row.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('button')) return;
+        open();
+      });
+      row.addEventListener('keydown', (e) => {
+        const k = e as KeyboardEvent;
+        if (k.key === 'Enter') open();
+      });
       this.results.appendChild(row);
     }
   }

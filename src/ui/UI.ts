@@ -50,6 +50,44 @@ import {
 
 export type ScreenName = 'menu' | 'howto' | 'controls' | 'play' | 'lobby' | 'colony' | 'necrotech' | 'customize' | 'game' | 'results';
 
+/**
+ * ONE SEAT of the OFFICIAL lobby (user ask 2026-09-29: "reuse the exact same lobby as
+ * P2P, with correct tags, text, logic"). The shell maps party rows onto this and the
+ * SAME lobby screen renders them — no parallel lookalike page.
+ */
+export interface OfficialLobbySeat {
+  id: string;
+  name: string;
+  ready: boolean;
+  colony: number;
+  nt: number;
+  isHost: boolean;
+  me: boolean;
+  acc: string;
+}
+
+/** Everything the official lobby screen needs for one paint. */
+export interface OfficialLobbyState {
+  code: string;
+  /** 'CLASSIC' | 'RANK' — the tag chip beside the title. */
+  format: string;
+  season: number;
+  players: OfficialLobbySeat[];
+  /** Am I the party leader (only they can FIND MATCH — the server enforces it too). */
+  leader: boolean;
+  /** My account can search (name + colony set). */
+  ready: boolean;
+  /** Rows not landed yet (a just-created lobby / a join in flight). */
+  gathering: boolean;
+}
+
+/** The shell's hooks behind the official lobby's own buttons. */
+export interface OfficialLobbyHooks {
+  findMatch(): void;
+  leave(): void;
+  kick(hex: string): void;
+}
+
 export interface UICallbacks {
   createLobby(name: string): void;
   joinLobby(code: string, name: string): void;
@@ -682,6 +720,9 @@ export class UI {
 
   // lobby refs
   private lobbyCode!: HTMLElement;
+  private lobbyMode!: HTMLElement;
+  private lobbySeason!: HTMLElement;
+  private lobbyCodeCap!: HTMLElement;
   /** The avatar rail: one live 3D figure per seat, standing above the seat cards. */
   // (see also the necrotech detail overlay fields further down)
   private lobbyRail!: HTMLElement;
@@ -692,6 +733,14 @@ export class UI {
   private lobbyHint!: HTMLElement;
   private lobbyStart!: HTMLButtonElement;
   private lobbyReady!: HTMLButtonElement;
+  /**
+   * OFFICIAL lobby mode (user ask 2026-09-29): the shell drives THIS lobby screen for
+   * official parties — same DOM, tags and logic swapped: LEADER chip, IN LOBBY states,
+   * FIND MATCH instead of READY/START, ?room= invite links, party kicks.
+   */
+  private officialLobbyOn = false;
+  /** The shell's callbacks while an official lobby owns the screen. */
+  officialLobby: OfficialLobbyHooks | null = null;
   /** The roster last pushed to the rail (kept so re-opening the screen rebuilds it at once). */
   private lobbyAvatars: LobbyAvatarInfo[] = [];
   private playStatus!: HTMLElement;
@@ -1503,7 +1552,12 @@ export class UI {
     // viewport: a lobby never scrolls vertically, only the seat track scrolls sideways.
     const head = el('div', 'lobby-head');
     head.appendChild(el('div', 'menu-title lobby-title', 'LOBBY'));
-    head.appendChild(el('span', 'lobby-mode', 'CLASSIC'));
+    this.lobbyMode = el('span', 'lobby-mode', 'CLASSIC');
+    head.appendChild(this.lobbyMode);
+    // The OFFICIAL lobby hangs the live SEASON tag beside the format chip (user ask:
+    // "enhance it to use the correct tags"); P2P rooms never show it.
+    this.lobbySeason = el('span', 'lobby-mode lobby-season hidden', '');
+    head.appendChild(this.lobbySeason);
     s.appendChild(head);
 
     // No `.panel` slab: the roster stands on the screen's own backdrop, on a lit stage (see the
@@ -1525,10 +1579,14 @@ export class UI {
     copyBtn.setAttribute('aria-label', 'Copy the lobby code');
     const shareBtn = button(ICON_SHARE, 'lobby-icon', () => {
       const code = this.lobbyCode.textContent ?? '';
-      const url = `${location.origin}${location.pathname}?lobby=${code}`;
+      // OFFICIAL lobbies are joined through the `?room=` invite (AppShell.consumeInvite); the
+      // P2P `?lobby=` deep link keeps booting the legacy WebRTC session.
+      const url = this.officialLobbyOn
+        ? `${location.origin}${location.pathname}?room=${code}`
+        : `${location.origin}${location.pathname}?lobby=${code}`;
       const nav = navigator as Navigator & { share?: (data: { title: string; text: string; url: string }) => Promise<void> };
       if (nav.share) {
-        void nav.share({ title: 'NECROFALL', text: `Join my Necrofall match: ${code}`, url });
+        void nav.share({ title: 'NECROFALL', text: `Join my Necrofall ${this.officialLobbyOn ? 'lobby' : 'match'}: ${code}`, url });
       } else {
         void navigator.clipboard?.writeText(url);
         this.toast('Invite link copied', 1600);
@@ -1541,7 +1599,8 @@ export class UI {
     this.lobbyCode = el('div', 'lobby-code', '-----');
     codeRow.append(shareBtn, copyBtn, this.lobbyCode);
     codebar.appendChild(codeRow);
-    codebar.appendChild(el('div', 'lobby-codecap', `UP TO ${CONFIG.maxPlayers} SURVIVORS · ${CONFIG.maxPerColony} PER COLONY`));
+    this.lobbyCodeCap = el('div', 'lobby-codecap', `UP TO ${CONFIG.maxPlayers} SURVIVORS · ${CONFIG.maxPerColony} PER COLONY`);
+    codebar.appendChild(this.lobbyCodeCap);
     s.appendChild(codebar);
 
     // ---- the line-up. Avatar i and seat card i share one slot width in ONE scrolling track, so
@@ -1567,14 +1626,25 @@ export class UI {
 
     const actions = el('div', 'lobby-actions');
     this.lobbyReady = button('READY', 'btn', () => this.cbs.toggleReady());
-    this.lobbyStart = button('START MATCH', 'btn primary', () => this.cbs.startMatch());
-    const leave = button('LEAVE', 'btn ghost', () => this.cbs.leaveRoom());
+    this.lobbyStart = button('START MATCH', 'btn primary', () => {
+      // The SAME button runs FIND MATCH for an official lobby (user ask: reuse the P2P
+      // lobby "with the correct tags, text, logic").
+      if (this.officialLobbyOn) this.officialLobby?.findMatch();
+      else this.cbs.startMatch();
+    });
+    const leave = button('LEAVE', 'btn ghost', () => {
+      if (this.officialLobbyOn) this.officialLobby?.leave();
+      else this.cbs.leaveRoom();
+    });
     actions.appendChild(this.lobbyReady);
     actions.appendChild(leave);
     actions.appendChild(this.lobbyStart);
     panel.appendChild(actions);
     s.appendChild(panel);
-    this.addBack(s, 'Leave the lobby', () => this.cbs.leaveRoom());
+    this.addBack(s, 'Leave the lobby', () => {
+      if (this.officialLobbyOn) this.officialLobby?.leave();
+      else this.cbs.leaveRoom();
+    });
     this.reg('lobby', s);
   }
 
@@ -1583,14 +1653,26 @@ export class UI {
     players: { id: string; name: string; ready: boolean; colony: number; nt: number; isHost: boolean; me: boolean; acc?: string }[],
     isHost: boolean,
     status: string,
-    canStart = true
+    canStart = true,
+    opts?: { official?: boolean; format?: string; season?: number; gathering?: boolean }
   ): void {
+    this.officialLobbyOn = Boolean(opts?.official);
+    this.lobbyMode.textContent = this.officialLobbyOn ? opts?.format || 'CLASSIC' : 'CLASSIC';
+    if (this.officialLobbyOn) {
+      this.lobbySeason.textContent = `SEASON ${opts?.season ?? 1}`;
+      this.lobbySeason.classList.remove('hidden');
+    } else {
+      this.lobbySeason.classList.add('hidden');
+    }
     this.lobbyCode.textContent = code || '-----';
 
-    // ---- OPEN SLOTS (user ask): a P2P room always shows its full roster shape —
-    // CONFIG.maxPlayers lit platforms — filled left to right as survivors arrive.
+    // ---- OPEN SLOTS (user ask): the room always shows its full roster shape —
+    // CONFIG.maxPlayers lit platforms for a P2P room, THREE for an official party.
     // At most FIVE seats stand fully on screen; the rest extend the track sideways.
-    const slots = Math.max(1, CONFIG.maxPlayers);
+    const slots = this.officialLobbyOn ? 3 : Math.max(1, CONFIG.maxPlayers);
+    this.lobbyCodeCap.textContent = this.officialLobbyOn
+      ? `UP TO ${slots} SURVIVORS · ${players.length} IN LOBBY`
+      : `UP TO ${slots} SURVIVORS · ${CONFIG.maxPerColony} PER COLONY`;
     this.lobbyAvatars = [
       ...players.map(p => ({ id: p.id, colony: p.colony, ready: p.ready, me: p.me, acc: p.acc ?? '' })),
       ...Array.from({ length: Math.max(0, slots - players.length) }, (_, i) => ({
@@ -1622,7 +1704,7 @@ export class UI {
         const openCard = el('div', 'seat-card empty');
         openCard.appendChild(el('div', 'seat-pad', ''));
         openCard.appendChild(el('div', 'seat-name', 'OPEN SLOT'));
-        openCard.appendChild(el('div', 'seat-state', 'WAITING'));
+        openCard.appendChild(el('div', 'seat-state', this.officialLobbyOn ? 'WAITING FOR SURVIVOR' : 'WAITING'));
         openSeat.appendChild(openCard);
         this.lobbySeats.appendChild(openSeat);
         continue;
@@ -1645,19 +1727,46 @@ export class UI {
         chips.appendChild(el('span', 'seat-chip dim', 'NO COLONY'));
       }
       if (p.nt >= 0) chips.appendChild(el('span', 'seat-chip', NECROTECHS[p.nt] ? NECROTECHS[p.nt].name : 'MUTATED'));
-      if (p.isHost) chips.appendChild(el('span', 'seat-chip host', 'HOST'));
+      // OFFICIAL parties run under a LEADER (the P2P room's HOST — same seat authority).
+      if (p.isHost) chips.appendChild(el('span', 'seat-chip host', this.officialLobbyOn ? 'LEADER' : 'HOST'));
       if (p.me) chips.appendChild(el('span', 'seat-chip you', 'YOU'));
       card.appendChild(chips);
-      card.appendChild(el('div', 'seat-state', p.ready ? 'READY \u2713' : 'WAITING'));
+      card.appendChild(el('div', 'seat-state', this.officialLobbyOn ? 'IN LOBBY' : p.ready ? 'READY \u2713' : 'WAITING'));
       // The host runs the room: it can remove anyone but itself, straight from the seat card.
       if (isHost && !p.me) {
-        const kick = button('\u2715', 'seat-kick', () => this.cbs.kickPlayer(p.id));
+        const kick = button('\u2715', 'seat-kick', () => {
+          // …the official lobby's version removes from the PARTY (user ask: same lobby, right logic)
+          if (this.officialLobbyOn) this.officialLobby?.kick(p.id);
+          else this.cbs.kickPlayer(p.id);
+        });
         kick.title = `Remove ${p.name} from the lobby`;
         kick.setAttribute('aria-label', `Remove ${p.name} from the lobby`);
         card.appendChild(kick);
       }
       seat.appendChild(card);
       this.lobbySeats.appendChild(seat);
+    }
+
+    if (this.officialLobbyOn) {
+      // ---- OFFICIAL: members are simply IN the lobby (no READY handshake) — the LEADER
+      // runs the search. The one button flips word by state, exactly like the P2P START does.
+      const gathering = Boolean(opts?.gathering);
+      this.lobbyReady.classList.add('hidden');
+      this.lobbyStart.classList.toggle('hidden', gathering);
+      this.lobbyStart.disabled = !canStart;
+      if (isHost) {
+        this.lobbyStart.textContent = canStart
+          ? opts?.format === 'RANK'
+            ? 'FIND RANKED MATCH'
+            : 'FIND MATCH'
+          : 'FINISH ONBOARDING FIRST';
+        this.lobbyStart.title = canStart ? 'Queues the whole lobby together.' : '';
+      } else {
+        this.lobbyStart.textContent = 'WAITING FOR LEADER\u2026';
+        this.lobbyStart.title = 'Only the lobby leader can search for a match.';
+      }
+      this.lobbyHint.textContent = status;
+      return;
     }
 
     const me = players.find(p => p.me);
@@ -1669,6 +1778,31 @@ export class UI {
     this.lobbyReady.textContent = me?.ready ? 'READY \u2713' : 'READY';
     this.lobbyReady.classList.toggle('on', !!me?.ready);
     this.lobbyHint.textContent = status;
+  }
+
+  /**
+   * THE OFFICIAL LOBBY (user ask 2026-09-29): the shell maps party rows onto the SAME
+   * lobby screen the P2P flow uses — `null` releases the mode again (back to P2P rules).
+   */
+  updateOfficialLobby(state: OfficialLobbyState | null): void {
+    if (!state) {
+      this.officialLobbyOn = false;
+      this.officialLobby = null;
+      this.lobbySeason.classList.add('hidden');
+      this.lobbyMode.textContent = 'CLASSIC';
+      return;
+    }
+    const status = state.gathering
+      ? 'GATHERING YOUR LOBBY\u2026'
+      : state.leader
+        ? 'You lead this lobby — FIND MATCH queues everyone together.'
+        : 'Only the leader can search for a match.';
+    this.updateLobby(state.code, state.players, state.leader, status, state.leader && state.ready, {
+      official: true,
+      format: state.format,
+      season: state.season,
+      gathering: state.gathering,
+    });
   }
 
   /** Pushes the roster into the 3D rail (a no-op while the preview is on another screen). */

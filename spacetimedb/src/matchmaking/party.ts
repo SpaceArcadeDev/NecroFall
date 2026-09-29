@@ -49,7 +49,70 @@ function joinTarget(ctx: any, target: any, acc: string): void {
     joined_at: ctx.timestamp,
     acc: clampAcc(acc),
   });
+  // The joiner is in — every pending invite addressed to them is consumed.
+  clearInvitesForTarget(ctx, ctx.sender);
 }
+
+/** How long a lobby invite stays live without an answer (swept by the 1 Hz scan). */
+export const PARTY_INVITE_TTL_US = 10n * 60n * 1_000_000n;
+
+/** The invitee joined (or declined): drop their invite rows. */
+export function clearInvitesForTarget(ctx: any, identity: any): void {
+  const hex = identity.toHexString();
+  for (const row of [...ctx.db.party_invite.to_identity.filter(identity)]) {
+    if (row.to_identity.toHexString() === hex) ctx.db.party_invite.id.delete(row.id);
+  }
+}
+
+/** The party is gone (or its code changed): its invites are dead too. */
+export function clearInvitesForParty(ctx: any, partyId: number): void {
+  for (const row of [...ctx.db.party_invite.party_id.filter(partyId)]) {
+    if (row.party_id === partyId) ctx.db.party_invite.id.delete(row.id);
+  }
+}
+
+/** 1 Hz sweep: unanswered invites expire after PARTY_INVITE_TTL_US. */
+export function sweepPartyInvites(ctx: any, now: bigint): void {
+  for (const row of [...ctx.db.party_invite.iter()]) {
+    const age = now - row.created_at.microsSinceUnixEpoch;
+    if (age > PARTY_INVITE_TTL_US) ctx.db.party_invite.id.delete(row.id);
+  }
+}
+
+/**
+ * INVITE (friends rail): any member of an open party may invite a player who is not
+ * already in one. One live invite per (party, target) — resending refreshes it.
+ */
+export const invite_to_party = spacetimedb.reducer({ target: t.identity() }, (ctx, { target }) => {
+  requirePlayer(ctx);
+  const member = myMembership(ctx);
+  if (!member) throw new SenderError('You are not in a lobby.');
+  const partyRow = ctx.db.party.party_id.find(member.party_id);
+  if (!partyRow || partyRow.state !== 0) throw new SenderError('Your lobby is not open.');
+  if (target.toHexString() === ctx.sender.toHexString()) throw new SenderError('You are already in this lobby.');
+  const them = ctx.db.player.identity.find(target);
+  if (!them) throw new SenderError('No such player.');
+  if (ctx.db.party_member.identity.find(target)) throw new SenderError('That survivor is already in a lobby.');
+  for (const row of [...ctx.db.party_invite.party_id.filter(member.party_id)]) {
+    if (row.to_identity.toHexString() === target.toHexString()) ctx.db.party_invite.id.delete(row.id);
+  }
+  ctx.db.party_invite.insert({
+    id: 0,
+    party_id: member.party_id,
+    from_identity: ctx.sender,
+    to_identity: target,
+    code: partyRow.join_code,
+    created_at: ctx.timestamp,
+  });
+});
+
+/** The invitee dismissed the notification (or already joined elsewhere). */
+export const decline_invite = spacetimedb.reducer({ id: t.u32() }, (ctx, { id }) => {
+  const row = ctx.db.party_invite.id.find(id);
+  if (!row) return;
+  if (row.to_identity.toHexString() !== ctx.sender.toHexString()) return;
+  ctx.db.party_invite.id.delete(row.id);
+});
 
 /** The outfit wire is tiny ("hat,backpack,pet") — cap it so a client cannot stuff the row. */
 function clampAcc(acc: string): string {
@@ -134,6 +197,8 @@ export function removeFromParty(ctx: any, member: any): void {
   const remaining = [...ctx.db.party_member.party_id.filter(partyId)];
   if (remaining.length === 0) {
     ctx.db.party.party_id.delete(partyId);
+    // The lobby is gone — its standing invites die with it.
+    clearInvitesForParty(ctx, partyId);
     return;
   }
   const partyRow = ctx.db.party.party_id.find(partyId);

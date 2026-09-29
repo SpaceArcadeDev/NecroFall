@@ -819,8 +819,7 @@
 }
 /* (user ask 2026-09-29) NO bottom gradient line in the LOBBY — the lit rule read as a
    seam sliced across the roster stage. The rank header keeps its own copy of the rule. */
-.lobby-screen .lobby-head::after,
-.lobby-room-page .lobby-head::after { display: none; }
+.lobby-screen .lobby-head::after { display: none; }
 /* the LOBBY wordmark wears the NECROFALL dress: same gradient, weight and tracking */
 .lobby-title {
   font-size: clamp(30px, 6.4vh, 54px);
@@ -901,6 +900,14 @@
   border: 1px solid rgba(77, 255, 166, 0.4);
   border-radius: 999px;
   padding: 2px 9px;
+}
+/* OFFICIAL lobbies only (user ask: the reused P2P lobby "with the correct tags"): the
+   live SEASON tag beside the format chip. P2P rooms keep the single CLASSIC chip. */
+.lobby-mode.lobby-season {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.42);
+  background: rgba(255, 209, 102, 0.07);
+  letter-spacing: 0.16em;
 }
 .lobby-lineup {
   position: relative;

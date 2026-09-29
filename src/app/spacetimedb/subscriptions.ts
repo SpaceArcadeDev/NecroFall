@@ -92,6 +92,15 @@ export function subscribeAccount(hex: string): void {
     `SELECT * FROM player_presence WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_settings WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM follow WHERE follower = ${hexLiteral(hex)}`,
+    // …and BOTH follow directions — friends are MUTUAL follows computed client-side
+    // (plan §5), and without the follower side `cache.friends()` was always empty
+    // (user report 2026-09-29: "followed back but not showing in friends list").
+    `SELECT * FROM follow WHERE following = ${hexLiteral(hex)}`,
+    // Lobby invites addressed to me (the friends rail's INVITE button + notification).
+    `SELECT * FROM party_invite WHERE to_identity = ${hexLiteral(hex)}`,
+    // The 1 Hz server clock (one tiny row): follow/invite notifications judge freshness
+    // against SERVER time, never a possibly-skewed device clock.
+    'SELECT * FROM server_clock',
     // Rank movements (plan §57/§80): the post-match overlay reads the newest row.
     `SELECT * FROM rank_history WHERE identity = ${hexLiteral(hex)}`,
   ]);

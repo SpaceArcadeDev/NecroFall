@@ -478,6 +478,15 @@
 .rk-rail { grid-column: 1; grid-row: 1; }
 .rk-map-wrap { grid-column: 2; grid-row: 1; }
 .rk-side { grid-column: 3; grid-row: 1; }
+/* DESKTOP quick actions (user report 2026-09-29: "desktop doesn't show the join/create
+   lobby and find match buttons"): the grid only placed rail/map/side in row 1, so
+   `.rk-quick` was auto-placed into a second row of the ZERO-width rail column and was
+   clipped away. Desktop gets a real second row under the side column; every other
+   viewport keeps its own placement rules (≤900 flex order 3, landscape col 3). */
+@media (min-width: 901px) {
+  .rk-main { grid-template-rows: minmax(0, 1fr) auto; }
+  .rk-quick { grid-column: 3; grid-row: 2; margin: 10px 14px 14px; }
+}
 /* RANK SELECTION pills live ONLY on the EXPANDED map (user 2026-09-29): in the rank
    menu the rail row was eating frame space — the map's own band highlight + label
    already say which band you are on. `--rk-railw` collapses the desktop column to
@@ -1251,14 +1260,9 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-colonies { padding: 9px 10px; }
 }
 
-/* The slim friends strip (fixed, 62px, z-12) sits EXACTLY over the strip's action
-   buttons on phones — every tap on LEADERBOARD / YOUR RING was swallowed by the
-   friend list (verified: pointer-events intercepted). The rank screen is a
-   full-bleed mode screen; it owns its right edge, friends stay on every other
-   shell page. */
-@media (max-width: 959px) {
-  .nf-shell:has(.rank-page) .nf-rail { display: none; }
-}
+/* The collapsed friends bar now has its OWN column in the shell layout (user ask
+   2026-09-29: relative area, never an overlay), so the rank page needs no special
+   placement for it — the strip's action buttons can never be covered. */
 
 /* Rank owns a fixed frame: while its screen is up, reclaim the bottom-nav reserve
    so the phone frame uses the whole safe area (iOS home-bar inset still honoured). */

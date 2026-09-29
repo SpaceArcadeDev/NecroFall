@@ -141,8 +141,18 @@
 }
 
 /* ---------------------------------------------------------------- main area */
+/* The pages and the friends bar share ONE row (user ask 2026-09-29: "the collapsed
+   friends list has its own relative area, not an overlay"): .nf-main takes the
+   remaining space, the bar owns its column and can never cover a page element. */
+.nf-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
 .nf-main {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   display: flex;
@@ -535,7 +545,22 @@ html.nf-onb-colony .count-badge { display: none; }
 @media (max-height: 430px) {
   .nf-stage { min-height: 96px; }
 }
-.nf-stage canvas { display: block; width: 100%; height: 100%; }
+/* FADE-IN (user ask 2026-09-29: "the avatar appears small for a few ms then only scales to
+   fit — it should be shown as fit to screen directly; use a fade in entering animation"):
+   the shared canvas is re-appended when the home stage claims the preview, and its FIRST
+   displayed frame can be the previous screen's stale bitmap stretched into the stage. The
+   element fades in instead, so the first visible frame is always the correctly framed one. */
+.nf-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  animation: nf-stage-avatar-in 0.5s ease-out 0.06s forwards;
+}
+@keyframes nf-stage-avatar-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
 .nf-home-caption {
   display: flex;
   flex-direction: column;
@@ -858,71 +883,11 @@ html.nf-onb-colony .count-badge { display: none; }
   box-shadow: 0 0 18px color-mix(in srgb, var(--nf-colony, #8fd7ff) 45%, transparent);
 }
 
-/* ------------------------------------------------ PARTY (the official lobby screen) */
-/* CREATE PARTY lands on a menu page of its own, dressed exactly like the in-game
-   P2P lobby: title + format chip, the [SHARE][COPY][CODE] chrome pinned top-right,
-   the lit stage carrying the 3D line-up, tinted seats and the FIND MATCH / LEAVE
-   action row. Nothing is embedded in the lobby entry. */
-.lobby-room-page {
-  position: relative; /* the code chrome pins to the page's top-right, like the lobby */
-  gap: 6px;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-.lobby-room-page .lobby-head { flex: 0 0 auto; }
-.lobby-room-page .lobby-title { animation: nf-title-glow 4.5s ease-in-out infinite; }
-/* the header's tag cluster (format chip + season), hung off the CENTRED title — the
-   wordmark itself stays dead-centre on the screen (user ask 2026-09-29). */
-.lobby-room-tags {
-  position: absolute;
-  left: calc(100% + 12px);
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-.lobby-room-season {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 11px;
-  border-radius: 999px;
-  background: rgba(255, 209, 102, 0.08);
-  border: 1px solid rgba(255, 209, 102, 0.38);
-  color: #ffd166;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-}
-.lobby-room-season b { color: var(--ui-text-muted); font-weight: 700; letter-spacing: 0.24em; }
-.lobby-room-season i { font-style: normal; }
-/* phones: the tags drop to their own line UNDER the wordmark instead of squeezing it */
-@media (max-width: 720px) {
-  .lobby-room-page .rk-head-title-row { flex-direction: column; gap: 4px; }
-  .lobby-room-tags { position: static; transform: none; margin-top: 2px; }
-  .lobby-room-season { font-size: 8.5px; padding: 3px 8px; }
-}
-.lobby-room-page .lobby-room-codebar {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  z-index: 4;
-}
-.lobby-room-page .lobby-panel { flex: 1 1 auto; min-height: 0; }
-.lobby-room-page .lobby-lineup { flex: 1 1 auto; min-height: 0; }
-/* The rail REUSES the in-game P2P lobby's own sizing (user ask 2026-09-29: "the scaling is very
-   different … the avatars not scaled correctly to fit screen, like p2p lobby"): the base
-   `.lobby-rail` rules (16vh stage, 204px cap) are what the P2P lobby draws its avatars at, so the
-   room no longer overrides them with a taller 42vh floor — the two lobbies now frame their
-   line-ups identically at every size. */
-.lobby-room-page .seat-card { border-color: color-mix(in srgb, var(--seat-col, var(--ui-border)) 52%, transparent); }
+/* ------------------------------------------------ PARTY (official lobby) */
+/* The official lobby is now the GAME'S OWN P2P lobby screen (user ask 2026-09-29:
+   "reuse the exact same lobby as p2p"): its dress lives in styles.css with the rest
+   of the in-game screens — the lookalike shell page and all `.lobby-room-*` rules
+   are gone. The shell only tags the reused screen (`.lobby-season`). */
 /* The CLASSIC flow screens (play, setup, party) wear the in-game menu dress: no
    account chrome above them — the wordmark rises to the very top and the back
    chevron floats over the corner. */
@@ -932,11 +897,6 @@ html.nf-onb-colony .count-badge { display: none; }
   top: calc(8px + env(safe-area-inset-top, 0px));
   left: calc(12px + env(safe-area-inset-left, 0px));
   z-index: 30;
-}
-/* short screens: keep the whole party on one page — trim the luxuries first */
-@media (max-height: 820px) {
-  .lobby-room-page .lobby-title { font-size: clamp(30px, 6.4vh, 48px); }
-  .lobby-room-page .seat-state { display: none; }
 }
 /* compact panels so the whole flow fits a phone frame without vertical scrolling */
 .play-page .nf-play-enter { gap: 8px; padding: 10px; }
@@ -950,8 +910,7 @@ html.nf-onb-colony .count-badge { display: none; }
    so the mode toggle, the code row and the action row always stay inside the
    frame instead of being clipped by the page's overflow:hidden. */
 @media (max-height: 480px) {
-  .play-page .menu-title,
-  .lobby-room-page .lobby-title { font-size: clamp(20px, 6.6vh, 30px); }
+  .play-page .menu-title { font-size: clamp(20px, 6.6vh, 30px); }
   .play-page .menu-col { gap: 6px; }
   /* when the leftover space can no longer hold the whole setup, `safe center`
      top-aligns it — so it can never spill back over the mode strip */
@@ -974,11 +933,6 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-play-actions .btn { min-height: 36px; padding: 6px 12px; font-size: 12.5px; }
   .nf-play-row input { min-height: 36px; padding: 6px 10px; }
   .nf-play-enter .muted { font-size: 11px; margin: 0; }
-  /* the party panel follows the in-game landscape lobby rules */
-  .lobby-room-page .lobby-panel { padding: 8px 10px; gap: 5px; }
-  .lobby-room-page .lobby-rail { min-height: 44px; margin-bottom: 4px; }
-  .lobby-room-page .seat-card { padding: 4px 4px 5px; min-height: 48px; }
-  .lobby-room-page .lobby-actions .btn { min-height: 40px; }
 }
 /* The tiniest landscape frames (a 568x320 phone): another notch off the
    controls so the last action row still clears the bottom edge. */
@@ -1785,18 +1739,27 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 
 /* ---------------------------------------------------------------- friends */
-/* The FIXED friends rail: a slim glass strip of avatars beside the content on
-   every width; on wide screens it widens into the full panel (names, status,
-   sections). It is the ONLY friends surface — nothing else duplicates it. */
+/* THE FRIENDS BAR (user redesign 2026-09-29): COLLAPSED by default — a slim strip
+   with the drawer handle on top and one icon per friend (green / dark-grey presence
+   dot). Pressing ANYWHERE on it expands the OVERLAY sheet: ADD FRIEND · FOLLOWERS ·
+   collapse, then the rows (name + status, INVITE while standing in a lobby).
+   In the shell the bar sits in ITS OWN COLUMN beside the page (never over it — user
+   ask 2026-09-29); while a game screen — the P2P / official lobby — owns the
+   viewport it detaches (`body` + `.floating`) and hugs the right edge instead. */
 .nf-rail {
-  position: fixed;
-  top: 68px;
-  right: 10px;
-  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
-  width: 62px;
-  z-index: 12;
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  /* FIXED height like the original rail (user ask): the bar spans its whole column —
+     from just under the chrome down to the floating-nav reserve — instead of hugging
+     its icons. The icon strip scrolls inside once the friends outgrow it. */
+  align-self: stretch;
+  width: 58px;
+  max-width: 58px;
+  margin: 6px 10px calc(104px + env(safe-area-inset-bottom, 0px)) 4px;
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 6px;
   padding: 8px 6px;
   border-radius: 20px;
@@ -1804,26 +1767,72 @@ html.nf-onb-colony .count-badge { display: none; }
   border: 1px solid var(--ui-border);
   backdrop-filter: blur(9px);
   overflow: hidden;
+  cursor: pointer;
 }
-/* compact: avatars only — names live in the tooltip-sized meta */
-.nf-rail .nf-card {
-  justify-content: center;
-  padding: 4px;
-  border-left-width: 0;
-  border-color: transparent;
-  background: transparent;
+/* the shell's own `.hidden` helper doesn't reach a FLOATING bar (it sits on body) */
+.nf-rail.hidden { display: none !important; }
+/* floating over the game (the P2P / official lobby, shell hidden): fixed at the right
+   edge — above the in-game UI (#ui z10), below the shell overlays and toasts. */
+.nf-rail.floating {
+  position: fixed;
+  top: 68px;
+  right: 10px;
+  bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+  left: auto;
+  margin: 0;
+  max-height: none;
+  z-index: 4050;
 }
-.nf-rail .nf-card:hover { background: rgba(90, 60, 150, 0.28); }
-.nf-rail .nf-card-col { display: none; }
-.nf-rail .nf-avatar { width: 42px; height: 42px; }
-/* the slim strip hides the head entirely; the find button lives in the footer */
-.nf-rail .nf-friends-head { display: none; }
-.nf-rail .nf-friend-section { display: none; }
-.nf-rail .nf-friends-panel { flex: 1; min-height: 0; }
-.nf-rail .nf-friend-list { max-height: none; flex: 1; }
-/* empty state: the strip stays, showing a single faint pulsing mote instead of a wall of text */
-.nf-rail:not(:has(.nf-card)) .nf-muted { font-size: 0; text-align: center; margin: 4px 0; }
-.nf-rail:not(:has(.nf-card)) .nf-muted::after {
+/* short landscape frames: hand the bar back the nav's reserve so it is never a stub */
+@media (max-height: 480px) {
+  .nf-rail:not(.floating) { margin-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+}
+.nf-rail.open { border-color: color-mix(in srgb, var(--ui-accent) 65%, transparent); }
+.nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes nf-panel-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+.nf-rail-drawer {
+  width: 42px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ui-text);
+  cursor: pointer;
+}
+.nf-rail-drawer:hover { background: rgba(90, 60, 150, 0.32); }
+.nf-rail-drawer svg { width: 18px; height: 18px; }
+.nf-rail-icons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.nf-rail-icons::-webkit-scrollbar { display: none; }
+.nf-rail-ico {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+.nf-rail-ico:hover { transform: scale(1.08); }
+.nf-rail-ico .nf-avatar { width: 42px; height: 42px; }
+/* empty state: a single faint pulsing mote instead of a wall of text */
+.nf-rail-icons:empty::after {
   content: '';
   display: block;
   width: 9px;
@@ -1834,17 +1843,127 @@ html.nf-onb-colony .count-badge { display: none; }
   opacity: 0.55;
   box-shadow: 0 0 14px rgba(154, 107, 255, 0.8);
 }
-.nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
-@keyframes nf-panel-in {
-  from { opacity: 0; transform: translateX(14px); }
+
+/* ------------------------------------------------ the expanded overlay sheet */
+.nf-friends-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 4400;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(6, 3, 12, 0.45);
+  animation: nf-fade-in 0.16s ease-out;
+}
+.nf-friends-card {
+  width: min(340px, 92vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(180deg, rgba(24, 16, 40, 0.97), rgba(12, 8, 22, 0.98));
+  border-left: 1px solid var(--ui-border);
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.5);
+  animation: nf-sheet-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes nf-sheet-in {
+  from { transform: translateX(26px); opacity: 0.4; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes nf-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.nf-sheet-head { display: flex; align-items: stretch; gap: 6px; }
+.nf-sheet-btn {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 4px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  color: var(--ui-text);
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+.nf-sheet-btn i { display: grid; place-items: center; }
+.nf-sheet-btn svg { width: 18px; height: 18px; }
+.nf-sheet-btn span { white-space: nowrap; }
+.nf-sheet-btn:hover { background: rgba(90, 60, 150, 0.32); }
+.nf-sheet-btn.on {
+  color: var(--ui-accent-2);
+  border-color: color-mix(in srgb, var(--ui-accent-2) 50%, transparent);
+  background: rgba(70, 224, 200, 0.12);
+}
+.nf-sheet-close { flex: 0 0 46px; color: var(--ui-accent-2); }
+.nf-sheet-close:hover { background: rgba(70, 224, 200, 0.14); }
+.nf-sheet-title { font-size: 11px; letter-spacing: 0.22em; color: var(--ui-text-muted); font-weight: 800; }
+.nf-sheet-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.nf-sheet-empty { margin: 12px 4px; }
+.nf-fr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+  cursor: pointer;
+}
+.nf-fr-row:hover { background: rgba(60, 40, 100, 0.5); }
+.nf-fr-col { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.nf-fr-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nf-fr-status { font-size: 11px; color: var(--ui-text-muted); }
+.nf-fr-act { display: flex; align-items: center; gap: 6px; }
+.nf-fr-chip {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ui-accent-2);
+  border: 1px solid color-mix(in srgb, var(--ui-accent-2) 45%, transparent);
+  border-radius: 999px;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+.nf-fr-invite { color: var(--ui-accent-2); border-color: color-mix(in srgb, var(--ui-accent-2) 45%, transparent); }
+
+/* notifications: the top-left stack (new followers + lobby invites, user ask). Sits
+   just BELOW the screen's back chevron band so it never swallows the back button. */
+.nf-notify-stack {
+  position: fixed;
+  top: calc(58px + env(safe-area-inset-top, 0px));
+  left: 12px;
+  z-index: 4500;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, 86vw);
+}
+.nf-notify {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 14px;
+  background: var(--ui-panel-strong);
+  border: 1px solid var(--ui-border);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
+  animation: nf-notify-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+.nf-notify.out { opacity: 0; transform: translateX(-10px); }
+@keyframes nf-notify-in {
+  from { opacity: 0; transform: translateX(-16px); }
   to { opacity: 1; transform: none; }
 }
-
-.nf-friends-panel { display: flex; flex-direction: column; gap: 8px; }
-.nf-friends-head { display: flex; align-items: center; justify-content: space-between; }
-.nf-friends-title { font-size: 11px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
-.nf-friend-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow: auto; }
-.nf-friend-section { font-size: 10px; letter-spacing: 0.16em; color: var(--ui-text-muted); margin-top: 4px; }
+.nf-notify-col { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.nf-notify-title { font-size: 12.5px; }
+.nf-notify-body { font-size: 10.5px; color: var(--ui-text-muted); }
+.nf-notify-x { border: none; background: none; color: var(--ui-text-muted); cursor: pointer; font-size: 12px; padding: 2px 5px; }
+.nf-notify-x:hover { color: #fff; }
 
 .nf-card {
   display: flex;
@@ -1864,8 +1983,15 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-avatar {
   width: 34px; height: 34px; border-radius: 50%;
   position: relative;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.3));
+  display: grid;
+  place-items: center;
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--nf-avatar-accent, #8fd7ff) 42%, #241d3a),
+    rgba(0, 0, 0, 0.35));
+  border: 1.5px solid color-mix(in srgb, var(--nf-avatar-accent, #8fd7ff) 55%, transparent);
 }
+.nf-avatar-letter { font-size: 13px; font-weight: 800; color: #fff; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6); }
+.nf-avatar-sm { width: 36px; height: 36px; }
 .nf-dot {
   position: absolute;
   right: -1px; bottom: -1px;
@@ -1878,28 +2004,6 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-card-col { display: flex; flex-direction: column; min-width: 0; }
 .nf-card-name { font-size: 13px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nf-card-meta { font-size: 11px; color: var(--ui-text-muted); }
-
-/* the find-players button (rail footer): compact, always tappable */
-.nf-friends-foot {
-  display: flex;
-  justify-content: center;
-  padding-top: 6px;
-  margin-top: auto;
-}
-.nf-friends-foot .nf-friends-add { min-width: 46px; min-height: 40px; }
-.nf-friends-add {
-  min-width: 34px;
-  min-height: 34px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-  font-size: 20px;
-  line-height: 1;
-  color: var(--ui-accent-2);
-  border: 1px solid color-mix(in srgb, var(--ui-accent-2) 45%, transparent);
-  border-radius: 12px;
-}
-.nf-friends-add:hover { background: rgba(70, 224, 200, 0.14); }
 
 /* ------------------------------------------------ find survivors (player search) */
 .nf-search-card { align-items: stretch; gap: 10px; }
@@ -1921,6 +2025,8 @@ html.nf-onb-colony .count-badge { display: none; }
   text-align: left;
 }
 .nf-search-row:hover { background: rgba(60, 40, 100, 0.5); }
+/* the direct ADD action (follow straight from the search — user ask) */
+.nf-search-add { margin-left: auto; flex: 0 0 auto; }
 .nf-search-avatar {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 800;
@@ -2176,31 +2282,6 @@ html.nf-onb-colony .count-badge { display: none; }
 @media (min-width: 960px) {
   /* The friends rail floats OVER the content — no page reserves space for it. */
   .nf-main { padding: 12px 24px 108px; justify-content: center; }
-  .nf-rail {
-    top: 68px;
-    right: 14px;
-    bottom: 116px;
-    width: 200px;
-    padding: 12px;
-    border-radius: 18px;
-    gap: 8px;
-  }
-  /* the full panel: rows get their cards, names, sections and status metadata back */
-  .nf-rail .nf-card {
-    justify-content: flex-start;
-    padding: 8px 10px;
-    border-left-width: 3px;
-    border-color: var(--ui-border);
-    border-left-color: var(--nf-card-accent, var(--ui-accent));
-    background: var(--ui-panel);
-  }
-  .nf-rail .nf-card-col { display: flex; }
-  .nf-rail .nf-avatar { width: 34px; height: 34px; }
-  .nf-rail .nf-friends-head { display: flex; justify-content: space-between; }
-  .nf-rail .nf-friend-section { display: block; }
-  .nf-rail .nf-friend-list { max-height: 52vh; }
-  .nf-rail:not(:has(.nf-card)) .nf-muted { font-size: 13px; }
-  .nf-rail:not(:has(.nf-card)) .nf-muted::after { content: none; }
   .nf-toasts { bottom: 132px; }
 }
 

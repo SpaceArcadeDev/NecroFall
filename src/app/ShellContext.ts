@@ -71,5 +71,7 @@ export interface ShellContext {
   launchLegacy(options: LegacyLaunchOptions): void;
   /** Stage (or park, with host=null) the OFFICIAL lobby line-up on the shell. */
   stageLobbyAvatars(host: HTMLElement | null, members: LobbySeatInfo[]): void;
+  /** The find-survivors sheet (friends ▸ ADD FRIEND): search by name or player id. */
+  openPlayerSearch(): void;
   toast(message: string): void;
 }

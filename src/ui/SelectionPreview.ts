@@ -980,8 +980,12 @@ export class SelectionPreview {
       });
       return;
     }
-    this.lobbySig = sig;
+    // dispose FIRST — it clears `lobbySig` (the mode switches rely on that) — and only then
+    // record the new signature. Writing it before the dispose silently reset it to '' and
+    // EVERY data tick disposed + rebuilt the whole line-up (user report 2026-09-29: "avatars
+    // keep resetting every few seconds", exactly on the seat-DOM rebuild cadence).
     this.disposeLobbyAvatars();
+    this.lobbySig = sig;
     if (this.lobbyData.length > 0) this.ensureLobbyLights();
     // one figure per OCCUPIED seat, one bare lit pad per OPEN seat — the row keeps its
     // slot rhythm either way, so a partially filled lobby still shows its full shape

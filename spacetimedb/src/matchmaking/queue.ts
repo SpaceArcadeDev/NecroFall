@@ -42,6 +42,7 @@ import { maybeReleasePlanet, refreshPlanetReservation } from '../ranked/planets'
 import { parsePlanetKey, planetSeed } from '../ranked/seed';
 import { ensureActiveSeason, universeSeed32 } from '../ranked/planets';
 import { sweepRanked } from '../ranked/planets';
+import { sweepPartyInvites } from './party';
 
 /** One scan per second ages every window; the real granularity lives in constants. */
 const SCAN_INTERVAL_US = 1_000_000n;
@@ -168,6 +169,9 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
     // 4) Ranked-world housekeeping: expired reservations die and shields that
     //    fell return their planets to the Necrophages (plan §38/§52).
     sweepRanked(ctx, now);
+
+    // 5) Lobby invites nobody answered expire (friends-rail INVITE, user ask 2026-09-29).
+    sweepPartyInvites(ctx, now);
   }
 );
 

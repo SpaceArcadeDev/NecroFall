@@ -16,6 +16,7 @@ import {
   MatchServerUsageRow,
   PartyMemberRow,
   PartyRow,
+  PartyInviteRow,
   PlanetControlHistoryRow,
   PlanetDiscoveryRow,
   PlayerInventoryRow,
@@ -49,6 +50,7 @@ const TABLES = [
   'profileView',
   'party',
   'partyMember',
+  'partyInvite',
   'match',
   'matchPlayer',
   'matchHistory',
@@ -224,6 +226,12 @@ export class ClientCache {
 
   partyMembers(partyId: number): PartyMemberRow[] {
     return this.list<PartyMemberRow>('partyMember').filter(r => r.partyId === partyId);
+  }
+
+  /** Lobby invites addressed to `hex` (the friends rail shows them as JOIN notifications). */
+  partyInvites(hex: string): PartyInviteRow[] {
+    if (!hex) return [];
+    return this.list<PartyInviteRow>('partyInvite').filter(r => hexOf(r.toIdentity) === hex);
   }
 
   myQueue(): QueueEntryRow | null {

@@ -34,6 +34,25 @@ export const party_member = table(
   }
 );
 
+/**
+ * A lobby invite from a party member to a player (friends rail ▸ INVITE — user ask
+ * 2026-09-29). Public and targeted: the invitee's account scope subscribes only
+ * `WHERE to_identity = me`, and the client shows it as a JOIN notification.
+ * One live invite per (party, target); consumed on join, declined, dissolved or swept.
+ */
+export const party_invite = table(
+  { name: 'party_invite', public: true },
+  {
+    id: t.u32().primaryKey().autoInc(),
+    party_id: t.u32().index('btree'),
+    from_identity: t.identity(),
+    to_identity: t.identity().index('btree'),
+    /** The party's join code at invite time — JOIN runs the normal join_party_by_code. */
+    code: t.string(),
+    created_at: t.timestamp(),
+  }
+);
+
 /** Internal queue row. One per player (identity is the primary key). */
 export const queue_entry = table(
   { name: 'queue_entry' },

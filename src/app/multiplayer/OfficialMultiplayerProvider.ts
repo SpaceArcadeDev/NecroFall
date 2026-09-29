@@ -25,6 +25,8 @@ import {
   kickFromParty,
   leaveParty,
   setPartyLoadout,
+  inviteToParty as inviteToPartyReducer,
+  declineInvite,
   leaveMatch as leaveMatchReducer,
   joinMatch as joinMatchReducer,
   reportNexusCapture,
@@ -61,6 +63,26 @@ const SPEED_EPS = 1.4;
  * the host role between two clients.
  */
 const AUTHORITY_GRACE_MS = 2500;
+/**
+ * No snapshot from the current authority for this long while the match is live → the next seat
+ * in line takes over (user report 2026-09-29: an authority that stopped simulating — a frozen
+ * background tab or a stale bundle — stalled EVERYTHING for everyone, movement included).
+ */
+const AUTHORITY_SILENCE_MS = 4000;
+/** Startup grace before the silence watchdog may fire (the authority may still be booting). */
+const AUTHORITY_SILENCE_GRACE_MS = 6500;
+/**
+ * Recency threshold of the double-authority resolver: an authority that has not broadcast for
+ * this long has lost the role to whoever is actually broadcasting.
+ */
+const CONFLICT_STALE_MS = 3000;
+/**
+ * How long a sustained lower-seat stream must be observed in a double-authority conflict before
+ * yielding to it. Bounds every conflict (no deadlock is possible), while an active caretaker
+ * keeps the role through brief blips: the original authority resumes and — if it keeps
+ * broadcasting — takes the role back within this window, P2P-style.
+ */
+const CONFLICT_CONCEDE_MS = 6000;
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -159,6 +181,29 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private authorityPendingSince = 0;
   /** Roster signature last pushed to the game — names/colonies/classes/tombstones. */
   private rosterSignature = '';
+  // ---- authority liveness (2026-09-29 hardening)
+  /** performance.now of the last broadcast snapshot WE relayed (0 = never). */
+  private lastSnapshotSentAt = 0;
+  /**
+   * Direct SDK hook bookkeeping (see `noteRelayArrival`): the freshest row arrival per sender
+   * hex, and the arrival BEFORE it. The direct hook runs on the WebSocket callback, so these
+   * stay accurate even while the tab is backgrounded and its timer flush is throttled — the
+   * liveness evidence this whole hardening rests on must not depend on rAF/setTimeout cadence.
+   */
+  private seenLast = new Map<string, number>();
+  private seenPrev = new Map<string, number>();
+  /** The connection object whose matchMsg table we hooked (re-registered after a reconnect). */
+  private hookedConn: unknown = null;
+  /** performance.now of the last snapshot received FROM the current authority. */
+  private authoritySnapAt = 0;
+  /** performance.now when `beginMatch` armed this match (the watchdog's startup grace). */
+  private matchStartAt = 0;
+  /** Seats the silence watchdog has written off — promoted past until they speak again. */
+  private silentSeats = new Set<string>();
+  /** Per-sender start of a persistent double-authority stream we may concede to (lower seat). */
+  private conflictSince = new Map<string, number>();
+  /** 1 Hz watchdog: promotes the next seat when the authority goes quiet. */
+  private watchdogTimer = 0;
 
   private gameListeners = new Set<(e: ProviderGameEvent) => void>();
   private stateListeners = new Set<(s: ProviderConnectionState) => void>();
@@ -181,12 +226,49 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     if (!this.cacheUnsub) {
       this.cacheUnsub = ClientCache.shared.onChange(() => this.onCacheChanged());
     }
+    this.hookRelayArrivals();
+    if (!this.watchdogTimer) {
+      this.watchdogTimer = window.setInterval(() => this.watchdogTick(), 1000);
+    }
     this.onCacheChanged();
+  }
+
+  /**
+   * Register a DIRECT insert listener on `match_msg` (once per connection). The cache flush that
+   * normally feeds us is rAF/timer-driven and gets throttled in background tabs; liveness
+   * evidence (who is still broadcasting snapshots) must not — the browser always wakes the event
+   * loop for network traffic, so this hook stays accurate even while everything else is frozen.
+   */
+  private hookRelayArrivals(): void {
+    const conn = SpacetimeConnection.shared.current;
+    if (!conn || this.hookedConn === conn) return;
+    this.hookedConn = conn;
+    conn.db?.matchMsg?.onInsert?.((_ctx: unknown, row: never) => this.noteRelayArrival(row as MatchMsgRow));
+  }
+
+  /** One relayed row arrived (direct SDK callback): keep the liveness clocks honest. */
+  private noteRelayArrival(row: MatchMsgRow): void {
+    if (!this.matchId || !row || row.matchId !== this.matchId || !row.fromHex) return;
+    const now = performance.now();
+    const prev = this.seenLast.get(row.fromHex) ?? 0;
+    this.seenPrev.set(row.fromHex, prev);
+    this.seenLast.set(row.fromHex, now);
+    if (row.kind === 's') {
+      const fromId = this.gameIdFor(row.fromHex);
+      if (fromId === this.authorityId) {
+        this.authoritySnapAt = now;
+        this.silentSeats.delete(fromId);
+      }
+    }
   }
 
   stop(): void {
     this.cacheUnsub?.();
     this.cacheUnsub = null;
+    if (this.watchdogTimer) {
+      window.clearInterval(this.watchdogTimer);
+      this.watchdogTimer = 0;
+    }
     if (this.matchId) releaseMatch(this.matchId);
     this.clearRelayState();
     this.matchId = 0;
@@ -216,6 +298,13 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.authorityPendingId = '';
     this.authorityPendingSince = 0;
     this.rosterSignature = '';
+    this.lastSnapshotSentAt = 0;
+    this.seenLast.clear();
+    this.seenPrev.clear();
+    this.authoritySnapAt = 0;
+    this.matchStartAt = 0;
+    this.silentSeats.clear();
+    this.conflictSince.clear();
   }
 
   /** Forget any pending all-confirmed beat — a new queue must never inherit the old one's. */
@@ -298,6 +387,21 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
 
   kickFromParty(target: Identity): void {
     kickFromParty(target);
+  }
+
+  /** Friends rail ▸ INVITE: send a JOIN notification into `targetHex`'s account. */
+  inviteToParty(targetHex: string): void {
+    const target = ClientCache.shared.playerByHex(targetHex)?.identity;
+    if (!target) {
+      console.warn('[NECROFALL] invite target not loaded yet', targetHex);
+      return;
+    }
+    inviteToPartyReducer(target);
+  }
+
+  /** Friends rail ▸ dismiss an invite notification (idempotent). */
+  declineInvite(id: number): void {
+    declineInvite(id);
   }
 
   /** Keep the party row's outfit wire current (the line-up renders every member's figure). */
@@ -499,6 +603,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
         seq: this.relaySeq,
         payload: JSON.stringify(body),
       });
+      // Liveness anchor of the authority role: a broadcast snapshot went out just now.
+      if (kind === 's' && toHex === '') this.lastSnapshotSentAt = performance.now();
     } catch (err) {
       console.warn('[NECROFALL] relay encode failed', err);
     }
@@ -545,8 +651,105 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       }
       if (!body || typeof body !== 'object') continue;
       if (typeof body.ex === 'string' && body.ex === this.myGameId) continue;
+      if (row.kind === 's' && this.authorityId === this.myGameId) {
+        // DOUBLE AUTHORITY: two seats believe they run the match. Resolve before the snapshot
+        // reaches the game — 'apply' means we yielded to the sender first, so the game takes
+        // it as a CLIENT (the same path a normal snapshot uses).
+        const verdict = this.resolveSnapshotConflict(row.fromHex);
+        if (verdict === 'drop') continue;
+      }
       this.gameApi.applyNetMessage(this.gameIdFor(row.fromHex), { t: row.kind, ...body });
     }
+  }
+
+  /**
+   * Two seats are broadcasting snapshots at once (a stale bundle, a woken tab that was promoted
+   * past, a partial roster at boot). WHICH side yields is decided by evidence every peer can
+   * see, so the pair converges on ONE authority from any starting state:
+   *   • one side recently broadcast, the other did not → the silent side yields;
+   *   • both sides were broadcasting → the LOWER seat id is the agreed authority, but the
+   *     other side only concedes after `CONFLICT_CONCEDE_MS` of its stream — a resumed
+   *     authority that keeps streaming takes its role back (P2P-style), while an active
+   *     caretaker keeps the match alive through a brief wake-up blip. The bounded wait makes
+   *     a permanent double-authority impossible.
+   * Returns 'apply' (we yielded; the message dispatches normally now) or 'drop' (keep the
+   * role; the sender will see our snapshots and yield by the same rule).
+   */
+  private resolveSnapshotConflict(senderHex: string): 'apply' | 'drop' {
+    const now = performance.now();
+    const myGap = this.lastSnapshotSentAt > 0 ? now - this.lastSnapshotSentAt : Number.POSITIVE_INFINITY;
+    // Evidence of the sender's activity BEFORE this very message (the hook already recorded it).
+    const seenAt = this.seenPrev.get(senderHex) ?? 0;
+    const theirGap = seenAt > 0 ? now - seenAt : Number.POSITIVE_INFINITY;
+    if (myGap <= CONFLICT_STALE_MS && theirGap > CONFLICT_STALE_MS) return 'drop';
+    if (myGap > CONFLICT_STALE_MS && theirGap <= CONFLICT_STALE_MS) {
+      this.yieldAuthorityTo(this.gameIdFor(senderHex));
+      return 'apply';
+    }
+    const mine = this.seatIdOf(this.myHex);
+    const theirs = this.seatIdOf(senderHex);
+    if (theirs >= 0 && mine >= 0 && theirs < mine) {
+      const since = this.conflictSince.get(senderHex) ?? now;
+      this.conflictSince.set(senderHex, since);
+      if (now - since >= CONFLICT_CONCEDE_MS) {
+        this.yieldAuthorityTo(this.gameIdFor(senderHex));
+        return 'apply';
+      }
+    }
+    return 'drop';
+  }
+
+  /** Adopt another seat as the authority (the game flips to the P2P client role). */
+  private yieldAuthorityTo(id: string): void {
+    if (!id || this.authorityId === id) return;
+    this.lastSnapshotSentAt = 0; // no longer 'actively broadcasting' from here on
+    this.setAuthorityNow(id);
+  }
+
+  /** The auto-inc seat id of one identity (‑1 when unknown). */
+  private seatIdOf(hex: string): number {
+    if (!this.matchId || !hex) return -1;
+    for (const row of ClientCache.shared.matchPlayers(this.matchId)) {
+      if (hexOf(row.identity) === hex) return row.id;
+    }
+    return -1;
+  }
+
+  /**
+   * 1 Hz authority watchdog. While this client is a CLIENT (or any non-authority seat), a live
+   * match must receive snapshots from the authority at 12 Hz — total silence for several
+   * seconds means the authority stopped simulating (frozen background tab, dead process,
+   * stale bundle). The next seat in line is promoted deterministically, so every observer
+   * picks the SAME successor; if we are that seat, broadcasting takes over from here.
+   */
+  private watchdogTick(): void {
+    if (!this.matchId || !this.gameApi) return;
+    const now = performance.now();
+    // Prune stalled conflicts: a sender that went quiet resets its concession clock.
+    for (const [hex, t] of this.conflictSince) {
+      if (now - (this.seenLast.get(hex) ?? 0) > CONFLICT_STALE_MS) this.conflictSince.delete(hex);
+    }
+    if (now - this.matchStartAt < AUTHORITY_SILENCE_GRACE_MS) return;
+    if (!this.authorityId || this.authorityId === this.myGameId) return; // we hold (or will hold) the role
+    const authHex = this.hexForGameId(this.authorityId);
+    const last = Math.max(this.authoritySnapAt, authHex ? this.seenLast.get(authHex) ?? 0 : 0);
+    if (last > 0 && now - last <= AUTHORITY_SILENCE_MS) return;
+    // The authority went quiet: write it off and promote the next live seat in its place.
+    const rows = ClientCache.shared.matchPlayers(this.matchId).filter(r => !r.left);
+    if (rows.length === 0) return;
+    this.silentSeats.add(this.authorityId);
+    const connected = rows.filter(r => r.connected);
+    const pool = (connected.length > 0 ? connected : rows).slice().sort((a, b) => a.id - b.id);
+    const next = pool.find(r => !this.silentSeats.has(this.gameIdFor(hexOf(r.identity))));
+    if (!next) {
+      this.silentSeats.clear(); // everyone looked dead at once — forgive and re-evaluate
+      return;
+    }
+    const nextId = this.gameIdFor(hexOf(next.identity));
+    if (nextId === this.authorityId) return;
+    console.warn(`[NECROFALL] authority ${this.authorityId} went silent — promoting ${nextId}`);
+    this.authoritySnapAt = now; // start the new authority's silence clock now
+    this.setAuthorityNow(nextId);
   }
 
   /**
@@ -618,6 +821,8 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.authorityId = id;
     this.authorityPendingId = '';
     this.authorityPendingSince = 0;
+    this.authoritySnapAt = performance.now(); // the new authority's silence clock starts now
+    this.conflictSince.clear(); // a settled role has no pending conflicts
     this.gameApi?.setAuthority(id);
   }
 
@@ -715,6 +920,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
 
   private onCacheChanged(): void {
     const cache = ClientCache.shared;
+    this.hookRelayArrivals(); // a reconnect swaps the connection — keep the direct listener live
     this.emitQueue(cache);
     this.emitCandidate(cache);
     this.detectMatchStart(cache);
@@ -868,6 +1074,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     // Fresh relay wire for this match: skip every row that already exists (the subscription
     // replays a few seconds of history) and wait for the live stream from here.
     this.clearRelayState();
+    this.matchStartAt = performance.now(); // the authority watchdog's startup grace
     for (const row of cache.matchMessages(matchId)) {
       if (row.id > this.lastRelayId) this.lastRelayId = row.id;
     }

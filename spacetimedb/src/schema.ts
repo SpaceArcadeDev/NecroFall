@@ -4,7 +4,7 @@ import { schema } from 'spacetimedb/server';
 
 import { admin_identity, player, player_inventory, player_loadout, player_presence, player_settings, player_stats, player_wallet } from './schema/player';
 import { follow, profile_view } from './schema/social';
-import { candidate_match, match_candidate_player, matchmaking_scan, party, party_member, queue_entry } from './schema/matchmaking';
+import { candidate_match, match_candidate_player, matchmaking_scan, party, party_invite, party_member, queue_entry } from './schema/matchmaking';
 import { match, match_history, match_input, match_player, match_server_usage } from './schema/match';
 import { match_entity, match_event, match_msg, match_msg_rate, match_objective, match_tick } from './schema/game';
 import { planet_control_history, planet_discovery, rank_history, ranked_location_discovery, ranked_planet, ranked_planet_reservation, ranked_season } from './schema/ranked';
@@ -26,6 +26,7 @@ export const spacetimedb = schema({
   // matchmaking
   party,
   party_member,
+  party_invite,
   queue_entry,
   candidate_match,
   match_candidate_player,
@@ -74,6 +75,7 @@ export {
   match_tick,
   matchmaking_scan,
   party,
+  party_invite,
   party_member,
   planet_control_history,
   planet_discovery,

@@ -34,7 +34,17 @@ export {
 } from './account/account';
 
 // ---- parties + matchmaking (plan §12/§14/§72)
-export { create_party, join_party, join_party_by_code, leave_party, kick_from_party, set_party_loadout } from './matchmaking/party';
+// Lobby invites (friends rail ▸ INVITE, user ask 2026-09-29) ride with the party reducers.
+export {
+  create_party,
+  join_party,
+  join_party_by_code,
+  leave_party,
+  kick_from_party,
+  set_party_loadout,
+  invite_to_party,
+  decline_invite,
+} from './matchmaking/party';
 export { find_match, cancel_find_match, matchmaking_scan_tick } from './matchmaking/queue';
 export { confirm_match, decline_match } from './matchmaking/confirmation';
 

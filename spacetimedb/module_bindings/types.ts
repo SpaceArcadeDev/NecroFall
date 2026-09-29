@@ -261,6 +261,16 @@ export const Party = __t.object("Party", {
 });
 export type Party = __Infer<typeof Party>;
 
+export const PartyInvite = __t.object("PartyInvite", {
+  id: __t.u32(),
+  partyId: __t.u32(),
+  fromIdentity: __t.identity(),
+  toIdentity: __t.identity(),
+  code: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type PartyInvite = __Infer<typeof PartyInvite>;
+
 export const PartyMember = __t.object("PartyMember", {
   id: __t.u32(),
   partyId: __t.u32(),

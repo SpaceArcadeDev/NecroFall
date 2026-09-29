@@ -1,7 +1,7 @@
 // NECROFALL — the profile HERO (user ask 2026-09-29, pass 2: "make it look like a
 // 100k profile website"). One identity block: a cover-lit card with the avatar (colony
 // ring + gender glyph), the name in display type over a colony glow, @handle with
-// colony/level tags, the bio — and a right rail with the shareable friend code and the
+// colony/level tags, the bio — and a right rail with the shareable player id and the
 // EDIT / FOLLOW action.
 //
 // The avatar + profile-icon pickers are GONE on purpose (user ask); everything the owner
@@ -72,13 +72,13 @@ export class ProfileHero {
     id.appendChild(who);
     this.element.appendChild(id);
 
-    // ---- right rail: the shareable code + the primary action
+    // ---- right rail: the shareable player id + the primary action
     const side = el('div', 'nf-hero-side');
     const codeWrap = el('div', 'nf-hero-code');
-    codeWrap.appendChild(el('span', 'nf-hero-code-label', 'FRIEND CODE'));
+    codeWrap.appendChild(el('span', 'nf-hero-code-label', 'PLAYER ID'));
     const codeBtn = el('button', 'nf-hero-codebox') as HTMLButtonElement;
     codeBtn.type = 'button';
-    codeBtn.title = 'Copy friend code';
+    codeBtn.title = 'Copy player id';
     codeBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
       '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>';
@@ -87,7 +87,7 @@ export class ProfileHero {
     codeBtn.addEventListener('click', () => void this.copyCode());
     codeWrap.appendChild(codeBtn);
     this.shareBtn = button('', 'nf-btn small nf-hero-share', () => void this.shareCode());
-    this.shareBtn.setAttribute('aria-label', 'Share friend code');
+    this.shareBtn.setAttribute('aria-label', 'Share player id');
     this.shareBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
       '<circle cx="6" cy="12" r="2.6"/><circle cx="17.5" cy="6" r="2.6"/><circle cx="17.5" cy="18" r="2.6"/>' +
@@ -126,7 +126,7 @@ export class ProfileHero {
     const code = this.codeEl.textContent ?? '';
     try {
       await navigator.clipboard.writeText(code);
-      this.ctx.toast(`Friend code ${code} copied.`);
+      this.ctx.toast(`Player id ${code} copied.`);
     } catch {
       this.ctx.toast('Copy failed — select the code and copy it manually.');
     }
@@ -139,7 +139,7 @@ export class ProfileHero {
     }).share;
     if (shareFn) {
       try {
-        await shareFn.call(navigator, { title: 'NECROFALL', text: `Add me on NECROFALL — my friend code is ${code}` });
+        await shareFn.call(navigator, { title: 'NECROFALL', text: `Add me on NECROFALL — my player id is ${code}` });
         return;
       } catch {
         /* sheet dismissed — fall through to copying */

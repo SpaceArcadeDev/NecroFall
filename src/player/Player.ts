@@ -1597,16 +1597,16 @@ export class Player {
     if (this.frozen) {
       // Invulnerable selection state (Necromutation perk picker / Necrotech offer). The picker
       // eats gameplay INPUT while it is up — a click aimed at a card must not still be sitting in
-      // the queue when the menu closes — but it no longer eats the BODY'S MOTION (user ask
-      // 2026-09-30: a runner or a mid-air body used to stop dead / get yanked straight down the
-      // moment a picker opened). The trajectory simply keeps running: gravity and the surface
-      // handling below act on the velocity UNTOUCHED, so a run keeps gliding and a jump keeps its
-      // arc for as long as the choice is up. Steering, dashes, jumps and attacks stay suspended.
+      // the queue when the menu closes — and the GROUND rule stays the old one: a run that is on
+      // the ground brakes to a stop (the old 1 - dt*5 bleed). ONLY an AIRBORNE body keeps its
+      // momentum (user ask 2026-09-30): there the velocity is left untouched and gravity keeps
+      // running, so a jump carries its arc through the whole choice instead of hovering and then
+      // dropping. Steering, dashes, jumps and attacks stay suspended either way.
       g.input.clearActions();
       // A committed Siegebreaker arc is the one exception that still runs (the slam block below):
-      // its impact is already scheduled, so the dive flies on to its own landing instead of
-      // hovering and then dropping.
+      // its impact is already scheduled, so the dive flies on to its own landing.
       if (!this.slam) {
+        if (this.grounded) this.velocity.multiplyScalar(Math.max(0, 1 - dt * 5));
         this.velocity.addScaledVector(this.up, -CONFIG.player.gravity * dt);
         this.integrate(dt);
         this.tickSkillCharges(dt);

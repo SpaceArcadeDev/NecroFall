@@ -3563,7 +3563,7 @@ export class UI {
     card.appendChild(el('div', 'panel-title', 'NECROMUTATION — CHOOSE A PERK'));
     // No inline font size: the picker's type scales with the viewport through the CSS (.modal.levelup
     // .modal-card > .muted), so it stays in step with the cards below it.
-    const sub = el('div', 'muted', 'You keep your momentum — invulnerable while choosing. Full heal on selection.');
+    const sub = el('div', 'muted', 'Invulnerable while choosing — airborne momentum carries on. Full heal on selection.');
     card.appendChild(sub);
     this.levelUpPerks = el('div', 'perks');
     card.appendChild(this.levelUpPerks);

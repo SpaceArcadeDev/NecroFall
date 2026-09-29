@@ -1,7 +1,7 @@
 // NECROFALL — galaxy generation (plan §7/§54/§73). Pure + deterministic:
 // `galaxyAt(seed, gx, gy)` always returns the same descriptor, and 91% of
 // coordinates return null (the void between galaxies — density per ring).
-import { GalaxyDescriptor, GalaxyMorphology, GALAXY_PREFIXES, GALAXY_SUFFIXES, NEBULA_COLORS, NebulaType, POI_LABELS, STAR_COLORS, StarType } from './GalaxyTypes';
+import { GalaxyDescriptor, GalaxyMorphology, GALAXY_PREFIXES, GALAXY_SUFFIXES, NEBULA_COLORS, NebulaType, STAR_COLORS, StarType } from './GalaxyTypes';
 import { ringConfig } from './RankRingConfig';
 import { encodeGalaxyId, hash32, MAX_RING_RADIUS, ringOfGalaxy, rng } from './SeedHash';
 
@@ -66,14 +66,11 @@ export function galaxyAt(universeSeed: number, gx: number, gy: number): GalaxyDe
   const starType = pickStarType(starRand, ring, exoticRoll, cfg.exotic);
   const nebula = NEBULAS[Math.floor(r() * NEBULAS.length)];
   const systemCount = cfg.systemsMin + Math.floor(r() * (cfg.systemsMax - cfg.systemsMin + 1));
-  const poiRoll = r();
-  let poi: GalaxyDescriptor['poi'] = 'NORMAL';
-  if (poiRoll < 0.04) poi = 'DEAD';
-  else if (poiRoll < 0.08) poi = 'CORRUPTED';
-  else if (poiRoll < 0.11) poi = 'SWARM';
-  else if (poiRoll < 0.14) poi = 'STRONGHOLD';
-  else if (poiRoll < 0.18) poi = 'DISCOVERY';
-  else if (nebula !== 'NONE') poi = 'NEBULA';
+  // (the POI roll lived here — REMOVED user 2026-09-29: "remove that system completely
+  // if it has no affect to procedural generated planets and gameplay". The r() call is
+  // kept as a BURN so the seeded stream — and with it every galaxy's shape the season
+  // shipped with — stays identical.)
+  r();
 
   // ---- morphology (plan §4): every structural property is rolled HERE and read by the
   // sprite generator, the system distribution and the debug overlays alike.
@@ -109,8 +106,6 @@ export function galaxyAt(universeSeed: number, gx: number, gy: number): GalaxyDe
     systemCount,
     nebula,
     nebulaColor: nebula === 'NONE' ? null : NEBULA_COLORS[nebula],
-    poi,
-    poiLabel: POI_LABELS[poi],
     radius: 26 + Math.min(16, systemCount) + (r() * 8 - 4),
     morphology,
     rotation,

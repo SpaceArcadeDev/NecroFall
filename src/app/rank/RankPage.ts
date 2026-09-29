@@ -30,7 +30,7 @@ import { systemAt } from '../../rankmap/procedural/SolarSystemGenerator';
 import { systemPlanetCount as generatedPlanetCount } from '../../rankmap/procedural/SolarSystemGenerator';
 import { galaxyAt } from '../../rankmap/procedural/GalaxyGenerator';
 import { RING_CONFIGS, ringConfig } from '../../rankmap/procedural/RankRingConfig';
-import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, poiVisual } from '../../rankmap/procedural/GalaxyTypes';
+import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankDisplayName, getRankFromStars, rankLabel, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
 import {
   galaxyLocationKey,
@@ -436,7 +436,7 @@ export class RankPage {
     return galaxyAt(this.universeSeed(), home.gx, home.gy) ?? {
       ring: this.myRing(), gx: home.gx, gy: home.gy, galaxyId: 0, seed: 0, name: 'FRONTIER',
       starType: 'YELLOW', starColor: '#ffe08a', systemCount: 6, nebula: 'NONE', nebulaColor: null,
-      poi: 'NORMAL', poiLabel: 'STANDARD GALAXY', radius: 40,
+      radius: 40,
       morphology: 'SPIRAL', rotation: 0, armCount: 2, armTightness: 3,
       bulgeStrength: 1, discThickness: 0.06, axisRatio: 1, brightness: 1,
     };
@@ -592,15 +592,6 @@ export class RankPage {
       const cfg = RING_CONFIGS[galaxy.ring] ?? RING_CONFIGS[0];
       card.appendChild(el('div', 'rk-mapinfo-kicker', `${galaxy.morphology.replace(/_/g, ' ')} · ${cfg.name} BAND`));
       card.appendChild(el('div', 'rk-mapinfo-title', galaxy.name.toUpperCase()));
-      // the selected galaxy's OWN POI, named (user 2026-09-29: "so that users can
-      // better understand") — the glyph matches the marker over its face, the
-      // label spells out what the icon means.
-      if (galaxy.poi !== 'NORMAL') {
-        const pv = poiVisual(galaxy.poi);
-        const line = el('div', 'rk-mapinfo-poi');
-        line.innerHTML = `<b style="color:${pv.color}">${pv.glyph}</b> ${galaxy.poiLabel}`;
-        card.appendChild(line);
-      }
       const summary = calculateDominance(this.rowsForGalaxy(galaxy.galaxyId), { colonyColors: colours, colonyNames: names, nowUs: this.serverNowUs() });
       card.appendChild(controlBlock(summary, { kicker: 'TERRITORY', compact: true }));
       card.appendChild(
@@ -902,7 +893,7 @@ export class RankPage {
     }
   }
 
-  private showHover(hover: { kind: string; label: string; sub: string; x: number; y: number } | null): void {
+  private showHover(hover: { kind: string; label: string; sub?: string; x: number; y: number } | null): void {
     if (!hover) {
       this.hoverTip.classList.add('hidden');
       return;
@@ -910,7 +901,7 @@ export class RankPage {
     this.hoverTip.classList.remove('hidden');
     this.hoverTip.style.left = `${Math.min(this.mapWrap.clientWidth - 150, hover.x + 14)}px`;
     this.hoverTip.style.top = `${Math.max(8, hover.y - 12)}px`;
-    this.hoverTip.innerHTML = `<div class="rk-tip-name">${hover.label}</div><div class="rk-tip-sub">${hover.sub}</div>`;
+    this.hoverTip.innerHTML = `<div class="rk-tip-name">${hover.label}</div>` + (hover.sub ? `<div class="rk-tip-sub">${hover.sub}</div>` : '');
   }
 
   // ------------------------------------------------------------ side panel

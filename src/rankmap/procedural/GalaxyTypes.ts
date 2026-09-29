@@ -36,8 +36,6 @@ export const NEBULA_COLORS: Record<Exclude<NebulaType, 'NONE'>, string> = {
   GOLDEN: '#ffc93d',
 };
 
-export type GalaxyPoi = 'NORMAL' | 'NEBULA' | 'DEAD' | 'CORRUPTED' | 'STRONGHOLD' | 'SWARM' | 'DISCOVERY';
-
 /**
  * GALAXY MORPHOLOGY (plan §4). Each kind is a genuinely different structure — shape,
  * star distribution and system placement all change with it, never just the colour.
@@ -53,44 +51,6 @@ export const MORPHOLOGY_LABELS: Record<GalaxyMorphology, string> = {
   FLOCCULENT: 'FLOCCULENT',
 };
 
-/**
- * Flavour labels (user 2026-09-29: "some of the poi icons name very confusing... why
- * is there a colony stronghold when it's an undiscovered planet?"). Every name is a
- * trait of the GALAXY ITSELF — never a claim about occupation, discovery or content
- * (the halo tints already speak the state language; these are seeded flavour only).
- * Old names implied things: COLONY STRONGHOLD → a player colony, DISCOVERY CLUSTER →
- * undiscovered worlds, NECROPHAGE SWARM → an active infestation; NEBULA didn't say
- * anything at all, so it became STELLAR NURSERY (user 2026-09-29: "whats a nebula?
- * it's confusing without explanation"). 'STANDARD GALAXY' deliberately names the
- * no-icon case so an icon-less galaxy reads as intentional.
- */
-export const POI_LABELS: Record<GalaxyPoi, string> = {
-  NORMAL: 'STANDARD GALAXY',
-  NEBULA: 'STELLAR NURSERY',
-  DEAD: 'DEAD CORE',
-  CORRUPTED: 'CORRUPTED',
-  STRONGHOLD: 'ANCIENT BASTION',
-  SWARM: 'SWARM REMNANTS',
-  DISCOVERY: 'FRONTIER CLUSTER',
-};
-
-/**
- * CANVAS GLYPH + COLOUR per POI (plan §55). ONE table: the map draws its markers
- * from it and the fullscreen info overlay (POI line + legend) reads it too — the
- * key can never drift from the map. SWARM/DEAD share the red alarm glyph;
- * STRONGHOLD is the gold flag; CORRUPTED / DISCOVERY / NEBULA wear the teal star
- * (the hover tooltip's `poiLabel` names which one); NORMAL draws nothing.
- */
-export function poiVisual(poi: GalaxyPoi): { glyph: string; color: string } {
-  switch (poi) {
-    case 'SWARM': return { glyph: '☣', color: '#ff5d73' };
-    case 'DEAD': return { glyph: '✝', color: '#ff5d73' };
-    case 'STRONGHOLD': return { glyph: '⚑', color: '#ffd166' };
-    case 'NORMAL': return { glyph: '', color: '#7be0c8' };
-    default: return { glyph: '✦', color: '#7be0c8' };
-  }
-}
-
 export interface GalaxyDescriptor {
   ring: number;
   gx: number;
@@ -103,8 +63,6 @@ export interface GalaxyDescriptor {
   systemCount: number;
   nebula: NebulaType;
   nebulaColor: string | null;
-  poi: GalaxyPoi;
-  poiLabel: string;
   /** Visual disc radius in world units (map space). */
   radius: number;
   // ---- morphology (plan §4): shape, star distribution and system placement read these

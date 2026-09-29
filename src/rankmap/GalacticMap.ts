@@ -15,7 +15,7 @@
 // season seed (plan §0). Discovery is EARNED IN MATCHES (AppShell records it when a ranked
 // match ends); the map only READS it back off the scoped subscriptions (plan §6/§47).
 // the server decides, and the DOM panels render what came back.
-import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, poiVisual } from './procedural/GalaxyTypes';
+import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from './procedural/GalaxyTypes';
 import { planetsInSystem, ringHome } from './procedural/UniverseGenerator';
 import { galaxyAt } from './procedural/GalaxyGenerator';
 import { systemAt, systemsInGalaxy } from './procedural/SolarSystemGenerator';
@@ -162,7 +162,13 @@ function withAlpha(color: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-const GAL_DISC_WORLD = 3.0; // galaxy disc diameter in world units
+// GALAXY DISC (user 2026-09-29 v4: "the solar systems are spread in a wide round that
+// overlaps other galaxies instead of staying in its own galaxy area" — the disc was
+// 3.0 world while a galaxy's FACE is ~1 world, so clusters spilled over the
+// neighbouring lattice cells, leaving nothing to soft-lock with the face filling the
+// screen). The disc now matches the face scale; everything derived from it (the
+// galaxy-view framing, the tier ramps, the debug discs) rescales with it.
+const GAL_DISC_WORLD = 1.0; // galaxy disc diameter in world units
 const SYSTEM_SCALE = 0.62; // system local (unit) space → world units
 /** The 72 h planetary control lifetime (plan §39) and the FRESH CONQUEST window:
  *  a world claimed within the last day still has > 48 h of its shield left, so the
@@ -256,7 +262,7 @@ export class GalacticMap {
     private host: HTMLElement,
     private data: MapData,
     private onSelect: (sel: MapSelection) => void,
-    private onHoverChange?: (hover: { kind: string; label: string; sub: string; x: number; y: number } | null) => void
+    private onHoverChange?: (hover: { kind: string; label: string; sub?: string; x: number; y: number } | null) => void
   ) {
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'rk-map-canvas';
@@ -1028,8 +1034,7 @@ export class GalacticMap {
       this.selected = { type: 'system', galaxy: g, system: sys };
     }
     const ranges = this.zoomRamps();
-    const wx = g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD;
-    const wy = g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD;
+    const { x: wx, y: wy } = this.systemWorldPos(g, sys);
     // land where the planets are fully open (ramp 85% of the planet band)
     const into = ranges.plStart + (ranges.plEnd - ranges.plStart) * 0.85;
     this.camTarget = { x: wx, y: wy, zoom: Math.max(this.cam.zoom, into) };
@@ -1418,26 +1423,6 @@ export class GalacticMap {
           }
           ctx.globalAlpha = 1;
         }
-        // POI marker (plan §55) — user 2026-09-29 v3: "the poi icon fade should follow
-        // the galaxy name fade... it should fade out faster" (icons read as clutter
-        // through the mid fade). The glyph now rides the EXACT band of the galaxy NAME
-        // (radius 16 → 28 — see `nameA` below): it appears once the face is well
-        // formed and retires early while zooming out. It still ignores the focus/hover
-        // face boost and any zoom threshold, so no state flip (hover, soft lock,
-        // wheel) can switch the glyph on or off.
-        const poiT = ramp01(radius, 16, 28);
-        if (g.poi !== 'NORMAL' && poiT > 0.02) {
-          const poiA = Math.min(0.9, 0.8 * pulse * field2 * haze * (1 - withdraw * 0.88) * poiT);
-          if (poiA > 0.015) {
-            const pv = poiVisual(g.poi);
-            ctx.globalAlpha = poiA;
-            ctx.fillStyle = pv.color;
-            ctx.font = '9px Rajdhani, sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText(pv.glyph, p.x, p.y - radius - 3);
-            ctx.globalAlpha = 1;
-          }
-        }
         if (isHover) {
           ctx.strokeStyle = 'rgba(255,255,255,0.55)';
           ctx.lineWidth = 1.2;
@@ -1562,8 +1547,16 @@ export class GalacticMap {
     return hit;
   }
 
+  /**
+   * SAME world point for drawing, hit-testing, the soft lock and flights (plan §23).
+   * The offset rides the galaxy's OWN face radius (the `g.radius * 0.012` world factor
+   * `galaxyScreenRadius` uses), so every star cluster stays INSIDE its own galaxy —
+   * never overlapping the neighbours (user 2026-09-29 v4: systems "spread in a wide
+   * round that overlaps other galaxies" left nothing to soft-lock onto).
+   */
   private systemWorldPos(g: GalaxyDescriptor, sys: SystemDescriptor): { x: number; y: number } {
-    return { x: g.gx + (sys.ux - 0.5) * GAL_DISC_WORLD, y: g.gy + (sys.uy - 0.5) * GAL_DISC_WORLD };
+    const s = g.radius * 0.012;
+    return { x: g.gx + (sys.ux - 0.5) * s, y: g.gy + (sys.uy - 0.5) * s };
   }
 
   /** Per-galaxy system territory map, rebuilt lazily — NEVER per frame (plan §58). */
@@ -2318,7 +2311,7 @@ export class GalacticMap {
     el.style.cursor = hit.kind ? 'pointer' : 'grab';
     if (!this.onHoverChange) return;
     if (hit.kind === 'galaxy' && hit.galaxy) {
-      this.onHoverChange({ kind: 'galaxy', label: hit.galaxy.name.toUpperCase(), sub: hit.galaxy.poiLabel, x: sx, y: sy });
+      this.onHoverChange({ kind: 'galaxy', label: hit.galaxy.name.toUpperCase(), x: sx, y: sy });
     } else if (hit.kind === 'system' && hit.system) {
       const g = this.lock.galaxy ?? this.focusGalaxy;
       const count = g ? systemPlanetCount(this.data.universeSeed, g.ring, g.galaxyId, hit.system.systemId) : 0;

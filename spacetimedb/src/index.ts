@@ -47,6 +47,16 @@ export {
 } from './matchmaking/party';
 export { find_match, cancel_find_match, matchmaking_scan_tick } from './matchmaking/queue';
 export { confirm_match, decline_match } from './matchmaking/confirmation';
+// Custom lobbies — the P2P loop on the hybrid architecture (user ask 2026-09-30).
+export {
+  create_custom_lobby,
+  join_custom_lobby,
+  leave_custom_lobby,
+  kick_custom_seat,
+  set_custom_ready,
+  set_custom_seat,
+  start_custom_match,
+} from './matchmaking/custom';
 
 // ---- the official game server (plan §16–§19/§40/§74)
 export {
@@ -72,6 +82,8 @@ export { search_players } from './social/search';
 export { discover_planet, colony_stats } from './ranked/planets';
 export { discover_location } from './ranked/discovery';
 export { find_ranked_match } from './ranked/matchmaking';
+// ---- solo-mode planet records + first-play log (user ask 2026-09-30)
+export { submit_planet_record, record_planet_play } from './ranked/records';
 
 // ---- views (plan §22/§23)
 export { my_queue_entry, my_candidate, my_candidate_players, my_match_usage, ranked_top } from './views';

@@ -31,6 +31,12 @@ export const match = table(
     planet_key: t.string().default(''),
     /** Rank ring of the planet — drives difficulty parameters (plan §6/§29). */
     rank_ring: t.u8().default(255),
+    /** MATCH_MODE_STANDARD (0) / MATCH_MODE_CUSTOM (1) — custom lobbies and their matches. */
+    mode: t.u8().default(0),
+    /** The custom lobby's share code ('' for standard matches). */
+    room_code: t.string().default(''),
+    /** Custom lobbies: the host's identity hex ('' for standard matches). */
+    host_hex: t.string().default(''),
   }
 );
 
@@ -87,6 +93,8 @@ export const match_player = table(
      * rides the public row so the offender's client shows it and everyone else ignores them.
      */
     kick_reason: t.string().default(''),
+    /** Custom lobbies: this seat is ready (the host's START gate). */
+    ready: t.bool().default(false),
   }
 );
 

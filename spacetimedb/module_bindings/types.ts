@@ -66,6 +66,9 @@ export const Match = __t.object("Match", {
   ranked: __t.bool(),
   planetKey: __t.string(),
   rankRing: __t.u8(),
+  mode: __t.u8(),
+  roomCode: __t.string(),
+  hostHex: __t.string(),
 });
 export type Match = __Infer<typeof Match>;
 
@@ -211,6 +214,7 @@ export const MatchPlayer = __t.object("MatchPlayer", {
   updatedAt: __t.timestamp(),
   left: __t.bool(),
   kickReason: __t.string(),
+  ready: __t.bool(),
 });
 export type MatchPlayer = __Infer<typeof MatchPlayer>;
 
@@ -301,6 +305,27 @@ export const PlanetDiscovery = __t.object("PlanetDiscovery", {
   discoveryOrder: __t.u8(),
 });
 export type PlanetDiscovery = __Infer<typeof PlanetDiscovery>;
+
+export const PlanetPlay = __t.object("PlanetPlay", {
+  id: __t.u32(),
+  planetKey: __t.string(),
+  identity: __t.identity(),
+  playerName: __t.string(),
+  slot: __t.u8(),
+  firstPlayedAt: __t.timestamp(),
+});
+export type PlanetPlay = __Infer<typeof PlanetPlay>;
+
+export const PlanetRecord = __t.object("PlanetRecord", {
+  id: __t.u32(),
+  planetKey: __t.string(),
+  mode: __t.u8(),
+  timeMs: __t.u64(),
+  playerName: __t.string(),
+  identity: __t.identity(),
+  setAt: __t.timestamp(),
+});
+export type PlanetRecord = __Infer<typeof PlanetRecord>;
 
 export const Player = __t.object("Player", {
   identity: __t.identity(),

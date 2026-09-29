@@ -417,6 +417,7 @@ export const join_match = spacetimedb.reducer(
       updated_at: now,
       left: false,
       kick_reason: '',
+      ready: false,
     });
     ctx.db.match.match_id.update({ ...m, player_count: m.player_count + 1 });
     const presence = ctx.db.player_presence.identity.find(ctx.sender);

@@ -70,6 +70,21 @@ export const cancelFindMatch = (): void => callReducer('cancelFindMatch');
 export const confirmMatch = (): void => callReducer('confirmMatch');
 export const declineMatch = (): void => callReducer('declineMatch');
 
+// ---- custom lobbies (user ask 2026-09-30): the P2P loop on the hybrid architecture
+export const createCustomLobby = (): void => callReducer('createCustomLobby');
+export const joinCustomLobby = (code: string): void => callReducer('joinCustomLobby', { code });
+export const leaveCustomLobby = (): void => callReducer('leaveCustomLobby');
+export const kickCustomSeat = (target: Identity): void => callReducer('kickCustomSeat', { target });
+export const setCustomReady = (ready: boolean): void => callReducer('setCustomReady', { ready });
+export const setCustomSeat = (colony: number, necrotech: number): void =>
+  callReducer('setCustomSeat', { colony, necrotech });
+export const startCustomMatch = (): void => callReducer('startCustomMatch');
+
+// ---- solo-mode planet records (user ask 2026-09-30)
+export const submitPlanetRecord = (mode: number, planetKey: string, timeMs: number): void =>
+  callReducer('submitPlanetRecord', { mode: mode, planetKey: planetKey, timeMs: BigInt(Math.max(0, Math.round(timeMs))) });
+export const recordPlanetPlay = (planetKey: string): void => callReducer('recordPlanetPlay', { planetKey }, true);
+
 // ------------------------------------------------------------ ranked (plan §59)
 
 /** FIND RANKED MATCH — queue for one planet; the server validates ring + availability. */

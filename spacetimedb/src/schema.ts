@@ -8,6 +8,7 @@ import { candidate_match, match_candidate_player, matchmaking_scan, party, party
 import { match, match_history, match_input, match_player, match_server_usage, violation_report } from './schema/match';
 import { match_entity, match_event, match_msg, match_msg_rate, match_objective, match_tick } from './schema/game';
 import { planet_control_history, planet_discovery, rank_history, ranked_location_discovery, ranked_planet, ranked_planet_reservation, ranked_season } from './schema/ranked';
+import { planet_play, planet_record } from './schema/records';
 import { server_clock } from './schema/clock';
 
 export const spacetimedb = schema({
@@ -55,6 +56,9 @@ export const spacetimedb = schema({
   ranked_planet_reservation,
   planet_control_history,
   rank_history,
+  // solo-mode planet records + first-play log (user ask 2026-09-30)
+  planet_record,
+  planet_play,
   // server clock (plan §14/§46) — the 1 Hz scan stamps it; clients count down on it
   server_clock,
 });
@@ -95,5 +99,7 @@ export {
   ranked_planet,
   ranked_planet_reservation,
   ranked_season,
+  planet_record,
+  planet_play,
   server_clock,
 };

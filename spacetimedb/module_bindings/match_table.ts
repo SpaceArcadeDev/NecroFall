@@ -25,4 +25,7 @@ export default __t.row({
   ranked: __t.bool(),
   planetKey: __t.string().name("planet_key"),
   rankRing: __t.u8().name("rank_ring"),
+  mode: __t.u8(),
+  roomCode: __t.string().name("room_code"),
+  hostHex: __t.string().name("host_hex"),
 });

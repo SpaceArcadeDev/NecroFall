@@ -2461,6 +2461,8 @@ export class EnemyManager {
   private apexT = 90;
   /** Seconds until the next Hunter Necrophage is allowed on to the field. */
   private hunterT = 55;
+  /** SURVIVAL only: seconds until the next roaming BOSS lands (the swarm's pressure valve). */
+  private survBossT = 95;
 
   constructor(private game: Game, private quality: QualitySettings) {}
 
@@ -2524,6 +2526,7 @@ export class EnemyManager {
     this.packT = 30;
     this.apexT = 90;
     this.hunterT = 55;
+    this.survBossT = 95;
     this.spatial.clear();
   }
 
@@ -2867,7 +2870,10 @@ export class EnemyManager {
 
   private runSpawner(dt: number): void {
     const g = this.game;
-    const elapsed = g.matchElapsed;
+    // SOLO mode ramp (user ask 2026-09-30): survival pushes the SAME curve harder (every
+    // count/cadence below reads this one number), so the horde keeps growing without a
+    // second spawner to keep in sync.
+    const elapsed = g.matchElapsed * g.enemyRampMul;
     if (elapsed < 3) return;
     const power = enemyPowerScale(elapsed);
     const cap = this.populationCap;
@@ -2933,6 +2939,26 @@ export class EnemyManager {
           const h = this.spawn(idx, _spawnV.copy(pos), { hpMul: power.hp, powerMul: power.dmg });
           g.ui.banner(`${h.genome.name.toUpperCase()} HAS YOUR SCENT`, 3000);
           g.audio.sfx('bossRoar', 0.8);
+        }
+      }
+    }
+
+    // ---- SURVIVAL boss cadence (user ask 2026-09-30): a full BOSS body (one of the four
+    // warden genomes) marches on the player every ~90 s, tightening as the run goes on.
+    // Bosses carry the stun pool a Beacon guardian would — they are the run's set pieces.
+    if (g.survivalMode) {
+      this.survBossT -= dt;
+      if (this.survBossT <= 0) {
+        this.survBossT = Math.max(45, 95 - g.matchElapsed * 0.05);
+        const pos = this.spawnPosNearPlayer();
+        if (pos && this.hasRoom) {
+          const guards = this.bestiary.bossIdxes;
+          const idx = guards.length > 0 ? guards[Math.floor(Math.random() * guards.length)] : this.bestiary.apexIdx;
+          const e = this.spawn(idx, pos, { hpMul: power.hp * 1.35, powerMul: power.dmg * 1.1 });
+          e.stunMax = e.maxHp * CONFIG.boss.stunPool;
+          e.stun = e.stunMax;
+          g.ui.banner(`${e.genome.name.toUpperCase()} RISES FROM THE DEEP`, 3400);
+          g.audio.sfx('bossRoar', 0.9);
         }
       }
     }

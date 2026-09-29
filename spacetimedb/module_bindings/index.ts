@@ -38,6 +38,7 @@ import CancelFindMatchReducer from "./cancel_find_match_reducer";
 import ChooseColonyReducer from "./choose_colony_reducer";
 import ClaimAdminReducer from "./claim_admin_reducer";
 import ConfirmMatchReducer from "./confirm_match_reducer";
+import CreateCustomLobbyReducer from "./create_custom_lobby_reducer";
 import CreatePartyReducer from "./create_party_reducer";
 import DeclineInviteReducer from "./decline_invite_reducer";
 import DeclineMatchReducer from "./decline_match_reducer";
@@ -50,12 +51,16 @@ import FollowPlayerReducer from "./follow_player_reducer";
 import GrantCurrencyAdminReducer from "./grant_currency_admin_reducer";
 import GrantItemAdminReducer from "./grant_item_admin_reducer";
 import InviteToPartyReducer from "./invite_to_party_reducer";
+import JoinCustomLobbyReducer from "./join_custom_lobby_reducer";
 import JoinMatchReducer from "./join_match_reducer";
 import JoinPartyReducer from "./join_party_reducer";
 import JoinPartyByCodeReducer from "./join_party_by_code_reducer";
+import KickCustomSeatReducer from "./kick_custom_seat_reducer";
 import KickFromPartyReducer from "./kick_from_party_reducer";
+import LeaveCustomLobbyReducer from "./leave_custom_lobby_reducer";
 import LeaveMatchReducer from "./leave_match_reducer";
 import LeavePartyReducer from "./leave_party_reducer";
+import RecordPlanetPlayReducer from "./record_planet_play_reducer";
 import RecordProfileViewReducer from "./record_profile_view_reducer";
 import ReportMatchStatsReducer from "./report_match_stats_reducer";
 import ReportNecrophageVictoryReducer from "./report_necrophage_victory_reducer";
@@ -65,14 +70,18 @@ import SendMatchMsgReducer from "./send_match_msg_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetBanAdminReducer from "./set_ban_admin_reducer";
 import SetBioReducer from "./set_bio_reducer";
+import SetCustomReadyReducer from "./set_custom_ready_reducer";
+import SetCustomSeatReducer from "./set_custom_seat_reducer";
 import SetGenderReducer from "./set_gender_reducer";
 import SetKeybindsReducer from "./set_keybinds_reducer";
 import SetPartyLoadoutReducer from "./set_party_loadout_reducer";
 import SetPlayerNameReducer from "./set_player_name_reducer";
 import SetProfileNameReducer from "./set_profile_name_reducer";
 import SetProfilePictureReducer from "./set_profile_picture_reducer";
+import StartCustomMatchReducer from "./start_custom_match_reducer";
 import SubmitInputReducer from "./submit_input_reducer";
 import SubmitPeerResultReducer from "./submit_peer_result_reducer";
+import SubmitPlanetRecordReducer from "./submit_planet_record_reducer";
 import SyncPoseReducer from "./sync_pose_reducer";
 import UnfollowPlayerReducer from "./unfollow_player_reducer";
 
@@ -98,6 +107,8 @@ import PartyInviteRow from "./party_invite_table";
 import PartyMemberRow from "./party_member_table";
 import PlanetControlHistoryRow from "./planet_control_history_table";
 import PlanetDiscoveryRow from "./planet_discovery_table";
+import PlanetPlayRow from "./planet_play_table";
+import PlanetRecordRow from "./planet_record_table";
 import PlayerRow from "./player_table";
 import PlayerInventoryRow from "./player_inventory_table";
 import PlayerLoadoutRow from "./player_loadout_table";
@@ -307,6 +318,34 @@ const tablesSchema = __schema({
       { name: 'planet_discovery_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, PlanetDiscoveryRow),
+  planetPlay: __table({
+    name: 'planet_play',
+    indexes: [
+      { accessor: 'id', name: 'planet_play_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'planet_key', name: 'planet_play_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'planet_play_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PlanetPlayRow),
+  planetRecord: __table({
+    name: 'planet_record',
+    indexes: [
+      { accessor: 'id', name: 'planet_record_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'planet_key', name: 'planet_record_planet_key_idx_btree', algorithm: 'btree', columns: [
+        'planetKey',
+      ] },
+    ],
+    constraints: [
+      { name: 'planet_record_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, PlanetRecordRow),
   player: __table({
     name: 'player',
     indexes: [
@@ -538,6 +577,7 @@ const reducersSchema = __reducers(
   __reducerSchema("choose_colony", ChooseColonyReducer),
   __reducerSchema("claim_admin", ClaimAdminReducer),
   __reducerSchema("confirm_match", ConfirmMatchReducer),
+  __reducerSchema("create_custom_lobby", CreateCustomLobbyReducer),
   __reducerSchema("create_party", CreatePartyReducer),
   __reducerSchema("decline_invite", DeclineInviteReducer),
   __reducerSchema("decline_match", DeclineMatchReducer),
@@ -550,12 +590,16 @@ const reducersSchema = __reducers(
   __reducerSchema("grant_currency_admin", GrantCurrencyAdminReducer),
   __reducerSchema("grant_item_admin", GrantItemAdminReducer),
   __reducerSchema("invite_to_party", InviteToPartyReducer),
+  __reducerSchema("join_custom_lobby", JoinCustomLobbyReducer),
   __reducerSchema("join_match", JoinMatchReducer),
   __reducerSchema("join_party", JoinPartyReducer),
   __reducerSchema("join_party_by_code", JoinPartyByCodeReducer),
+  __reducerSchema("kick_custom_seat", KickCustomSeatReducer),
   __reducerSchema("kick_from_party", KickFromPartyReducer),
+  __reducerSchema("leave_custom_lobby", LeaveCustomLobbyReducer),
   __reducerSchema("leave_match", LeaveMatchReducer),
   __reducerSchema("leave_party", LeavePartyReducer),
+  __reducerSchema("record_planet_play", RecordPlanetPlayReducer),
   __reducerSchema("record_profile_view", RecordProfileViewReducer),
   __reducerSchema("report_match_stats", ReportMatchStatsReducer),
   __reducerSchema("report_necrophage_victory", ReportNecrophageVictoryReducer),
@@ -565,14 +609,18 @@ const reducersSchema = __reducers(
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_ban_admin", SetBanAdminReducer),
   __reducerSchema("set_bio", SetBioReducer),
+  __reducerSchema("set_custom_ready", SetCustomReadyReducer),
+  __reducerSchema("set_custom_seat", SetCustomSeatReducer),
   __reducerSchema("set_gender", SetGenderReducer),
   __reducerSchema("set_keybinds", SetKeybindsReducer),
   __reducerSchema("set_party_loadout", SetPartyLoadoutReducer),
   __reducerSchema("set_player_name", SetPlayerNameReducer),
   __reducerSchema("set_profile_name", SetProfileNameReducer),
   __reducerSchema("set_profile_picture", SetProfilePictureReducer),
+  __reducerSchema("start_custom_match", StartCustomMatchReducer),
   __reducerSchema("submit_input", SubmitInputReducer),
   __reducerSchema("submit_peer_result", SubmitPeerResultReducer),
+  __reducerSchema("submit_planet_record", SubmitPlanetRecordReducer),
   __reducerSchema("sync_pose", SyncPoseReducer),
   __reducerSchema("unfollow_player", UnfollowPlayerReducer),
 );
@@ -605,6 +653,10 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
     readonly "planet_control_history": Omit<typeof tablesSchema.schemaType.tables["planetControlHistory"], "accessorName"> & { readonly accessorName: "planet_control_history" };
     /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
     readonly "planet_discovery": Omit<typeof tablesSchema.schemaType.tables["planetDiscovery"], "accessorName"> & { readonly accessorName: "planet_discovery" };
+    /** @deprecated Use `planetPlay` instead. This alias will be removed in the next major version. */
+    readonly "planet_play": Omit<typeof tablesSchema.schemaType.tables["planetPlay"], "accessorName"> & { readonly accessorName: "planet_play" };
+    /** @deprecated Use `planetRecord` instead. This alias will be removed in the next major version. */
+    readonly "planet_record": Omit<typeof tablesSchema.schemaType.tables["planetRecord"], "accessorName"> & { readonly accessorName: "planet_record" };
     /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
     readonly "player_inventory": Omit<typeof tablesSchema.schemaType.tables["playerInventory"], "accessorName"> & { readonly accessorName: "player_inventory" };
     /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */
@@ -669,6 +721,8 @@ const tableAccessorAliases = {
   "party_member": "partyMember",
   "planet_control_history": "planetControlHistory",
   "planet_discovery": "planetDiscovery",
+  "planet_play": "planetPlay",
+  "planet_record": "planetRecord",
   "player_inventory": "playerInventory",
   "player_loadout": "playerLoadout",
   "player_presence": "playerPresence",
@@ -727,6 +781,10 @@ export type DbView = __DbViewBase & {
   readonly "planet_control_history": __DbViewBase["planetControlHistory"];
   /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
   readonly "planet_discovery": __DbViewBase["planetDiscovery"];
+  /** @deprecated Use `planetPlay` instead. This alias will be removed in the next major version. */
+  readonly "planet_play": __DbViewBase["planetPlay"];
+  /** @deprecated Use `planetRecord` instead. This alias will be removed in the next major version. */
+  readonly "planet_record": __DbViewBase["planetRecord"];
   /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
   readonly "player_inventory": __DbViewBase["playerInventory"];
   /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */
@@ -787,6 +845,10 @@ export type Tables = __TablesBase & {
   readonly "planet_control_history": __TablesBase["planetControlHistory"];
   /** @deprecated Use `planetDiscovery` instead. This alias will be removed in the next major version. */
   readonly "planet_discovery": __TablesBase["planetDiscovery"];
+  /** @deprecated Use `planetPlay` instead. This alias will be removed in the next major version. */
+  readonly "planet_play": __TablesBase["planetPlay"];
+  /** @deprecated Use `planetRecord` instead. This alias will be removed in the next major version. */
+  readonly "planet_record": __TablesBase["planetRecord"];
   /** @deprecated Use `playerInventory` instead. This alias will be removed in the next major version. */
   readonly "player_inventory": __TablesBase["playerInventory"];
   /** @deprecated Use `playerLoadout` instead. This alias will be removed in the next major version. */

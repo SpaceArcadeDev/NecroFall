@@ -9,6 +9,8 @@ import {
   CandidateRow,
   FollowRow,
   hexOf,
+  MATCH_MODE_CUSTOM,
+  MATCH_STARTING,
   MatchHistoryRow,
   MatchMsgRow,
   MatchPlayerRow,
@@ -19,6 +21,8 @@ import {
   PartyInviteRow,
   PlanetControlHistoryRow,
   PlanetDiscoveryRow,
+  PlanetPlayRow,
+  PlanetRecordRow,
   PlayerInventoryRow,
   PlayerLoadoutRow,
   PlayerPresenceRow,
@@ -63,6 +67,9 @@ const TABLES = [
   'rankedPlanetReservation',
   'planetControlHistory',
   'rankHistory',
+  // Solo-mode planet records + first-play log (user ask 2026-09-30).
+  'planetRecord',
+  'planetPlay',
   'serverClock',
 ] as const;
 
@@ -254,6 +261,36 @@ export class ClientCache {
     return this.list<MatchPlayerRow>('matchPlayer')
       .filter(r => r.matchId === matchId)
       .sort((a, b) => a.id - b.id);
+  }
+
+  /** The best SPEEDRUN / SURVIVAL run on one planet (null when nobody has one yet). */
+  planetRecord(planetKey: string, mode: number): PlanetRecordRow | null {
+    if (!planetKey) return null;
+    return this.list<PlanetRecordRow>('planetRecord').find(r => r.planetKey === planetKey && r.mode === mode) ?? null;
+  }
+
+  /** First-play slots of one planet (any mode), in discovery order. */
+  planetPlays(planetKey: string): PlanetPlayRow[] {
+    if (!planetKey) return [];
+    return this.list<PlanetPlayRow>('planetPlay')
+      .filter(r => r.planetKey === planetKey)
+      .sort((a, b) => a.slot - b.slot);
+  }
+
+  /**
+   * The caller's WAITING custom lobby, if any (mode 1, status 0: the lobby before START).
+   * Reads the resident `match` rows — the matchmaking scope keeps my seats subscribed.
+   */
+  myCustomLobby(hex: string): MatchRow | null {
+    if (!hex) return null;
+    const mine = this.list<MatchPlayerRow>('matchPlayer')
+      .filter(r => hexOf(r.identity) === hex)
+      .sort((a, b) => b.id - a.id);
+    for (const seat of mine) {
+      const m = this.match(seat.matchId);
+      if (m && m.mode === MATCH_MODE_CUSTOM && m.status === MATCH_STARTING && !seat.left) return m;
+    }
+    return null;
   }
 
   /**

@@ -40,4 +40,5 @@ export default __t.row({
   updatedAt: __t.timestamp().name("updated_at"),
   left: __t.bool(),
   kickReason: __t.string().name("kick_reason"),
+  ready: __t.bool(),
 });

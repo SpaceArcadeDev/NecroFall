@@ -37,6 +37,22 @@ export function formatTime(sec: number): string {
   const r = s % 60;
   return `${m}:${r < 10 ? '0' : ''}${r}`;
 }
+/**
+ * SOLO-mode run clock (user ask 2026-09-30): speedruns live in tenths and survival runs in
+ * seconds — `m:ss.d`, rolling into `h:mm:ss.d` past the hour. `formatTime` rounds UP (the match
+ * countdown rule); a recorded time must round DOWN so a time is never inflated.
+ */
+export function formatRunTime(ms: number): string {
+  const totalTenths = Math.max(0, Math.floor(ms / 100));
+  const tenths = totalTenths % 10;
+  const totalSec = Math.floor(totalTenths / 10);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60) % 60;
+  const h = Math.floor(totalSec / 3600);
+  const ss = `${s < 10 ? '0' : ''}${s}`;
+  if (h > 0) return `${h}:${m < 10 ? '0' : ''}${m}:${ss}.${tenths}`;
+  return `${m}:${ss}.${tenths}`;
+}
 export function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {

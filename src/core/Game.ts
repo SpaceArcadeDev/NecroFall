@@ -62,10 +62,40 @@ import { loadSelection, saveSelection, selectionFromWire, selectionToWire } from
 import { CosmeticFxRunner } from '../customization/CosmeticFx';
 import { NECROTECHS, NecrotechDef, defForDrop, ALL_NECROTECHS, ensureAim, aimDefault } from '../necrotech/NecrotechData';
 import { PERKS, Perk, rollPerks } from '../necromutation/Perks';
-import { Rand, clamp, dirFromAngles, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
+import { Rand, clamp, dirFromAngles, formatRunTime, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { PerformanceMonitor } from '../performance/PerformanceMonitor';
 
 export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'playing' | 'ended';
+
+/** The SOLO modes (user ask 2026-09-30): single-player runs on a chosen planet. */
+export type SoloMode = 'speedrun' | 'survival';
+
+/**
+ * Everything a SOLO run needs. The run is CLIENT-LOCAL (no match row — the solo match
+ * simulates on this machine) but the RECORDS live on the server: `onStart` logs the first
+ * play, `onFinish` submits the time. The world is the planet's deterministic world seed.
+ */
+export interface SoloRunOptions {
+  mode: SoloMode;
+  /** Canonical `ring:g:s:p` planet key. */
+  planetKey: string;
+  /** Rank ring of the planet — shapes the terrain archetype and the ecology. */
+  ring: number;
+  /** The season's universe seed (planet regeneration matches the map exactly). */
+  universeSeed: number;
+  /** The planet's deterministic world seed (= server `map_seed` for ranked). */
+  seed: number;
+  /** The account colony this run is played as. */
+  colony: number;
+  /** The planet's current best time in ms for this mode (0 = none) — the NEW RECORD compare. */
+  bestMs?: number;
+  /** The planet's record holder's name, for the end screen. */
+  bestName?: string;
+  /** Fired once the world boots (the shell logs the first play). */
+  onStart?: (info: { mode: SoloMode; planetKey: string }) => void;
+  /** Fired when the run concludes with a countable time (speedrun WIN / any survival death). */
+  onFinish?: (info: { mode: SoloMode; planetKey: string; timeMs: number; victory: boolean }) => void;
+}
 
 /** Everything the account shell hands the game when it boots an OFFICIAL match. */
 export interface GameOptions {
@@ -283,6 +313,14 @@ export class Game {
   private officialMatch: GameOptions['official'] | null = null;
   /** Server usage summary of the last OFFICIAL match (plan §28) — printed on the results screen. */
   private officialUsage: NonNullable<OfficialMatchResult['usage']> | null = null;
+  /** The active SOLO run (speedrun / survival), or null for every other match type. */
+  private soloRun: SoloRunOptions | null = null;
+  /** The settled solo result (record compare + submission outcome), kept for the end screen. */
+  private soloResult: { timeMs: number; bestMs: number; bestName: string; isNew: boolean; victory: boolean; submitted: boolean } | null = null;
+  /** True once the running world is a SURVIVAL match (no towers, count-up clock, death ends it). */
+  survivalMode = false;
+  /** Enemy difficulty ramp multiplier for the ACTIVE match (survival ramps ~50% faster). */
+  enemyRampMul = 1;
   /**
    * The last settled result, kept so a LATE server verdict (the authoritative finish of a match
    * this client already concluded locally — e.g. after a Nexus capture) can repaint the SAME
@@ -1472,6 +1510,55 @@ export class Game {
     void this.joinLobby(room, (name ?? '').trim() || this.ui.playerName);
   }
 
+  /** True while this instance is mid SOLO run (speedrun / survival). */
+  get isSoloRun(): boolean {
+    return this.soloRun !== null;
+  }
+
+  get soloRunner(): SoloRunOptions | null {
+    return this.soloRun;
+  }
+
+  /**
+   * START A SOLO RUN (user ask 2026-09-30): speedrun and survival are single-player matches that
+   * play the EXACT planet the picker showed — same seed, same terrain archetype, same ecology as
+   * a ranked match there — but with no server match row and no network. The starter-class picker
+   * opens first (the account colony is already fixed), then the world boots and either the Nexus
+   * capture (speedrun) or the player's death (survival) concludes the run and reports the time.
+   */
+  startSoloRun(opts: SoloRunOptions, necrotech = -1): void {
+    if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech') {
+      throw new Error('This instance is already in a session.');
+    }
+    if (this.phase === 'ended') this.returnToMenu();
+    this.soloRun = opts;
+    this.soloResult = null;
+    this.officialMatch = null; // a solo run never rides the relay
+    this.officialUsage = null;
+    this.lastEnd = null;
+    this.net.goSolo();
+    this.roster.clear();
+    this.players.clear();
+    const id = this.net.myId;
+    const name = (this.ui.playerName || '').trim() || 'Survivor';
+    this.roster.set(id, {
+      id,
+      name,
+      ready: true,
+      colony: opts.colony >= 0 && opts.colony < COLONIES.length ? opts.colony : 0,
+      nt: necrotech,
+      isHost: true,
+      me: true,
+    });
+    this.hostOrder = [id];
+    // The starter-class pick (same screen as every other flow); its clock finalizes locally and
+    // `finalizeNecrotechPhase` then boots the world with the PLANET's seed.
+    this.phase = 'necrotech';
+    this.phaseTimer = CONFIG.necrotechSelectTime;
+    this.onPhaseChanged('necrotech');
+    this.ui.banner(COLONIES[this.roster.get(id)!.colony]?.name + ' — NECROTECH SELECTION', 2200);
+  }
+
   /** The official server finished the match: show its authoritative result. */
   officialMatchEnded(result: OfficialMatchResult): void {
     // A LATE server verdict for a match this client already concluded locally (the Nexus capture
@@ -2125,6 +2212,10 @@ export class Game {
     battlefieldCenterDir(seed, this.towers.centerDir);
     // Late arrivals pick the match clock up from the host instead of restarting it at zero.
     this.matchElapsed = elapsed;
+    // SURVIVAL (user ask 2026-09-30): endless horde, no towers, the clock counts UP and the
+    // enemies ramp harder than a classic match's curve.
+    this.survivalMode = this.soloRun?.mode === 'survival';
+    this.enemyRampMul = this.survivalMode ? 1.5 : 1;
     // fresh performance budget for the match
     this.enemyBudget = this.settings.maxEnemies;
     this.dprStep = 0;
@@ -2148,10 +2239,16 @@ export class Game {
     // DIRECTLY — that is what makes the planet on the galactic map byte-identical to the planet
     // you land on. Classic matches keep the decorrelating hash. The rank ring tunes the terrain
     // archetype and the ecology's complexity (plan §6/§29).
+    // SOLO runs (user ask 2026-09-30) play a PICKED planet exactly like a ranked match does.
     const official = this.officialMatch?.match;
-    const rankedPlanet = Boolean(official?.ranked && official.planetKey);
-    const rankRing = rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
-    const planetSeed = (official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0);
+    const solo = this.soloRun;
+    const rankedPlanet = Boolean((official?.ranked && official.planetKey) || solo);
+    const planetKey = solo ? solo.planetKey : official?.planetKey ?? '';
+    const universeSeed = solo ? solo.universeSeed : official?.universeSeed ?? DEFAULT_UNIVERSE_SEED;
+    const rankRing = solo
+      ? (solo.ring >= 0 && solo.ring < 8 ? solo.ring : 0)
+      : rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
+    const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0;
     const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
     const oldPlanet = this.planet;
     this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing);
@@ -2181,10 +2278,9 @@ export class Game {
     const bestiary = (() => {
       // The ranked planet's descriptor regenerates the EXACT world the map showed (plan §32):
       // biome, ecology kind, corruption and the landmark biases that bend the local ecology.
-      if (rankedPlanet && official?.planetKey) {
-        const parsed = parsePlanetKey(official.planetKey);
+      if (rankedPlanet && planetKey) {
+        const parsed = parsePlanetKey(planetKey);
         if (parsed) {
-          const universeSeed = official.universeSeed ?? DEFAULT_UNIVERSE_SEED;
           const descriptor = planetAt(universeSeed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
           const biases = Array.from(new Set(this.planet.landmarks.map((l) => l.bias)));
           return this.enemies.generateEcology(seed, factsFromDescriptor(seed, parsed.ring, descriptor, biases));
@@ -2199,13 +2295,15 @@ export class Game {
     );
     // Four wardens, four different creatures — the names go to the console log above; the banner
     // states the fact (one name would play favourites with Beacons 2-4).
-    this.ui.banner('FOUR GUARDIANS AWAKEN — ONE GUARDS EACH BEACON', 3200);
+    if (!this.survivalMode) this.ui.banner('FOUR GUARDIANS AWAKEN — ONE GUARDS EACH BEACON', 3200);
     this.combat.clear();
     this.abilities.clear();
     this.entityResetPickups();
     for (const buff of this.colonyBuffs) buff.time = 0;
     this.towers.reset();
-    this.towers.init(seed);
+    // SURVIVAL plays NO towers at all (user ask: "no beacons or nexus") — surviving the swarm
+    // IS the goal, so the tower tracker, the wards and the Nexus all stay off the field.
+    if (!this.survivalMode) this.towers.init(seed);
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
     this.planet.aimSunAt(this.towers.centerDir);
@@ -2216,6 +2314,13 @@ export class Game {
     this.input.setEnabled(true);
     this.cam.snap();
     this.audio.sfx('bossRoar', 0.5);
+    if (this.survivalMode) {
+      this.ui.banner('SURVIVE THE SWARM — IT NEVER STOPS COMING', 3600);
+    }
+    if (this.soloRun) {
+      if (this.soloRun.mode === 'speedrun') this.ui.banner('SPEEDRUN — CLAIM THE NEXUS AS FAST AS YOU CAN', 3600);
+      this.soloRun.onStart?.({ mode: this.soloRun.mode, planetKey: this.soloRun.planetKey });
+    }
   }
 
   private broadcastPhase(msg: Record<string, unknown>): void {
@@ -2408,8 +2513,9 @@ export class Game {
       chosen[`nt:${r.id}`] = nt;
       chosen[`colony:${r.id}`] = r.colony;
     }
-    const seed = (Math.random() * 0xffffffff) >>> 0;
-    if (this.isHost) {
+    // SOLO runs play the PICKED PLANET: its deterministic seed IS the match seed (no random roll).
+    const seed = this.soloRun ? this.soloRun.seed >>> 0 : (Math.random() * 0xffffffff) >>> 0;
+    if (this.isHost && !this.soloRun) {
       this.net.broadcast({ t: 'phase', p: 'play', timer: 0, assign: chosen, seed });
     }
     this.beginPlaying(chosen, seed);
@@ -2693,6 +2799,8 @@ export class Game {
     // match" after the end screen, and a reload dragged the player back in). A server-projected
     // end (`fromServer`) reports nothing: it IS the finish landing.
     if (this.officialMatch && !fromServer) this.officialMatch.bridge.reportVictory(winner);
+    // SOLO runs settle their record BEFORE the results screen builds its numbers.
+    if (this.soloRun) this.finishSoloRun(winner);
     const tiles = this.towers.towers.map((t, i) => ({
       label: t.kind === 'nexus' ? 'Nexus' : `Beacon ${i + 1}`,
       owner: t.owner,
@@ -2705,13 +2813,62 @@ export class Game {
     this.audio.sfx(winner !== null && this.localPlayer && winner === this.localPlayer.colony ? 'victory' : 'defeat');
   }
 
+  /**
+   * SOLO RESULTS (user ask 2026-09-30): compare the run against the planet's standing record,
+   * report the time to the server, and stage the NEW RECORD banner. Speedrun only counts a WIN
+   * (a tired-out clock is no record); survival counts every death — that IS the run.
+   */
+  private finishSoloRun(winner: number | null): void {
+    const run = this.soloRun;
+    if (!run) return;
+    const victory = winner !== null && this.localPlayer !== null && winner === this.localPlayer.colony;
+    const timeMs = Math.max(0, Math.round(this.matchElapsed * 1000));
+    const countable = run.mode === 'speedrun' ? victory : timeMs > 0;
+    const bestMs = Math.max(0, Math.round(run.bestMs ?? 0));
+    const isNew =
+      countable &&
+      (run.mode === 'speedrun' ? bestMs <= 0 || timeMs < bestMs : timeMs > bestMs);
+    this.soloResult = {
+      timeMs: countable ? timeMs : 0,
+      bestMs,
+      bestName: run.bestName ?? '',
+      isNew,
+      victory,
+      submitted: countable,
+    };
+    if (countable) {
+      run.onFinish?.({ mode: run.mode, planetKey: run.planetKey, timeMs, victory });
+    }
+  }
+
   private showResults(winner: number | null, tiles: { label: string; owner: number }[], reason?: string): void {
     const me = this.localPlayer;
     const victory = winner !== null && me !== null && winner === me.colony;
     const stats: { k: string; v: string }[] = [];
     const hero: { label: string; value: string; accent?: string }[] = [];
-    const matchTime = formatTime(Math.min(this.matchElapsed, CONFIG.matchTime));
+    const solo = this.soloRun && this.soloResult ? { run: this.soloRun, res: this.soloResult } : null;
+    const matchTime = solo
+      ? (solo.res.submitted ? formatRunTime(solo.res.timeMs) : '—')
+      : formatTime(Math.min(this.matchElapsed, CONFIG.matchTime));
     stats.push({ k: 'Match time', v: matchTime });
+    if (solo) {
+      const res = solo.res;
+      const bestText = res.bestMs > 0 ? formatRunTime(res.bestMs) : '—';
+      stats.push({ k: solo.run.mode === 'speedrun' ? 'Speedrun time' : 'Survival time', v: res.submitted ? formatRunTime(res.timeMs) : '—' });
+      stats.push({ k: 'Planet record', v: bestText });
+      if (res.bestMs > 0 && res.bestName) stats.push({ k: 'Record holder', v: res.bestName });
+      stats.push({ k: 'Planet', v: solo.run.planetKey });
+      hero.unshift({
+        label: solo.run.mode === 'speedrun' ? 'SPEEDRUN TIME' : 'SURVIVED',
+        value: res.submitted ? formatRunTime(res.timeMs) : '—',
+        accent: res.isNew ? '#ffd166' : '#7ef0b0',
+      });
+      hero.unshift({
+        label: 'PLANET RECORD',
+        value: res.isNew && res.submitted ? 'NEW RECORD!' : bestText,
+        accent: res.isNew && res.submitted ? '#ffd166' : '#8fd7ff',
+      });
+    }
     if (me) {
       const nt = `${me.necrotechName}${me.mutated ? (me.mutated === 2 ? ' (SUPER MUTATION)' : ' (MUTATED)') : ''}`;
       stats.push({ k: 'Your colony', v: COLONIES[me.colony]?.name ?? '—' });
@@ -2748,7 +2905,32 @@ export class Game {
       stats.push({ k: 'Egress (estimated)', v: bytes(usage.egressBytes) });
       stats.push({ k: 'Storage', v: bytes(usage.storageBytes) });
     }
-    this.ui.showResults({ victory, winnerColony: winner, tiles, stats, reason, hero, standings, matchTime });
+    this.ui.showResults({
+      victory,
+      winnerColony: winner,
+      tiles,
+      stats,
+      reason,
+      hero,
+      standings,
+      matchTime,
+      title: solo ? (solo.run.mode === 'survival' ? 'THE SWARM CONSUMED YOU' : solo.res.victory ? 'SPEEDRUN COMPLETE' : 'SPEEDRUN FAILED') : undefined,
+      subtitle: solo
+        ? (solo.res.submitted
+            ? `RUN RECORDED ${formatRunTime(solo.res.timeMs)}${solo.res.isNew ? ' — NEW PLANET RECORD' : ''}`
+            : solo.run.mode === 'speedrun'
+              ? 'THE CLOCK RAN OUT — NO RECORD SUBMITTED'
+              : undefined)
+        : undefined,
+      record: solo
+        ? {
+            value: solo.res.submitted ? formatRunTime(solo.res.timeMs) : '—',
+            best: solo.res.bestMs > 0 ? formatRunTime(solo.res.bestMs) : '—',
+            bestName: solo.res.bestName,
+            isNew: solo.res.isNew && solo.res.submitted,
+          }
+        : undefined,
+    });
   }
 
   private returnToMenu(): void {
@@ -2756,6 +2938,10 @@ export class Game {
     this.untrackRoom();
     this.lateSelect = null;
     this.isHost = true;
+    this.soloRun = null;
+    this.soloResult = null;
+    this.survivalMode = false;
+    this.enemyRampMul = 1;
     this.phase = 'menu';
     this.lastEnd = null;
     this.officialUsage = null;
@@ -3989,6 +4175,12 @@ export class Game {
       this.net.sendToHost({ t: 'died', pid: p.id });
     }
     if (p.isLocal) {
+      // SURVIVAL (user ask 2026-09-30): the run is OVER the moment the player dies — no
+      // respawn overlay, the end screen IS the goal line (survive as long as you can).
+      if (this.soloRun?.mode === 'survival' && this.phase === 'playing') {
+        this.endMatch(null, 'THE SWARM CONSUMED YOU');
+        return;
+      }
       this.ui.showRespawn(CONFIG.player.respawnTime, killer && killer !== p ? killer.name : null);
     }
   }
@@ -4678,7 +4870,9 @@ export class Game {
     if (this.phase === 'playing') {
       if (this.isHost) {
         this.matchElapsed += dt;
-        if (this.matchElapsed >= CONFIG.matchTime) {
+        // The 10-minute Necrorad ends a classic match — SURVIVAL has no clock to race
+        // (user ask 2026-09-30): the timer counts UP and only death ends the run.
+        if (!this.survivalMode && this.matchElapsed >= CONFIG.matchTime) {
           this.endMatch(null);
         }
         this.updateRespawns(dt);
@@ -5096,8 +5290,13 @@ export class Game {
     this.hudBuffs.length = nb;
     // The mutation itself is not announced down here — it lives on the head plate as a status icon.
 
-    d.remaining = this.phase === 'playing' ? Math.max(0, CONFIG.matchTime - this.matchElapsed) : CONFIG.matchTime;
+    d.remaining = this.survivalMode
+      ? this.matchElapsed
+      : this.phase === 'playing'
+        ? Math.max(0, CONFIG.matchTime - this.matchElapsed)
+        : CONFIG.matchTime;
     d.matchTime = CONFIG.matchTime;
+    d.countUp = this.survivalMode;
     d.hp = p?.hp ?? 0;
     d.maxHp = p?.maxHp ?? CONFIG.player.maxHp;
     d.level = p?.level ?? 1;
@@ -5229,6 +5428,12 @@ export class Game {
 
   /** The three colony objectives shown under the tower tracker, with live progress. */
   private fillObjectives(): void {
+    // SURVIVAL has no objectives at all (user ask: "no beacons or nexus") — the HUD's task
+    // list disappears rather than showing a wall of impossible 0/4 progress.
+    if (this.survivalMode) {
+      this.hudTasks.length = 0;
+      return;
+    }
     const myColony = this.localPlayer?.colony ?? -1;
     let held = 0;
     let nexusMine = false;

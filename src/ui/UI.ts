@@ -123,6 +123,8 @@ export interface UICallbacks {
 export interface HudData {
   remaining: number;
   matchTime: number;
+  /** SURVIVAL (user ask 2026-09-30): the clock counts UP — `remaining` holds the ELAPSED time. */
+  countUp?: boolean;
   hp: number;
   maxHp: number;
   level: number;
@@ -319,6 +321,11 @@ export interface ResultsData {
   standings?: { name: string; color: string; towers: number }[];
   /** Match length, shown under the title. */
   matchTime?: string;
+  /** SOLO modes override the verdict headline (SPEEDRUN COMPLETE / THE SWARM CONSUMED YOU). */
+  title?: string;
+  subtitle?: string;
+  /** SOLO modes: the run-vs-record block above the hero row. */
+  record?: { value: string; best: string; bestName?: string; isNew: boolean };
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -2477,8 +2484,15 @@ export class UI {
   updateHud(d: HudData): void {
     // ---- timer
     setText(this.timerVal, formatTime(d.remaining));
-    setClass(this.timerVal, 'low', d.remaining < 60);
-    const timeFrac = d.matchTime > 0 ? clamp01(1 - d.remaining / d.matchTime) : 0;
+    // SURVIVAL counts UP (user ask 2026-09-30): no "low time" flash and the rail shows the
+    // elapsed-within-an-hour sweep instead of the classic countdown's remaining slice.
+    setClass(this.timerVal, 'low', !d.countUp && d.remaining < 60);
+    setClass(this.timerVal, 'countup', Boolean(d.countUp));
+    const timeFrac = d.countUp
+      ? clamp01(d.remaining / 3600)
+      : d.matchTime > 0
+        ? clamp01(1 - d.remaining / d.matchTime)
+        : 0;
     setStyle(this.timerRail, 'width', `${timeFrac * 100}%`);
 
     // ---- tower symbols: owner ink + capture arc + single status glyph
@@ -3549,7 +3563,7 @@ export class UI {
     card.appendChild(el('div', 'panel-title', 'NECROMUTATION — CHOOSE A PERK'));
     // No inline font size: the picker's type scales with the viewport through the CSS (.modal.levelup
     // .modal-card > .muted), so it stays in step with the cards below it.
-    const sub = el('div', 'muted', 'You are invulnerable and immobile while choosing. Full heal on selection.');
+    const sub = el('div', 'muted', 'You keep your momentum — invulnerable while choosing. Full heal on selection.');
     card.appendChild(sub);
     this.levelUpPerks = el('div', 'perks');
     card.appendChild(this.levelUpPerks);
@@ -4081,15 +4095,40 @@ export class UI {
     const head = el('div', 'results-head');
     const emblem = el('div', `results-emblem ${data.victory ? 'win' : 'lose'}`, data.victory ? '◈' : '☠');
     head.appendChild(emblem);
-    head.appendChild(el('div', `results-title ${data.victory ? 'win' : 'lose'}`, data.victory ? 'PLANET CLAIMED' : 'NECROPHAGES WIN'));
-    const sub = data.victory && data.winnerColony !== null
+    head.appendChild(
+      el(
+        'div',
+        `results-title ${data.victory ? 'win' : 'lose'}`,
+        data.title ?? (data.victory ? 'PLANET CLAIMED' : 'NECROPHAGES WIN')
+      )
+    );
+    const sub = data.subtitle ?? (data.victory && data.winnerColony !== null
       ? COLONIES[data.winnerColony].name
-      : (data.reason ?? 'TIME EXPIRED — NO COLONY CLAIMED THE PLANET');
+      : (data.reason ?? 'TIME EXPIRED — NO COLONY CLAIMED THE PLANET'));
     const colonyEl = el('div', 'results-colony', sub);
-    if (data.victory && data.winnerColony !== null) colonyEl.style.color = COLONIES[data.winnerColony].css;
+    if (data.victory && data.winnerColony !== null && !data.subtitle) colonyEl.style.color = COLONIES[data.winnerColony].css;
     head.appendChild(colonyEl);
     if (data.matchTime) head.appendChild(el('div', 'results-time', `MATCH LENGTH ${data.matchTime}`));
     inner.appendChild(head);
+
+    // ---- SOLO RECORD (user ask 2026-09-30): the run's time against the planet's standing
+    // record — NEW RECORD gets the gold banner so the beat cannot be missed.
+    if (data.record) {
+      const rec = el('div', `results-record${data.record.isNew ? ' new' : ''}`);
+      rec.appendChild(el('div', 'rr-line', data.record.isNew ? 'NEW PLANET RECORD!' : 'PLANET RECORD'));
+      const row = el('div', 'rr-row');
+      const cell = (k: string, v: string, cls = ''): HTMLElement => {
+        const box = el('div', `rr-cell ${cls}`);
+        box.appendChild(el('div', 'rr-v', v));
+        box.appendChild(el('div', 'rr-k', k));
+        return box;
+      };
+      row.appendChild(cell('YOUR RUN', data.record.value, data.record.isNew ? 'hot' : ''));
+      row.appendChild(cell('RECORD', data.record.best));
+      if (data.record.bestName) row.appendChild(cell('HOLDER', data.record.bestName.toUpperCase()));
+      rec.appendChild(row);
+      inner.appendChild(rec);
+    }
 
     // ---- headline numbers, big and readable
     if (data.hero && data.hero.length) {
@@ -4107,43 +4146,45 @@ export class UI {
 
     const grid = el('div', 'results-grid');
 
-    // ---- towers as chips, coloured by owner
-    const towers = el('div', 'panel');
-    towers.appendChild(el('div', 'panel-title', 'TOWER CONTROL'));
-    const chips = el('div', 'tower-chips');
-    for (const t of data.tiles) {
-      const chip = el('div', `tower-chip${t.owner >= 0 ? '' : ' free'}`);
-      const dot = el('span', 'dot');
-      dot.style.background = t.owner >= 0 ? COLONIES[t.owner].css : '#4b3f63';
-      if (t.owner >= 0) dot.style.boxShadow = `0 0 12px ${COLONIES[t.owner].css}`;
-      chip.appendChild(dot);
-      chip.appendChild(el('span', 'nm', t.label));
-      chips.appendChild(chip);
-    }
-    towers.appendChild(chips);
-    const owned = data.tiles.filter(t => t.owner >= 0).length;
-    towers.appendChild(el('div', 'tower-count', `${owned} / ${data.tiles.length} TOWERS CAPTURED`));
-
-    if (data.standings && data.standings.length) {
-      const bars = el('div', 'standings');
-      const best = Math.max(1, ...data.standings.map(x => x.towers));
-      for (const st of data.standings) {
-        const row = el('div', 'standings-row');
-        const nm = el('span', 'nm', st.name);
-        nm.style.color = st.color;
-        row.appendChild(nm);
-        const track = el('div', 'track');
-        const fill = el('div', 'fill');
-        fill.style.width = `${Math.round((st.towers / best) * 100)}%`;
-        fill.style.background = st.color;
-        track.appendChild(fill);
-        row.appendChild(track);
-        row.appendChild(el('span', 'n', `${st.towers}`));
-        bars.appendChild(row);
+    // ---- towers as chips, coloured by owner (SURVIVAL has none — the panel is skipped)
+    if (data.tiles.length > 0) {
+      const towers = el('div', 'panel');
+      towers.appendChild(el('div', 'panel-title', 'TOWER CONTROL'));
+      const chips = el('div', 'tower-chips');
+      for (const t of data.tiles) {
+        const chip = el('div', `tower-chip${t.owner >= 0 ? '' : ' free'}`);
+        const dot = el('span', 'dot');
+        dot.style.background = t.owner >= 0 ? COLONIES[t.owner].css : '#4b3f63';
+        if (t.owner >= 0) dot.style.boxShadow = `0 0 12px ${COLONIES[t.owner].css}`;
+        chip.appendChild(dot);
+        chip.appendChild(el('span', 'nm', t.label));
+        chips.appendChild(chip);
       }
-      towers.appendChild(bars);
+      towers.appendChild(chips);
+      const owned = data.tiles.filter(t => t.owner >= 0).length;
+      towers.appendChild(el('div', 'tower-count', `${owned} / ${data.tiles.length} TOWERS CAPTURED`));
+
+      if (data.standings && data.standings.length) {
+        const bars = el('div', 'standings');
+        const best = Math.max(1, ...data.standings.map(x => x.towers));
+        for (const st of data.standings) {
+          const row = el('div', 'standings-row');
+          const nm = el('span', 'nm', st.name);
+          nm.style.color = st.color;
+          row.appendChild(nm);
+          const track = el('div', 'track');
+          const fill = el('div', 'fill');
+          fill.style.width = `${Math.round((st.towers / best) * 100)}%`;
+          fill.style.background = st.color;
+          track.appendChild(fill);
+          row.appendChild(track);
+          row.appendChild(el('span', 'n', `${st.towers}`));
+          bars.appendChild(row);
+        }
+        towers.appendChild(bars);
+      }
+      grid.appendChild(towers);
     }
-    grid.appendChild(towers);
 
     const stats = el('div', 'panel');
     stats.appendChild(el('div', 'panel-title', 'MATCH REPORT'));

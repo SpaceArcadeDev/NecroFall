@@ -102,3 +102,21 @@ export const PLANET_MATCH_RESERVATION_US = 60n * 60n * 1_000_000n;
 export const PLANET_CONTROL_US = 72n * 60n * 60n * 1_000_000n;
 /** Keep only the first N discoverers per planet (plan §35). */
 export const MAX_PLANET_DISCOVERERS = 5;
+
+// ------------------------------------------------------------ solo modes + planet records (2026-09-30)
+/** Standard matches (matchmaking / ranked). */
+export const MATCH_MODE_STANDARD = 0;
+/** Custom lobbies and the matches they start. */
+export const MATCH_MODE_CUSTOM = 1;
+/** planet_record.mode: fastest win on the planet (lowest time_ms wins). */
+export const RECORD_MODE_SPEEDRUN = 0;
+/** planet_record.mode: longest survival on the planet (highest time_ms wins). */
+export const RECORD_MODE_SURVIVAL = 1;
+/** Heartbeat freshness window for `record_planet_play` — one call per match start. */
+export const MAX_PLANET_PLAYS = 9;
+/** Sanity bounds for submitted times (ms). A speedrun shorter than this is not real. */
+export const RECORD_MIN_SPEEDRUN_MS = 20_000n;
+export const RECORD_MAX_SPEEDRUN_MS = 3_600_000n;
+/** A survival run must last this long to count, and cannot exceed this. */
+export const RECORD_MIN_SURVIVAL_MS = 5_000n;
+export const RECORD_MAX_SURVIVAL_MS = 86_400_000n;

@@ -40,9 +40,11 @@ import { requireOnboarded, requirePlayer } from '../auth/authorization';
 import { cleanupFinishedMatches } from '../game/rewards';
 import { maybeReleasePlanet, refreshPlanetReservation } from '../ranked/planets';
 import { parsePlanetKey, planetSeed } from '../ranked/seed';
+import { recordPlanetPlayInternal } from '../ranked/records';
 import { ensureActiveSeason, universeSeed32 } from '../ranked/planets';
 import { sweepRanked } from '../ranked/planets';
 import { sweepPartyInvites } from './party';
+import { sweepCustomLobbies } from './custom';
 
 /** One scan per second ages every window; the real granularity lives in constants. */
 const SCAN_INTERVAL_US = 1_000_000n;
@@ -225,6 +227,9 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
 
     // 5) Lobby invites nobody answered expire (friends-rail INVITE, user ask 2026-09-29).
     sweepPartyInvites(ctx, now);
+
+    // 6) Waiting CUSTOM lobbies dissolve once abandoned (user ask 2026-09-30).
+    sweepCustomLobbies(ctx, now);
   }
 );
 
@@ -524,6 +529,15 @@ export function createMatch(ctx: any, candidateId: number, seats: any[]): void {
     scheduled_at: ScheduleAt.interval(TICK_INTERVAL_US),
     match_id: m.match_id,
   });
+
+  // DISCOVERED BY feeds from EVERY mode (user ask 2026-09-30): a ranked match is a
+  // player's first footfall on its planet — log every seat through the shared path.
+  if (key) {
+    for (const seat of seats) {
+      const account = ctx.db.player.identity.find(seat.identity);
+      recordPlanetPlayInternal(ctx, key, seat.identity, account?.player_name ?? 'Survivor', now);
+    }
+  }
   void candidateId;
 }
 /**

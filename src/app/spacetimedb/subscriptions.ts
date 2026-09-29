@@ -170,6 +170,25 @@ export function releaseMatch(matchId: number): void {
   releaseScope(`match:${matchId}`);
 }
 
+// ------------------------------------------------------------ solo modes (user ask 2026-09-30)
+
+/**
+ * One planet's record board + first-play log — subscribed only while the player is
+ * picking it, playing it, or has its panel open (never the whole universe).
+ */
+export function subscribePlanetRecords(planetKey: string): void {
+  if (!planetKey) return;
+  ensureScope(`planet-rec:${planetKey}`, [
+    `SELECT * FROM planet_record WHERE planet_key = '${planetKey}'`,
+    `SELECT * FROM planet_play WHERE planet_key = '${planetKey}'`,
+  ]);
+}
+
+export function releasePlanetRecords(planetKey: string): void {
+  if (!planetKey) return;
+  releaseScope(`planet-rec:${planetKey}`);
+}
+
 // ------------------------------------------------------------ ranked map (plan §61)
 
 /**

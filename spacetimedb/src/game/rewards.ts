@@ -11,6 +11,7 @@ import { player, player_presence, player_stats, player_wallet } from '../schema/
 import {
   EVENT_MATCH_ENDED,
   MATCH_FINISHED,
+  MATCH_MODE_STANDARD,
   MATCH_RUNNING,
   PRESENCE_ONLINE,
   REWARD_PREMIUM_WIN,
@@ -87,6 +88,9 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
   const nowUs = nowMicros(ctx);
   const startedMicros = m.started_at ? (m.started_at.microsSinceUnixEpoch as bigint) : nowUs;
   const durationSeconds = Math.max(0, Number((nowUs - startedMicros) / 1_000_000n));
+  // CUSTOM matches keep the P2P economy rules (user ask 2026-09-30): the match is recorded
+  // (history, stats, results) but official currency and account XP are NOT granted.
+  const rewarded = m.mode === MATCH_MODE_STANDARD;
 
   for (const p of [...ctx.db.match_player.match_id.filter(matchId)]) {
     if (p.left) {
@@ -103,14 +107,16 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
     const premium = won ? REWARD_PREMIUM_WIN : 0;
     const xpEarned = 40 + p.kills * 6 + p.objectives * 25 + (won ? 80 : 0);
 
-    // ---- wallet (integers only, plan §7)
-    const wallet = ctx.db.player_wallet.identity.find(p.identity);
-    if (wallet) {
-      ctx.db.player_wallet.identity.update({
-        ...wallet,
-        soft_currency: wallet.soft_currency + BigInt(soft),
-        premium_currency: wallet.premium_currency + BigInt(premium),
-      });
+    // ---- wallet (integers only, plan §7) — standard matches only
+    if (rewarded) {
+      const wallet = ctx.db.player_wallet.identity.find(p.identity);
+      if (wallet) {
+        ctx.db.player_wallet.identity.update({
+          ...wallet,
+          soft_currency: wallet.soft_currency + BigInt(soft),
+          premium_currency: wallet.premium_currency + BigInt(premium),
+        });
+      }
     }
 
     // ---- account totals + level curve (level placeholder until seasons ship)
@@ -156,11 +162,15 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
       ctx.db.player.identity.update({
         ...account,
         ...rankFields,
-        xp,
-        level,
-        wins: account.wins + (won ? 1 : 0),
-        losses: account.losses + (won ? 0 : 1),
-        matches_played: account.matches_played + 1,
+        ...(rewarded
+          ? {
+              xp,
+              level,
+              wins: account.wins + (won ? 1 : 0),
+              losses: account.losses + (won ? 0 : 1),
+              matches_played: account.matches_played + 1,
+            }
+          : {}),
         last_seen_at: now,
       });
     }
@@ -190,8 +200,8 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
       objectives: p.objectives,
       duration_seconds: durationSeconds,
       ended_at: now,
-      soft_currency_earned: BigInt(soft),
-      xp_earned: xpEarned,
+      soft_currency_earned: rewarded ? BigInt(soft) : 0n,
+      xp_earned: rewarded ? xpEarned : 0,
       // Which planet the match was fought on (user ask 2026-09-29 — the history tab).
       planet_key: m.planet_key ?? '',
     });

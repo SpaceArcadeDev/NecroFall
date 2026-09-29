@@ -16,6 +16,15 @@ export const CANDIDATE_FILLING = 0;
 export const CANDIDATE_CONFIRMING = 1;
 export const CANDIDATE_STARTED = 2;
 
+/** Match rows: standard matchmaking/ranked vs a custom lobby + the match it started. */
+export const MATCH_MODE_STANDARD = 0;
+export const MATCH_MODE_CUSTOM = 1;
+/** planet_record.mode values (mirror spacetimedb/src/constants.ts). */
+export const RECORD_MODE_SPEEDRUN = 0;
+export const RECORD_MODE_SURVIVAL = 1;
+/** First players per planet, any mode (who 'discovered' it). */
+export const MAX_PLANET_PLAYS = 9;
+
 export const MATCH_STARTING = 0;
 export const MATCH_RUNNING = 1;
 export const MATCH_FINISHED = 2;
@@ -246,6 +255,12 @@ export interface MatchRow {
   planetKey: string;
   /** Rank ring of the planet (0..7), 255 for classic. */
   rankRing: number;
+  /** MATCH_MODE_STANDARD (0) / MATCH_MODE_CUSTOM (1) — custom lobbies and their matches. */
+  mode: number;
+  /** The custom lobby's share code ('' for standard matches). */
+  roomCode: string;
+  /** Custom lobbies: the host's identity hex ('' for standard matches). */
+  hostHex: string;
 }
 
 export interface MatchPlayerRow {
@@ -279,6 +294,33 @@ export interface MatchPlayerRow {
   left: boolean;
   /** Non-empty when the anti-cheat layer force-removed the seat — shown to the offender. */
   kickReason: string;
+  /** Custom lobbies: this seat is ready (the host's START gate). */
+  ready: boolean;
+}
+
+/** The best SPEEDRUN / SURVIVAL run on one planet (user ask 2026-09-30). */
+export interface PlanetRecordRow {
+  id: number;
+  /** Canonical `ring:g:s:p` planet key. */
+  planetKey: string;
+  /** RECORD_MODE_SPEEDRUN (0) / RECORD_MODE_SURVIVAL (1). */
+  mode: number;
+  /** Recorded time in milliseconds (speedrun: lowest wins; survival: highest). */
+  timeMs: bigint;
+  playerName: string;
+  identity: Identity;
+  setAt: Timestamp;
+}
+
+/** One first-play slot on a planet (any mode) — the overlay's DISCOVERED BY list. */
+export interface PlanetPlayRow {
+  id: number;
+  planetKey: string;
+  identity: Identity;
+  playerName: string;
+  /** 0-based discovery order (0 = first footfall). */
+  slot: number;
+  firstPlayedAt: Timestamp;
 }
 
 /**

@@ -60,6 +60,8 @@ import ReportNecrophageVictoryReducer from "./report_necrophage_victory_reducer"
 import ReportNexusCaptureReducer from "./report_nexus_capture_reducer";
 import SetAvatarReducer from "./set_avatar_reducer";
 import SetBanAdminReducer from "./set_ban_admin_reducer";
+import SetBioReducer from "./set_bio_reducer";
+import SetGenderReducer from "./set_gender_reducer";
 import SetKeybindsReducer from "./set_keybinds_reducer";
 import SetPartyLoadoutReducer from "./set_party_loadout_reducer";
 import SetPlayerNameReducer from "./set_player_name_reducer";
@@ -401,6 +403,9 @@ const tablesSchema = __schema({
       { accessor: 'location_key', name: 'ranked_location_discovery_location_key_idx_btree', algorithm: 'btree', columns: [
         'locationKey',
       ] },
+      { accessor: 'player_identity', name: 'ranked_location_discovery_player_identity_idx_btree', algorithm: 'btree', columns: [
+        'playerIdentity',
+      ] },
     ],
     constraints: [
       { name: 'ranked_location_discovery_id_key', constraint: 'unique', columns: ['id'] },
@@ -518,6 +523,8 @@ const reducersSchema = __reducers(
   __reducerSchema("report_nexus_capture", ReportNexusCaptureReducer),
   __reducerSchema("set_avatar", SetAvatarReducer),
   __reducerSchema("set_ban_admin", SetBanAdminReducer),
+  __reducerSchema("set_bio", SetBioReducer),
+  __reducerSchema("set_gender", SetGenderReducer),
   __reducerSchema("set_keybinds", SetKeybindsReducer),
   __reducerSchema("set_party_loadout", SetPartyLoadoutReducer),
   __reducerSchema("set_player_name", SetPlayerNameReducer),

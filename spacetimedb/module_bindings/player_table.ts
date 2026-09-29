@@ -37,4 +37,7 @@ export default __t.row({
   lastOnlineAt: __t.timestamp().name("last_online_at"),
   banned: __t.bool(),
   playerCode: __t.string().name("player_code"),
+  bio: __t.string(),
+  gender: __t.u8(),
+  peakRankPoints: __t.i32().name("peak_rank_points"),
 });

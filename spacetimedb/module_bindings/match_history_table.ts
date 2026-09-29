@@ -23,4 +23,5 @@ export default __t.row({
   endedAt: __t.timestamp().name("ended_at"),
   softCurrencyEarned: __t.u64().name("soft_currency_earned"),
   xpEarned: __t.u32().name("xp_earned"),
+  planetKey: __t.string().name("planet_key"),
 });

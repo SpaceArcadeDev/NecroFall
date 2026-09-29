@@ -32,6 +32,8 @@ import ReportNecrophageVictoryReducer from "../report_necrophage_victory_reducer
 import ReportNexusCaptureReducer from "../report_nexus_capture_reducer";
 import SetAvatarReducer from "../set_avatar_reducer";
 import SetBanAdminReducer from "../set_ban_admin_reducer";
+import SetBioReducer from "../set_bio_reducer";
+import SetGenderReducer from "../set_gender_reducer";
 import SetKeybindsReducer from "../set_keybinds_reducer";
 import SetPartyLoadoutReducer from "../set_party_loadout_reducer";
 import SetPlayerNameReducer from "../set_player_name_reducer";
@@ -68,6 +70,8 @@ export type ReportNecrophageVictoryParams = __Infer<typeof ReportNecrophageVicto
 export type ReportNexusCaptureParams = __Infer<typeof ReportNexusCaptureReducer>;
 export type SetAvatarParams = __Infer<typeof SetAvatarReducer>;
 export type SetBanAdminParams = __Infer<typeof SetBanAdminReducer>;
+export type SetBioParams = __Infer<typeof SetBioReducer>;
+export type SetGenderParams = __Infer<typeof SetGenderReducer>;
 export type SetKeybindsParams = __Infer<typeof SetKeybindsReducer>;
 export type SetPartyLoadoutParams = __Infer<typeof SetPartyLoadoutReducer>;
 export type SetPlayerNameParams = __Infer<typeof SetPlayerNameReducer>;

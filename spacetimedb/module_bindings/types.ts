@@ -122,6 +122,7 @@ export const MatchHistory = __t.object("MatchHistory", {
   endedAt: __t.timestamp(),
   softCurrencyEarned: __t.u64(),
   xpEarned: __t.u32(),
+  planetKey: __t.string(),
 });
 export type MatchHistory = __Infer<typeof MatchHistory>;
 
@@ -297,6 +298,9 @@ export const Player = __t.object("Player", {
   lastOnlineAt: __t.timestamp(),
   banned: __t.bool(),
   playerCode: __t.string(),
+  bio: __t.string(),
+  gender: __t.u8(),
+  peakRankPoints: __t.i32(),
 });
 export type Player = __Infer<typeof Player>;
 

@@ -1280,12 +1280,38 @@ export class Game {
       matchEnded: result => this.officialMatchEnded(result),
     });
 
+    this.officialElapsedBase = match.elapsed;
+    this.officialBootAt = nowSec();
+
+    // REJOIN RESTORE (user ask 2026-09-29): a seat that comes BACK to this match resumes its run
+    // — level, perks, mutations and the fused Necrotech — instead of being reset at the starter
+    // picker. The run lives in the local save (perks and mutations are client-only, exactly like
+    // P2P), keyed by the official match id and validated against the match seed; a genuinely new
+    // seat has none and still gets the picker. Covers a reload, a revived tab and a rejoin from
+    // the shared `#/match/<id>` link on this browser.
+    const saved = this.session.loadRun(`official:${match.matchId}`, match.meId);
+    const restore =
+      saved && Number(saved.seed) === match.seed && Number(saved.colony) >= 0 && Number(saved.colony) < COLONIES.length
+        ? saved
+        : null;
+    if (restore) {
+      // The roster's class picks the base kit `beginPlaying` builds; the saved loadout (including
+      // its absorbed stack) is refolded on top the moment the world exists.
+      const me = this.roster.get(match.meId);
+      if (me && Number.isFinite(Number(restore.ntBase))) me.nt = Math.round(Number(restore.ntBase));
+      this.finalizeOfficialNecrotechPhase();
+      if (this.localPlayer) {
+        this.applySavedRun(this.localPlayer, restore);
+        this.maybeOpenQueued();
+        this.ui.toast('Survivor restored — Necrotech, level and mutations are back.', 4200);
+      }
+      return;
+    }
+
     // STARTER NECROTECH SELECTION (user ask 2026-09-28): official matches used to drop every
     // player straight into the fight on the default class with no pick at all. They now open the
     // SAME SELECT NECROTECH screen the P2P flow uses — a LOCAL phase (the server match is already
     // live), so when the countdown ends the world boots from the payload's seed and clock.
-    this.officialElapsedBase = match.elapsed;
-    this.officialBootAt = nowSec();
     this.beginOfficialNecrotechPhase();
   }
 
@@ -1631,7 +1657,9 @@ export class Game {
   private saveRun(): void {
     this.saveT = 5;
     const p = this.localPlayer;
-    const code = this.net.code;
+    // OFFICIAL matches persist under the match id (there is no room code there): a rejoin reads
+    // this back to hand the survivor to its player — the starter picker is only for new seats.
+    const code = this.officialMatch ? `official:${this.officialMatch.match.matchId}` : this.net.code;
     if (!p || !code || code === 'SOLO' || this.phase !== 'playing') return;
     const run = this.session.saveRun({
       code,

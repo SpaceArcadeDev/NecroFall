@@ -30,7 +30,7 @@ import { systemAt } from '../../rankmap/procedural/SolarSystemGenerator';
 import { systemPlanetCount as generatedPlanetCount } from '../../rankmap/procedural/SolarSystemGenerator';
 import { galaxyAt } from '../../rankmap/procedural/GalaxyGenerator';
 import { RING_CONFIGS, ringConfig } from '../../rankmap/procedural/RankRingConfig';
-import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, POI_LABELS, poiVisual } from '../../rankmap/procedural/GalaxyTypes';
+import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor, poiVisual } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankDisplayName, getRankFromStars, rankLabel, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
 import {
   galaxyLocationKey,
@@ -580,34 +580,16 @@ export class RankPage {
         discoveryBlock(this.discoveriesForGalaxy(galaxy.galaxyId), { fallback: 'none', nowUs: this.serverNowUs(), max: MAX_ROWS })
       );
     }
-    // MAP ICON LEGEND (user 2026-09-29): the glyphs drawn above galaxy faces,
-    // spelled out in small text — colours come from the SAME `poiVisual` table the
-    // canvas draws with, so the key can never drift from the map.
-    const legend = el('div', 'rk-mapinfo-legend');
-    legend.appendChild(el('div', 'rk-mapinfo-legend-head', 'MAP ICONS'));
-    const legendRows = [
-      { poi: 'SWARM', label: POI_LABELS.SWARM },
-      { poi: 'DEAD', label: POI_LABELS.DEAD },
-      { poi: 'STRONGHOLD', label: POI_LABELS.STRONGHOLD },
-      { poi: 'NEBULA', label: 'NEBULA · CORRUPTED · DISCOVERY' },
-    ] as const;
-    for (const row of legendRows) {
-      const pv = poiVisual(row.poi);
-      const line = el('div', 'rk-mapinfo-legend-row');
-      line.innerHTML = `<b style="color:${pv.color}">${pv.glyph}</b><span>${row.label}</span>`;
-      legend.appendChild(line);
-    }
-    // MY TERRITORY spelling-out (user ask 2026-09-29): the pulsing rings and the
-    // fresh-conquest pennant have meanings — name them in my own colony colour.
+    // MY TERRITORY marker (user ask 2026-09-29; user v2: the overlay shows only what
+    // APPLIES to the selection — the galaxy's own POI line above — and the generic
+    // icon key is gone; this one row stays as the plain "YOUR COLONY" tag for the
+    // colony-coloured rings/pennant on the map).
     const mc = this.me();
     if (mc && mc.colony < 3) {
-      const line = el('div', 'rk-mapinfo-legend-row');
-      line.innerHTML =
-        `<b style="color:${COLONIES[mc.colony].css}">${COLONIES[mc.colony].symbol}</b>` +
-        `<span>YOUR COLONY — RINGED WORLDS · FRESH CONQUESTS</span>`;
-      legend.appendChild(line);
+      const line = el('div', 'rk-mapinfo-colony');
+      line.innerHTML = `<b style="color:${COLONIES[mc.colony].css}">${COLONIES[mc.colony].symbol}</b><span>YOUR COLONY</span>`;
+      card.appendChild(line);
     }
-    card.appendChild(legend);
     this.mapInfoEl.appendChild(card);
     this.mapInfoEl.classList.remove('hidden');
   }
@@ -1121,8 +1103,9 @@ export class RankPage {
     }
     const mine = this.me();
     if (mine && mine.colony < 3) {
-      const c = this.stats.colonies[mine.colony];
-      this.statsEl.appendChild(el('div', 'rk-colony-you', `YOUR COLONY · ${COLONIES[mine.colony].name} — ${c?.planets ?? 0} PLANETS HELD`));
+      // plain marker (user 2026-09-29): the long "· AEGIS — 0 PLANETS HELD" suffix
+      // repeated what the highlighted colony row right above already shows.
+      this.statsEl.appendChild(el('div', 'rk-colony-you', 'YOUR COLONY'));
     }
   }
 

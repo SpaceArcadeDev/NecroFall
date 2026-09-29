@@ -143,13 +143,15 @@
 
 /* quick actions (user ask 2026-09-29 PM): the code input FIRST, then JOIN ·
    CREATE LOBBY · FIND MATCH. Desktop + landscape stack them in the right column;
-   portrait wraps: input on its own line, the three buttons share the next. */
+   portrait wraps: input on its own line, the three buttons share the next.
+   The input matches the buttons' height EXACTLY (user ask). */
 .rk-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 2px; }
-.rk-quick .rk-btn { flex: 1 1 0; justify-content: center; padding: 9px 8px; font-size: 11px; letter-spacing: 0.08em; white-space: nowrap; }
+.rk-quick .rk-btn { flex: 1 1 0; height: 34px; justify-content: center; padding: 9px 8px; font-size: 11px; letter-spacing: 0.08em; white-space: nowrap; }
 .rk-join-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 8px 10px;
+  height: 34px;
+  padding: 0 10px;
   border-radius: var(--rk-corner, 12px);
   border: 1px solid var(--ui-border);
   background: rgba(10, 6, 20, 0.6);
@@ -1274,6 +1276,19 @@ body.nf-touch .rk-hover-tip { display: none !important; }
   .rk-card-note { display: none; }
   .rk-orb, .rk-planet-card .rk-orb { display: none; }
   .rk-stat-grid { grid-template-columns: repeat(4, 1fr); margin-top: 8px; }
+  /* YOUR STANDING stats don't fit the narrow details column on a landscape phone —
+     scroll them HORIZONTALLY instead of squeezing (user ask 2026-09-29 PM). */
+  .rk-standing-stats {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    margin-top: 8px;
+  }
+  .rk-standing-stats::-webkit-scrollbar { display: none; }
+  .rk-standing-stats .rk-stat { flex: 0 0 auto; min-width: 92px; }
   .rk-colonies { padding: 9px 10px; }
 }
 

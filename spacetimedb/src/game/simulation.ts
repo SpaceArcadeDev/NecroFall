@@ -29,6 +29,7 @@ import {
   MOVE_TOLERANCE,
   PLANET_RADIUS,
   PRESENCE_IN_MATCH,
+  PRESENCE_ONLINE,
   TICK_INTERVAL_US,
 } from '../constants';
 import { finishMatchInternal, noteTickUsage } from './rewards';
@@ -441,6 +442,11 @@ export const leave_match = spacetimedb.reducer((ctx) => {
   }
   if (!seat) return; // nothing to leave — idempotent
   ctx.db.match_player.id.update({ ...seat, left: true, connected: false, updated_at: ctx.timestamp });
+  // OUT OF THE GAME = ONLINE right away (user report 2026-09-29: the friends rail kept showing
+  // "In match" for up to the 30 s abandonment grace, because presence only flipped when the
+  // match row finally finished. Leaving IS the exit — flip it here.)
+  const presence = ctx.db.player_presence.identity.find(ctx.sender);
+  if (presence) ctx.db.player_presence.identity.update({ ...presence, status: PRESENCE_ONLINE, last_seen: ctx.timestamp });
 });
 
 /**

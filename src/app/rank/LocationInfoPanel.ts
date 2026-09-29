@@ -165,7 +165,9 @@ export function buildRootPanel(host: LocationPanelHost, focus: PanelFocus): HTML
   const stars = host.myStars();
   const info = getRankFromStars(stars);
   const cfg = ringConfig(host.myRing());
-  const grid = el('div', 'rk-stat-grid');
+  // `rk-standing-stats`: on landscape phones the row scrolls horizontally (user ask
+  // 2026-09-29 PM — 4 stats never fit the narrow details column at that size).
+  const grid = el('div', 'rk-stat-grid rk-standing-stats');
   grid.innerHTML =
     `<div class="rk-stat"><span>YOUR RANK</span><b style="color:${cfg.accent}">${getRankDisplayName(stars)}</b></div>` +
     `<div class="rk-stat"><span>STARS</span><b>${stars} ★</b></div>` +
@@ -218,10 +220,8 @@ export function buildRootPanel(host: LocationPanelHost, focus: PanelFocus): HTML
       }
     }
   }
-  const go = el('button', 'rk-btn primary wide', `BACK TO ${cfg.name} BAND`) as HTMLButtonElement;
-  go.type = 'button';
-  go.addEventListener('click', () => host.flyToRing(host.myRing()));
-  box.appendChild(go);
+  // (user ask 2026-09-29 PM) The "BACK TO <BAND> BAND" button was removed from YOUR
+  // STANDING — it read as a mystery action; the crosshair control already flies home.
   box.appendChild(
     el('p', 'rk-card-note', 'Tap any galaxy, system or planet to inspect it — the expanded view holds its control and discovery history.')
   );
@@ -404,21 +404,9 @@ export function buildPlanetPanel(p: PlanetDescriptor, host: LocationPanelHost): 
     box.appendChild(el('p', 'rk-card-note', 'You are already in a matchmaking queue — cancel it first.'));
   } else if (!mine) {
     box.appendChild(el('p', 'rk-card-note', `This world fights at ${RING_CONFIGS[p.ring]?.name ?? 'another'} — reach that ring to battle here.`));
-  } else if (controlled || reserved) {
-    const other = host.findAnother(p);
-    const b = el('button', 'rk-btn primary wide', other ? `FIND ANOTHER PLANET — ${other.name.toUpperCase()}` : 'SEARCH THE NEXT GALAXY') as HTMLButtonElement;
-    b.type = 'button';
-    b.addEventListener('click', () => {
-      if (other) host.jumpTo(other);
-      else host.flyToRing(host.myRing());
-    });
-    box.appendChild(b);
-  } else {
-    const b = el('button', 'rk-btn primary wide', `FIND MATCH — LIBERATE ${p.name.toUpperCase()}`) as HTMLButtonElement;
-    b.type = 'button';
-    b.addEventListener('click', () => host.startRanked(p));
-    box.appendChild(b);
-    box.appendChild(el('p', 'rk-card-note', "Win the match to raise your colony's 72-hour shield over this planet."));
   }
+  // (user ask 2026-09-29 PM) FIND ANOTHER PLANET / SEARCH THE NEXT GALAXY / FIND MATCH —
+  // LIBERATE were removed from the planet card — "confusing why it's there". The FIND
+  // MATCH quick action on the map picks the nearest open world in your ring.
   return box;
 }

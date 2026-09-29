@@ -1772,16 +1772,27 @@ html.nf-onb-colony .count-badge { display: none; }
 /* the shell's own `.hidden` helper doesn't reach a FLOATING bar (it sits on body) */
 .nf-rail.hidden { display: none !important; }
 /* floating over the game (the P2P / official lobby, shell hidden): fixed at the right
-   edge — above the in-game UI (#ui z10), below the shell overlays and toasts. */
+   edge — above the in-game UI (#ui z10), below the shell overlays and toasts. Top and
+   bottom MATCH THE MAIN MENU (chrome 72 + 6 / nav reserve 104) so the bar's size and
+   position never change between screens, and it enters WITHOUT the slide animation
+   (user ask 2026-09-29: "no need enter animation for collapsed friends menu in lobby"). */
 .nf-rail.floating {
   position: fixed;
-  top: 68px;
+  top: 78px;
   right: 10px;
   bottom: calc(104px + env(safe-area-inset-bottom, 0px));
   left: auto;
   margin: 0;
   max-height: none;
   z-index: 4050;
+  animation: none;
+}
+/* In the in-game LOBBY the bar gets a REAL strip of its own (user ask 2026-09-29 PM:
+   "in lobby, no relative space given for collapsed friends menu"): while the floating
+   bar is on screen the whole lobby screen ends left of it instead of being covered.
+   78 = rail right offset 10 + bar width 58 + a 10px gutter. */
+body:has(.nf-rail.floating:not(.hidden)) .lobby-screen {
+  right: 78px;
 }
 /* short landscape frames: hand the bar back the nav's reserve so it is never a stub */
 @media (max-height: 480px) {
@@ -1811,7 +1822,7 @@ html.nf-onb-colony .count-badge { display: none; }
   cursor: pointer;
 }
 .nf-rail-drawer:hover { background: rgba(90, 60, 150, 0.32); }
-.nf-rail-drawer svg { width: 18px; height: 18px; }
+.nf-rail-drawer svg { width: 18px; height: 18px; display: block; }
 .nf-rail-icons {
   display: flex;
   flex-direction: column;
@@ -1901,7 +1912,8 @@ html.nf-onb-colony .count-badge { display: none; }
   border-color: color-mix(in srgb, var(--ui-accent-2) 50%, transparent);
   background: rgba(70, 224, 200, 0.12);
 }
-.nf-sheet-close { flex: 0 0 46px; color: var(--ui-accent-2); }
+.nf-sheet-close { flex: 0 0 46px; color: var(--ui-accent-2); justify-content: center; }
+.nf-sheet-close svg { display: block; }
 .nf-sheet-close:hover { background: rgba(70, 224, 200, 0.14); }
 .nf-sheet-title { font-size: 11px; letter-spacing: 0.22em; color: var(--ui-text-muted); font-weight: 800; }
 .nf-sheet-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
@@ -1932,12 +1944,14 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 .nf-fr-invite { color: var(--ui-accent-2); border-color: color-mix(in srgb, var(--ui-accent-2) 45%, transparent); }
 
-/* notifications: the top-left stack (new followers + lobby invites, user ask). Sits
-   just BELOW the screen's back chevron band so it never swallows the back button. */
+/* notifications: the top-RIGHT stack (new followers + lobby invites — user ask
+   2026-09-29 PM: same vertical position as before, on the right side). */
 .nf-notify-stack {
   position: fixed;
   top: calc(58px + env(safe-area-inset-top, 0px));
-  left: 12px;
+  right: 12px;
+  left: auto;
+  align-items: flex-end;
   z-index: 4500;
   display: flex;
   flex-direction: column;
@@ -1958,9 +1972,9 @@ html.nf-onb-colony .count-badge { display: none; }
   animation: nf-notify-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
   transition: opacity 0.4s ease, transform 0.4s ease;
 }
-.nf-notify.out { opacity: 0; transform: translateX(-10px); }
+.nf-notify.out { opacity: 0; transform: translateX(10px); }
 @keyframes nf-notify-in {
-  from { opacity: 0; transform: translateX(-16px); }
+  from { opacity: 0; transform: translateX(16px); }
   to { opacity: 1; transform: none; }
 }
 .nf-notify-col { display: flex; flex-direction: column; min-width: 0; flex: 1; }

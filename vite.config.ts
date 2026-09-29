@@ -11,6 +11,11 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+// Rapier ships wasm-bindgen "bundler"-target output (a plain `import wasm from './*.wasm'`),
+// which needs the wasm plugin; its glue is written as a top-level-await module, which the es2020
+// build target cannot express — the TLA plugin rewrites it. Both mirror Folio 2025's Vite stack.
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 
 /** What the provider points its own redirects at; those must stay on OUR origin (see api/auth-proxy). */
 const PROVIDER_ORIGIN = 'https://auth.spacetimedb.com';
@@ -58,7 +63,7 @@ function contentStableHotUpdate(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [contentStableHotUpdate()],
+  plugins: [wasm(), topLevelAwait(), contentStableHotUpdate()],
   server: {
     host: true,
     port: 5173,

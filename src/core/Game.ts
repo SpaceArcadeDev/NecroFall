@@ -27,9 +27,6 @@ import {
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
-import { ENV_PROFILES, environmentQualityFor } from '../world/EnvironmentConfig';
-import type { FocusInput } from '../world/interaction/VegetationInteraction';
-import type { DestructionState } from '../world/interaction/DestructionLedger';
 import { Effects } from '../effects/Effects';
 import { TelegraphSystem } from '../effects/Telegraphs';
 import { CombatSystem } from '../combat/Combat';
@@ -256,10 +253,6 @@ const _tmpEnemies: Enemy[] = [];
 export class Game {
   scene = new THREE.Scene();
   renderer: THREE.WebGLRenderer;
-  /** Scene lights, shared with the environment's atmosphere layer (rework plan §32). */
-  private hemiLight!: THREE.HemisphereLight;
-  private sunLight!: THREE.DirectionalLight;
-  private rimLight!: THREE.DirectionalLight;
   cam: GameCamera;
   planet: Planet;
   effects: Effects;
@@ -458,9 +451,6 @@ export class Game {
   private berserkFxT = 0;
 
   private snapshotT = 0;
-  /** Reused focus slots for the environment update (no per-frame allocation — plan §71). */
-  private readonly envFocusPool: FocusInput[] = [];
-  private readonly envZeroVelocity = new THREE.Vector3();
   private cooldownNudgeT = 0;
   /**
    * Peer clocks: state packets carry the sender's own time, and these map it onto ours. `hostSync`
@@ -625,24 +615,19 @@ export class Game {
     this.app.appendChild(this.renderer.domElement);
 
     this.scene.fog = new THREE.FogExp2(0x171029, 0.0012);
-    this.hemiLight = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
-    this.scene.add(this.hemiLight);
-    this.sunLight = new THREE.DirectionalLight(0xfff0d8, 1.5);
-    this.sunLight.position.set(1, 0.85, 0.6).multiplyScalar(400);
-    this.scene.add(this.sunLight);
-    this.rimLight = new THREE.DirectionalLight(0x7a5cff, 0.35);
-    this.rimLight.position.set(-1, 0.2, -0.8).multiplyScalar(400);
-    this.scene.add(this.rimLight);
+    const hemi = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
+    this.scene.add(hemi);
+    const sun = new THREE.DirectionalLight(0xfff0d8, 1.5);
+    sun.position.set(1, 0.85, 0.6).multiplyScalar(400);
+    this.scene.add(sun);
+    const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
+    rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
+    this.scene.add(rim);
     this.buildStarfield();
 
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
-    this.planet = new Planet(this.scene, this.settings, PLANET_SEED, undefined, 0, {
-      sun: this.sunLight,
-      hemi: this.hemiLight,
-      rim: this.rimLight,
-    });
+    this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
     this.effects = new Effects(this.scene, this.settings);
-    this.wireEnvironment();
     this.cosmeticFx = new CosmeticFxRunner(this.scene);
     this.telegraphs = new TelegraphSystem(this.scene);
     this.telegraphs.setPlanet(this.planet);
@@ -1001,11 +986,7 @@ export class Game {
    */
   private baseDpr(): number {
     const cap = IS_MOBILE ? DPR_CAP.mobile : DPR_CAP.desktop;
-    // The environment profile owns the device-class resolution ceiling (rework plan §48): a
-    // high-DPI phone shading a full grass field is exactly the thermal case the rework targets,
-    // so this cap sits ON TOP of the preset's own ceiling.
-    const envCap = ENV_PROFILES[environmentQualityFor(this.settings.name)].pixelRatioCap;
-    return Math.min(window.devicePixelRatio || 1, cap, this.settings.pixelRatio, envCap);
+    return Math.min(window.devicePixelRatio || 1, cap, this.settings.pixelRatio);
   }
 
   /** The live render resolution: the capped DPR times the current adaptive ladder step. */
@@ -1216,15 +1197,10 @@ export class Game {
     // In a match the rebuild already happens per match inside `beginPlaying`.
     if (this.phase === 'menu') {
       const old = this.planet;
-      this.planet = new Planet(this.scene, this.settings, PLANET_SEED, undefined, 0, {
-        sun: this.sunLight,
-        hemi: this.hemiLight,
-        rim: this.rimLight,
-      });
+      this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
       this.telegraphs.setPlanet(this.planet);
       this.effects.setPlanet(this.planet);
       old.dispose();
-      this.wireEnvironment();
     }
   }
 
@@ -2079,12 +2055,6 @@ export class Game {
       ord: this.hostOrder,
       assign: { [`colony:${entry.id}`]: entry.colony, [`nt:${entry.id}`]: entry.nt },
     });
-    // Late arrival reconciliation (rework plan §73): send the environment ledger's state so
-    // trees the newcomer never saw alive are already broken on their screen.
-    const envBatch = this.planet.environment.serialiseDestruction();
-    if (envBatch.ids.length > 0) {
-      this.net.sendTo(entry.id, { t: 'env', ids: envBatch.ids, states: envBatch.states });
-    }
     this.ui.killFeed(`${entry.name} dropped in`, COLONIES[entry.colony]?.css ?? '#fff');
     this.ui.banner(`${entry.name.toUpperCase()} JOINED THE BATTLE`, 2600);
     // The roster was pushed before the colony/kit existed: refresh it so every peer agrees.
@@ -2324,11 +2294,7 @@ export class Game {
     const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0;
     const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
     const oldPlanet = this.planet;
-    this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing, {
-      sun: this.sunLight,
-      hemi: this.hemiLight,
-      rim: this.rimLight,
-    });
+    this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing);
     // Every telegraph is projected on to the CURRENT planet — a system still holding last match's
     // height field would lay its warnings metres off the ground.
     this.telegraphs.setPlanet(this.planet);
@@ -2352,9 +2318,6 @@ export class Game {
     // with nothing equipped simply stay quiet). Later respawns go through `placeRespawned`.
     for (const p of this.players.values()) this.playPlayerFx('spawn', p, p.position, p.up);
     oldPlanet.dispose();
-    // The rebuilt planet gets a fresh environment: re-attach the gameplay seams (destruction
-    // hook, watchdog quality step, hotspot toggles — plan §24/§47/§66).
-    this.wireEnvironment();
     const bestiary = (() => {
       // The ranked planet's descriptor regenerates the EXACT world the map showed (plan §32):
       // biome, ecology kind, corruption and the landmark biases that bend the local ecology.
@@ -2389,12 +2352,7 @@ export class Game {
     this.planet.aimSunAt(this.towers.centerDir);
     // Dense grass is grown once, around the tower zones where the fighting happens, and then left
     // alone for the whole match — generated at match start, never re-grown while you move.
-    // Tower feet AND pad decks become gameplay keep-out zones so nothing sprouts through them
-    // (rework plan §61).
-    this.planet.growGrass([
-      ...this.towers.towers.map(t => t.position),
-      ...this.pads.list().map(p => p.position),
-    ]);
+    this.planet.growGrass(this.towers.towers.map(t => t.position));
     this.ui.show('game');
     this.input.setEnabled(true);
     this.cam.snap();
@@ -3075,16 +3033,6 @@ export class Game {
         // The connection already introduced this peer (see onPeerJoin) — just refresh its name.
         const entry = this.roster.get(from);
         if (entry && msg.name) entry.name = String(msg.name).slice(0, 16) || entry.name;
-        return;
-      }
-      case 'env': {
-        // Environment destruction batch from the host (rework plan §26/§73): apply id+state pairs
-        // to this client's own deterministic world — no transforms ever travel.
-        if (this.isHost) return;
-        this.planet.environment.applyDestruction({
-          ids: (msg.ids ?? []) as number[],
-          states: (msg.states ?? []) as DestructionState[],
-        });
         return;
       }
       case 'lobby': {
@@ -5240,14 +5188,7 @@ export class Game {
     this.cosmeticFx.update(dt);
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
-    this.planet.update(
-      dt,
-      this.cam.camera.position,
-      this.cam.camera.quaternion,
-      this.collectEnvFocuses(),
-      this.localPlayer ? this.localPlayer.position : null,
-      this.matchElapsed
-    );
+    this.planet.update(dt, this.cam.camera.position);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());
     this.updateIndicators(dt);
     this.updateModalTimers(dt);
@@ -5277,15 +5218,6 @@ export class Game {
   }
 
   private networkTick(dt: number): void {
-    // Environment destruction sync (rework plan §73): the HOST drains its ledger and broadcasts
-    // id+state pairs. Clients drain too — their local predictions are cosmetic; the host ledger
-    // is the authority every other client converges to.
-    {
-      const batch = this.planet.environment.drainDestruction();
-      if (this.isHost && batch.ids.length > 0) {
-        this.net.broadcast({ t: 'env', ids: batch.ids, states: batch.states });
-      }
-    }
     // Every state packet carries the sender's clock, so the other side can place the poses on a
     // timeline that network delay does not distort.
     const now = nowSec();
@@ -6140,73 +6072,6 @@ export class Game {
     this.ui.updateBossPlates(list);
   }
 
-  // ------------------------------------------------------------ environment wiring
-
-  /**
-   * Attaches the gameplay seams the environment rework exposes (plan §24/§47/§66):
-   *   * shockwaves damage vegetation/props (Effects.onWave → environment.explosion);
-   *   * the watchdog rescue level drives the dynamic quality step;
-   *   * F9/F10 need hooks for the terrain mesh and shadow map, which live in the game.
-   * Called for the menu world and after every per-match planet rebuild.
-   */
-  private wireEnvironment(): void {
-    const env = this.planet.environment;
-    env.setQualityStepProvider(() => this.rescueLevel);
-    env.setHotspotHooks({
-      setTerrainVisible: visible => { this.planet.mesh.visible = visible; },
-      setShadowsEnabled: enabled => { this.renderer.shadowMap.enabled = enabled; },
-    });
-    env.setFx({
-      burst: (pos, color, opts) => this.effects.burst(pos, color, opts),
-      ring: (pos, up, radius, color, opts) =>
-        this.effects.ring(pos, up, radius, color, opts?.dur ?? 0.6, opts?.rings ?? 2, 0.85),
-      dust: (pos, up, color, amount) =>
-        this.effects.burst(pos, color, { count: amount, speed: 2.4, life: 1.1, size: 0.5, gravity: -1.2, up, spread: 0.6 }),
-    });
-    this.effects.onWave = (pos, up, radius) => {
-      // Genuine shockwaves break vegetation and props (plan §24/§57). Visual-first: the ledger
-      // records the states; the host broadcasts them as `{id, state}` pairs.
-      void up;
-      this.planet.environment.explosion(pos, radius * 0.8, Math.min(220, radius * 7));
-    };
-  }
-
-  /** This frame's entities the vegetation/visibility systems should react to (plan §25/§55). */
-  private collectEnvFocuses(): FocusInput[] {
-    const pool = this.envFocusPool;
-    let n = 0;
-    const take = (position: THREE.Vector3, velocity: THREE.Vector3, kind: FocusInput['kind'], local: boolean): void => {
-      let slot = pool[n];
-      if (!slot) {
-        slot = { position: new THREE.Vector3(), velocity: new THREE.Vector3(), kind: 'player', local: false };
-        pool[n] = slot;
-      }
-      slot.position.copy(position);
-      slot.velocity.copy(velocity);
-      slot.kind = kind;
-      slot.local = local;
-      n++;
-    };
-    for (const p of this.players.values()) {
-      if (!p.alive) continue;
-      take(p.position, p.velocity, 'player', p.isLocal);
-    }
-    // Enemies near the local player: they keep their readability through vegetation (plan §55)
-    // without dragging the streaming foci away from the players (plan §72).
-    const lp = this.localPlayer;
-    if (lp) {
-      let count = 0;
-      for (const e of this.enemies.enemies) {
-        if (!e.alive || count >= 4) continue;
-        if (e.position.distanceToSquared(lp.position) > 8100) continue; // 90 m
-        take(e.position, this.envZeroVelocity, e.isBoss ? 'boss' : 'enemy', false);
-        count++;
-      }
-    }
-    pool.length = n;
-    return pool;
-  }
-
   // ------------------------------------------------------------ debug
   private onDebugKey(e: KeyboardEvent): void {
     if (!e.code.startsWith('F') || e.code.length > 3) return;
@@ -6238,18 +6103,6 @@ export class Game {
       case 8:
         this.debugClaimPlanet();
         break;
-      case 9: {
-        // Environment detail overlay (rework plan §65).
-        const on = this.planet.environment.toggleTelemetry();
-        this.ui.toast(`ENV DETAIL ${on ? 'ON' : 'OFF'}`, 1400);
-        break;
-      }
-      case 10: {
-        // GPU hotspot toggles (rework plan §66): one press disables the next subsystem.
-        const label = this.planet.environment.cycleHotspot();
-        this.ui.toast(`HOTSPOT — ${label}`, 1600);
-        break;
-      }
       default:
         break;
     }
@@ -6371,7 +6224,7 @@ export class Game {
       `towers ${this.towers.towers.map(t => `${t.kind === 'nexus' ? 'N' : t.idx + 1}:${t.owner >= 0 ? COLONIES[t.owner].name[0] : '-'}:${t.state[0]}`).join(' ')}`,
       `buffs ${this.colonyBuffs.map((b, i) => (b.time > 0 ? `${COLONIES[i].name[0]}${Math.ceil(b.time)}s` : null)).filter(Boolean).join(' ') || '—'}`,
     ];
-    this.ui.setDebug([...lines.filter(Boolean), ...this.planet.environment.telemetryLines()]);
+    this.ui.setDebug(lines.filter(Boolean));
   }
 
   // ------------------------------------------------------------ misc

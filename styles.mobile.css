@@ -642,6 +642,17 @@ body.nf-touch .acc-ico { width: 40px; height: 40px; }
   body.nf-touch .play-head .menu-title { font-size: clamp(22px, 7vh, 34px); }
   body.nf-touch .play-enter .btn { min-height: 38px; padding: 6px 14px; font-size: 12.5px; }
   body.nf-touch .play-screen .menu-name { min-height: 38px; padding: 4px 10px; }
+  /* CUSTOMIZE, stacked + short (a landscape phone ≤820px wide): the avatar stage yields its
+     height FIRST so the category row and the item list always fit — 230px of stage + 56px of
+     tabs cannot fit a 360–430px screen, and the tabs used to pay for the overflow (user report:
+     "categories cut off at the bottom"). An EXPLICIT height, not just min-height: the stage's
+     canvas is `height: 100%`, so in the stacked column (indefinite height) the canvas's own
+     intrinsic size drove the box and min-height could never cap it. The list keeps a card's
+     worth of height and scrolls. */
+  body.nf-touch .acc-screen .acc-preview { height: clamp(100px, 30vh, 200px); min-height: 0; }
+  body.nf-touch .acc-screen .acc-caption { font-size: 8.5px; min-height: 0; }
+  body.nf-touch .acc-tabs { margin-bottom: 4px; }
+  body.nf-touch .acc-hint { margin: -1px 0 4px; }
   body.nf-touch .lobby-panel { padding: 8px 10px; gap: 5px; }
   body.nf-touch .lobby-icon { width: 36px; }
   body.nf-touch .lobby-actions .btn { min-height: 40px; }

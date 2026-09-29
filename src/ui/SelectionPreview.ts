@@ -424,6 +424,12 @@ export class SelectionPreview {
   private fxCat: EffectCategory | null = null;
   private fxIdx = -1;
   private fxTimer = 0;
+  /**
+   * Colony accent the customize avatar (and its pad) is built with — the account colony, set by
+   * the shell (user ask: "the avatar follows the colony color scheme"). 0x9a7bff is the lobby's
+   * own no-colony fallback, so a colony-less player sees the same body on both stages.
+   */
+  private avatarTint = 0x9a7bff;
   /** The customize stage's lit pad (the same build the lobby line-up stands on). */
   private avatarPad: THREE.Group | null = null;
   /** CUSTOMIZE mode turntable: the player drags the avatar itself to turn it. */
@@ -586,6 +592,17 @@ export class SelectionPreview {
     this.fxTimer = 0;
   }
 
+  /**
+   * CUSTOMIZE mode: sets the colony accent the avatar is built with (the account's colony colour,
+   * resolved by the caller). A customize screen that is already open rebuilds its avatar at once,
+   * so a colony that arrives while the menu is up still lands on the body.
+   */
+  setAvatarTint(tint: number): void {
+    if (this.avatarTint === tint) return;
+    this.avatarTint = tint;
+    if (this.mode === 'customize') this.buildScene();
+  }
+
   private stop(): void {
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
@@ -717,15 +734,16 @@ export class SelectionPreview {
       });
       this.updateWeaponVisibility();
     } else if (this.mode === 'customize') {
-      // ---- CUSTOMIZE: the player's own model, dressed with everything at once. Using the MATCH
-      // builder here is the whole trick — the menu cannot drift from the game.
+      // ---- CUSTOMIZE: the player's own model, dressed with everything at once and wearing the
+      // account colony's colours (user ask). Using the MATCH builder here is the whole trick —
+      // the menu cannot drift from the game.
       this.camera.position.set(0, 1.78, 4.4);
       this.camera.lookAt(0, 1.08, 0);
-      // the avatar's own lit pad — the same stage the lobby's line-up stands on, so the customize
-      // screen and the lobby read as one place (and the near-black body gets its light)
-      this.avatarPad = this.buildPad(0xb07aff, 1.35);
+      // the avatar's own lit pad — the same stage the lobby's line-up stands on, tinted like the
+      // body so the pad light never fights the colony accent
+      this.avatarPad = this.buildPad(this.avatarTint, 1.35);
       this.scene.add(this.avatarPad);
-      this.avatarParts = buildPlayerModel(0x8f6cff);
+      this.avatarParts = buildPlayerModel(this.avatarTint);
       this.avatarParts.group.position.y = 0.02;
       this.scene.add(this.avatarParts.group);
       this.avatarAcc = new AvatarAccessories(

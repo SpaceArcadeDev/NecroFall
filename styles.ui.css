@@ -444,6 +444,12 @@
   gap: 8px;
   justify-content: flex-start;
   flex-wrap: nowrap;
+  /* NEVER CRUSHED (user report 2026-09-29: "categories cut off at the bottom in landscape
+     mobile"): in a short landscape viewport the right column runs out of height, and a scroll
+     container's automatic min-height is 0 — so THIS row was the first thing flex-shrink ate,
+     collapsing 44px pills into a 14px sliver and clipping their bottoms. The row keeps its full
+     height; the strip below (flex 1 1 auto, min-height 0, overflow-y auto) absorbs the shortage. */
+  flex: 0 0 auto;
   min-width: 0;
   overflow-x: auto;
   /* …and NEVER a vertical bar: `overflow-x: auto` forces `overflow-y` to auto too, and the 5px
@@ -462,6 +468,8 @@
 .acc-tab { flex: 0 0 auto; white-space: nowrap; }
 /* one line of context per category — the three effect tabs must say WHEN they play */
 .acc-hint {
+  /* fixed height like the tab row: it must never be squeezed away on a short screen */
+  flex: 0 0 auto;
   font-size: 10px;
   letter-spacing: 0.07em;
   text-transform: uppercase;

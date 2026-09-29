@@ -643,6 +643,10 @@ export class AppShell implements ShellContext {
     if (this.invitedRoomCode) this.consumeInvite();
 
     const me = this.myHex() ? ClientCache.shared.me(this.myHex()) : null;
+    // The customize stage's avatar wears the ACCOUNT colony (user ask) — pushed on every data
+    // settle, so a deep link straight to Customize never shows a colony-less avatar (the home
+    // screen's showShellAvatar push only covers routes that stage the home).
+    if (me) this.game?.ui.setAvatarColony(me.colony);
     if (!this.accountReady && me) {
       this.accountReady = true;
       this.clearBootWatchdog();

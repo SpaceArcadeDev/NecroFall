@@ -732,6 +732,8 @@ export class UI {
   /** Customize screen state: the worn outfit and the open category. */
   private accSel: AccessorySelection = loadSelection();
   private accTab: AccessoryCategory = 'hat';
+  /** Colony accent for the customize avatar — set by the account shell (0x9a7bff = no colony). */
+  private avatarTint = 0x9a7bff;
   private accTabs = new Map<AccessoryCategory, HTMLButtonElement>();
   private accStrip!: HTMLElement;
   private accCaption!: HTMLElement;
@@ -789,10 +791,25 @@ export class UI {
   onScreenChange: ((name: ScreenName) => void) | null = null;
 
   /**
+   * The account shell reports its colony: the customize stage's avatar follows those colours
+   * (user ask). Resolution matches the lobby's own rule — out-of-range means "no colony", which
+   * keeps the neutral lavender the line-up uses.
+   */
+  setAvatarColony(colony: number): void {
+    const tint = colony >= 0 && colony < COLONIES.length ? COLONIES[colony].color : 0x9a7bff;
+    if (tint === this.avatarTint) return;
+    this.avatarTint = tint;
+    this.preview?.setAvatarTint(tint);
+  }
+
+  /**
    * Account shell: stage this player's avatar on the shell's home screen using the SAME lobby
    * line-up preview the in-game lobby uses — one avatar, the player's own outfit, its idle, its pet.
    */
   showShellAvatar(host: HTMLElement, colony: number, accWire: string): void {
+    // the account colony is also the customize stage's accent (user ask: the avatar follows the
+    // colony colour scheme) — remembered here, applied on every customize-screen build
+    this.setAvatarColony(colony);
     this.shellBorrowedPreview = true;
     if (!this.preview) this.preview = new SelectionPreview();
     this.preview.setMode('lobby', host);
@@ -883,6 +900,9 @@ export class UI {
     }
     if (name === 'customize') {
       if (!this.preview) this.preview = new SelectionPreview();
+      // the avatar wears the account's colony colours (user ask) — applied BEFORE the build, and
+      // live-rebuilt by the preview itself if it is already on screen
+      this.preview.setAvatarTint(this.avatarTint);
       this.preview.setMode('customize', this.customizePreviewBox);
       // first visit: build the squircle renders now (a few tens of ms on one category), so the
       // app itself never pays for them at boot

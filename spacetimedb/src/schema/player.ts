@@ -48,6 +48,12 @@ export const player = table(
         query ever sequentially scans this table (SpacetimeDB advisor warning).
         Appended LAST: additive schema changes must keep existing column order. */
     player_code: t.string().default('').index('btree'),
+    /** Profile bio (user ask 2026-09-29, the reworked profile page). '' = not set. Never shown raw. */
+    bio: t.string().default(''),
+    /** Gender glyph on the profile: 0 = not set, 1 = male, 2 = female. */
+    gender: t.u8().default(0),
+    /** The account's HIGHEST `rank_points` ever held — the profile's BEST rank. */
+    peak_rank_points: t.i32().default(0),
   }
 );
 

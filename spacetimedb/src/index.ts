@@ -22,6 +22,8 @@ export {
   set_profile_name,
   set_profile_picture,
   set_avatar,
+  set_bio,
+  set_gender,
   equip_item,
   set_keybinds,
   submit_peer_result,

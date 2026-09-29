@@ -582,52 +582,137 @@ html.nf-onb-colony .count-badge { display: none; }
 }
 .nf-link-dot { color: rgba(170, 130, 255, 0.45); }
 
-/* ---------------------------------------------------------------- graphics page */
-/* Settings ▸ GRAPHICS: the preset list and the frame-rate chips. One full-width row per preset
-   (name + what it buys + the ACTIVE mark) reads faster than a row of four letter chips, and the
-   chips that remain (MAX FPS) stay thumb-sized on touch. */
-.nf-gfx-page { max-width: 720px; align-self: center; width: 100%; }
-.nf-gfx-section { display: flex; flex-direction: column; gap: 10px; }
-.nf-gfx-list { display: flex; flex-direction: column; gap: 8px; }
-.nf-gfx-opt {
+/* ---------------------------------------------------------------- graphics page (reworked 2026-09-29) */
+/* Settings ▸ GRAPHICS — rebuilt for landscape phones (user report: "cut off, bad ui and not
+   optimized for touch n mobile"). The page now FITS the frame: five big preset cards on one row
+   (each with its bar ramp), then the frame-rate segmented control. Nothing scrolls; on very
+   short frames the card blurbs step aside and the page becomes pure controls. */
+.nf-gfx-page { max-width: 920px; width: 100%; min-height: 0; overflow: hidden; gap: 10px; }
+.nf-gfx-head { flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.nf-gfx-title { margin: 0; font-size: clamp(22px, 3.4vw, 34px); letter-spacing: 0.08em; }
+.nf-gfx-sub { margin: 0; color: var(--ui-text-muted); font-size: 12.5px; }
+.nf-gfx-sec { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.nf-gfx-sec:first-of-type { flex: 1 1 auto; }
+.nf-gfx-sec-fps { flex: 0 0 auto; }
+.nf-gfx-label { display: flex; align-items: center; gap: 10px; min-height: 18px; }
+.nf-gfx-label-t { font-size: 11px; letter-spacing: 0.22em; color: var(--ui-text-muted); font-weight: 800; }
+.nf-gfx-now {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--ui-accent-2);
+  border: 1px solid rgba(70, 224, 200, 0.4);
+  border-radius: 999px;
+  padding: 2px 9px;
+  white-space: nowrap;
+}
+.nf-gfx-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* keeps the cards card-sized on tall screens instead of stretching them to the floor */
+  max-height: min(38vh, 260px);
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.nf-gfx-card {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  padding: 12px 14px;
-  border-radius: 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+  border-radius: 16px;
   border: 1px solid var(--ui-border);
   background: var(--ui-panel);
   color: var(--ui-text);
   font-family: inherit;
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+  overflow: hidden;
+  transition: border-color 0.16s ease, background 0.18s ease, box-shadow 0.2s ease, transform 0.08s ease;
 }
-.nf-gfx-opt:hover { border-color: rgba(210, 170, 255, 0.55); }
-.nf-gfx-opt:active { transform: scale(0.985); }
-.nf-gfx-opt.on {
+.nf-gfx-card:hover { border-color: rgba(210, 170, 255, 0.55); }
+.nf-gfx-card:active { transform: scale(0.975); }
+.nf-gfx-card.on {
   border-color: var(--ui-accent-2);
-  box-shadow: 0 0 18px rgba(70, 224, 200, 0.16);
+  background: linear-gradient(180deg, rgba(70, 224, 200, 0.13), rgba(20, 14, 33, 0.8) 70%);
+  box-shadow: 0 0 22px rgba(70, 224, 200, 0.18);
 }
-.nf-gfx-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.nf-gfx-name { font-weight: 800; font-size: 14px; letter-spacing: 0.14em; }
-.nf-gfx-desc { font-size: 12px; color: var(--ui-text-muted); }
-.nf-gfx-mark {
-  min-width: 58px;
-  text-align: center;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  padding: 4px 8px;
-  border-radius: 9px;
+/* the bar ramp: a preset's "how much does this device draw" at a glance */
+.nf-gfx-bars { display: flex; align-items: flex-end; gap: 3px; height: 26px; flex: 0 0 auto; }
+.nf-gfx-bars i { width: 4px; height: 32%; border-radius: 2px; background: rgba(255, 255, 255, 0.16); }
+.nf-gfx-bars i:nth-child(2) { height: 48%; }
+.nf-gfx-bars i:nth-child(3) { height: 62%; }
+.nf-gfx-bars i:nth-child(4) { height: 78%; }
+.nf-gfx-bars i:nth-child(5) { height: 94%; }
+.nf-gfx-bars i.lit { background: linear-gradient(180deg, var(--ui-accent-2), #1fa98f); box-shadow: 0 0 9px rgba(70, 224, 200, 0.45); }
+.nf-gfx-card.on .nf-gfx-bars i.lit { background: linear-gradient(180deg, #9dffe9, #29c8a8); }
+/* AUTO probes: the bars breathe instead of claiming a level */
+.nf-gfx-bars.auto i { background: rgba(154, 107, 255, 0.55); animation: nf-gfx-probe 1.7s ease-in-out infinite; }
+.nf-gfx-bars.auto i:nth-child(2) { animation-delay: 0.12s; }
+.nf-gfx-bars.auto i:nth-child(3) { animation-delay: 0.24s; }
+.nf-gfx-bars.auto i:nth-child(4) { animation-delay: 0.36s; }
+.nf-gfx-bars.auto i:nth-child(5) { animation-delay: 0.48s; }
+@keyframes nf-gfx-probe {
+  0%, 100% { transform: scaleY(0.55); opacity: 0.45; }
+  50% { transform: scaleY(1.12); opacity: 1; }
+}
+.nf-gfx-name { font-size: 13px; font-weight: 900; letter-spacing: 0.14em; }
+.nf-gfx-desc { font-size: 11px; line-height: 1.32; color: var(--ui-text-muted); }
+.nf-gfx-note { margin: 0; font-size: 11.5px; color: var(--ui-text-muted); flex: 0 0 auto; }
+.nf-gfx-seg {
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 14px;
+  border: 1px solid var(--ui-border);
+  background: rgba(18, 12, 30, 0.62);
+}
+.nf-gfx-seg-opt {
+  flex: 1 1 0;
+  min-height: 44px;
+  border-radius: 10px;
   border: 1px solid transparent;
-  color: transparent;
+  background: transparent;
+  color: var(--ui-text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease;
 }
-.nf-gfx-opt.on .nf-gfx-mark { color: var(--ui-accent-2); border-color: var(--ui-accent-2); }
-.nf-gfx-note { margin: 0; }
-.nf-gfx-chips { display: flex; gap: 8px; flex-wrap: wrap; }
-.nf-fps-chip { min-width: 64px; font-weight: 800; letter-spacing: 0.1em; font-size: 13px; }
+.nf-gfx-seg-opt:hover { border-color: rgba(210, 170, 255, 0.5); }
+.nf-gfx-seg-opt.on {
+  background: linear-gradient(180deg, rgba(146, 70, 255, 0.92), rgba(84, 34, 150, 0.92));
+  border-color: rgba(226, 200, 255, 0.75);
+  box-shadow: 0 0 18px rgba(180, 92, 255, 0.4);
+}
+/* Portrait: the five cards wrap into as many columns as fit (landscape keeps the single
+   five-card row — the width is there even on a 568px phone). */
+@media (orientation: portrait) {
+  .nf-gfx-grid { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); grid-auto-rows: minmax(96px, 128px); max-height: none; }
+}
+/* Very short frames (568x320-class phones): the cards keep their bars + name, the
+   blurbs step aside — nothing may clip. */
+@media (max-height: 430px) {
+  .nf-gfx-bars { height: 18px; }
+  .nf-gfx-bars i { width: 3px; }
+  .nf-gfx-card { padding: 8px 10px; gap: 5px; border-radius: 13px; }
+  .nf-gfx-name { font-size: 12px; }
+  .nf-gfx-desc { font-size: 10.5px; line-height: 1.25; }
+  .nf-gfx-sec { gap: 6px; }
+  .nf-gfx-grid { gap: 6px; }
+  .nf-gfx-note { font-size: 10.5px; }
+}
+@media (max-height: 350px) {
+  .nf-gfx-sub { display: none; }
+  .nf-gfx-desc { display: none; }
+  .nf-gfx-note { display: none; }
+}
 
 @keyframes nf-title-glow {
   0%, 100% { text-shadow: 0 0 36px rgba(160, 80, 255, 0.32); }
@@ -1100,40 +1185,138 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-confirm-btn { min-height: 50px; font-size: 16px; border-radius: 14px; }
 }
 
-/* ---------------------------------------------------------------- profile */
-.nf-profile-head { display: flex; flex-direction: column; gap: 10px; }
-.nf-profile-id { display: flex; align-items: center; gap: 14px; }
-.nf-profile-code-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
-.nf-profile-code-label { font-size: 10px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
-.nf-profile-code {
+/* ---------------------------------------------------------------- profile (reworked 2026-09-29) */
+/* User ask: the old page was "too cluttered". The new one is ONE screen: the head
+   (identity card + CURRENT/HIGHEST rank cards) over a tabbed body — the tab rail sits on
+   the LEFT edge (landscape's free axis) and only the ACTIVE pane scrolls. The avatar and
+   icon pickers are gone; name / bio / gender / colony live in one EDIT sheet. */
+.profile-page { flex: 1 1 auto; min-height: 0; gap: 10px; padding-bottom: 0; overflow: hidden; }
+/* head: identity left, the two rank cards right (stacks only in portrait) */
+.nf-p-head { flex: 0 0 auto; display: flex; align-items: stretch; gap: 10px; min-width: 0; }
+
+/* ---- identity card */
+.nf-hero {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 11px;
+  border-radius: 18px;
+  border: 1px solid var(--ui-border);
+  background:
+    radial-gradient(120% 150% at 0% 0%, color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 20%, transparent), transparent 58%),
+    var(--ui-panel);
+  animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.nf-hero-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.nf-hero-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 900;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.38));
+  border: 2px solid var(--nf-colony, var(--ui-accent));
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--nf-colony, var(--ui-accent)) 42%, transparent),
+    inset 0 0 18px rgba(0, 0, 0, 0.35);
+}
+/* the gender glyph rides the avatar's corner */
+.nf-hero-gender {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  line-height: 1;
+  background: #191231;
+  border: 1px solid rgba(140, 190, 255, 0.55);
+  color: #9bd0ff;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+.nf-hero-gender.female { border-color: rgba(255, 155, 214, 0.55); color: #ff9bd6; }
+.nf-hero-who { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nf-hero-namerow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.nf-hero-name { margin: 0; font-size: clamp(20px, 3.4vw, 30px); letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(50ch, 100%); }
+.nf-hero-chip {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--ui-border);
+  color: var(--ui-text-muted);
+  white-space: nowrap;
+}
+.nf-hero-chip.colony {
+  color: var(--nf-colony, var(--ui-text-muted));
+  border-color: color-mix(in srgb, var(--nf-colony, var(--ui-border)) 55%, transparent);
+}
+.nf-hero-handle { color: var(--ui-text-muted); font-size: 12.5px; }
+.nf-hero-bio { margin: 3px 0 0; font-size: 13px; line-height: 1.38; color: var(--ui-text); max-width: 72ch; }
+.nf-hero-bio.empty { color: var(--ui-text-muted); font-style: italic; }
+.nf-hero-actions { flex: 0 0 auto; margin-left: auto; display: flex; gap: 8px; align-self: flex-start; }
+.nf-hero-actions .nf-btn { min-width: 74px; justify-content: center; }
+
+/* friend code: ONE tap copies it */
+.nf-hero-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nf-hero-code-label { font-size: 9.5px; letter-spacing: 0.24em; color: var(--ui-text-muted); }
+.nf-hero-codebox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border-radius: 11px;
+  border: 1px dashed rgba(170, 130, 255, 0.42);
+  background: rgba(10, 6, 20, 0.55);
+  color: var(--ui-accent-2);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+}
+.nf-hero-codebox:hover { border-color: rgba(70, 224, 200, 0.6); background: rgba(20, 14, 33, 0.7); }
+.nf-hero-codebox:active { transform: scale(0.97); }
+.nf-hero-codebox svg { width: 15px; height: 15px; opacity: 0.8; flex: 0 0 auto; }
+.nf-hero-codeval {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 15px;
   font-weight: 800;
-  letter-spacing: 0.3em;
-  padding: 4px 10px;
-  border-radius: 10px;
-  background: rgba(10, 6, 20, 0.6);
-  border: 1px dashed rgba(170, 130, 255, 0.5);
-  color: var(--ui-accent-2);
+  letter-spacing: 0.28em;
 }
-.nf-code-btn { min-height: 34px; padding: 6px 10px; font-size: 11px; letter-spacing: 0.1em; }
-.nf-profile-avatar {
-  width: 74px; height: 74px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 28px; font-weight: 900;
-  background: linear-gradient(145deg, var(--ui-accent), #37207a);
-  border: 3px solid rgba(255, 255, 255, 0.35);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-}
-.nf-profile-who { display: flex; flex-direction: column; }
-.nf-profile-name { margin: 0; font-size: clamp(22px, 4vw, 32px); }
-.nf-profile-handle { color: var(--ui-text-muted); font-size: 13px; }
-.nf-profile-level { font-size: 12px; color: var(--ui-text-muted); }
-.nf-profile-colony { font-weight: 800; color: var(--nf-colony, var(--ui-accent)); letter-spacing: 0.1em; }
-.nf-profile-actions { display: flex; gap: 10px; }
-.nf-profile-editor { display: flex; flex-direction: column; gap: 10px; }
+.nf-hero-share { min-width: 40px; min-height: 40px; padding: 0; display: grid; place-items: center; }
+.nf-hero-share svg { width: 17px; height: 17px; }
+
+/* ---- the EDIT sheet (own profile): toggled by the EDIT button */
+.nf-hero-editor { display: none; flex-direction: column; gap: 10px; padding-top: 10px; border-top: 1px solid rgba(148, 120, 220, 0.18); }
+.nf-hero-editor.open { display: flex; animation: nf-drop 0.26s ease-out backwards; }
 .nf-edit-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.nf-edit-label { width: 64px; font-size: 11px; letter-spacing: 0.16em; color: var(--ui-text-muted); }
-.nf-avatar-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+.nf-edit-bio { align-items: flex-start; }
+.nf-edit-label { width: 58px; flex: 0 0 auto; font-size: 10.5px; letter-spacing: 0.18em; color: var(--ui-text-muted); }
+.nf-bio-wrap { position: relative; flex: 1 1 220px; min-width: 0; }
+.nf-bio-input { width: 100%; resize: none; padding-right: 56px; line-height: 1.35; font-family: inherit; }
+.nf-bio-count {
+  position: absolute;
+  right: 10px;
+  bottom: 9px;
+  font-size: 10px;
+  color: var(--ui-text-muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.nf-bio-count.near { color: var(--ui-gold); }
+.nf-chip-grid { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .nf-chip {
   min-width: 40px;
   min-height: 40px;
@@ -1142,6 +1325,8 @@ html.nf-onb-colony .count-badge { display: none; }
   background: var(--ui-panel);
   color: var(--ui-text);
   cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
   transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
 .nf-chip:hover { border-color: rgba(210, 170, 255, 0.55); }
@@ -1151,6 +1336,7 @@ html.nf-onb-colony .count-badge { display: none; }
   color: var(--ui-accent-2);
   box-shadow: 0 0 14px rgba(70, 224, 200, 0.25);
 }
+.nf-chip-gender { padding: 0 12px; letter-spacing: 0.1em; }
 /* colony chips carry their own colour (--nf-colony set inline) */
 .nf-chip-colony {
   min-width: 0;
@@ -1165,88 +1351,306 @@ html.nf-onb-colony .count-badge { display: none; }
   color: var(--nf-colony);
   box-shadow: 0 0 16px color-mix(in srgb, var(--nf-colony) 45%, transparent);
 }
-/* own-profile friends list */
-.nf-friends-grid { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
 
-.nf-profile-section { display: flex; flex-direction: column; gap: 10px; }
-.nf-section-title { margin: 0; font-size: 13px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
-.nf-stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.nf-stat {
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
-  border-radius: 14px;
-  padding: 10px 12px;
+/* ---- CURRENT / HIGHEST rank cards */
+.nf-ranks { flex: 0 0 clamp(340px, 34vw, 520px); display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-width: 0; }
+.nf-rank-card {
+  position: relative;
   display: flex;
   flex-direction: column;
-}
-.nf-stat-k { font-size: 11px; color: var(--ui-text-muted); }
-.nf-stat-v { font-size: 18px; font-weight: 800; }
-
-.nf-social-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.nf-social-chip {
-  background: var(--ui-panel);
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px 11px 15px;
+  border-radius: 16px;
   border: 1px solid var(--ui-border);
-  border-radius: 14px;
-  padding: 10px 16px;
+  background: var(--ui-panel);
+  overflow: hidden;
+  animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: 0.06s;
+}
+.nf-rank-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--rk, var(--ui-accent));
+  box-shadow: 0 0 16px var(--rk, var(--ui-accent));
+}
+.nf-rank-k { font-size: 9.5px; letter-spacing: 0.22em; color: var(--ui-text-muted); }
+.nf-rank-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.nf-rank-v {
+  font-size: clamp(16px, 2.5vw, 23px);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  color: var(--rk, var(--ui-text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 22px color-mix(in srgb, var(--rk, transparent) 55%, transparent);
+}
+.nf-rank-stars { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.nf-rank-bar { height: 5px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.nf-rank-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rk, var(--ui-accent)) 55%, #fff), var(--rk, var(--ui-accent)));
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nf-rank-sub { font-size: 11px; color: var(--ui-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-rank-card.unplaced { border-style: dashed; }
+.nf-rank-card.unplaced::before { opacity: 0.4; box-shadow: none; }
+
+/* ---- tabbed body: rail on the LEFT, panes beside it */
+.nf-p-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+.nf-p-tabs {
+  flex: 0 0 auto;
+  width: 134px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid var(--ui-border);
+  background: rgba(14, 9, 26, 0.5);
+  backdrop-filter: blur(8px);
+  animation: nf-rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: 0.1s;
 }
-.nf-social-v { font-size: 20px; font-weight: 800; }
-.nf-social-k { font-size: 11px; color: var(--ui-text-muted); }
+.nf-p-tab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 10px 10px 10px 15px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ui-text-muted);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.1s ease;
+}
+.nf-p-tab::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: 3px;
+  background: var(--ui-accent);
+  transform: translateY(-50%);
+  transition: height 0.24s cubic-bezier(0.3, 1.3, 0.4, 1);
+}
+.nf-p-tab:hover { color: var(--ui-text); background: rgba(90, 60, 150, 0.18); }
+.nf-p-tab:active { transform: scale(0.98); }
+.nf-p-tab.on { color: var(--ui-text); background: var(--ui-panel); border-color: var(--ui-border); }
+.nf-p-tab.on::before { height: 62%; }
+.nf-p-tab-ico { display: grid; place-items: center; width: 22px; height: 22px; }
+.nf-p-tab-ico svg { width: 100%; height: 100%; display: block; }
+.nf-p-tab.on .nf-p-tab-ico { color: var(--ui-accent); filter: drop-shadow(0 0 8px rgba(154, 107, 255, 0.7)); }
+.nf-p-tab-lbl { font-size: 10.5px; font-weight: 800; letter-spacing: 0.14em; }
 
-.nf-medals { display: flex; gap: 10px; flex-wrap: wrap; }
-.nf-medal {
-  width: 110px;
+.nf-p-panes {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  border-radius: 16px;
+  border: 1px solid var(--ui-border);
+  background: rgba(14, 9, 26, 0.42);
+  overflow: hidden;
+}
+.nf-p-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 10px;
-  border-radius: 14px;
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+.nf-pane-in { animation: nf-pane-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+@keyframes nf-pane-in {
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes nf-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---- stats pane */
+.nf-p-social { display: flex; gap: 8px; flex: 0 0 auto; }
+.nf-p-soc {
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  text-align: center;
-}
-.nf-medal-icon { font-size: 22px; color: var(--ui-text-muted); }
-.nf-medal-name { font-size: 11px; }
-.nf-medal-soon { font-size: 9px; letter-spacing: 0.14em; color: var(--ui-text-muted); }
-
-.nf-history-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: 2px;
+  padding: 8px 6px;
   border-radius: 12px;
   background: var(--ui-panel);
   border: 1px solid var(--ui-border);
-  border-left: 4px solid var(--ui-text-muted);
 }
-.nf-history-row.win { border-left-color: var(--ui-accent-2); }
-.nf-history-row.loss { border-left-color: #ff5c7a; }
-.nf-history-result { font-weight: 900; letter-spacing: 0.08em; width: 52px; }
-.nf-history-time { font-variant-numeric: tabular-nums; color: var(--ui-text-muted); }
-.nf-history-stats { flex: 1; font-size: 13px; }
-.nf-history-reward { color: var(--ui-gold); font-weight: 700; }
-
-.nf-collection-grid { display: flex; gap: 10px; flex-wrap: wrap; }
-.nf-item {
-  width: 96px;
-  padding: 10px;
-  border-radius: 14px;
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
+.nf-p-soc-v { font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.nf-p-soc-k { font-size: 9.5px; letter-spacing: 0.12em; color: var(--ui-text-muted); text-transform: uppercase; }
+.nf-p-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.nf-p-tile {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
 }
-.nf-item.equipped { border-color: var(--ui-accent-2); }
-.nf-item-icon { font-size: 20px; color: var(--ui-gold); }
-.nf-item-name { font-size: 11px; }
-.nf-item-badge { font-size: 9px; color: var(--ui-accent-2); letter-spacing: 0.1em; }
+.nf-p-tile-k { font-size: 10px; color: var(--ui-text-muted); }
+.nf-p-tile-v { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.nf-p-viewers { display: flex; flex-direction: column; gap: 8px; }
+.nf-p-sub-title { margin: 4px 0 0; font-size: 10.5px; letter-spacing: 0.2em; color: var(--ui-text-muted); }
+.nf-p-viewer-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.nf-viewers { display: flex; gap: 8px; flex-wrap: wrap; }
+/* ---- list rows (history + discoveries) */
+.nf-p-rows { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.nf-p-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-left: 3px solid rgba(255, 255, 255, 0.14);
+}
+.nf-p-row.win { border-left-color: var(--ui-accent-2); }
+.nf-p-row.loss { border-left-color: #ff5c7a; }
+.nf-p-row.disc.first { border-left-color: var(--ui-gold); }
+.nf-p-row-res { flex: 0 0 42px; font-size: 10.5px; font-weight: 900; letter-spacing: 0.12em; }
+.nf-p-row.win .nf-p-row-res { color: var(--ui-accent-2); }
+.nf-p-row.loss .nf-p-row-res { color: #ff8797; }
+.nf-p-disc-ix {
+  flex: 0 0 38px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  padding: 3px 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ui-text-muted);
+}
+.nf-p-row.disc.first .nf-p-disc-ix { background: rgba(255, 209, 102, 0.16); color: var(--ui-gold); }
+.nf-p-row-mid { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nf-p-row-place { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; }
+.nf-p-row-planet { font-weight: 800; letter-spacing: 0.06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nf-p-row-planet-ico { font-style: normal; font-size: 10px; color: var(--ui-accent); flex: 0 0 auto; }
+.nf-p-row.disc.first .nf-p-row-planet-ico { color: var(--ui-gold); }
+.nf-p-row-ring {
+  flex: 0 0 auto;
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--ui-gold);
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.nf-p-row-classic { color: var(--ui-text-muted); font-size: 12px; letter-spacing: 0.08em; }
+.nf-p-row-meta { font-size: 11px; color: var(--ui-text-muted); font-variant-numeric: tabular-nums; }
+.nf-p-row-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.nf-p-row-ago { font-size: 10.5px; color: var(--ui-text-muted); }
+.nf-p-row-reward { font-size: 12.5px; font-weight: 800; color: var(--ui-gold); }
+.nf-p-empty { margin: 16px auto; max-width: 42ch; text-align: center; color: var(--ui-text-muted); font-size: 12.5px; }
+
+/* Landscape phones (the game's home shape): the head becomes ONE row — identity left,
+   rank cards right — and the tabbed body takes every leftover pixel. The pane is the
+   ONLY scroll surface; the page itself always fits the frame. */
+@media (orientation: landscape) and (max-height: 640px) {
+  .profile-page { gap: 8px; }
+  .nf-p-head { flex-direction: row; align-items: stretch; gap: 8px; }
+  .nf-hero { flex: 1 1 auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: 14px; }
+  .nf-hero-main { flex: 1 1 240px; min-width: 0; gap: 10px; }
+  .nf-hero-avatar { width: 44px; height: 44px; font-size: 17px; }
+  .nf-hero-gender { width: 18px; height: 18px; font-size: 11px; right: -3px; bottom: -3px; }
+  .nf-hero-who { gap: 1px; }
+  .nf-hero-name { font-size: clamp(15px, 2.3vw, 21px); }
+  .nf-hero-handle { font-size: 11px; }
+  .nf-hero-bio { margin: 1px 0 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nf-hero-actions { align-self: center; }
+  .nf-hero-code { flex: 0 0 auto; }
+  .nf-hero-code-label { display: none; }
+  .nf-hero-codebox { min-height: 36px; padding: 4px 10px; }
+  .nf-hero-codeval { font-size: 13px; letter-spacing: 0.22em; }
+  .nf-hero-share { min-width: 36px; min-height: 36px; }
+  .nf-hero-editor.open { flex-basis: 100%; max-height: 42vh; overflow-y: auto; }
+  .nf-ranks { flex: 0 0 clamp(270px, 36vw, 420px); gap: 8px; }
+  .nf-rank-card { padding: 8px 10px 9px 13px; border-radius: 13px; gap: 4px; }
+  .nf-rank-k { font-size: 8.5px; }
+  .nf-rank-v { font-size: clamp(12px, 1.8vw, 18px); letter-spacing: 0.03em; }
+  .nf-rank-sub { font-size: 10px; }
+  .nf-p-tabs { width: 106px; padding: 5px; gap: 5px; border-radius: 13px; }
+  .nf-p-tab { min-height: 0; flex: 1 1 0; padding: 6px 8px 6px 13px; gap: 3px; }
+  .nf-p-tab-lbl { font-size: 9.5px; }
+  .nf-p-tab-ico { width: 18px; height: 18px; }
+  .nf-p-body { gap: 8px; }
+  .nf-p-panes { border-radius: 13px; }
+  .nf-p-pane { padding: 8px; gap: 6px; }
+  .nf-p-grid { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+  .nf-p-tile { padding: 6px 8px; }
+  .nf-p-tile-v { font-size: 14px; }
+  .nf-p-row { padding: 6px 9px; }
+}
+/* 320-tall phones (568x320 … 640x360): the head keeps identity + rank names only —
+   the pane needs the pixels. */
+@media (orientation: landscape) and (max-height: 420px) {
+  .nf-hero { padding: 6px 8px; gap: 4px 8px; }
+  .nf-hero-avatar { width: 38px; height: 38px; font-size: 15px; }
+  .nf-hero-gender { width: 16px; height: 16px; font-size: 10px; }
+  .nf-hero-handle { display: none; }
+  .nf-hero-chip.level { display: none; }
+  .nf-hero-bio { font-size: 11px; }
+  .nf-hero-codebox { min-height: 32px; padding: 3px 8px; }
+  .nf-hero-codeval { font-size: 12px; letter-spacing: 0.18em; }
+  .nf-hero-share { min-width: 32px; min-height: 32px; }
+  .nf-rank-sub { display: none; }
+  .nf-rank-card { padding: 6px 8px 7px 12px; gap: 3px; }
+  .nf-p-tabs { width: 96px; }
+  .nf-p-tab-lbl { font-size: 9px; letter-spacing: 0.1em; }
+  .nf-p-tab { padding: 5px 6px 5px 11px; }
+  .nf-pane-in { animation: none; }
+}
+/* Portrait / narrow-but-tall frames: the rail turns into a top strip and the head stacks.
+   (A SHORT landscape frame — a phone in fullscreen — keeps the row + side rail from the
+   query above even when it is narrower than 720px; that is the game's own shape.) */
+@media (orientation: portrait), (max-width: 720px) and (min-height: 500px) {
+  .nf-p-head { flex-direction: column; gap: 10px; }
+  .nf-ranks { flex: 0 0 auto; }
+  .nf-p-body { flex-direction: column; gap: 8px; }
+  .nf-p-tabs { width: auto; flex-direction: row; }
+  .nf-p-tab { flex: 1 1 0; min-height: 52px; flex-direction: row; align-items: center; justify-content: center; padding: 8px 6px; gap: 7px; }
+  .nf-p-tab::before { left: 50%; top: auto; bottom: 3px; width: 0; height: 3px; transform: translateX(-50%); }
+  .nf-p-tab.on::before { width: 54%; height: 3px; }
+  .nf-p-tab-lbl { font-size: 10px; }
+}
+/* The floating back chevron overlaps the top-left corner whenever the page is not
+   centred far away from it — give the first row a corridor instead of hiding content. */
+@media (max-width: 1200px) {
+  .nf-hero { padding-left: 58px; }
+  .nf-gfx-head { padding-left: 58px; }
+}
 
 /* ---------------------------------------------------------------- friends */
 /* The FIXED friends rail: a slim glass strip of avatars beside the content on
@@ -1677,21 +2081,28 @@ html.nf-onb-colony .count-badge { display: none; }
 @media (max-width: 620px) {
   .nf-page { gap: 10px; }
   .nf-top-who { display: none; }
-  .nf-stat-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
   .nf-confirm-seats { gap: 8px; }
-  .nf-hero { padding: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .nf-queue-clock.urgent { animation: none; }
   .nf-page, .nf-rail, .nf-bottom { animation: none; }
   .play-page .nf-play-entry { animation: none; }
+  .nf-hero, .nf-rank-card, .nf-p-tabs, .nf-pane-in { animation: none; }
 }
 
 /* Child screens own their full canvas — nothing to clear for the floating bar. */
 .nf-shell.no-nav .nf-main { padding-bottom: 56px; }
 
-/* the profile page reads to the very last section: the page box must GROW with its
-   content (a stretched flex item overflows its own box, so its padding-bottom would
-   never show below the last section — that was the "cut off" bottom). */
-.profile-page { align-self: flex-start; padding-bottom: 48px; }
+/* PROFILE and GRAPHICS are fixed APP screens (the pane scrolls INSIDE the page): on a
+   landscape phone the floating-nav clearance and the side gutters are reclaimed — every
+   pixel goes to the content. NOTE the higher specificity: it must beat `.no-nav` above. */
+@media (orientation: landscape) and (max-height: 640px) {
+  .nf-shell.no-nav:has(.profile-page) .nf-main,
+  .nf-shell.no-nav:has(.nf-gfx-page) .nf-main { padding: 6px 10px 8px; }
+}
+
+/* The PROFILE and GRAPHICS pages are full-bleed app screens: the friends rail (a floating
+   strip on the right) only eats their width, so it steps aside while they own the screen. */
+.nf-shell:has(.profile-page) .nf-rail,
+.nf-shell:has(.nf-gfx-page) .nf-rail { display: none; }

@@ -148,7 +148,8 @@ export const ranked_location_discovery = table(
     galaxy_id: t.u32().index('btree'),
     system_id: t.u32(),
     planet_id: t.u32(),
-    player_identity: t.identity(),
+    /** Indexed: a profile subscribes its OWN discovery log by player (user ask 2026-09-29). */
+    player_identity: t.identity().index('btree'),
     player_name: t.string(),
     /** Colony at discovery time (COLONY_NONE when the player had none). */
     colony: t.u8(),

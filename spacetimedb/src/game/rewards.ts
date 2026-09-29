@@ -133,6 +133,8 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
           current_rank: newInfo.tier,
           rank_status: 1,
           season_id: season.season_id,
+          // The profile's BEST rank (user ask 2026-09-29): the ladder only grows here.
+          peak_rank_points: Math.max(account.peak_rank_points, applied.stars),
         };
         ctx.db.rank_history.insert({
           id: 0,
@@ -190,6 +192,8 @@ export function finishMatchInternal(ctx: any, matchId: number, winnerColony: num
       ended_at: now,
       soft_currency_earned: BigInt(soft),
       xp_earned: xpEarned,
+      // Which planet the match was fought on (user ask 2026-09-29 — the history tab).
+      planet_key: m.planet_key ?? '',
     });
 
     const presence = ctx.db.player_presence.identity.find(p.identity);

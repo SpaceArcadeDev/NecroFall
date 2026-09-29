@@ -85,6 +85,12 @@ export interface PlayerRow {
   lastSeenAt: Timestamp;
   lastOnlineAt: Timestamp;
   banned: boolean;
+  /** Profile bio (user ask 2026-09-29). '' = not set. */
+  bio: string;
+  /** Gender glyph: 0 = not set, 1 = male, 2 = female. */
+  gender: number;
+  /** Highest `rankPoints` ever held — the profile's BEST rank. */
+  peakRankPoints: number;
 }
 
 export interface PlayerStatsRow {
@@ -271,6 +277,8 @@ export interface MatchHistoryRow {
   endedAt: Timestamp;
   softCurrencyEarned: bigint;
   xpEarned: number;
+  /** The ranked planet this match was fought on (`ring:g:s:p`), '' for classic. */
+  planetKey: string;
 }
 
 /** One row of the `my_match_usage` view — the caller's latest match's server usage summary. */

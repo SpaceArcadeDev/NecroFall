@@ -87,6 +87,27 @@ export const set_profile_picture = spacetimedb.reducer({ picture: t.u32() }, (ct
 });
 
 /**
+ * The profile bio (user ask 2026-09-29 — the reworked profile page). Trimmed;
+ * 160 characters is the wall. `''` clears it. Nothing is rendered raw: the
+ * client writes it with textContent, never innerHTML.
+ */
+export const set_bio = spacetimedb.reducer({ text: t.string() }, (ctx, { text }) => {
+  const p = requirePlayer(ctx);
+  const bio = text.trim();
+  if (bio.length > 160) throw new SenderError('Bio must be 160 characters or fewer.');
+  if (bio === p.bio) return; // idempotent
+  ctx.db.player.identity.update({ ...p, bio });
+});
+
+/** The profile's gender glyph: 0 = not set, 1 = male, 2 = female. */
+export const set_gender = spacetimedb.reducer({ gender: t.u8() }, (ctx, { gender }) => {
+  if (gender > 2) throw new SenderError('Unknown gender.');
+  const p = requirePlayer(ctx);
+  if (p.gender === gender) return; // idempotent
+  ctx.db.player.identity.update({ ...p, gender });
+});
+
+/**
  * Save the caller's control remap (plan §37): a JSON blob of action → key code.
  * Validated loosely — size + JSON shape — so a malformed client cannot grow
  * the row without bound; the client re-reads the authoritative row afterwards.

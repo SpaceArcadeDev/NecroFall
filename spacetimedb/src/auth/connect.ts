@@ -87,6 +87,9 @@ export function ensureAccount(ctx: any): any {
     last_seen_at: now,
     last_online_at: now,
     banned: false,
+    bio: '',
+    gender: 0,
+    peak_rank_points: 0,
   });
   ctx.db.player_wallet.insert({ identity, soft_currency: 0n, premium_currency: 0n });
   ctx.db.player_stats.insert({

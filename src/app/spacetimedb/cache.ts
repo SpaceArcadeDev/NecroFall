@@ -319,6 +319,17 @@ export class ClientCache {
       .sort((a, b) => b.id - a.id);
   }
 
+  /**
+   * ONE player's first-footfall log, newest first (user ask 2026-09-29 — the
+   * profile's DISCOVERIES tab). Fed by the profile scope's player-scoped
+   * subscription over `ranked_location_discovery`.
+   */
+  discoveriesByPlayer(hex: string): RankedLocationDiscoveryRow[] {
+    return this.list<RankedLocationDiscoveryRow>('rankedLocationDiscovery')
+      .filter(r => hexOf(r.playerIdentity) === hex)
+      .sort((a, b) => Number(b.discoveredAt - a.discoveredAt));
+  }
+
   /** The KING OF GODS leaderboard (plan §78) — top ranked survivors. */
   rankedTop(): PlayerRow[] {
     return this.list<PlayerRow>('rankedTop');

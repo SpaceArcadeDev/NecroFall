@@ -1,53 +1,92 @@
-// NECROFALL — the full profile page (plan §4/§26/§48).
+// NECROFALL — the profile page (reworked 2026-09-29, user ask: the old page was
+// "too cluttered and sucks"; this is a modern, minimalist, touch-first layout).
+//
+//   hero          identity: avatar + gender glyph, name, colony/level, bio, code
+//   ranks         CURRENT RANK + HIGHEST RANK cards
+//   tabs (left)   STATS · HISTORY · DISCOVERIES switch the pane beside them
 //
 // Subscribes ONLY to the viewed profile while it is open (plan §23/§48) and
 // records the visit through a single throttled reducer call. Own profile gains
-// the edit affordances and the friends list; another player's profile shows
-// the public views only.
+// the edit sheet; another player's profile shows the follow action instead.
 import { ClientCache } from '../spacetimedb/cache';
 import { recordProfileView } from '../spacetimedb/reducers';
-import { releaseProfile, subscribePlayer, subscribeProfile } from '../spacetimedb/subscriptions';
+import { releaseProfile, subscribeProfile } from '../spacetimedb/subscriptions';
 import { ShellContext } from '../ShellContext';
-import { clear, el, formatDuration } from '../ui/dom';
-import { ProfileCard } from '../ui/ProfileCard';
-import { ProfileHeader } from './ProfileHeader';
-import { ProfileSocial } from './ProfileSocial';
+import { el } from '../ui/dom';
+import { ProfileHero } from './ProfileHero';
+import { ProfileRanks } from './ProfileRanks';
 import { ProfileStats } from './ProfileStats';
-import { ProfileViewers } from './ProfileViewers';
+import { ProfileHistory } from './ProfileHistory';
+import { ProfileDiscoveries } from './ProfileDiscoveries';
+
+type PaneKey = 'stats' | 'history' | 'discoveries';
+
+interface Pane {
+  element: HTMLElement;
+  update(): void;
+}
+
+const TAB_ICONS: Record<PaneKey, string> = {
+  stats:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V5M19 20v-9"/></svg>',
+  history:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.6V12l3 1.9"/></svg>',
+  discoveries:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 14.1 9l5.9 2.3-5.9 2.4L12 19.8l-2.1-6.1L4 11.3 9.9 9z"/></svg>',
+};
+
+const TABS: Array<{ key: PaneKey; label: string }> = [
+  { key: 'stats', label: 'STATS' },
+  { key: 'history', label: 'HISTORY' },
+  { key: 'discoveries', label: 'DISCOVERIES' },
+];
 
 export class ProfilePage {
   readonly element: HTMLElement;
-  private header: ProfileHeader;
-  private stats: ProfileStats;
-  private social: ProfileSocial;
-  private viewers: ProfileViewers;
-  private history: HTMLElement;
-  private friends: HTMLElement;
-  private friendsBody: HTMLElement;
+  private hero: ProfileHero;
+  private ranks: ProfileRanks;
+  private panes: Record<PaneKey, Pane>;
+  private tabBtns: HTMLButtonElement[] = [];
+  private active: PaneKey = 'stats';
 
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('div', 'nf-page profile-page');
-    this.header = new ProfileHeader(ctx, hex);
-    this.element.appendChild(this.header.element);
-    this.stats = new ProfileStats(hex);
-    this.element.appendChild(this.stats.element);
 
-    // Own profile: the friends list lives here (friendship = mutual follow, plan §5).
-    this.friends = el('section', 'nf-profile-section');
-    this.friends.appendChild(el('h2', 'nf-section-title', 'FRIENDS'));
-    this.friendsBody = el('div', 'nf-friends-grid');
-    this.friends.appendChild(this.friendsBody);
-    if (hex === ctx.myHex()) this.element.appendChild(this.friends);
+    // ---- head: the identity card and the rank cards (side by side on wide-short frames)
+    const head = el('div', 'nf-p-head');
+    this.hero = new ProfileHero(ctx, hex);
+    head.appendChild(this.hero.element);
+    this.ranks = new ProfileRanks(hex);
+    head.appendChild(this.ranks.element);
+    this.element.appendChild(head);
 
-    this.history = el('section', 'nf-profile-section');
-    this.history.appendChild(el('h2', 'nf-section-title', 'MATCH HISTORY'));
-    this.element.appendChild(this.history);
+    // ---- tabbed body: the tab rail (left edge in landscape, top row in portrait)
+    const body = el('div', 'nf-p-body');
+    const nav = el('nav', 'nf-p-tabs');
+    nav.setAttribute('role', 'tablist');
+    nav.setAttribute('aria-label', 'Profile views');
+    const stats = new ProfileStats(ctx, hex);
+    const history = new ProfileHistory(hex);
+    const discoveries = new ProfileDiscoveries(hex, hex === ctx.myHex());
+    this.panes = { stats, history, discoveries };
 
-    this.social = new ProfileSocial(ctx.myHex(), hex);
-    this.element.appendChild(this.social.element);
-    this.viewers = new ProfileViewers(ctx, hex);
-    this.element.appendChild(this.viewers.element);
+    const panesHost = el('div', 'nf-p-panes');
+    TABS.forEach((tab) => {
+      const btn = el('button', 'nf-p-tab') as HTMLButtonElement;
+      btn.type = 'button';
+      btn.setAttribute('role', 'tab');
+      btn.innerHTML = `<span class="nf-p-tab-ico">${TAB_ICONS[tab.key]}</span><span class="nf-p-tab-lbl">${tab.label}</span>`;
+      btn.addEventListener('click', () => this.setTab(tab.key));
+      this.tabBtns.push(btn);
+      nav.appendChild(btn);
+      panesHost.appendChild(this.panes[tab.key].element);
+    });
+    body.appendChild(nav);
+    body.appendChild(panesHost);
+    this.element.appendChild(body);
 
+    this.attachSwipe(panesHost);
+    this.setTab(this.active, false);
     this.onShow();
   }
 
@@ -67,51 +106,65 @@ export class ProfilePage {
   }
 
   update(): void {
-    this.header.update();
-    this.stats.update();
-    this.social.update();
-    this.viewers.update();
-    this.renderFriends();
-    this.renderHistory();
+    this.hero.update();
+    this.ranks.update();
+    this.panes[this.active].update();
   }
 
-  /** The friends list (own profile only): mutual follows, live from the cache. */
-  private renderFriends(): void {
-    if (!this.friends.isConnected) return;
-    clear(this.friendsBody);
-    const cache = ClientCache.shared;
-    const friendHexes = cache.friends(this.hex);
-    if (friendHexes.length === 0) {
-      this.friendsBody.appendChild(
-        el('p', 'nf-muted', 'No friends yet — tap + in the Friends rail to find survivors by name or code.')
-      );
-      return;
+  private setTab(key: PaneKey, animate = true): void {
+    this.active = key;
+    const idx = TABS.findIndex((t) => t.key === key);
+    this.tabBtns.forEach((btn, i) => {
+      const on = i === idx;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    for (const tab of TABS) {
+      const pane = this.panes[tab.key].element;
+      const on = tab.key === key;
+      pane.classList.toggle('on', on);
+      pane.classList.toggle('hidden', !on);
     }
-    for (const h of friendHexes) {
-      if (!cache.playerByHex(h)) subscribePlayer(h);
-      const card = new ProfileCard(h, () => this.ctx.openProfile(h));
-      card.update();
-      this.friendsBody.appendChild(card.element);
+    if (animate) {
+      // Re-run the entrance beat on every switch (remove → reflow → add).
+      const pane = this.panes[key].element;
+      pane.classList.remove('nf-pane-in');
+      void pane.offsetWidth;
+      pane.classList.add('nf-pane-in');
     }
+    this.panes[key].update();
   }
 
-  private renderHistory(): void {
-    const rows = ClientCache.shared.historyFor(this.hex).slice(0, 8);
-    // Keep the title, rebuild the body.
-    while (this.history.children.length > 1) this.history.removeChild(this.history.lastChild as Node);
-    if (rows.length === 0) {
-      this.history.appendChild(el('p', 'nf-muted', 'No official matches yet.'));
-      return;
-    }
-    for (const row of rows) {
-      const item = el('div', 'nf-history-row' + (row.won ? ' win' : ' loss'));
-      item.appendChild(el('span', 'nf-history-result', row.won ? 'WIN' : 'LOSS'));
-      item.appendChild(el('span', 'nf-history-time', formatDuration(row.durationSeconds)));
-      item.appendChild(
-        el('span', 'nf-history-stats', `${row.kills} kills · ${row.deaths} deaths · ${row.objectives} objectives`)
-      );
-      item.appendChild(el('span', 'nf-history-reward', `+${row.softCurrencyEarned}`));
-      this.history.appendChild(item);
-    }
+  /**
+   * Swipe the pane sideways to move between tabs (touch only). The panes are
+   * `touch-action: pan-y`, so vertical drags stay native scrolling and only a
+   * deliberate horizontal swipe reaches these handlers.
+   */
+  private attachSwipe(host: HTMLElement): void {
+    let sx = 0;
+    let sy = 0;
+    let id = -1;
+    let tracking = false;
+    host.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse') return;
+      sx = e.clientX;
+      sy = e.clientY;
+      id = e.pointerId;
+      tracking = true;
+    });
+    const settle = (e: PointerEvent): void => {
+      if (!tracking || e.pointerId !== id) return;
+      tracking = false;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      if (Math.abs(dx) < 56 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      const idx = TABS.findIndex((t) => t.key === this.active);
+      const next = (idx + (dx < 0 ? 1 : -1) + TABS.length) % TABS.length;
+      this.setTab(TABS[next].key);
+    };
+    host.addEventListener('pointerup', settle);
+    host.addEventListener('pointercancel', () => {
+      tracking = false;
+    });
   }
 }

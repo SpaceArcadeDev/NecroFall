@@ -801,6 +801,10 @@ export class AppShell implements ShellContext {
     this.page?.onHide?.();
     this.page = null;
     clear(this.screenHost);
+    // The pane is REUSED between screens: a fresh page inherits the previous one's scroll
+    // position and reads as "cut off at the top" (user report on GRAPHICS, 2026-09-29).
+    this.screenHost.scrollTop = 0;
+    this.screenHost.scrollLeft = 0;
     this.screen = screen;
     this.root.classList.remove('hidden');
     // The boot spinner is for the LOADING screen only — any real screen hides it.

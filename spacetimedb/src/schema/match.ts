@@ -136,6 +136,9 @@ export const match_history = table(
     ended_at: t.timestamp(),
     soft_currency_earned: t.u64(),
     xp_earned: t.u32(),
+    /** The ranked planet this match was fought on (`ring:g:s:p`), '' for classic (user ask
+        2026-09-29: the profile history shows which planet). Appended LAST — additive column. */
+    planet_key: t.string().default(''),
   }
 );
 

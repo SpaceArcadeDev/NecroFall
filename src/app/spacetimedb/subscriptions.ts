@@ -130,6 +130,12 @@ export function subscribeProfile(hex: string): void {
     `SELECT * FROM player_presence WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM player_loadout WHERE identity = ${hexLiteral(hex)}`,
     `SELECT * FROM match_history WHERE identity = ${hexLiteral(hex)}`,
+    // The profile's DISCOVERIES tab (user ask 2026-09-29): the player's own
+    // first-footfall log, scoped and indexed by identity (never the whole table).
+    `SELECT * FROM ranked_location_discovery WHERE player_identity = ${hexLiteral(hex)}`,
+    // The active season seed — planet/system/galaxy NAMES come from it (client-side
+    // regeneration), so the history rows can say WHICH planet without storing names.
+    'SELECT * FROM ranked_season',
     `SELECT * FROM follow WHERE follower = ${hexLiteral(hex)}`,
     `SELECT * FROM follow WHERE following = ${hexLiteral(hex)}`,
     `SELECT * FROM profile_view WHERE profile = ${hexLiteral(hex)}`,

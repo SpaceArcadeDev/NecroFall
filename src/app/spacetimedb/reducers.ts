@@ -36,6 +36,10 @@ export const setPlayerName = (name: string): void => callReducer('setPlayerName'
 export const setProfileName = (name: string): void => callReducer('setProfileName', { name });
 export const setProfilePicture = (picture: number): void => callReducer('setProfilePicture', { picture });
 export const setAvatar = (avatar: number): void => callReducer('setAvatar', { avatar });
+/** The profile bio (user ask 2026-09-29): trimmed server-side, ≤160 chars, '' clears. */
+export const setBio = (text: string): void => callReducer('setBio', { text });
+/** The profile gender glyph: 0 = hidden, 1 = male, 2 = female. */
+export const setGender = (gender: number): void => callReducer('setGender', { gender });
 export const equipItem = (slot: number, itemId: number): void => callReducer('equipItem', { slot, itemId });
 /** Save the control remap blob (JSON action → key code) to the account. */
 export const setKeybinds = (binds: string): void => callReducer('setKeybinds', { binds });

@@ -25,6 +25,17 @@ export function clear(node: HTMLElement): void {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
+/** Write text ONLY when it changed — the profile page repaints on every data tick. */
+export function setText(node: HTMLElement, text: string): void {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+/** `setText` for a class that must flip with the text (the NEW badge, WIN/LOSS, …). */
+export function setTextClass(node: HTMLElement, text: string, cls: string): void {
+  setText(node, text);
+  if (node.className !== cls) node.className = cls;
+}
+
 /** `@handle` display with a graceful fallback. */
 export function handleOf(name: string): string {
   return name ? `@${name}` : '@unknown';

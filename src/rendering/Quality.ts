@@ -80,13 +80,14 @@ export class Quality {
 
   /**
    * Grass field half extent in metres — the moving detail window (§39/§68).
-   * Sized so the world-anchored recycling boundary sits FAR outside the
-   * readable view (blades are a couple of pixels when they appear) instead of
-   * popping inside it. Density tapers with a steep falloff past the dense
-   * core (34% of the extent), so the far band costs few blades.
+   * Folio-density tuning: folio runs ~280² blades over a SMALL near field
+   * (≈50–90 blades/m², heavily overlapped — no ground gaps). Ours must fit
+   * the same density into the dense core (34% of the extent), so the extent
+   * is sized for blade density, not for reach: even Q2 still overshoots the
+   * ~45 m horizon of the 113 m planet.
    */
   grassHalfExtent(): number {
-    return this.level === 0 ? 160 : this.level === 1 ? 118 : 88;
+    return this.level === 0 ? 110 : this.level === 1 ? 80 : 60;
   }
 
   /** Foliage (leaf cards) fade distance. */

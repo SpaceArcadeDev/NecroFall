@@ -64,10 +64,6 @@ export class Grass {
   private readonly uGrassPush = uniform(1);
   /** Player world position (planet space) — the parting is centred EXACTLY here. */
   private readonly uPushCenter = uniform(new THREE.Vector3(1, 0, 0));
-  /** Smoothed run factor (0 idle → 1 sprint) — scales the directional trail. */
-  private readonly uTrail = uniform(0);
-  /** Smoothed motion direction (world, horizontal) — the trail sweeps this way. */
-  private readonly uPlayerDir = uniform(new THREE.Vector3(0, 0, 1));
 
   private subdivisions: number;
   private halfExtent: number;
@@ -84,9 +80,6 @@ export class Grass {
   private readonly frameB = new THREE.Vector3(0, 0, 1);
   private readonly scratchDir = new THREE.Vector3();
   private readonly scratchOffset = new THREE.Vector3();
-  private readonly scratchVelocity = new THREE.Vector3();
-  private readonly prevFocus = new THREE.Vector3();
-  private trailReady = false;
 
   constructor(
     private readonly surface: PlanetSurface,
@@ -138,11 +131,13 @@ export class Grass {
 
   private updateScale(): void {
     // folio's surfaceOverflow ratio — bigger fields hold slightly larger blades
-    // (clamped: the extended field must not grow reeds)
+    // (clamped). Proportions matched to folio's actual uniform values:
+    // blades are CHUNKY — ~0.19 m wide, ~0.78 m tall — so they overlap into
+    // a continuous lawn instead of reading as separate slivers.
     const surface = Math.pow(this.halfExtent * 2, 2);
     const overflow = Math.min(1.1, Math.max(0, surface - 2000) / 2000);
-    this.uBladeWidth.value = 0.045 * (1 + overflow * 0.28);
-    this.uBladeHeight.value = 0.55 * (1 + overflow * 0.28);
+    this.uBladeWidth.value = 0.07 * (1 + overflow * 0.28);
+    this.uBladeHeight.value = 0.58 * (1 + overflow * 0.28);
   }
 
   /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14). */
@@ -240,9 +235,10 @@ export class Grass {
       hasWater: false,
       hasLightBounce: false,
       shadowNode: (() => {
-        // root shadow like folio: the base of every blade sits in shade
+        // root shadow like folio: the base of every blade sits in shade — this
+        // is what visually "plants" the lawn and reads as contact shadow
         const terrainData = nodes.terrainNode(positionWorld);
-        return tipness.oneMinus().mul(terrainData.y.mul(0.55)) as any;
+        return tipness.oneMinus().mul(terrainData.y.mul(0.75)) as any;
       })(),
     });
 
@@ -311,31 +307,16 @@ export class Grass {
       const tipness = isTip.select(float(1), float(0));
       const sway = windOffset.mul(tipness).mul(shapeUp).mul(this.uSwayStrength);
 
-      // ---- the player PARTS the grass: a standing clearing under the feet PLUS
-      // a DIRECTIONAL trail — blades lean along the motion in a swept streak
-      // behind the player and relax back the moment the run slows (when the
-      // player stops, only the grass below them is moved, the trail vanishes).
+      // ---- the player PARTS the grass: blades within the walk radius bend
+      // away from the player (tip vertices only), centred on their exact world
+      // position. They spring straight back the moment the player has passed —
+      // the INSTANT recovery reads as a natural walking trail, no lane.
       const toPlayerWorld = basePosition.sub(this.uPushCenter);
       const horizontal = toPlayerWorld.sub(direction.mul((toPlayerWorld as any).dot(direction)));
       const playerDistance = (horizontal as any).length();
       const pushInfluence = smoothstep(1.25, 0.15, playerDistance);
       const pushDir = normalize(horizontal as any);
-      const clearingBend = pushDir.mul(pushInfluence.mul(0.55));
-
-      const behind = (horizontal as any).dot(this.uPlayerDir); // + = ahead of motion
-      const lateralVec = horizontal.sub(this.uPlayerDir.mul(behind));
-      const lateralDistance = (lateralVec as any).length();
-      const trailLength = this.uTrail.mul(7.5).add(1.0);
-      const behindMask = smoothstep(trailLength.add(0.8), trailLength.sub(0.2), behind.negate());
-      const frontMask = smoothstep(1.05, 0.15, behind);
-      const lateralMask = smoothstep(1.6, 0.8, lateralDistance);
-      const trailInfluence = max(behindMask, frontMask).mul(lateralMask).mul(this.uTrail);
-      const lateralDir = normalize(lateralVec.add(vec3(0.0001, 0.0001, 0.0001)) as any);
-      const trailBend = this.uPlayerDir
-        .mul(trailInfluence.mul(0.85))
-        .add(lateralDir.mul(trailInfluence.mul(0.35)));
-
-      const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
+      const pushBend = pushDir.mul(pushInfluence.mul(0.55)).mul(tipness).mul(this.uGrassPush);
 
       const vertexPosition = basePosition
         .add(facing.mul(shapeX))
@@ -414,29 +395,6 @@ export class Grass {
 
     // Parting centre = the player's exact world position.
     this.uPushCenter.value.copy(focus);
-
-    // Directional trail: smoothed run factor + motion direction. Ramps in fast
-    // when running, relaxes slower on release — no trail survives a stop.
-    if (this.trailReady) {
-      const dt = Math.max(0.001, this.ticker.delta);
-      this.scratchVelocity.subVectors(focus, this.prevFocus).divideScalar(dt);
-      this.scratchVelocity.addScaledVector(this.scratchDir, -this.scratchVelocity.dot(this.scratchDir));
-      const speed = this.scratchVelocity.length();
-      const target = Math.min(1, speed / 7);
-      const rate = target > this.uTrail.value ? 14 : 5;
-      this.uTrail.value += (target - this.uTrail.value) * (1 - Math.exp(-dt * rate));
-      if (speed > 0.4) {
-        const blend = 1 - Math.exp(-dt * 10);
-        const d = this.uPlayerDir.value;
-        d.set(
-          d.x + (this.scratchVelocity.x / speed - d.x) * blend,
-          d.y + (this.scratchVelocity.y / speed - d.y) * blend,
-          d.z + (this.scratchVelocity.z / speed - d.z) * blend,
-        ).normalize();
-      }
-    }
-    this.prevFocus.copy(focus);
-    this.trailReady = true;
 
     // Keep the water-suppression slots pointed at the basins near the field.
     this.updateWaterSlots();

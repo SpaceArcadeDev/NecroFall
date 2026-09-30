@@ -27,6 +27,7 @@ import {
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
+import { SHADER_GLOBALS } from '../world/ShaderGlobals';
 import { createGameRenderer } from './RendererService';
 import { FolioWorld } from '../world/folio/FolioWorld';
 import { FolioResources } from '../world/folio/FolioResources';
@@ -218,8 +219,6 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
-/** Sun offset (direction × distance) — the shadow frustum rides this from the local focus. */
-const _sunOffset = new THREE.Vector3(1, 0.85, 0.6).normalize().multiplyScalar(400);
 /** Local +Y — the axis every ground decal is built around. */
 const _UP = new THREE.Vector3(0, 1, 0);
 const _qAlign = new THREE.Quaternion();
@@ -5305,8 +5304,22 @@ export class Game {
     // the world visible but put its animation to sleep (plan §106/§107 — the phone stays cool).
     if (this.sunLight) {
       const focus = this.localPlayer ?? this.camTarget;
-      this.sunLight.target.position.copy(focus.position);
-      this.sunLight.position.copy(focus.position).add(_sunOffset);
+      // The shadow light must shine along the SAME direction the Folio materials shade with
+      // (Planet.update writes it to SHADER_GLOBALS.uSunDir every frame). A fixed offset here
+      // meant cast shadows fell on a different side than the lighting — half of the "the
+      // lighting looks off" report (live review 2026-09-30).
+      //
+      // The focus is snapped to the shadow texel grid before it is used: without the snap the
+      // ortho box re-rasterised the map under the camera every frame the player moved, which
+      // shimmers/crawls over every receiver — the "light keeps flickering as I move" report.
+      const texel = (this.sunLight.shadow.camera.right - this.sunLight.shadow.camera.left) / this.sunLight.shadow.mapSize.x;
+      const fx = Math.round(focus.position.x / texel) * texel;
+      const fy = Math.round(focus.position.y / texel) * texel;
+      const fz = Math.round(focus.position.z / texel) * texel;
+      this.sunLight.target.position.set(fx, fy, fz);
+      this.sunLight.position
+        .set(fx, fy, fz)
+        .addScaledVector(SHADER_GLOBALS.uSunDir.value, 400);
     }
     this.folioWorld?.setActive(this.phase === 'playing' || this.phase === 'ended');
     this.folioWorld?.update(dt, this.cam.camera.position, this.collectEnvFocuses(), this.clock);

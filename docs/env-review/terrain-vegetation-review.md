@@ -24,6 +24,52 @@ inspected forever. Use the debug handle `window.necrofall` (`g.folioWorld`, `g.p
 `g.localPlayer`, `g.cam.camera`) to teleport the player/camera and to `g.planet.aimSunAt(dir)`
 when shooting screenshots (a real match aims the sun at the tower ring automatically).
 
+## Follow-up pass — the "grass/lighting look off, light flickers, things pop" report
+
+Second live review (user screenshot: icy planet, grass as dark hatching, lighting mismatch).
+Root causes found and fixed:
+
+### A. Grass didn't wear the ground's colour
+The blades shaded with `terrainAlbedoNode(..., TERRAIN_PALETTE.grass, ...)` — a **hard-coded
+green** — while the actual ground can be any palette (icy blue, volcanic red…). folio's grass
+uses the terrain's OWN colorNode, so blades always read as the ground. Our blades stood out as
+a differently-coloured hatch layer — the "doesn't look like the source repo".
+Fix: the grass bakes a third texture — the ground colour per direction via the **same
+`BiomeGenerator.colorAt`** the terrain mesh bakes its vertices with — and shades with
+`terrainAlbedoNode(data, groundColor, vegetation)` (`Grass.ts` + `FolioWorld.growGrass`).
+
+### B. The grass popped because the frame re-base was inexact
+`shiftFrame` (the tangent-frame re-base that runs when the view travels ~52 m) decoded each
+blade's new offset with `atan2(dot(dir,t1), dot(dir,anchor)) · R` — a small-angle
+approximation of the shader's cap mapping (`dir = anchor·cosθ + û·sinθ`). At 70–90 m offsets
+that is a ~13 % error — **far blades jumped metres on every re-base**, reading as the field
+"yanking/popping" while walking. Fix: the exact inverse (`acos` decomposition), byte-identical
+to the shader's forward mapping.
+
+### C. Folio lighting: shadows didn't match the shading
+The three `DirectionalLight` (shadow map) shone from a **fixed** offset `(1, 0.85, 0.6)`, while
+every folio material shades with the per-planet sun (`SHADER_GLOBALS.uSunDir`). Cast shadows
+fell on a different side than the lighting — "the lighting looks off". Fix (`Game.ts`): the
+light now rides `SHADER_GLOBALS.uSunDir` (same direction the materials shade with).
+
+### D. Flicker while moving = shadow-map crawl (+ a drifting sun)
+The shadow ortho box follows the player and was re-rasterised every frame — sub-texel motion
+shimmers over every receiver. Fix (`Game.ts`): the focus is snapped to the shadow **texel
+grid** before the light is placed. Also removed the old ±0.16 rad sun drift (`Planet.update`) —
+the sun is now rock-steady within a match (the drift kept rotating every lit face and shadow,
+reading as "the light keeps changing").
+
+### E. Tree leaves popping in = hard instance culls
+The per-instance CPU cull wrote zero-scale matrices in one step at the cull distance — and the
+performance-rescue levels (`lodFor`) *change that distance* mid-match (×0.82/×0.62/×0.45), so
+canopies popped on every rescue step. Fix (`Foliage.ts`): a **soft fade band** — instances
+shrink smoothly to zero over the last 22 % of the cull distance (quantised state, no per-frame
+writes). Distance changes and rescue changes both fade instead of popping.
+
+Evidence: `after-05-dead-thirdperson.png` (DEAD planet, third-person: blades now carry the
+ground's icy tone — no dark hatch layer; canopies visible; shot taken with the game's own
+camera).
+
 ## Evidence
 
 | Screenshot | What it shows |
@@ -33,6 +79,7 @@ when shooting screenshots (a real match aims the sun at the tower ring automatic
 | `after-02-grass-jungle.png` | After: JUNGLE — the carpet reaches the horizon; no bare edge, no visible recycling line. |
 | `after-03-trees-jungle.png` | After: JUNGLE — trees with **full blue-green dappled canopies** + folio's coloured shadow on the grass. |
 | `after-04-water-volcanic.png` | After: VOLCANIC — the basin water surface renders (foam ring, ripple sparkles) with the blade carpet and canopied trees around it. |
+| `after-05-dead-thirdperson.png` | After (follow-up pass): DEAD planet in the game's own third-person camera — blades blend with the icy ground, canopies visible, no dark hatch layer. |
 
 ## Root causes found (all fixed)
 

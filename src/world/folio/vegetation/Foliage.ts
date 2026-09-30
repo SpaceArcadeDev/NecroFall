@@ -86,6 +86,8 @@ export class Foliage {
   /** 1 = shown, 0 = culled; 255 = never written yet (forces the first pass to fill everything). */
   private readonly cullState: Uint8Array;
   private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+  /** Scratch for the soft-fade matrices (shrunk copies of the base matrices). */
+  private readonly fadeMatrix = new THREE.Matrix4();
   private readonly seeThroughPosition = uniform(vec2());
   /** Camera→player distance: leaves closer than this can fade, leaves beyond never do. */
   private readonly seeThroughFocusDistance = uniform(1e3);
@@ -295,9 +297,11 @@ export class Foliage {
   }
 
   /**
-   * Per-instance CPU culling: past the category distance or behind the planet's horizon the
-   * instance is written as a zero-scale matrix (invisible). This replaced the old vertex-stage
-   * cull, which depended on the custom instancing path.
+   * Per-instance CPU culling with a SOFT landing: past the category distance or behind the
+   * planet's horizon the instance is written as a zero-scale matrix (invisible); in the last
+   * stretch before the distance it shrinks smoothly instead of vanishing in one step. Both the
+   * camera distance and the rescue-level cull-distance changes then fade out instead of popping
+   * (live review 2026-09-30: "the tree leaves keep popping in").
    *
    * The horizon circle sits at `acos(R/d)` from the camera's own radial — cosine threshold R/d
    * (with a small margin). Using sqrt(1-(R/d)^2) used to hide a huge visible band of foliage.
@@ -312,6 +316,10 @@ export class Foliage {
     const camZ = camera.z * invCam;
     const maxD = this.cullDistance.value;
     const maxD2 = maxD * maxD;
+    // Shrink-to-zero band: the last ~22 % of the cull distance.
+    const fadeStart = maxD * 0.78;
+    const fadeStart2 = fadeStart * fadeStart;
+    const invFadeSpan = 1 / Math.max(1e-3, maxD - fadeStart);
     let changed = false;
     for (let i = 0; i < count; i++) {
       const x = this.centers[i * 3];
@@ -320,13 +328,30 @@ export class Foliage {
       const dx = x - camera.x;
       const dy = y - camera.y;
       const dz = z - camera.z;
-      const tooFar = dx * dx + dy * dy + dz * dz > maxD2;
+      const d2 = dx * dx + dy * dy + dz * dz;
       const len = Math.max(1e-4, Math.sqrt(x * x + y * y + z * z));
       const behind = (x * camX + y * camY + z * camZ) / len < horizonCos;
-      const shown = tooFar || behind ? 0 : 1;
-      if (shown !== this.cullState[i]) {
-        this.cullState[i] = shown;
-        this.mesh.setMatrixAt(i, shown ? this.baseMatrices[i] : this.hidden);
+      // Quantised fade so distant instances are rewritten rarely (state 0 = hidden, 16 = full).
+      let q = 0;
+      if (!behind && d2 <= maxD2) {
+        const fade = d2 <= fadeStart2 ? 1 : 1 - (Math.sqrt(d2) - fadeStart) * invFadeSpan;
+        q = Math.max(1, Math.min(16, Math.round(fade * 16)));
+      }
+      if (q !== this.cullState[i]) {
+        this.cullState[i] = q;
+        if (q === 0) {
+          this.mesh.setMatrixAt(i, this.hidden);
+        } else if (q === 16) {
+          this.mesh.setMatrixAt(i, this.baseMatrices[i]);
+        } else {
+          const m = this.fadeMatrix.copy(this.baseMatrices[i]);
+          const s = q / 16;
+          const e = m.elements;
+          e[0] *= s; e[1] *= s; e[2] *= s;
+          e[4] *= s; e[5] *= s; e[6] *= s;
+          e[8] *= s; e[9] *= s; e[10] *= s;
+          this.mesh.setMatrixAt(i, m);
+        }
         changed = true;
       }
     }

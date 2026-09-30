@@ -55,7 +55,11 @@ export interface FolioWorldPlanet {
     moistureAt(x: number, y: number, z: number): number;
     corruptionAt(x: number, y: number, z: number): number;
   };
-  biome: { plantDensityAt(x: number, y: number, z: number): number };
+  biome: {
+    plantDensityAt(x: number, y: number, z: number): number;
+    /** The terrain mesh's own vertex-colour baker — shared with the grass blades. */
+    colorAt(x: number, y: number, z: number, h: number, slope: number, out: THREE.Color, scratch: THREE.Color): void;
+  };
   archetype: {
     palette: { deep: number; low: number; mid: number; ridge: number; peak: number; vein: number };
     sky: { zenith: number; horizon: number; nebula: number; fog: number };
@@ -281,6 +285,8 @@ export class FolioWorld {
   growGrass(towers: THREE.Vector3[], focus: THREE.Vector3 | null): void {
     const planet = this.options.planet;
     const quality = this.options.quality;
+    // Scratch for the ground-colour baker the grass shares with the terrain mesh.
+    const grassScratch = new THREE.Color();
 
     // Wild meadows: seeded patches away from the battlefield (plan §13's "world beyond the fight").
     this.meadows.length = 0;
@@ -317,6 +323,11 @@ export class FolioWorld {
       reliefMin: planet.reliefMin,
       reliefMax: planet.reliefMax,
       waterline01: clamp((planet.waterLevel - planet.reliefMin) / Math.max(1e-3, planet.reliefMax - planet.reliefMin), 0, 1),
+      // Blades wear the ground's own colour: the exact BiomeGenerator.colorAt the terrain mesh
+      // bakes per vertex — folio's shared terrain colorNode. Without it the blades were
+      // green-by-default on every palette (the user's “grass doesn't look like the source
+      // repo” screenshot: icy ground with green/blue hatch blades, live review 2026-09-30).
+      colorAt: (x, y, z, height, slope, out) => planet.biome.colorAt(x, y, z, height, slope, out, grassScratch),
       castShadows: false,
     });
     this.options.scene.add(this.grass.mesh);

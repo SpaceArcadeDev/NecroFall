@@ -357,11 +357,10 @@ export class Planet {
   /** Per-frame uniform updates (shared by the GLSL gameplay shaders and the Folio materials). */
   update(dt: number, cameraPos: THREE.Vector3): void {
     updateShaderGlobals(dt, cameraPos);
-    // slow sun drift keeps highlights moving across the surface
-    const time = SHADER_GLOBALS.uTime.value;
-    SHADER_GLOBALS.uSunDir.value.copy(this.sunBase)
-      .applyAxisAngle(this.sunAxis, Math.sin(time * 0.01) * 0.16)
-      .normalize();
+    // The sun is ROCK-STEADY within a match (like folio's day preset). The old drift
+    // (`sin(time×0.01) × 0.16` rad swing) kept rotating every lit face and every cast shadow —
+    // the "the light keeps changing" report (live review 2026-09-30).
+    SHADER_GLOBALS.uSunDir.value.copy(this.sunBase);
     // The Folio family reads the same sun through its own uniform.
     FOLIO.lighting.direction.value.copy(SHADER_GLOBALS.uSunDir.value);
     FOLIO.lighting.color.value.copy(SHADER_GLOBALS.uSunColor.value);

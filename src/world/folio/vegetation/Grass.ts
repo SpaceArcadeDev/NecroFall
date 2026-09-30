@@ -50,7 +50,7 @@ import {
 } from 'three/tsl';
 import { clamp, Rand } from '../../../utils/Utils';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
-import { terrainAlbedoNode, TERRAIN_PALETTE } from '../terrain/NecroFallTerrainNode';
+import { terrainAlbedoNode } from '../terrain/NecroFallTerrainNode';
 import { FOLIO } from '../FolioShaderGlobals';
 import type { TerrainSurface } from '../../TerrainSurface';
 
@@ -71,6 +71,14 @@ export interface GrassOptions {
   reliefMax: number;
   /** Waterline as height01 (0..1 of the relief band); -1 = dry world. */
   waterline01?: number;
+  /**
+   * Ground colour at a direction — the SAME `BiomeGenerator.colorAt` the terrain mesh bakes per
+   * vertex. Blades must wear exactly the ground's colour (folio: the grass shares the terrain's
+   * `colorNode`). Without this the blades used a hard-coded green while the ground could be any
+   * palette — the user's "grass doesn't look like the source repo" (icy ground + green/blue
+   * hatch blades, live review 2026-09-30).
+   */
+  colorAt?(x: number, y: number, z: number, height: number, slope: number, out: THREE.Color): void;
   castShadows?: boolean;
 }
 
@@ -98,6 +106,8 @@ function helperAxis(y: number): THREE.Vector3 {
 }
 const _axisX = new THREE.Vector3(1, 0, 0);
 const _axisY = new THREE.Vector3(0, 1, 0);
+/** Scratch colour for the ground-colour bake (one texel at a time). */
+const _bakeColor = new THREE.Color();
 
 export class Grass {
   /**
@@ -156,7 +166,7 @@ export class Grass {
     this.positionAttribute = this.buildGeometry();
     const data = this.bakeTerrainTextures();
 
-    this.material = this.buildMaterial(data.texA, data.texB);
+    this.material = this.buildMaterial(data.texA, data.texB, data.texC);
     this.mesh = new THREE.Mesh(this.geometry!, this.material);
     this.mesh.name = 'folio-grass';
     this.mesh.frustumCulled = false; // the field follows the camera; a baked bound would lie
@@ -231,16 +241,20 @@ export class Grass {
   }
 
   /**
-   * Bake the per-direction terrain data into two equirect textures — the spherical stand-in for
-   * folio's `terrain.terrainNode(bladePosition)`. A = (slope, height01, moisture, corruption),
-   * B = vegetation (0..1.6 → 0..255). Sampled per blade in the vertex/fragment shaders, so a
-   * wrapped blade always wears the data of the ground it currently stands on.
+   * Bake the per-direction terrain data into three equirect textures — the spherical stand-in
+   * for folio's `terrain.terrainNode(bladePosition)`. A = (slope, height01, moisture,
+   * corruption), B = vegetation (0..1.6 → 0..255), C = the ground colour (the exact value the
+   * terrain mesh carries in its `color` attribute). Sampled per blade in the vertex/fragment
+   * shaders, so a wrapped blade always wears the data AND the colour of the ground it currently
+   * stands on — folio's shared-colorNode guarantee.
    */
-  private bakeTerrainTextures(): { texA: THREE.DataTexture; texB: THREE.DataTexture } {
+  private bakeTerrainTextures(): { texA: THREE.DataTexture; texB: THREE.DataTexture; texC: THREE.DataTexture } {
     const surface = this.options.surface;
     const reliefSpan = Math.max(1e-3, this.options.reliefMax - this.options.reliefMin);
     const texA = new Uint8Array(TEX_W * TEX_H * 4);
     const texB = new Uint8Array(TEX_W * TEX_H);
+    const texC = new Uint8Array(TEX_W * TEX_H * 4);
+    const color = _bakeColor;
 
     for (let y = 0; y < TEX_H; y++) {
       const lat = (y / (TEX_H - 1) - 0.5) * Math.PI;
@@ -263,6 +277,14 @@ export class Grass {
         texA[i + 2] = clamp(moisture, 0, 1) * 255;
         texA[i + 3] = clamp(corruption, 0, 1) * 255;
         texB[y * TEX_W + x] = clamp(veg / 1.6, 0, 1) * 255;
+
+        // Ground colour: same baker as the terrain mesh (see GrassOptions.colorAt).
+        color.setRGB(1, 1, 1);
+        this.options.colorAt?.(dx, sinLat, dz, h, clamp(slope, 0, 1), color);
+        texC[i] = clamp(color.r, 0, 1) * 255;
+        texC[i + 1] = clamp(color.g, 0, 1) * 255;
+        texC[i + 2] = clamp(color.b, 0, 1) * 255;
+        texC[i + 3] = 255;
       }
     }
 
@@ -277,7 +299,11 @@ export class Grass {
       return tex;
     };
 
-    return { texA: wrap(texA, THREE.RGBAFormat, 4), texB: wrap(texB, THREE.RedFormat, 1) };
+    return {
+      texA: wrap(texA, THREE.RGBAFormat, 4),
+      texB: wrap(texB, THREE.RedFormat, 1),
+      texC: wrap(texC, THREE.RGBAFormat, 4),
+    };
   }
 
   private buildBasis(dir: THREE.Vector3, t1: THREE.Vector3, t2: THREE.Vector3): void {
@@ -293,7 +319,7 @@ export class Grass {
   readonly bladeHeightU: any = uniform(0.6);
   readonly bladeRandomnessU: any = uniform(0.6);
 
-  private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture): MeshDefaultMaterial {
+  private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture, texC: THREE.DataTexture): MeshDefaultMaterial {
     // --- folio's overflow formula, CLAMPED: folio grows the blades when the field grows (their
     // field resizes with the view LOD). Our field now covers the whole visible ground (190 m
     // wide), which would push the raw overflow to 17 → 3.8 m blades. The clamp keeps the tuned
@@ -326,11 +352,13 @@ export class Grass {
     // fragment stage samples at the interpolated `vUv`.
     const sampleA = Fn(([uvNode]: any[]) => texture(texA, uvNode));
     const sampleVeg = Fn(([uvNode]: any[]) => (texture(texB, uvNode) as any).r.mul(1.6));
+    const sampleGround = Fn(([uvNode]: any[]) => (texture(texC, uvNode) as any).rgb);
 
     const material = new MeshDefaultMaterial({
       colorNode: Fn(() => {
-        // Folio: the terrain's own colour function, evaluated at this blade's data.
-        return terrainAlbedoNode(sampleA(vUv), TERRAIN_PALETTE.grass, sampleVeg(vUv).div(1.6));
+        // Folio: the terrain's own colour function, evaluated at the blade's data AND with the
+        // ground's own baked colour — the blades wear the ground, they are not green-by-default.
+        return terrainAlbedoNode(sampleA(vUv), sampleGround(vUv), sampleVeg(vUv).div(1.6));
       })(),
       // Folio passes a constant (0, 1, 0); on the sphere that is the blade's surface up.
       normalNode: vUp,
@@ -521,10 +549,21 @@ export class Grass {
       const dy = oldAnchor.y * Math.cos(r) + (oldT1.y * lu + oldT2.y * lv) * (sinR / len);
       const dz = oldAnchor.z * Math.cos(r) + (oldT1.z * lu + oldT2.z * lv) * (sinR / len);
 
-      // Into the new frame (angular offsets, metres of arc), wrapped into the field window.
-      const ca = dx * newAnchor.x + dy * newAnchor.y + dz * newAnchor.z;
-      const nu = Math.atan2(dx * t1n.x + dy * t1n.y + dz * t1n.z, ca) * radius;
-      const nv = Math.atan2(dx * t2n.x + dy * t2n.y + dz * t2n.z, ca) * radius;
+      // Into the new frame — the EXACT inverse of the shader's cap mapping (`θ = |offset|/R`,
+      // `dir = anchor·cosθ + û·sinθ`). The old `atan2(dot(dir,t1), dot(dir,anchor))·R` form was
+      // only a small-angle approximation: at 70-90 m offsets it shifted blades by metres on
+      // EVERY frame re-base — visible as the far field jumping/yanking while the player walked
+      // ("the grass keeps popping in", live review 2026-09-30).
+      const ca = clamp(dx * newAnchor.x + dy * newAnchor.y + dz * newAnchor.z, -1, 1);
+      const theta = Math.acos(ca);
+      const sinTheta = Math.sin(theta);
+      let nu = 0;
+      let nv = 0;
+      if (theta > 1e-6 && sinTheta > 1e-6) {
+        const invSin = 1 / sinTheta;
+        nu = ((dx - newAnchor.x * ca) * t1n.x + (dy - newAnchor.y * ca) * t1n.y + (dz - newAnchor.z * ca) * t1n.z) * invSin * theta * radius;
+        nv = ((dx - newAnchor.x * ca) * t2n.x + (dy - newAnchor.y * ca) * t2n.y + (dz - newAnchor.z * ca) * t2n.z) * invSin * theta * radius;
+      }
       const wu = (((nu + half) % size) + size) % size - half;
       const wv = (((nv + half) % size) + size) % size - half;
       pos[o] = wu; pos[o + 2] = wu; pos[o + 4] = wu;

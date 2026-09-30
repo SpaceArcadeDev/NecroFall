@@ -1,11 +1,18 @@
 // NECROFALL — bootstrap.
 //
-// DEFAULT: the folio-style WebGPU PLANET WORLD boots directly — the new
-// environment + architecture stack, generated fully procedurally per seed/ring
-// through the game's planet pipeline (`planetAt` + `makePlanetSpec`).
-//   • `#/dev` / `?devworld` — aliases of the default (kept for scripts/tests).
-//   • `?legacy` / `#/legacy` — the previous account shell + WebGL game, exactly
-//     as it was (SpacetimeDB login/onboarding → MOBA shell → matches).
+// The account shell decides what boots:
+//   • SpacetimeDB configured + signed in → login/onboarding → MOBA shell →
+//     official (SpacetimeDB-authoritative) or P2P (existing WebRTC) play —
+//     classic and rank matches run exactly as they always have.
+//   • Anything else → the existing game boots exactly as it always has.
+//
+// PLANET WORLD (the new folio-style environment + architecture stack):
+//   • `#/world` (or `#/dev`, `?world`, `?devworld`) boots the planet scene —
+//     fully procedurally generated per seed/ring through the game's planet
+//     pipeline (planetAt + makePlanetSpec).
+//   • The gameplay migration (classic/rank matches running ON the planet
+//     world) lands as a staged port: world adapter → entity bridge → mode
+//     wiring → netcode — the routes above are where it will become default.
 import { AppShell } from './app/AppShell';
 import { SpacetimeConnection } from './app/spacetimedb/connection';
 import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
@@ -13,11 +20,15 @@ import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
 const app = document.getElementById('app');
 if (!app) throw new Error('#app container missing');
 
-const legacyRoute =
-  new URLSearchParams(window.location.search).has('legacy') ||
-  /^#\/?(legacy|shell)\b/i.test(window.location.hash);
+const params = new URLSearchParams(window.location.search);
+const planetWorldRoute =
+  /^#\/?(dev-world|dev|world)\b/i.test(window.location.hash) ||
+  params.has('world') ||
+  params.has('devworld');
 
-if (legacyRoute) {
+if (planetWorldRoute) {
+  void import('./dev/DevWorld').then((module) => module.startDevWorld());
+} else {
   const shell = new AppShell(app);
   void shell.boot();
 
@@ -29,7 +40,4 @@ if (legacyRoute) {
   // familiar `necrofall`.
   (window as unknown as { necrofallShell: AppShell }).necrofallShell = shell;
   (window as unknown as { necrofallDb: SpacetimeConnection }).necrofallDb = SpacetimeConnection.shared;
-} else {
-  // THE PLANET WORLD — the new default environment + architecture.
-  void import('./dev/DevWorld').then((module) => module.startDevWorld());
 }

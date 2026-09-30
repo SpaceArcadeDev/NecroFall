@@ -8,7 +8,7 @@
 //
 // It never touches per-object transforms: nothing MOVES when the camera moves, only budgets do.
 import * as THREE from 'three/webgpu';
-import { lodFor, type LodCategory } from '../folio/vegetation/VegetationLOD';
+import { lodFor, type LodCategory } from '../../rendering/Environment/VegetationLOD';
 import type { QualitySettings } from '../../core/Config';
 
 export interface ShaderCulledSystem {

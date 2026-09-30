@@ -28,9 +28,16 @@ import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
 import { SHADER_GLOBALS } from '../world/ShaderGlobals';
-import { createGameRenderer } from './RendererService';
-import { FolioWorld } from '../world/folio/FolioWorld';
-import { FolioResources } from '../world/folio/FolioResources';
+import { Rendering } from '../rendering/Rendering';
+import { Viewport } from '../rendering/Viewport';
+import { Quality, qualityLevelForPreset } from '../rendering/Quality';
+import { Ticker, TICK } from '../rendering/Ticker';
+import { Time } from '../rendering/Time';
+import { Lighting } from '../rendering/Environment/Lighting';
+import { Fog } from '../rendering/Environment/Fog';
+import { RenderStateCollector } from '../game/RenderState';
+import { World } from '../rendering/Environment/World';
+import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
 import type { WebGPURenderer } from 'three/webgpu';
 import { Effects } from '../effects/Effects';
 import { TelegraphSystem } from '../effects/Telegraphs';
@@ -268,12 +275,25 @@ export class Game {
   renderer: WebGPURenderer;
   /** 'webgpu' | 'webgl' — which backend actually came up (telemetry / debug overlay). */
   rendererBackend: 'webgpu' | 'webgl' = 'webgl';
-  /** The world's sun: the single shadow caster the Folio materials catch (plan §35/§36). */
-  private sunLight: THREE.DirectionalLight | null = null;
+  /**
+   * The Folio rendering core (plan §4–§7): viewport → quality → renderer + post pipeline, and
+   * the ordered ticker that drives every environment stage (Time … Rendering at 998).
+   */
+  readonly viewport: Viewport;
+  readonly quality: Quality;
+  readonly rendering: Rendering;
+  readonly ticker = new Ticker();
+  readonly envTime: Time;
+  /** The Folio lighting rig (plan §33): one shadow-casting sun + hemisphere fill + rim. */
+  readonly lighting: Lighting;
+  /** The Folio atmosphere (plan §35): shared fog state + the legacy FogExp2 mirror. */
+  readonly fog: Fog;
+  /** The rendering boundary (plan §1): the per-frame gameplay snapshot the environment reads. */
+  readonly renderState = new RenderStateCollector();
   /** The Folio world (vegetation/scenery/water/physics/occlusion) for the CURRENT planet. */
-  folioWorld: FolioWorld | null = null;
+  folioWorld: World | null = null;
   /** One loader/cache for the Folio assets, shared by every planet rebuild. */
-  private folioResources: FolioResources | null = null;
+  private folioResources: ResourcesLoader | null = null;
   cam: GameCamera;
   planet: Planet;
   effects: Effects;
@@ -628,50 +648,41 @@ export class Game {
     this.qualityPref = loadQualityPref();
     this.fpsPref = loadFpsPref();
     this.settings = qualitySettings(resolveQuality(this.qualityPref));
-    const rendererHandle = createGameRenderer({ antialias: this.settings.name !== 'low' });
-    this.renderer = rendererHandle.renderer;
-    this.rendererBackend = rendererHandle.backend;
-    void rendererHandle.ready.then(() => {
-      this.rendererBackend = rendererHandle.backend;
-      this.rendererReady = true;
+    // The Folio rendering core (plan §4–§7): ONE WebGPURenderer (WebGL2 fallback backend), the
+    // viewport + quality owners, and the ordered ticker every environment stage subscribes to.
+    this.viewport = new Viewport();
+    this.quality = new Quality(qualityLevelForPreset(this.settings.name));
+    this.rendering = new Rendering({
+      scene: this.scene,
+      viewport: this.viewport,
+      quality: this.quality,
     });
-    // Shadows: the Folio materials catch the shadow map through `receivedShadowNode`; the single
-    // directional light below is the caster. Environment shadow depth is a quality tier (plan §36).
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.envTime = new Time(this.ticker);
+    this.renderer = this.rendering.renderer;
+    this.rendererBackend = this.rendering.backend;
     // NEVER the raw devicePixelRatio on a phone: a 3x panel would triple the shaded pixels for no
     // visible gain at arm's length. See `baseDpr` / `currentDpr` and DPR_CAP in Config.ts.
-    this.renderer.setPixelRatio(this.currentDpr());
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.rendering.setRenderScale(this.currentDpr());
     this.renderer.setClearColor(0x09060f);
     this.app.appendChild(this.renderer.domElement);
-    this.folioResources = new FolioResources(this.renderer);
+    this.folioResources = new ResourcesLoader(this.renderer);
 
-    this.scene.fog = new THREE.FogExp2(0x171029, 0.0012);
-    const hemi = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff0d8, 1.5);
-    sun.position.set(1, 0.85, 0.6).multiplyScalar(400);
-    sun.castShadow = this.settings.environmentShadows;
-    sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.near = 200;
-    sun.shadow.camera.far = 620;
-    sun.shadow.camera.left = -70;
-    sun.shadow.camera.right = 70;
-    sun.shadow.camera.top = 70;
-    sun.shadow.camera.bottom = -70;
-    this.scene.add(sun);
-    // The frustum is small (±70 m) so it must FOLLOW the action: the shadow box originally sat
-    // at the world origin, which left every match fought anywhere else on the 130-180 m-radius
-    // planet entirely unshadowed.
-    this.scene.add(sun.target);
-    this.sunLight = sun;
-    const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
-    rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
-    this.scene.add(rim);
+    // The Folio atmosphere (plan §35): shader-state fog, mirrored into the legacy FogExp2 for
+    // the materials that are not TSL yet.
+    this.fog = new Fog();
+    this.fog.syncLegacy(this.scene);
+    // The Folio lighting rig (plan §33): ONE shadow-casting sun — no point lights per crystal,
+    // tower, puddle or enemy. Radioactive light comes from emissive materials + bloom.
+    this.lighting = new Lighting({
+      scene: this.scene,
+      shadows: this.settings.environmentShadows,
+      shadowMapSize: this.quality.shadowMapSize(),
+    });
     this.buildStarfield();
 
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
+    // The post pipeline is built against this camera in `Rendering.init()` (called in `start()`).
+    this.rendering.attachCamera(this.cam.camera);
     this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
     this.wireFolioWorld(null);
     this.effects = new Effects(this.scene, this.settings);
@@ -1025,8 +1036,9 @@ export class Game {
   }
 
   onResize(): void {
+    this.viewport.measure();
     this.applyRenderScale();
-    this.cam.resize(window.innerWidth / window.innerHeight);
+    this.cam.resize(this.viewport.ratio);
   }
 
   // ------------------------------------------------------------ render scale (DPR)
@@ -1047,10 +1059,9 @@ export class Game {
     return Math.max(0.5, Math.round(base * PERF.dprLadder[this.dprStep] * 100) / 100);
   }
 
-  /** Applies the render scale. Only the WebGL buffer changes — the CSS/UI keeps the device DPR. */
+  /** Applies the render scale through the ONE renderer owner. The CSS/UI keeps the device DPR. */
   private applyRenderScale(): void {
-    this.renderer.setPixelRatio(this.currentDpr());
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.rendering.setRenderScale(this.currentDpr());
   }
 
   /**
@@ -1243,6 +1254,8 @@ export class Game {
     this.applyRenderScale();
     this.resetRescue();
     this.enemyBudget = next.maxEnemies;
+    // The renderer's own quality level follows the preset (bloom mip count / DOF availability).
+    this.quality.setLevel(qualityLevelForPreset(next.name));
     this.enemies.cullTo(this.enemyBudget);
 
     // Menu world: rebuild it so the terrain detail / decoration change is visible right away.
@@ -1252,7 +1265,7 @@ export class Game {
       this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
       this.telegraphs.setPlanet(this.planet);
       this.effects.setPlanet(this.planet);
-      if (this.sunLight) this.sunLight.castShadow = this.settings.environmentShadows;
+      this.lighting.setEnvironmentShadows(this.settings.environmentShadows);
       this.wireFolioWorld(null);
       old.dispose();
     }
@@ -1278,7 +1291,7 @@ export class Game {
     this.folioWorld?.dispose();
     this.folioWorld = null;
 
-    const world = new FolioWorld({
+    const world = new World({
       scene: this.scene,
       planet: this.planet,
       quality: this.settings,
@@ -1326,6 +1339,28 @@ export class Game {
       this.ui.banner('GRAPHICS RESTORED', 2600);
     });
     PerformanceMonitor.init();
+    // Bring the renderer up (WebGPU init + post pipeline construction). The loop below is gated
+    // on `rendererReady` until it resolves — `render()` throws before `init()` on WebGPU.
+    void this.rendering
+      .init()
+      .then(() => {
+        this.rendererBackend = this.rendering.backend;
+        this.rendererReady = true;
+      })
+      .catch((error) => {
+        console.warn('[NECROFALL] renderer init failed', error);
+      });
+    // The render step is the ticker's LAST stage (folio 998) — everything the frame draws has
+    // already been advanced by the stages before it.
+    this.ticker.on(TICK.RENDERING, () => {
+      if (this.rendererReady) this.rendering.render();
+    });
+    // The environment ticks at its own stage (plan §43/§45): after ALL gameplay simulation, so
+    // the world always renders the frame the player is in. `PlanetRenderer` owns the order of
+    // the systems inside this stage.
+    this.ticker.on(TICK.PLANET, () => {
+      this.folioWorld?.update(this.ticker.delta, this.cam.camera.position, this.collectEnvFocuses(), this.clock, this.renderState);
+    });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
     const wake = (): void => { this.lastInteractionAt = performance.now(); };
     for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
@@ -1377,11 +1412,10 @@ export class Game {
         // be attributed to the GPU draw or the CPU simulation instead of guessed at.
         PerformanceMonitor.beginRender();
         const r0 = performance.now();
-        // `render()` must wait for `init()`: the WebGPU backend throws until it resolves, and the
-        // frame-error guard would swallow (and log) every boot frame.
-        if (this.rendererReady) {
-          this.renderer.render(this.scene, this.cam.camera);
-        }
+        // The ordered tick (plan §43): Time → … → gameplay VFX → Rendering(998). The game's own
+        // `update(dt)` ran directly above; every environment stage lands after it, and the render
+        // step itself waits for `init()`.
+        this.ticker.update(dt);
         this.renderMs += (performance.now() - r0 - this.renderMs) * 0.1;
         PerformanceMonitor.endRender(this.renderer, this.phase, this.settings.name);
       } catch (err) {
@@ -5162,6 +5196,9 @@ export class Game {
     // water → resolution, all read through the Folio visibility table. Gameplay systems are never
     // sacrificed before every environment knob is spent.
     this.folioWorld?.setRescueLevel(this.rescueLevel);
+    // Plan §83: the LAST rescue step turns cheapDOF off (a full-screen pass). Bloom stays, so the
+    // radioactive accents never lose their glow under load.
+    this.quality.setLevel(this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));
   }
 
   /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */
@@ -5330,27 +5367,15 @@ export class Game {
     this.planet.update(dt, this.cam.camera.position);
     // The Folio environment: shared globals, occlusion, water, particles, physics LOD. Menus keep
     // the world visible but put its animation to sleep (plan §106/§107 — the phone stays cool).
-    if (this.sunLight) {
-      const focus = this.localPlayer ?? this.camTarget;
-      // The shadow light must shine along the SAME direction the Folio materials shade with
-      // (Planet.update writes it to SHADER_GLOBALS.uSunDir every frame). A fixed offset here
-      // meant cast shadows fell on a different side than the lighting — half of the "the
-      // lighting looks off" report (live review 2026-09-30).
-      //
-      // The focus is snapped to the shadow texel grid before it is used: without the snap the
-      // ortho box re-rasterised the map under the camera every frame the player moved, which
-      // shimmers/crawls over every receiver — the "light keeps flickering as I move" report.
-      const texel = (this.sunLight.shadow.camera.right - this.sunLight.shadow.camera.left) / this.sunLight.shadow.mapSize.x;
-      const fx = Math.round(focus.position.x / texel) * texel;
-      const fy = Math.round(focus.position.y / texel) * texel;
-      const fz = Math.round(focus.position.z / texel) * texel;
-      this.sunLight.target.position.set(fx, fy, fz);
-      this.sunLight.position
-        .set(fx, fy, fz)
-        .addScaledVector(SHADER_GLOBALS.uSunDir.value, 400);
-    }
+    // The shadow box follows the action (player first), snapped to the shadow texel grid so the
+    // map never shimmers — see Lighting.update.
+    this.lighting.update((this.localPlayer ?? this.camTarget).position);
+    this.fog.syncLegacy(this.scene);
+    // The rendering boundary (plan §1): snapshot the gameplay pose the environment reads.
+    // (Enemy/effect capture lights up here when a rendering consumer needs it — the collector
+    // is pooled and allocation-free either way.)
+    this.renderState.capture(this.localPlayer);
     this.folioWorld?.setActive(this.phase === 'playing' || this.phase === 'ended');
-    this.folioWorld?.update(dt, this.cam.camera.position, this.collectEnvFocuses(), this.clock);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());
     this.updateIndicators(dt);
     this.updateModalTimers(dt);

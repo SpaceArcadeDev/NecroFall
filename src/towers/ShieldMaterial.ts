@@ -19,7 +19,7 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import { FOLIO } from '../world/folio/FolioShaderGlobals';
+import { FOLIO } from '../rendering/FolioShaderGlobals';
 
 /** Shared helpers (kept as plain functions so each material reads like the GLSL did). */
 const viewDirNode = () => (FOLIO.cameraPosition as any).sub(positionWorld).normalize();

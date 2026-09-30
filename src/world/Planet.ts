@@ -19,9 +19,9 @@ import { deriveArchetype, type PlanetArchetype } from './PlanetArchetypes';
 import { TerrainGenerator } from './TerrainGenerator';
 import { BiomeGenerator } from './BiomeGenerator';
 import type { Landmark } from './LandmarkGenerator';
-import { TerrainVisual } from './folio/terrain/TerrainVisual';
-import { TERRAIN_PALETTE } from './folio/terrain/NecroFallTerrainNode';
-import { FOLIO } from './folio/FolioShaderGlobals';
+import { TerrainVisual } from '../rendering/Environment/PlanetTerrain';
+import { TERRAIN_PALETTE } from '../rendering/Environment/PlanetTerrainNodes';
+import { FOLIO } from '../rendering/FolioShaderGlobals';
 
 const _up = new THREE.Vector3();
 const _t1 = new THREE.Vector3();

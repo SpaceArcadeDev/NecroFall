@@ -21,7 +21,7 @@ import {
   vec4,
 } from 'three/tsl';
 import type { EnemyGenome } from './EnemyGenomes';
-import { FOLIO } from '../world/folio/FolioShaderGlobals';
+import { FOLIO } from '../rendering/FolioShaderGlobals';
 import { Rand } from '../utils/Utils';
 
 const GEO = {

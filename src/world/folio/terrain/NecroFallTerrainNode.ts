@@ -93,11 +93,11 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
   albedo.assign(albedo.mul(wet.mul(0.16).add(0.84)));
 
   // Shoreline: a dry band just above the waterline, a deep tint below it.
-  const aboveWater = height01.sub(TERRAIN_PALETTE.waterline01).max(0);
+  const aboveWater = height01.sub(FOLIO.terrain.waterline01).max(0);
   const dryBand = aboveWater.mul(30).smoothstep(0, 0.5);
   albedo.assign(albedo.mul(dryBand.mul(0.2).add(0.8)));
 
-  const below = TERRAIN_PALETTE.waterline01.sub(height01).max(0).mul(30).min(1);
+  const below = FOLIO.terrain.waterline01.sub(height01).max(0).mul(30).min(1);
   albedo.assign(albedo.mix(TERRAIN_PALETTE.deep, below.mul(0.35)));
 
   // Necrotic wash: the shared corruption field tinted towards the archetype's vein colour.

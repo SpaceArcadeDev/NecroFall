@@ -308,7 +308,7 @@ export class FolioWorld {
       surface: this.surface,
       seed: planet.seed,
       density: quality.grassDensity,
-      maxDistance: 62 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
+      maxDistance: 95 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
       towers,
       meadows: this.meadows,
       moistureAt: (x, y, z) => planet.terrain.moistureAt(x, y, z),

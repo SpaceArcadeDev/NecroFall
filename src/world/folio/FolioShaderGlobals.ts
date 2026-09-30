@@ -113,6 +113,20 @@ class FolioNecro {
 }
 
 /**
+ * The current planet's relief band + waterline, shared like wind/lighting. Written once per
+ * planet by `Planet`'s constructor. Grass blade bases, the terrain's shoreline wash and the
+ * water washes all read THIS object — the module-level palette copies could split across the
+ * dev server's module graph, leaving the grass buried at radius 0 (live bug 2026-09-30).
+ */
+class FolioTerrainBand {
+  /** Radius band that height01 spans. */
+  readonly reliefMin = uniform(0);
+  readonly reliefMax = uniform(1);
+  /** Waterline as height01 (everything below it is submerged); -1 = dry world. */
+  readonly waterline01 = uniform(-1);
+}
+
+/**
  * The shared environment state. `update()` is called once per frame by FolioWorld; everything
  * else only ever writes uniforms.
  */
@@ -132,6 +146,7 @@ class FolioState {
   readonly water = new FolioWater();
   readonly reveal = new FolioReveal();
   readonly necro = new FolioNecro();
+  readonly terrain = new FolioTerrainBand();
 
   /** Feed the per-frame state that is not gameplay-owned (time, camera, wind clock). */
   update(dt: number, cameraPos: THREE.Vector3): void {

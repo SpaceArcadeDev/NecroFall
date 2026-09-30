@@ -268,13 +268,12 @@ export class Grass {
   readonly bladeRandomnessU: any = uniform(0.6);
 
   private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture): MeshDefaultMaterial {
-    // --- folio's overflow formulas, tuned to NecroFall's scale: the third-person camera sits a
-    // couple of metres up, so grass must stay ankle-to-knee high (~0.3–0.5 m) instead of folio's
-    // chest-high blades, or it fills the frame from any ground-level position.
+    // --- folio's overflow formulas, tuned to NecroFall's scale: tall enough to read as folio's
+    // lush field in third person (≈0.6 m after the overflow term) without swallowing the camera.
     const surface = this.size * this.size;
     const surfaceOverflow = Math.max(0, surface - SURFACE_IDEAL) / SURFACE_IDEAL;
-    this.bladeWidthU.value = 0.04 * (1 + surfaceOverflow * 0.5);
-    this.bladeHeightU.value = 0.22 * (1 + surfaceOverflow * 0.5);
+    this.bladeWidthU.value = 0.055 * (1 + surfaceOverflow * 0.5);
+    this.bladeHeightU.value = 0.4 * (1 + surfaceOverflow * 0.5);
     const bladeWidth = this.bladeWidthU;
     const bladeHeight = this.bladeHeightU;
     const bladeHeightRandomness = this.bladeRandomnessU;
@@ -366,13 +365,13 @@ export class Grass {
         .add(0.45)
         .clamp(0, 1)
         .mul(a.w.oneMinus().mul(0.45).add(0.55));
-      const aboveWater = height01.sub(TERRAIN_PALETTE.waterline01).max(0).mul(50).clamp(0, 1);
+      const aboveWater = height01.sub(FOLIO.terrain.waterline01).max(0).mul(50).clamp(0, 1);
       const mask = flatness.mul(lush).mul(aboveWater).clamp(0, 1);
       vMask.assign(mask);
 
       // Height: folio's bladeHeight × mix(1, random, 0.6) × noise variation × grass mask.
-      const baseRadius = TERRAIN_PALETTE.reliefMin.add(
-        height01.mul(TERRAIN_PALETTE.reliefMax.sub(TERRAIN_PALETTE.reliefMin)),
+      const baseRadius = FOLIO.terrain.reliefMin.add(
+        height01.mul(FOLIO.terrain.reliefMax.sub(FOLIO.terrain.reliefMin)),
       );
       const heightVariation = mx_noise_float(vec3(loopPosition.x, float(0), loopPosition.y).mul(0.0321))
         .mul(0.5)
@@ -480,8 +479,16 @@ export class Grass {
       const a = this.rand.next() * Math.PI * 2;
       const rMin = includeCentre ? 0 : 0.5;
       const r = half * (rMin + (1 - rMin) * this.rand.next());
-      pos[i * 2] = Math.cos(a) * r;
-      pos[i * 2 + 1] = Math.sin(a) * r;
+      const u = Math.cos(a) * r;
+      const v = Math.sin(a) * r;
+      // `aField` carries one value PER VERTEX (3 consecutive entries per blade). Every write
+      // must replicate to all THREE vertices — writing a single slot leaves the blade's corners
+      // reading DIFFERENT field values, and the triangle stretches across the planet (the giant
+      // screen-filling facets — live bug 2026-09-30: any re-anchor, e.g. landing, exploded the
+      // whole field).
+      const o = i * 6;
+      pos[o] = u; pos[o + 2] = u; pos[o + 4] = u;
+      pos[o + 1] = v; pos[o + 3] = v; pos[o + 5] = v;
     };
 
     for (let i = 0; i < count; i++) {
@@ -489,10 +496,11 @@ export class Grass {
         scatter(i, true);
         continue;
       }
-      const i2 = i * 2;
-      // The blade's DISPLAYED offset in the old frame (same wrap the shader applies).
-      const lu = (((pos[i2] - c2u + half) % size + size) % size - half);
-      const lv = (((pos[i2 + 1] - c2v + half) % size + size) % size - half);
+      const o = i * 6;
+      // The blade's DISPLAYED offset in the old frame (same wrap the shader applies). All three
+      // vertices are identical by construction, so vertex 0's value is the blade's value.
+      const lu = (((pos[o] - c2u + half) % size + size) % size - half);
+      const lv = (((pos[o + 1] - c2v + half) % size + size) % size - half);
       const len = Math.max(1e-4, Math.hypot(lu, lv));
       const r = len / radius;
       const sinR = Math.sin(r);
@@ -507,8 +515,8 @@ export class Grass {
       const nu = Math.atan2(dx * t1n.x + dy * t1n.y + dz * t1n.z, ca) * radius;
       const nv = Math.atan2(dx * t2n.x + dy * t2n.y + dz * t2n.z, ca) * radius;
       if (Math.hypot(nu, nv) <= keepLimit) {
-        pos[i2] = nu;
-        pos[i2 + 1] = nv;
+        pos[o] = nu; pos[o + 2] = nu; pos[o + 4] = nu;
+        pos[o + 1] = nv; pos[o + 3] = nv; pos[o + 5] = nv;
       } else {
         scatter(i, false); // outside the new disk: recycle it at the field's rim
       }

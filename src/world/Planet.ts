@@ -20,6 +20,7 @@ import { TerrainGenerator } from './TerrainGenerator';
 import { BiomeGenerator } from './BiomeGenerator';
 import type { Landmark } from './LandmarkGenerator';
 import { TerrainVisual } from './folio/terrain/TerrainVisual';
+import { TERRAIN_PALETTE } from './folio/terrain/NecroFallTerrainNode';
 import { FOLIO } from './folio/FolioShaderGlobals';
 
 const _up = new THREE.Vector3();
@@ -200,6 +201,19 @@ export class Planet {
       this.reliefMin + reliefSpan * WATER_FRACTION,
       this.radius - 1,
     );
+    // The shared palette uniforms must reflect THIS planet before any Folio material samples
+    // them (grass blade bases, terrain washes, water proximity). Writing them here — right next
+    // to the measurements themselves — keeps the values authoritative even if module graphs
+    // ever split (live bug 2026-09-30: the grass field sat at radius 0, buried inside the
+    // planet, because these uniforms kept their 0/0/-1 defaults for the running match).
+    TERRAIN_PALETTE.reliefMin.value = this.reliefMin;
+    TERRAIN_PALETTE.reliefMax.value = this.reliefMax;
+    TERRAIN_PALETTE.waterline01.value = clamp((this.waterLevel - this.reliefMin) / reliefSpan, 0, 1);
+    // The FOLIO copy is the one the grass/terrain/water materials provably share (wind + lighting
+    // already flow through it every frame).
+    FOLIO.terrain.reliefMin.value = this.reliefMin;
+    FOLIO.terrain.reliefMax.value = this.reliefMax;
+    FOLIO.terrain.waterline01.value = clamp((this.waterLevel - this.reliefMin) / reliefSpan, 0, 1);
     geo.computeVertexNormals();
     // PASS 2 — colours from the BIOME classifier: palette ramp + slope rock + veins + landmarks
     const nrm = geo.attributes.normal as THREE.BufferAttribute;

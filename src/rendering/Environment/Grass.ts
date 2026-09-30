@@ -29,6 +29,7 @@ import {
   smoothstep,
   texture,
   uniform,
+  varying,
   vec2,
   vec3,
   vertexIndex,
@@ -118,8 +119,8 @@ export class Grass {
     // folio's surfaceOverflow ratio — bigger fields hold slightly larger blades
     const surface = Math.pow(this.halfExtent * 2, 2);
     const overflow = Math.max(0, surface - 2000) / 2000;
-    this.uBladeWidth.value = 0.07 * (1 + overflow * 0.3);
-    this.uBladeHeight.value = 0.46 * (1 + overflow * 0.3);
+    this.uBladeWidth.value = 0.045 * (1 + overflow * 0.28);
+    this.uBladeHeight.value = 0.55 * (1 + overflow * 0.28);
   }
 
   /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14). */
@@ -179,20 +180,33 @@ export class Grass {
 
     const vertexLoop = vertexIndex.toFloat().mod(3);
     const isTip = vertexLoop.lessThan(0.5);
-    const isLeft = vertexLoop.greaterThan(1.5); // vertex 2 gets -width
+    // base vertices: vertex 1 = -width (screen-left), vertex 2 = +width
+    // (screen-right) — CCW as seen from the camera so the FRONT face is lit.
+    const isRightBase = vertexLoop.greaterThan(1.5);
+    // Fragment-side tipness as a VARYING (folio's trick): the vertex index
+    // interpolates 0→1→2 across the blade, giving a smooth tip→base gradient
+    // for the colour ramp and the root shadow.
+    const tipness = varying(vertexLoop.oneMinus().clamp(0, 1));
+    // per-blade brightness variation (the reference world's tufts are not uniform)
+    const bladeTint = varying(attribute('bladeRandom') as any);
 
     const material = new MeshDefaultMaterial({
-      colorNode: (() => nodes.colorNode(nodes.terrainNode(positionWorld)))(),
+      // folio's visible vertical gradient: dark root → bright tip, all in the
+      // terrain's own colour under this blade
+      colorNode: (() => {
+        const base = nodes.colorNode(nodes.terrainNode(positionWorld));
+        const ramp = mix(base.mul(0.62), base.mul(1.2), tipness);
+        return ramp.mul((bladeTint as any).mul(0.28).add(0.88));
+      })(),
       normalNode: normalize(positionWorld) as any,
-      // blade winding is handedness-dependent on the sphere — one triangle per
-      // blade is cheaper than a guaranteed orientation
+      // safety net for degenerate winding at grazing angles
       side: THREE.DoubleSide,
       hasWater: false,
       hasLightBounce: false,
       shadowNode: (() => {
-        // shadow creeps along the blade base (folio's tipnessShadowMix, softened)
+        // root shadow like folio: the base of every blade sits in shade
         const terrainData = nodes.terrainNode(positionWorld);
-        return isTip.select(float(0), terrainData.y.mul(0.35)) as any;
+        return tipness.oneMinus().mul(terrainData.y.mul(0.55)) as any;
       })(),
     });
 
@@ -239,7 +253,7 @@ export class Grass {
         .mul(texture(this.noises.perlin, patch.mul(0.0321)).r.add(0.5))
         .mul(density);
 
-      const sideX = select(isLeft, bladeWidth.negate(), bladeWidth) as any;
+      const sideX = select(isRightBase, bladeWidth, bladeWidth.negate()) as any;
       const shapeX = isTip.select(float(0), sideX);
       const shapeUp = isTip.select(bladeHeight, float(0));
 

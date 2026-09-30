@@ -99,7 +99,12 @@ export async function startDevWorld(): Promise<void> {
   const viewport = new Viewport(canvas);
   const quality = new Quality();
   const forcedQuality = switches.bag['quality'];
-  if (forcedQuality !== undefined) quality.changeLevel(Number(forcedQuality) as QualityLevel);
+  if (forcedQuality !== undefined) {
+    quality.changeLevel(Number(forcedQuality) as QualityLevel);
+    quality.adaptive = false; // an explicitly chosen level is never auto-downgraded
+  } else {
+    quality.adaptive = switches.enabled('adaptive', true);
+  }
   quality.forceNoDof = !switches.enabled('dof', true);
   viewport.setPixelRatioMax(quality.pixelRatioMax());
 
@@ -226,8 +231,8 @@ export async function startDevWorld(): Promise<void> {
 
   const cameraRig = {
     yaw: Math.PI * 0.9,
-    pitch: 0.44,
-    distance: 10,
+    pitch: 0.62,
+    distance: 12,
     target: new THREE.Vector3(),
   };
   let freeCamera = switches.freeCamera;
@@ -485,7 +490,8 @@ export async function startDevWorld(): Promise<void> {
     // fixed-step physics (plan §42), then the ordered tick
     physics.advance(delta);
     ticker.update(delta);
-    quality.monitor(delta);
+    // throttled background tabs produce meaningless deltas — never degrade on them
+    if (!document.hidden) quality.monitor(delta);
   };
   requestAnimationFrame(frame);
 

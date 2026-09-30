@@ -18,6 +18,10 @@ export class Quality {
   /** Rolling frame-rate window for the heat control (plan §83). */
   private readonly frameTimes: number[] = [];
   private degradeCooldown = 3;
+  /** Warmup: shader compilation hitches must never trigger a downgrade. */
+  private warmup = 10;
+  /** `?adaptive=0` / forced quality levels pin the level. */
+  adaptive = true;
 
   static detect(): QualityLevel {
     const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -35,7 +39,17 @@ export class Quality {
    * for a sustained stretch, drop one quality step (pixel ratio first — the
    * order is implemented cheaply here by stepping the whole level).
    */
-  monitor(delta: number, target = 50): void {
+  monitor(delta: number, target = 45): void {
+    if (!this.adaptive) return;
+    if (this.warmup > 0) {
+      this.warmup -= delta;
+      return;
+    }
+    if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {
+      // throttled/occluded windows report meaningless frame times
+      this.frameTimes.length = 0;
+      return;
+    }
     const list = this.frameTimes;
     list.push(delta);
     if (list.length > 180) list.splice(0, list.length - 180);
@@ -59,9 +73,9 @@ export class Quality {
     return this.level === 0 ? 2 : this.level === 1 ? 1.5 : 1.25;
   }
 
-  /** Grass blade cells per side (plan §14: 280 / 220 / 160). */
+  /** Grass blade cells per side (plan §14, raised to folio density). */
   grassSubdivisions(): number {
-    return this.level === 0 ? 280 : this.level === 1 ? 220 : 160;
+    return this.level === 0 ? 340 : this.level === 1 ? 260 : 180;
   }
 
   /** Grass field half extent in metres — the moving detail window (§39/§68). */

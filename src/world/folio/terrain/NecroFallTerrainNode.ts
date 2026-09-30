@@ -79,17 +79,16 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
     .mul(patch.mul(0.3).add(0.86))
     .toVar();
 
-  // Vegetation creeps over flat low ground; rock takes over on steep faces (plan §83 — the same
-  // slope value that gates placement, so nothing grows where the material shows cliffs). With
-  // the vegetation channel carved into PATCHES (VegetationPatches), this wash is what paints
-  // the lawn onto the ground: blobs of grass colour over the baked biome palette, exactly like
-  // the island where the lawn ends and the ground's own colour takes over. No floor term —
-  // folio's data goes to zero between patches and the ground shows through
-  // (user review 2026-09-30: "in patches not full all over").
-  const flatness = slope.smoothstep(1.3, 0.05);
-  const highland = height01.smoothstep(0.88, 0.22);
-  const grassy = flatness.mul(highland).mul(vegetation).min(1);
-  albedo.assign(albedo.mix(TERRAIN_PALETTE.grass.mul(grain.mul(1.0).add(0.55)), grassy.mul(0.85)));
+  // Grass — FOLIO'S LAW, EXACT (Terrain.js: `mix(baseColor, grassColor, terrainData.g)`): the
+  // vegetation channel IS the mix amount, towards the PLAIN `#b8b62e` grass uniform. The old
+  // port damped the mix (×0.85 plus an altitude gate) and draped it over a dimmed grass tone,
+  // which left every lawn reading as dark ground with green flecks (the user's "dark green
+  // spikes"). The only remaining gate is a CLIFF gate — our patch field is slope-blind where
+  // folio's authored data simply carries no grass on walls; everything walkable gets the full
+  // law (the old `smoothstep(1.3, 0.05)` faded the lawn from ~0.05 slope, i.e. almost anywhere).
+  const walkable = slope.smoothstep(0.95, 0.45);
+  const grassy = walkable.mul(vegetation).min(1);
+  albedo.assign(albedo.mix(TERRAIN_PALETTE.grass, grassy));
 
   const rocky = slope.smoothstep(0.26, 0.6);
   albedo.assign(albedo.mix(TERRAIN_PALETTE.rock.mul(fine.mul(0.6).add(0.7)), rocky.mul(0.6)));

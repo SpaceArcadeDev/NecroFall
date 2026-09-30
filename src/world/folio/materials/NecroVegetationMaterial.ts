@@ -29,14 +29,18 @@ export interface AdoptOptions {
   geometry?: THREE.BufferGeometry;
 }
 
-/** The planet's weathering wash: grain + corruption, shared by every adopted material. */
-export function weatheredNode(baseColor: any): any {
+/** The planet's weathering wash: grain + corruption, shared by every adopted material.
+ *  `veinStrength` is the corruption mix cap — spikes pass ~0 so they stay stone-grey under a
+ *  warm sun (the full wash tinted them purple on corrupt worlds: "colored pyramids", user
+ *  review 2026-09-30). */
+export function weatheredNode(baseColor: any, veinStrength = 0.3): any {
   return Fn(() => {
     const data = terrainDataNode();
     const grain = mx_noise_float(positionWorld.mul(2.7)).mul(0.5).add(0.5);
     const col = baseColor.mul(grain.mul(0.28).add(0.86)).toVar();
+    if (veinStrength <= 0) return col;
     const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.4)).min(1);
-    col.assign(col.mix(TERRAIN_PALETTE.vein, corruption.mul(0.3)));
+    col.assign(col.mix(TERRAIN_PALETTE.vein, corruption.mul(veinStrength)));
     return col;
   })();
 }

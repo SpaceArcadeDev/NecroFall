@@ -61,18 +61,23 @@ class FolioFog {
  * breathes as one system instead of a pile of unrelated sine waves.
  */
 class FolioWind {
-  readonly direction = uniform(new THREE.Vector2(0.86, 0.51).normalize());
+  /**
+   * Folio's Wind.js: `angle = Math.PI * 0.6`, a CONSTANT direction — the island's wind never
+   * wanders (only the strength moves, driven by the weather). The old port swung the angle over
+   * time; that broke the travelling gust fronts' identity (they must scroll along one axis).
+   */
+  readonly direction = uniform(new THREE.Vector2(Math.sin(Math.PI * 0.6), Math.cos(Math.PI * 0.6)));
   /**
    * Folio drives this from the weather (remapClamp(wind, 0, 1, 0.1, 1)) — 0.5 is their average
    * day. We run near the top of their live range so the travel waves clearly read at gameplay
    * camera heights (user review 2026-09-30: "more visible wavy animation").
    */
   readonly strength = uniform(0.95);
-  /** Wandering angle the Game nudges over time; the direction is derived from it. */
-  angle = 0.6;
+  /** Folio's constant angle (kept for any debug UI). */
+  readonly angle = Math.PI * 0.6;
   readonly localTime = uniform(0);
-  /** A hair above folio's 0.1 so gust fronts travel visibly while staying their law. */
-  readonly timeFrequency = 0.12;
+  /** Folio's Wind.js `timeFrequency = 0.1` exactly. */
+  readonly timeFrequency = 0.1;
   readonly positionFrequency = uniform(0.5);
 
   /**
@@ -167,12 +172,9 @@ class FolioState {
     this.delta.value = dt;
     this.cameraPosition.value.copy(cameraPos);
 
-    // Wind: the angle wanders slowly; strength gusts in waves (same spirit as the GLSL wind).
-    const t = this.time.value;
+    // Wind: folio's exact drive (Wind.js) — a constant direction, and a local clock that
+    // advances with the strength. No angle wander: the gust fronts travel along ONE axis.
     this.wind.localTime.value += dt * this.wind.timeFrequency * this.wind.strength.value;
-    const angle = Math.sin(t * 0.037) * 0.5 + Math.sin(t * 0.013 + 1.7) * 0.9;
-    this.wind.angle = angle;
-    this.wind.direction.value.set(Math.cos(angle), Math.sin(angle)).normalize();
   }
 }
 

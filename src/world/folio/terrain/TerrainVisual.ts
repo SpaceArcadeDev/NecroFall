@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 import { clamp } from '../../../utils/Utils';
 import { NecroTerrainMaterial } from '../materials/NecroTerrainMaterial';
 import { TERRAIN_PALETTE } from './NecroFallTerrainNode';
-import { vegetationPatchAt } from './VegetationPatches';
+import { vegetationLawnAt, vegetationPeak } from './VegetationPatches';
 
 /** The Planet surface TerrainVisual needs — structural, so Planet stays free to evolve. */
 export interface TerrainVisualPlanet {
@@ -67,6 +67,13 @@ export class TerrainVisual {
     const terrain = new Float32Array(count * 4);
     const veg = new Float32Array(count);
 
+    // Lawn channel: the patch carve × the planet's own normalized richness (VegetationPatches.
+    // vegetationLawnAt) — MUST be the exact formula Grass bakes into its data texture, so the
+    // blades, the ground's grass wash and the trees' shared albedo agree on where the lawn is.
+    const seed = this.planet.seed ?? 0x51ab51;
+    const plantDensityAt = (x: number, y: number, z: number): number => this.planet.biome.plantDensityAt(x, y, z);
+    const lawnPeak = vegetationPeak(plantDensityAt, seed);
+
     const dir = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
       dir.fromBufferAttribute(pos, i);
@@ -80,12 +87,9 @@ export class TerrainVisual {
       terrain[i * 4 + 1] = this.height01Of(h);
       terrain[i * 4 + 2] = clamp(this.planet.terrain.moistureAt(dir.x, dir.y, dir.z), 0, 1);
       terrain[i * 4 + 3] = clamp(this.planet.terrain.corruptionAt(dir.x, dir.y, dir.z), 0, 1);
-      // Patched vegetation (VegetationPatches): lawns in blobs over bare ground — the ground's
-      // grass wash and the blades must both read the SAME carved channel (folio's authored
-      // density data). The seed matches the grass texture bake exactly.
-      veg[i] =
-        this.planet.biome.plantDensityAt(dir.x, dir.y, dir.z) *
-        vegetationPatchAt(dir.x, dir.y, dir.z, this.planet.seed ?? 0x51ab51);
+      // Patched + normalized vegetation: lawns in blobs over bare ground — the ground's grass
+      // wash and the blades both read the SAME channel (folio's authored density data).
+      veg[i] = vegetationLawnAt(plantDensityAt, lawnPeak, dir.x, dir.y, dir.z, seed);
     }
 
     geometry.setAttribute('aTerrain', new THREE.BufferAttribute(terrain, 4));

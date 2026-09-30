@@ -430,13 +430,48 @@ export class VegetationGenerator {
       // Kind mix tuned with the terrain review (2026-09-30): rocks stay the majority, slabs and
       // spikes dress the slopes, and crystals are common enough to read as "this planet has
       // crystals" the way the original environment did.
+      //
+      // SPIKES are groups, not singles (user review 2026-09-30: "the actual spikes should be grey
+      // cones in groups, like before the rework"): one spike roll plants a CLUSTER of 2-5 tall
+      // narrow cones around the centre — the pre-rework "jagged peaks" read. The roll chances are
+      // re-balanced for that: a spike roll spends ~3.4 placements, so 6 % of rolls ≈ 20 % of
+      // instances (was 14 % as singles).
       const roll = rand.next();
-      const kind = roll < 0.5 ? 'ROCK' : roll < 0.68 ? 'SLAB' : roll < 0.86 ? 'CRYSTAL' : 'SPIKE';
+      const kind =
+        roll < 0.06 ? 'SPIKE' :
+        roll < 0.62 ? 'ROCK' :
+        roll < 0.8 ? 'SLAB' :
+        'CRYSTAL';
+
+      if (kind === 'SPIKE') {
+        const members = Math.min(2 + Math.floor(rand.next() * 4), Math.max(1, budget - placed));
+        for (let k = 0; k < members; k++) {
+          // Re-derive the tangent basis every member: frameFor() rewrites the shared scratch.
+          tangentBasis(dir, _t1, _t2);
+          const a = rand.range(0, Math.PI * 2);
+          const r = rand.range(0.5, 2.3) / surface.radius; // 0.5..2.3 m of arc between members
+          _dir2
+            .copy(dir)
+            .addScaledVector(_t1, Math.cos(a) * r)
+            .addScaledVector(_t2, Math.sin(a) * r)
+            .normalize();
+          if (surface.waterAtDir(_dir2.x, _dir2.y, _dir2.z) > 0.4) continue;
+          const scale = rand.range(0.9, 1.7);
+          const stretch = rand.range(1.5, 2.4);
+          // Spikes stand PROUD (only a light embed) — the renderer adds its own lift for them;
+          // a cone buried like a boulder reads as a rock, not a spike.
+          this.frameFor(_dir2, rand, 6, scale, 0.08 * scale);
+          const spike: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind: 'SPIKE', stretch };
+          placements.rocks.push(spike);
+          placed++;
+        }
+        continue;
+      }
+
       const scale =
         kind === 'ROCK' ? rand.range(0.7, 2.1) :
         kind === 'SLAB' ? rand.range(0.6, 1.6) :
-        kind === 'CRYSTAL' ? rand.range(1.0, 2.6) :
-        rand.range(0.7, 1.6);
+        rand.range(1.0, 2.6);
       // Per-kind sink: flat slabs need to bury deep or their downhill edge floats on slopes
       // (live review 2026-09-30: "rocks floating in air") — the sink is along the surface normal.
       const sink = kind === 'SLAB' ? 0.42 * scale : kind === 'CRYSTAL' ? 0.28 * scale : 0.22 * scale;
@@ -450,4 +485,5 @@ export class VegetationGenerator {
 
 const _t1 = new THREE.Vector3();
 const _t2 = new THREE.Vector3();
+const _dir2 = new THREE.Vector3();
 const _probe = new THREE.Vector3();

@@ -19,7 +19,9 @@ export class Rocks {
   private readonly materials: THREE.Material[] = [];
 
   constructor(options: RocksOptions) {
-    const groups: Array<{ kind: RockPlacement['kind']; geometry: THREE.BufferGeometry; material: MeshDefaultMaterial; yStretch?: number }> = [
+    // `lift` (× scale, metres): + stands proud of the ground, − sinks below it. Spikes LIFT —
+    // buried half-way a cone reads as a boulder, not a spire.
+    const groups: Array<{ kind: RockPlacement['kind']; geometry: THREE.BufferGeometry; material: MeshDefaultMaterial; yStretch?: number; lift?: number }> = [
       {
         kind: 'ROCK',
         geometry: new THREE.DodecahedronGeometry(1, 0),
@@ -39,8 +41,13 @@ export class Rocks {
       },
       {
         kind: 'SPIKE',
-        geometry: new THREE.ConeGeometry(0.55, 3.2, 5),
-        material: this.buildMaterial(0x6e6678, 0),
+        // The pre-rework "jagged peaks" (user review 2026-09-30: "the actual spikes should be
+        // grey cones in groups, not colored pyramids"): a tall 5-sided grey cone, lifted to
+        // stand proud of the ground, with almost no corruption wash so it stays stone-grey.
+        // Clusters come from the placement generator (2-5 cones per cluster).
+        geometry: new THREE.ConeGeometry(0.62, 3.2, 5),
+        material: this.buildMaterial(0x8c8aa0, 0, 0.06),
+        lift: 0.5,
       },
     ];
 
@@ -62,9 +69,12 @@ export class Rocks {
       const scaleVec = new THREE.Vector3();
       for (let i = 0; i < placements.length; i++) {
         const placement = placements[i];
-        // Sink rocks a quarter of their size along the surface normal (no pasted-on look).
-        const sunk = placement.position.clone().addScaledVector(placement.direction, -placement.scale * 0.25);
-        scaleVec.set(placement.scale, placement.scale * (group.yStretch ?? 1), placement.scale);
+        // Sink rocks a quarter of their size along the surface normal (no pasted-on look);
+        // spikes lift instead (see the group comment).
+        const offset = (group.lift ?? -0.25) * placement.scale;
+        const sunk = placement.position.clone().addScaledVector(placement.direction, offset);
+        const stretch = placement.stretch ?? group.yStretch ?? 1;
+        scaleVec.set(placement.scale, placement.scale * stretch, placement.scale);
         matrix.compose(sunk, placement.quaternion, scaleVec);
         mesh.setMatrixAt(i, matrix);
         terrain.set(placement.terrain, i * 4);
@@ -80,9 +90,9 @@ export class Rocks {
     }
   }
 
-  private buildMaterial(baseHex: number, emissive: number): MeshDefaultMaterial {
+  private buildMaterial(baseHex: number, emissive: number, vein = 0.3): MeshDefaultMaterial {
     const baseColor = uniform(new THREE.Color(baseHex));
-    const colorNode = weatheredNode(baseColor);
+    const colorNode = weatheredNode(baseColor, vein);
     return new MeshDefaultMaterial({
       colorNode,
       hasWater: false,

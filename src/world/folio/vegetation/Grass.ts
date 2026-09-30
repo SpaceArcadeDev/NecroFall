@@ -52,7 +52,7 @@ import {
 import { clamp, Rand } from '../../../utils/Utils';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { terrainAlbedoNode } from '../terrain/NecroFallTerrainNode';
-import { vegetationPatchAt } from '../terrain/VegetationPatches';
+import { vegetationLawnAt, vegetationPeak } from '../terrain/VegetationPatches';
 import { FOLIO } from '../FolioShaderGlobals';
 import type { TerrainSurface } from '../../TerrainSurface';
 
@@ -86,10 +86,11 @@ export interface GrassOptions {
 
 /** The island's OWN architecture (Grass.js): subdivisions = 280 over its optimal-view disc, blade
  *  size growing with the field — the count stays modest while the read is a packed lawn. Our
- *  field is a 56 m disc at high quality; 480² = 230k blades ≈ 23 blades/m² — folio's packed
- *  density, concentrated to ≈38/m² inside the patch blobs. The count must stay near folio's
- *  scale relative to the AREA, with blade SIZE absorbing the difference (700²/490k cost the
- *  frame rate; 512² read the same as 480² for +12% vertex work — live reviews 2026-09-30). */
+ *  field is a 112 m window at high quality (half-extent 56 m — the visible ground); 480² = 230k
+ *  blades ≈ 18 blades/m² and much denser inside the patch blobs. The count must stay near
+ *  folio's scale relative to the AREA (700²/490k cost the frame rate; 512² read the same as 480²
+ *  for +12% vertex work — live reviews 2026-09-30); blade SIZE keeps folio's island proportions
+ *  (the overflow term is capped — see buildMaterial). */
 const BASE_SUBDIVISIONS = 480;
 /** Folio's ideal field surface (m²) — drives the blade-size overflow formula. */
 const SURFACE_IDEAL = 2000;
@@ -260,6 +261,12 @@ export class Grass {
     const texB = new Uint8Array(TEX_W * TEX_H);
     const texC = new Uint8Array(TEX_W * TEX_H * 4);
     const color = _bakeColor;
+    // Lawn channel: the SAME `vegetationLawnAt` TerrainVisual bakes into aVeg (patch carve ×
+    // the planet's own normalized richness) — blades and the ground wash agree by construction.
+    // The raw channel (desert: 0.16..0.3) sat below the blade visibility floor, which is why a
+    // classic desert match showed no grass at all (user review 2026-09-30).
+    const plantDensityAt = (x: number, y: number, z: number): number => surface.vegetationAtDir(x, y, z);
+    const lawnPeak = vegetationPeak(plantDensityAt, this.options.seed);
 
     for (let y = 0; y < TEX_H; y++) {
       const lat = (y / (TEX_H - 1) - 0.5) * Math.PI;
@@ -274,9 +281,10 @@ export class Grass {
         const slope = surface.slopeAtDir(dx, sinLat, dz);
         const moisture = this.options.moistureAt(dx, sinLat, dz);
         const corruption = this.options.corruptionAt(dx, sinLat, dz);
-        // Patched: lawns in blobs over bare ground (VegetationPatches) — the same carved channel
-        // TerrainVisual bakes into aVeg, so blades and ground colour agree by construction.
-        const veg = surface.vegetationAtDir(dx, sinLat, dz) * vegetationPatchAt(dx, sinLat, dz, this.options.seed);
+        // Patched + normalized: lawns in blobs over bare ground, scaled by the planet's own
+        // richness (VegetationPatches.vegetationLawnAt) — the same channel TerrainVisual bakes
+        // into aVeg, so blades and ground colour agree by construction.
+        const veg = vegetationLawnAt(plantDensityAt, lawnPeak, dx, sinLat, dz, this.options.seed);
 
         const i = (y * TEX_W + x) * 4;
         texA[i] = clamp(slope, 0, 1) * 255;
@@ -327,16 +335,15 @@ export class Grass {
   readonly bladeRandomnessU: any = uniform(0.6);
 
   private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture, texC: THREE.DataTexture): MeshDefaultMaterial {
-    // --- folio's overflow formula, CLAMPED: folio grows the blades when the field grows (their
-    // field resizes with the view LOD). Our field now covers the whole visible ground (190 m
-    // wide), which would push the raw overflow to 17 → 3.8 m blades. The clamp keeps the tuned
-    // third-person scale (≈0.1 m wide / 0.7 m tall) at every quality tier.
+    // --- FOLIO'S BLADE PROPORTIONS, EXACT (Grass.js setMaterial): `0.1 / 0.6 × (1 + surface
+    // Overflow × 0.5)`. The overflow is CLAMPED to the island's own range (0..0.4 ≈ their live
+    // optimal-area values): our field is ~2.2× their island's, and their unclamped formula (they
+    // resize the field with the view LOD) would grow 2.2 m blades on our fixed 112 m field. At
+    // the cap: 0.12 m half-width × 0.72 m taper — the island's lawn, not giant spikes.
     const surface = this.size * this.size;
-    const surfaceOverflow = clamp((surface - SURFACE_IDEAL) / SURFACE_IDEAL, 0, 1.6);
-    // folio's blade proportions — slightly enlarged per the live review ("maybe slightly
-    // bigger"): a 0.21 m base under a tall taper ≈ 0.75 m at max overflow.
-    this.bladeWidthU.value = 0.062 * (1 + surfaceOverflow * 0.5);
-    this.bladeHeightU.value = 0.42 * (1 + surfaceOverflow * 0.5);
+    const surfaceOverflow = clamp(Math.max(0, (surface - SURFACE_IDEAL) / SURFACE_IDEAL), 0, 0.4);
+    this.bladeWidthU.value = 0.1 * (1 + surfaceOverflow * 0.5);
+    this.bladeHeightU.value = 0.6 * (1 + surfaceOverflow * 0.5);
     const bladeWidth = this.bladeWidthU;
     const bladeHeight = this.bladeHeightU;
     const bladeHeightRandomness = this.bladeRandomnessU;
@@ -440,11 +447,17 @@ export class Grass {
       // its root-shadow strength, and its VISIBILITY. The carve makes the lawn read as patches
       // of grass over bare ground instead of a uniform carpet; the density falls towards every
       // patch edge so the border is a soft taper of shrinking blades.
+      //
+      // The only planet adaptation left is the CLIFF gate: our patch field is slope-blind (where
+      // folio's authored data simply carries no grass on walls), so blades fade out over ~0.95
+      // slope. On everything walkable the gate is 1 and g IS the channel — folio-exact. (The old
+      // `smoothstep(1.3, 0.05)` already thinned the field on gentle hills — that, plus the damped
+      // colour mix, was the "dark green spikes" look.)
       const a = sampleA(uv) as any;
       const height01 = a.y;
-      const flatness = a.x.smoothstep(1.3, 0.05);
+      const walkable = a.x.smoothstep(0.95, 0.45);
       const veg = sampleVeg(uv).div(1.6) as any;
-      const g = veg.mul(flatness.mul(0.8).add(0.2)).min(1);
+      const g = veg.mul(walkable.mul(0.8).add(0.2)).min(1);
       vMask.assign(g);
       // Folio's `hidden` trick: below the density floor the blade is LIFTED 100 m off the
       // surface — culled by geometry, not faded, so patch boundaries are crisp like the
@@ -467,9 +480,10 @@ export class Grass {
         height01.mul(this.reliefMaxU.sub(this.reliefMinU)),
       );
 
-      // Shape (vertices: tip / left / right) along the surface up.
+      // Shape (vertices: tip / left / right) along the surface up — folio exactly
+      // (`bladeShape.x × bladeWidth × g`, no sign flip; Grass.js).
       const corner = vertexIndex.toFloat().mod(3);
-      const shapeX = (bladeShape.element(corner.mul(2)) as any).negate().mul(width);
+      const shapeX = (bladeShape.element(corner.mul(2)) as any).mul(width);
       const shapeY = (bladeShape.element(corner.mul(2).add(1)) as any).mul(height);
 
       const base = dir.mul(baseRadius);

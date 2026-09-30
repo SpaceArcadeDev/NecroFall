@@ -47,6 +47,11 @@ export interface SceneryPlacement extends EnvironmentPlacement {
 
 export interface RockPlacement extends EnvironmentPlacement {
   kind: RockKind;
+  /**
+   * Extra Y scale for stretched kinds — tall spike cones (the pre-rework "jagged peaks" were
+   * tall narrow cones, not round rocks) and stretched crystals. 1 = the kind's default.
+   */
+  stretch?: number;
 }
 
 /** All placements of one generator run — the scene graph is built straight from this. */

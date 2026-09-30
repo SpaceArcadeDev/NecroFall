@@ -241,3 +241,29 @@ scale) — slabs/crystals now sit in the ground on steep terrain.
 - `src/world/folio/vegetation/Foliage.ts` — softer corruption wash.
 - `src/world/vegetation/VegetationGenerator.ts` — per-kind rock sink (slabs/crystals on slopes).
 - `src/world/folio/environment/WaterSurface.ts` — 8-bit encoded depth map (water renders again).
+
+## Round 4 — no grass in a classic game · "dark green spikes" · grey cone groups (2026-09-30)
+
+User report: a classic match on a DESERT planet showed **no grass at all**; the grass read as dark
+green spikes with no folio-like colour/gradient; the environment "spikes" (rock formations) should
+be grey cones in groups like the pre-rework world, not coloured pyramids.
+
+- **Why the desert had no grass**: the vegetation channel was the RAW `plantDensityAt` product
+  (desert ≈ 0.16–0.30) — every blade sat below folio's `g` gate and the ground wash was invisible.
+  The channel is now the lawn law in `VegetationPatches`: `patch carve × (0.5 + 0.5 × clamp(raw /
+  planetPeak))` — folio's authored on/off density semantics, so EVERY archetype grows a real lawn
+  in its blobs (baked identically into the terrain `aVeg` and the grass data texture).
+- **Grass colour = folio's law exactly** (`Terrain.js`: `mix(baseColor, grassColor, g)`): full
+  strength, no ×0.85 damping, no altitude gate; blades wear the same function evaluated at their
+  own data (`terrain.colorNode(terrainData)`), so lawn and blades are one surface. The root→tip
+  gradient stays folio's shadow term (`(1 − tipness) × g` → the violet shadow colour).
+- **Blade law**: folio's `0.1 / 0.6 × (1 + overflow × 0.5)` proportions (the overflow term is
+  capped at the island's own 0..0.4 range — our field is 2.2× theirs, and their unclamped formula
+  would grow 2.2 m blades); folio's wind exactly (constant `0.6π` direction, `timeFrequency 0.1` —
+  the old wandering angle is gone).
+- **Spikes**: `SPIKE` placements are now CLUSTERS of 2–5 tall grey cones (0x8c8aa0, no corruption
+  wash, lifted proud of the ground, 0.5–2.3 m between members) — the pre-rework "jagged peaks",
+  not single coloured pyramids.
+
+Evidence: `grass-01-desert.png` (grass on a desert classic planet), `grass-02-jungle-lawn.png`
+(the folio lawn), `spikes-01-cluster.png` (grey cone groups).

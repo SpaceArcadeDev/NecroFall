@@ -75,7 +75,7 @@ export class Quality {
 
   /** Grass blade cells per side (plan §14, raised to folio density). */
   grassSubdivisions(): number {
-    return this.level === 0 ? 660 : this.level === 1 ? 480 : 370;
+    return this.level === 0 ? 700 : this.level === 1 ? 510 : 390;
   }
 
   /**

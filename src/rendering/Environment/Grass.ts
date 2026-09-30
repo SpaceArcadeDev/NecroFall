@@ -156,7 +156,7 @@ export class Grass {
     // a continuous lawn instead of reading as separate slivers.
     const surface = Math.pow(this.halfExtent * 2, 2);
     const overflow = Math.min(1.1, Math.max(0, surface - 2000) / 2000);
-    this.uBladeWidth.value = 0.07 * (1 + overflow * 0.28);
+    this.uBladeWidth.value = 0.085 * (1 + overflow * 0.28);
     this.uBladeHeight.value = 0.58 * (1 + overflow * 0.28);
   }
 
@@ -299,8 +299,10 @@ export class Grass {
       const visibility = rimFade.mul(this.waterSuppression(direction).oneMinus());
       // Outside the patches a sparse baseline remains (small random tufts), so
       // bare zones still have some grass — but the dark soil shading in the
-      // terrain keys on patchFactor only, so it follows the ACTUAL patches.
-      const sizeScale = patchFactor.mul(0.85).add(0.15).mul(visibility);
+      // terrain keys on the patch CORE only (full-blade zone), so it can never
+      // show through partial-size blades. Strong mid-band floor keeps the
+      // clump edges packed too.
+      const sizeScale = patchFactor.pow(0.6).mul(0.78).add(0.22).mul(visibility);
 
       // ---- surface position
       const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));
@@ -360,12 +362,16 @@ export class Grass {
           const toTrail = basePosition.sub(packed.xyz);
           const horizontalTrail = toTrail.sub(direction.mul((toTrail as any).dot(direction)));
           const trailDistance = (horizontalTrail as any).length();
-          const influence = smoothstep(1.35, 0.3, trailDistance).mul(smoothstep(1.6, 0.7, age));
+          // Ramp IN over 0.3 s as well as out: a sample landing must never
+          // snap blades to a new angle — that was the moving flicker/pop.
+          const influence = smoothstep(1.35, 0.3, trailDistance)
+            .mul(smoothstep(1.6, 0.7, age))
+            .mul(smoothstep(0.0, 0.3, age));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
         });
-        return accumulated.mul(0.45);
+        return accumulated.mul(0.38);
       })();
 
       const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);

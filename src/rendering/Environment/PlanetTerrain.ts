@@ -146,8 +146,11 @@ export class PlanetTerrain {
         // transition tufts.
         const direction = normalize(positionLocal);
         const patchNoise = texture(noises.perlin, direction.xz.mul(9.0)).r;
-        const patchFactor = smoothstep(0.4, 0.52, patchNoise);
-        return base.mul(mix(1.0, 0.45, patchFactor)) as any;
+        // INSIDE the full-blade zone only (blades hit 100% at noise ~0.52) and
+        // gentle, so the dark can only ever appear as faint shade BETWEEN
+        // packed blades — never as exposed dark ground.
+        const patchFactor = smoothstep(0.53, 0.64, patchNoise);
+        return base.mul(mix(1.0, 0.62, patchFactor)) as any;
       })(),
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.

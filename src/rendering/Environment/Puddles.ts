@@ -6,26 +6,42 @@
  * flat water level below the rim, and conformed to the terrain (flat inside
  * the basin, hugging the ground at the shore).
  *
+ * LEVELS ARE RENDERED-RELATIVE: the terrain mesh interpolates between coarse
+ * grid vertices, so a small dip is shallower on screen than analytically. The
+ * fill level is clamped above the RENDERED floor (`RenderedTerrain`) and the
+ * depth/shore values follow the visible mesh — the waterline always sits where
+ * the camera's ground meets the water, never buried inside unseen geometry.
+ *
  * The surface itself ports folio's technique 1:1 — the water is a BLURRED
  * SCREEN MIRROR (viewportSharedTexture + hashBlur) with white foam details
  * (shore line + wind ripple rings), blended in only where the ground sits
  * under the water level (deep → pure mirror, shore → foam).
+ *
+ * TRAIL RIPPLES: folio's Trails system feeds a position data-texture into the
+ * shader — the same pattern drives the walking wake here. While the player
+ * wades, a ripple centre is dropped into a 16-slot data texture every 0.45 m;
+ * the shader expands each into a travelling foam ring (radius = age × speed,
+ * width grows, fades with age and reach).
  */
 import * as THREE from 'three/webgpu';
 import {
   attribute,
   color,
+  exp,
+  float,
   Fn,
+  Loop,
   max,
+  min,
   mix,
   positionWorld,
   screenUV,
-  select,
   sin,
   smoothstep,
   texture,
   uniform,
   varying,
+  vec2,
   vec3,
   vec4,
   viewportSharedTexture,
@@ -33,6 +49,7 @@ import {
 import { hashBlur } from 'three/addons/tsl/display/hashBlur.js';
 import { PlanetSurface, createSurfaceSample } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
+import { createRenderedRadiusAt, type RenderedRadiusAt } from '../../planet/RenderedTerrain';
 import type { Noises } from './Noises';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
@@ -44,28 +61,66 @@ const MIN_RIM_DROP = 0.22; // metres — the centre must sit this far below its 
 const TARGET_SITES = 120;
 const MAX_ATTEMPTS = 9000;
 
-interface BasinSite {
+/** Walking-wake ring buffer: ripple centres kept as one RGBA float row. */
+const TRAIL_SLOTS = 16;
+const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
+const TRAIL_STEP = 0.45; // metres between wake drops
+const RIPPLE_SPEED = 2.1; // ring expansion, m/s — fast enough to read as a wake
+const RIPPLE_WIDTH = 0.12; // ring thickness at birth, m (thin, crisp lines)
+
+export interface BasinSite {
   direction: THREE.Vector3;
   /** Patch radius in metres (the probed rim radius). */
   radius: number;
   /** Water surface as a RADIUS from the planet centre (flat locally). */
   waterLevel: number;
+  /** dot(direction, siteDirection) threshold that counts as “inside the basin”. */
+  reachCos: number;
+  /** cos angular radius of the water footprint (grass suppression core). */
+  waterCos: number;
+  /** cos angular radius + 1.5 m soft edge (grass suppression falloff). */
+  shoreCos: number;
   seed: number;
 }
 
 export class Puddles {
   readonly mesh: THREE.Mesh;
   readonly count: number;
+  readonly sites: BasinSite[];
+
+  /** Exact sampler of the RENDERED terrain mesh (see RenderedTerrain.ts). */
+  private readonly renderedRadiusAt: RenderedRadiusAt;
+
+  /** Walking wake: ripple centres (xyz + birth time) fed to the shader. */
+  private readonly trailTexture: THREE.DataTexture;
+  private readonly trailData: Float32Array;
+  private readonly lastTrailPoint = new THREE.Vector3();
+  private readonly trailScratch = new THREE.Vector3();
+  private trailCursor = 0;
+  private wasWading = false;
 
   constructor(
     private readonly surface: PlanetSurface,
     private readonly generator: PlanetGenerator,
-    noises: Noises,
-    timeUniform: any,
+    private readonly noises: Noises,
+    private readonly timeUniform: any,
     spawnClear?: { direction: THREE.Vector3; radius: number },
   ) {
+    this.renderedRadiusAt = createRenderedRadiusAt(generator);
     const sites = this.findBasins(spawnClear);
+    this.sites = sites;
     this.count = sites.length;
+
+    // ------------------------------------------------------------- trail buffer
+    this.trailData = new Float32Array(TRAIL_SLOTS * 4);
+    for (let i = 0; i < TRAIL_SLOTS; i++) this.trailData[i * 4 + 3] = -1e3; // “long dead”
+    this.trailTexture = new THREE.DataTexture(this.trailData, TRAIL_SLOTS, 1, THREE.RGBAFormat, THREE.FloatType);
+    this.trailTexture.minFilter = THREE.NearestFilter;
+    this.trailTexture.magFilter = THREE.NearestFilter;
+    this.trailTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.trailTexture.wrapT = THREE.ClampToEdgeWrapping;
+    this.trailTexture.generateMipmaps = false;
+    this.trailTexture.needsUpdate = true;
 
     // ---------------------------------------------------------------- geometry
     const positions: number[] = [];
@@ -95,10 +150,16 @@ export class Puddles {
             .addScaledVector(bitangent, Math.sin(angle) * radius)
             .normalize();
 
-          const terrainRadius = this.generator.radiusAt(direction.x, direction.y, direction.z);
-          const depth = site.waterLevel - terrainRadius;
-          // flat inside the basin, hugging the terrain above the waterline
-          const surfaceRadius = depth > 0 ? site.waterLevel : terrainRadius + 0.035;
+          const renderedRadius = this.renderedRadiusAt(direction);
+          const depth = site.waterLevel - renderedRadius;
+          // flat water inside the basin; over the outer band it slopes down to
+          // hug the VISIBLE ground so the shoreline sits exactly where the
+          // camera's terrain meets the water
+          const edgeDrop = smoothstepCpu(0.82, 1.0, r);
+          const conformRadius = renderedRadius + 0.035;
+          const surfaceRadius = depth > 0.02
+            ? site.waterLevel * (1 - edgeDrop) + conformRadius * edgeDrop
+            : conformRadius;
 
           positions.push(direction.x * surfaceRadius, direction.y * surfaceRadius, direction.z * surfaceRadius);
           depths.push(depth);
@@ -132,19 +193,45 @@ export class Puddles {
     const depth: any = varying(attribute('aDepth') as any);
     const ring: any = varying(attribute('aRing') as any);
     const seed: any = varying(attribute('aSeed') as any);
+    void seed;
 
-    // shore foam + wind ripple rings (folio's details mask)
+    // walking wake: expand every trail slot into a travelling ring (folio's
+    // Trails pattern — a position data-texture sampled by the shader)
+    const wake = Fn(() => {
+      const total = float(0).toVar();
+      Loop(TRAIL_SLOTS, ({ i }) => {
+        const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
+        const packed = texture(this.trailTexture as any, slotUv) as any;
+        const toPoint = positionWorld.sub(packed.xyz);
+        const distance = (toPoint as any).length();
+        const age = this.timeUniform.sub(packed.w);
+
+        const radius = age.mul(RIPPLE_SPEED);
+        const width = age.mul(0.22).add(RIPPLE_WIDTH);
+        const delta = distance.sub(radius);
+        const band = exp(delta.mul(delta).div(width.mul(width)).negate());
+
+        const fresh = smoothstep(0.0, 0.08, age).mul(smoothstep(2.8, 1.5, age));
+        const reach = smoothstep(2.6, 0.9, distance);
+        total.addAssign(band.mul(fresh).mul(reach));
+      });
+      return min(total, 1.0) as any;
+    })();
+
+    // natural foam only — a FAINT waterline tint and barely-there wind bands.
+    // (On gentle terrain a depth band spans many metres, so the only reliable
+    // way to keep shores clean is low intensity.) The walking wake stays crisp.
     const detailsMask = (() => {
-      const shore = smoothstep(0.18, 0.02, depth);
+      const shore = smoothstep(0.035, 0.006, depth).mul(0.45);
       const noise = texture(noises.perlin, positionWorld.xz.mul(0.35)).r;
-      const rippleBand = sin(depth.mul(16).sub(timeUniform.mul(0.55)).add(noise.mul(6.283)));
-      const ripple = smoothstep(0.87, 1.0, rippleBand).mul(smoothstep(0.05, 0.4, depth));
+      const rippleBand = sin(depth.mul(16).sub(timeUniform.mul(0.55)).add(noise.mul(2.2)));
+      const ripple = smoothstep(0.95, 1.0, rippleBand).mul(smoothstep(0.05, 0.4, depth)).mul(0.25);
       return max(shore, ripple) as any;
     })();
 
     const material = new MeshDefaultMaterial({
-      // folio: the detail pass is the foam — tinted here so bloom never blows it out
-      colorNode: mix(color(0xffffff), color(0x9fd8cc), 0.4) as any,
+      // folio: the detail pass is the foam — soft seafoam, never milk-white
+      colorNode: mix(color(0xdff7ee), color(0x86c7b6), 0.55) as any,
       alphaNode: detailsMask,
       alphaTest: 0,
       depthWrite: false,
@@ -156,9 +243,9 @@ export class Puddles {
       hasFog: true,
     });
 
-    // folio's output override: where the detail mask is quiet the surface shows
-    // the BLURRED SCREEN behind it (the mirror); wet pixels replace it, dry
-    // pixels vanish entirely.
+    // folio's output override: the surface shows the BLURRED SCREEN behind it
+    // (the mirror) with smoothly blended foam; the walking wake rides on top as
+    // thin bright rings; dry pixels vanish entirely.
     const baseOutput = (material as any).outputNode as any;
     (material as any).outputNode = Fn(() => {
       const blurOutput = (hashBlur as any)(viewportSharedTexture(screenUV), floatLike(0.012), {
@@ -168,8 +255,11 @@ export class Puddles {
       // contaminated tint over the screen mirror (radioactive puddle water)
       const mirrored = mix(blurOutput.rgb, vec3(0.06, 0.24, 0.25), 0.38);
       const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(1.0, 0.84, ring));
-      const surface = baseOutput.a.greaterThan(0.5);
-      const rgb = select(surface, baseOutput.rgb, mirrored);
+      // smooth foam compositing (a hard >0.5 cut turned every mask edge into a
+      // solid white patch — the over-foamed shores)
+      const foamed = mix(mirrored, baseOutput.rgb, detailsMask);
+      // walking wake: crisp rings on top of the water, not foam blobs
+      const rgb = mix(foamed, baseOutput.rgb, (wake as any).mul(0.65));
       return vec4(rgb, wet.mul(0.97));
     })();
 
@@ -228,9 +318,10 @@ export class Puddles {
           const height = this.generator.radiusAt(probe.x, probe.y, probe.z);
           if (height < rimMin) rimMin = height;
         }
+        // keep growing: the LARGEST viable rim wins, so the pool fills the
+        // whole depression instead of a film around its lowest point
         if (rimMin - centreRadius > MIN_RIM_DROP) {
           found = { radius: rimRadius, rimMin };
-          break;
         }
       }
       if (!found) continue;
@@ -246,17 +337,69 @@ export class Puddles {
       }
       if (tooClose) continue;
 
-      const fill = Math.min((found.rimMin - centreRadius) * 0.7, 0.85);
+      const drop = found.rimMin - centreRadius;
+      // fill to 85% of the drop: a real pool, its waterline just below the
+      // lowest rim point; never beneath the visible mesh floor
+      const fill = Math.min(drop * 0.85, 1.2);
+      const renderedCentre = this.renderedRadiusAt(direction);
+      const waterLevel = Math.max(centreRadius + Math.max(0.2, fill), renderedCentre + 0.15);
       sites.push({
         direction: direction.clone(),
         radius: found.radius,
-        waterLevel: centreRadius + Math.max(0.12, fill),
+        waterLevel,
+        reachCos: Math.cos((found.radius * 1.25) / this.surface.radius),
+        waterCos: Math.cos(found.radius / this.surface.radius),
+        shoreCos: Math.cos((found.radius + 1.5) / this.surface.radius),
         seed: random(),
       });
     }
 
     // rebuild probe basis lazily inside the loop above (stable tangent per candidate)
     return sites;
+  }
+
+  /**
+   * Walking wake: while the player wades through a basin (feet under the water
+   * level), drop a ripple centre every TRAIL_STEP metres; the shader expands
+   * each slot into a travelling ring. Generic on purpose — remote P2P players
+   * can feed the same buffer.
+   */
+  trackTrail(focusPoint: THREE.Vector3): void {
+    const direction = this.trailScratch.copy(focusPoint).normalize();
+
+    let wadingDepth = 0;
+    let wadingSite: BasinSite | null = null;
+    const playerRadius = focusPoint.length();
+    for (const site of this.sites) {
+      if (direction.dot(site.direction) < site.reachCos) continue;
+      // must be AT the water surface — flying/jumping over a puddle leaves no wake
+      if (playerRadius > site.waterLevel + 0.4) continue;
+      // visible depth — the wake follows the water the camera shows
+      const waterDepth = site.waterLevel - this.renderedRadiusAt(direction);
+      if (waterDepth > 0.045 && waterDepth > wadingDepth) {
+        wadingDepth = waterDepth;
+        wadingSite = site;
+      }
+    }
+
+    if (!wadingSite) {
+      this.wasWading = false;
+      return;
+    }
+
+    const point = direction.multiplyScalar(wadingSite.waterLevel);
+    if (this.wasWading && this.lastTrailPoint.distanceTo(point) < TRAIL_STEP) return;
+
+    const offset = (this.trailCursor % TRAIL_SLOTS) * 4;
+    this.trailCursor++;
+    this.trailData[offset] = point.x;
+    this.trailData[offset + 1] = point.y;
+    this.trailData[offset + 2] = point.z;
+    this.trailData[offset + 3] = this.timeUniform.value as number;
+    this.trailTexture.needsUpdate = true;
+
+    this.lastTrailPoint.copy(point);
+    this.wasWading = true;
   }
 
   setVisible(visible: boolean): void {
@@ -266,10 +409,17 @@ export class Puddles {
   dispose(): void {
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
+    this.trailTexture.dispose();
   }
 }
 
 /** Small helper so hashBlur receives a node-friendly scalar. */
 function floatLike(value: number): any {
   return uniform(value);
+}
+
+/** CPU smoothstep (matches the shader semantics). */
+function smoothstepCpu(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }

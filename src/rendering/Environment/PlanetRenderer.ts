@@ -9,6 +9,7 @@
 import * as THREE from 'three/webgpu';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
+import { PlanetObstacles } from '../../planet/PlanetObstacles';
 import type { Quality } from '../Quality';
 import type { Ticker } from '../Ticker';
 import type { Materials } from '../materials/Materials';
@@ -99,7 +100,12 @@ export class PlanetRenderer {
 
   private readonly focusScratch = new THREE.Vector3();
 
-  private constructor(private readonly deps: PlanetWorldDependencies) {}
+  /** Environmental colliders (trees / bushes / rocks / spikes / crystals). */
+  readonly obstacles: PlanetObstacles;
+
+  private constructor(private readonly deps: PlanetWorldDependencies) {
+    this.obstacles = new PlanetObstacles(deps.surface.radius);
+  }
 
   static async create(
     deps: PlanetWorldDependencies,
@@ -122,12 +128,17 @@ export class PlanetRenderer {
     });
     this.group.add(this.terrain.mesh);
 
-    // 2 — grass field
-    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, deps.ticker, deps.spawnDirection);
+    // 2 — water films FIRST: the basin list feeds the grass suppression slots
+    onProgress?.(0.32, 'flooding puddles');
+    this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
+    this.group.add(this.puddles.mesh);
+
+    // 3 — grass field (blades vanish inside basins, wake ripples on water)
+    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, deps.ticker, deps.spawnDirection, this.puddles);
     this.group.add(this.grass.mesh);
 
-    // 3 — bushes (leaf-card canopies)
-    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 240, spawnClear);
+    // 4 — bushes (leaf-card canopies)
+    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 240, spawnClear, this.obstacles);
     this.group.add(this.bushes.foliage.mesh);
 
     // 4 — trees (trunk instancing + leaf-card canopies)
@@ -143,6 +154,7 @@ export class PlanetRenderer {
         surface: deps.surface,
         generator: deps.generator,
         spawnClear,
+        obstacles: this.obstacles,
       });
       this.trees.push(tree);
       this.group.add(tree.group);
@@ -150,23 +162,18 @@ export class PlanetRenderer {
 
     // 5 — rocks / spikes / crystals
     onProgress?.(0.72, 'scattering rocks');
-    this.rocks = new Rocks(deps.surface, deps.generator, spawnClear);
+    this.rocks = new Rocks(deps.surface, deps.generator, spawnClear, this.obstacles);
     this.group.add(this.rocks.group);
 
     onProgress?.(0.78, 'planting spikes');
-    this.spikes = new Spikes(deps.surface, deps.generator, 74, spawnClear);
+    this.spikes = new Spikes(deps.surface, deps.generator, 74, spawnClear, this.obstacles);
     if (this.spikes.mesh) this.group.add(this.spikes.mesh);
 
     onProgress?.(0.82, 'growing crystals');
-    this.crystals = new RadioactiveCrystals(deps.surface, deps.generator, deps.time, 48, spawnClear);
+    this.crystals = new RadioactiveCrystals(deps.surface, deps.generator, deps.time, 48, spawnClear, this.obstacles);
     if (this.crystals.mesh) this.group.add(this.crystals.mesh);
 
-    // 6 — water films
-    onProgress?.(0.86, 'flooding puddles');
-    this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
-    this.group.add(this.puddles.mesh);
-
-    // 7 — atmosphere
+    // 6 — atmosphere
     onProgress?.(0.9, 'releasing contamination');
     this.particles = new FloatingParticles(
       deps.surface,
@@ -185,6 +192,7 @@ export class PlanetRenderer {
   update(focusPoint: THREE.Vector3, camera?: THREE.Camera): void {
     void this.focusScratch;
     this.grass.update(focusPoint);
+    this.puddles.trackTrail(focusPoint);
     this.particles.update(focusPoint, camera);
   }
 
@@ -234,6 +242,7 @@ export class PlanetRenderer {
       'crystals': `${this.crystals.shardCount}`,
       'puddles': `${this.puddles.count}`,
       'motes': `${this.particles.count}`,
+      'colliders': `${this.obstacles.count}`,
     };
   }
 }

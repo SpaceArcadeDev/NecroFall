@@ -17,6 +17,7 @@ import type { Wind } from './Wind';
 import { Foliage } from './Foliage';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
+import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { scatterPlacements } from '../../planet/Placement';
 
 export interface TreeSpeciesOptions {
@@ -51,6 +52,8 @@ export interface TreesDependencies {
   generator: PlanetGenerator;
   /** Keep a clearing around the player spawn (dev world + real spawns). */
   spawnClear?: SpawnClear;
+  /** Solid trunks register here (player collision). */
+  obstacles?: PlanetObstacles;
 }
 
 export class Trees {
@@ -104,6 +107,11 @@ export class Trees {
       excludeDirection: deps.spawnClear?.direction,
       excludeRadius: deps.spawnClear?.radius,
     });
+
+    // ---- solid trunks: the player collides with a thin trunk cylinder
+    for (const placement of placements) {
+      deps.obstacles?.add(placement, 0.028 * assetHeight * placement.scale, 0, false);
+    }
 
     // ---- trunk instancing
     let trunkMesh: THREE.InstancedMesh | null = null;

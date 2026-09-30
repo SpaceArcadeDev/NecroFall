@@ -336,6 +336,17 @@ export async function startDevWorld(): Promise<void> {
       if (verticalComponent < 0) playerState.velocity.addScaledVector(scratchDirection, -verticalComponent);
     }
 
+    // environmental objects are solid — trees, bushes, rocks, spikes, crystals
+    world.obstacles.resolve(playerState.position, 0.42, playerState.velocity);
+
+    // keep the resolved position on the collision surface (a push along a
+    // slope must never leave the body under the terrain)
+    scratchDirection.copy(playerState.position).normalize();
+    const resolvedRadius = surface.radiusAt(scratchDirection) + FOOT_OFFSET;
+    if (playerState.position.length() < resolvedRadius) {
+      playerState.position.copy(scratchDirection).multiplyScalar(resolvedRadius);
+    }
+
     if (moving && grounded) {
       playerState.facing = Math.atan2(scratchMove.dot(moveRight), scratchMove.dot(moveForward));
     }

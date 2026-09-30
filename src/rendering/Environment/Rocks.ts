@@ -10,6 +10,7 @@ import { color } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
+import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { mulberry32 } from '../../planet/PlanetSeed';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
@@ -33,7 +34,12 @@ export class Rocks {
   readonly group = new THREE.Group();
   readonly count: number;
 
-  constructor(surface: PlanetSurface, generator: PlanetGenerator, spawnClear?: { direction: THREE.Vector3; radius: number }) {
+  constructor(
+    surface: PlanetSurface,
+    generator: PlanetGenerator,
+    spawnClear?: { direction: THREE.Vector3; radius: number },
+    obstacles?: PlanetObstacles,
+  ) {
     let total = 0;
     for (const variant of VARIANTS) {
       const geometry = Rocks.createGeometry(variant.salt, variant.stretch);
@@ -55,6 +61,8 @@ export class Rocks {
         excludeDirection: spawnClear?.direction,
         excludeRadius: spawnClear?.radius,
       });
+
+      for (const placement of placements) obstacles?.add(placement, 0.9 * placement.scale, 0.85 * placement.scale, true);
 
       const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, placements.length));
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);

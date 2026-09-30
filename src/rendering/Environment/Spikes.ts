@@ -10,6 +10,7 @@ import { color, mix, normalWorld } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
+import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
 
@@ -17,7 +18,7 @@ export class Spikes {
   readonly mesh: THREE.InstancedMesh | null;
   readonly spikeCount: number;
 
-  constructor(surface: PlanetSurface, generator: PlanetGenerator, clusterTarget = 74, spawnClear?: { direction: THREE.Vector3; radius: number }) {
+  constructor(surface: PlanetSurface, generator: PlanetGenerator, clusterTarget = 74, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles) {
     const clusters = scatterPlacements(surface, generator, {
       count: clusterTarget,
       salt: 77,
@@ -33,8 +34,10 @@ export class Spikes {
     });
 
     const random = generator.rand(78);
-    const geometry = new THREE.ConeGeometry(0.17, 0.98, 5);
-    geometry.translate(0, 0.49, 0);
+    const geometry = new THREE.ConeGeometry(0.2, 1.25, 5);
+    geometry.translate(0, 0.625, 0);
+
+    for (const cluster of clusters) obstacles?.add(cluster, 0.95 * cluster.scale, 1.6 * cluster.scale, false);
 
     const material = new MeshDefaultMaterial({
       colorNode: mix(
@@ -53,11 +56,11 @@ export class Spikes {
     const tilt = new THREE.Quaternion();
 
     for (const cluster of clusters) {
-      const perCluster = 2 + Math.floor(random() * 4);
+      const perCluster = 4 + Math.floor(random() * 6); // 4–9 chunky spikes per cluster
       for (let i = 0; i < perCluster; i++) {
         const angle = random() * Math.PI * 2;
-        const distance = 0.08 + random() * 0.42;
-        const scale = 0.55 + random() * 0.95;
+        const distance = 0.08 + random() * 0.62;
+        const scale = 0.8 + random() * 1.15;
 
         dummy.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
         dummy.rotation.set((random() - 0.5) * 0.2, random() * Math.PI * 2, (random() - 0.5) * 0.2);

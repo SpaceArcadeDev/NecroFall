@@ -12,6 +12,7 @@ import type { Wind } from './Wind';
 import { Foliage } from './Foliage';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
+import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { scatterPlacements } from '../../planet/Placement';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
 
@@ -32,6 +33,7 @@ export class Bushes {
     generator: PlanetGenerator,
     count = 240,
     spawnClear?: SpawnClear,
+    obstacles?: PlanetObstacles,
   ) {
     const placements = scatterPlacements(surface, generator, {
       count,
@@ -46,6 +48,8 @@ export class Bushes {
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
     });
+
+    for (const placement of placements) obstacles?.add(placement, 0.45 * placement.scale, 0.55 * placement.scale, true);
 
     const matrices = placements.map((placement) => placement.matrix);
     this.foliage = new Foliage(

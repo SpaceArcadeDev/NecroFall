@@ -10,12 +10,13 @@ import { color, mix, normalWorld, uv } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
+import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 
 export class RadioactiveCrystals {
   readonly mesh: THREE.InstancedMesh | null;
   readonly shardCount: number;
 
-  constructor(surface: PlanetSurface, generator: PlanetGenerator, timeUniform: any, clusterTarget = 48, spawnClear?: { direction: THREE.Vector3; radius: number }) {
+  constructor(surface: PlanetSurface, generator: PlanetGenerator, timeUniform: any, clusterTarget = 48, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles) {
     const clusters = scatterPlacements(surface, generator, {
       count: clusterTarget,
       salt: 55,
@@ -24,13 +25,14 @@ export class RadioactiveCrystals {
       aboveWater: 0.35,
       scaleMin: 0.85,
       scaleMax: 1.5,
-      sinkFactor: 0.03,
+      sinkFactor: 0.12,
       attemptsPerInstance: 16,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
     });
 
     const random = generator.rand(56);
+    for (const cluster of clusters) obstacles?.add(cluster, 0.75 * cluster.scale, 1.5 * cluster.scale, false);
     const geometry = new THREE.OctahedronGeometry(0.46, 0);
     geometry.scale(0.5, 1.9, 0.5);
     geometry.translate(0, 0.75, 0);
@@ -56,9 +58,13 @@ export class RadioactiveCrystals {
         const distance = 0.1 + random() * 0.55;
         const scale = 0.6 + random() * 1.0;
 
-        // tangent-plane offset + yaw + slight tilt (plan §77: never world Y)
-        dummy.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
-        dummy.rotation.set((random() - 0.5) * 0.34, random() * Math.PI * 2, (random() - 0.5) * 0.34);
+        // random BURIAL DEPTH + leaning shards in any direction — some barely
+        // poke out of the ground, none is a manicured vertical bed
+        const bury = random() * 0.75 * scale;
+        const tiltX = (random() - 0.5) * 1.7; // up to ~±49°
+        const tiltZ = (random() - 0.5) * 1.7;
+        dummy.position.set(Math.cos(angle) * distance, -bury, Math.sin(angle) * distance);
+        dummy.rotation.set(tiltX, random() * Math.PI * 2, tiltZ, 'YXZ');
         dummy.scale.set(scale, scale * (0.8 + random() * 0.7), scale);
         dummy.updateMatrix();
 

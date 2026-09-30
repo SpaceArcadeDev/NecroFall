@@ -75,12 +75,18 @@ export class Quality {
 
   /** Grass blade cells per side (plan §14, raised to folio density). */
   grassSubdivisions(): number {
-    return this.level === 0 ? 340 : this.level === 1 ? 260 : 180;
+    return this.level === 0 ? 620 : this.level === 1 ? 450 : 340;
   }
 
-  /** Grass field half extent in metres — the moving detail window (§39/§68). */
+  /**
+   * Grass field half extent in metres — the moving detail window (§39/§68).
+   * Sized so the world-anchored recycling boundary sits FAR outside the
+   * readable view (blades are a couple of pixels when they appear) instead of
+   * popping inside it. Density tapers with a steep falloff past the dense
+   * core (34% of the extent), so the far band costs few blades.
+   */
   grassHalfExtent(): number {
-    return this.level === 0 ? 30 : this.level === 1 ? 24 : 18;
+    return this.level === 0 ? 160 : this.level === 1 ? 118 : 88;
   }
 
   /** Foliage (leaf cards) fade distance. */

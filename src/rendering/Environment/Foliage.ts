@@ -1,10 +1,11 @@
 /**
  * NECROFALL — instanced leaf cards (folio `World/Foliage.js` port, plan §19/§94).
  *
- * One merged plane-cloud geometry (80 leaf cards clustered into a canopy) is
- * instanced at every reference transform. Colour = folio's two-tone canopy
- * (N·L mix), alpha = the generated leaf SDF, wind = the shared field. ONE
- * draw call per tree type / bush family.
+ * One merged plane-cloud geometry (80 leaf cards clustered into a canopy, each
+ * with a PERPENDICULAR TWIN so the canopy can never collapse edge-on from any
+ * orbit angle) is instanced at every reference transform. Colour = folio's
+ * two-tone canopy (N·L mix), alpha = the generated leaf SDF, wind = the shared
+ * field. ONE draw call per tree type / bush family.
  */
 import * as THREE from 'three/webgpu';
 import { float, Fn, mix, normalWorld, positionLocal, rotateUV, screenSize, screenUV, smoothstep, texture, uniform, uv, vec2, vec3 } from 'three/tsl';
@@ -23,6 +24,13 @@ export interface FoliageOptions {
   planeCount?: number;
   /** Seed for the canopy scatter. */
   seed?: number;
+  /**
+   * Give every card a perpendicular twin. Folio's cards are coplanar per canopy,
+   * so from some orbit angles every quad goes edge-on and the SDF cutout
+   * collapses to a 2D line; the twin keeps ≥45° of one of the pair face-on
+   * from ANY direction.
+   */
+  crossCards?: boolean;
   /** Fade cards near the player so they never block the view (folio see-through). */
   seeThrough?: boolean;
   castShadow?: boolean;
@@ -52,7 +60,7 @@ export class Foliage {
     const planeSize = options.planeSize ?? 0.8;
     const planeCount = options.planeCount ?? 80;
 
-    const geometry = Foliage.createGeometry(planeCount, planeSize, options.seed ?? 1);
+    const geometry = Foliage.createGeometry(planeCount, planeSize, options.seed ?? 1, options.crossCards ?? true);
 
     // ---- alpha: the leaf SDF, shimmering with the wind (folio's rotateUV)
     const foliageAlpha = Fn(() => {
@@ -130,23 +138,21 @@ export class Foliage {
   }
 
   /** Folio's canopy: a sphere of leaf cards, radial distribution, bent normals. */
-  private static createGeometry(planeCount: number, planeSize: number, seed: number): THREE.BufferGeometry {
+  private static createGeometry(
+    planeCount: number,
+    planeSize: number,
+    seed: number,
+    crossCards = true,
+  ): THREE.BufferGeometry {
     const rng = mulberry32(seed);
     const planes: THREE.BufferGeometry[] = [];
 
-    for (let i = 0; i < planeCount; i++) {
+    const makeCard = (position: THREE.Vector3, roll: number, crossed: boolean): THREE.BufferGeometry => {
       const plane = new THREE.PlaneGeometry(planeSize, planeSize);
-
-      const radius = 1 - Math.pow(rng(), 3);
-      const theta = Math.PI * 2 * rng();
-      const phi = Math.PI * rng();
-      const position = new THREE.Vector3(
-        radius * Math.sin(phi) * Math.cos(theta),
-        radius * Math.cos(phi),
-        radius * Math.sin(phi) * Math.sin(theta),
-      );
-
-      plane.rotateZ(rng() * 9999);
+      plane.rotateZ(roll);
+      // the crossed twin sits 90° to its partner — from ANY view at least one
+      // of the pair is ≥45° face-on (a canopy can never collapse to a line)
+      if (crossed) plane.rotateX(Math.PI * 0.5);
       plane.translate(position.x, position.y, position.z);
 
       // normals bent toward the canopy centre so leaves shade softly
@@ -162,7 +168,22 @@ export class Foliage {
         normalArray[i3 + 2] = mixed.z;
       }
       plane.setAttribute('normal', new THREE.BufferAttribute(normalArray, 3));
-      planes.push(plane);
+      return plane;
+    };
+
+    for (let i = 0; i < planeCount; i++) {
+      const radius = 1 - Math.pow(rng(), 3);
+      const theta = Math.PI * 2 * rng();
+      const phi = Math.PI * rng();
+      const position = new THREE.Vector3(
+        radius * Math.sin(phi) * Math.cos(theta),
+        radius * Math.cos(phi),
+        radius * Math.sin(phi) * Math.sin(theta),
+      );
+      const roll = rng() * 9999;
+
+      planes.push(makeCard(position, roll, false));
+      if (crossCards) planes.push(makeCard(position, roll, true));
     }
 
     const geometry = mergeGeometries(planes)!;

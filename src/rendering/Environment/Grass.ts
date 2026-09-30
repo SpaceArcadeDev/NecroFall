@@ -281,10 +281,17 @@ export class Grass {
       const patch = vec2(loopX, loopZ);
 
       // ---- rim fade — recycling happens at zero size (no popping, no hard edge).
-      // Blades keep FULL SIZE through the density falloff and only shrink in the
-      // last 18% of the field, so the mid-distance lawn never reads as stubble.
+      // The boundary CULLS blades one-by-one in hash order (see rimCull) instead
+      // of scaling them all together: a uniform grow/shrink wave at the field
+      // edge is exactly what reads as "grass popping in" while moving; single
+      // blades vanishing among a dense field, far away, do not.
       const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
-      const rimFade = smoothstep(0.82, 1.0, rimDistance).oneMinus();
+      const rimFade = smoothstep(0.78, 0.97, rimDistance).oneMinus();
+      const bladeHash = (patch.x.mul(12.9898).add(patch.y.mul(78.233)) as any)
+        .sin()
+        .mul(43758.5453)
+        .fract();
+      const rimCull = select(bladeHash.lessThan(rimFade), float(1), float(0));
 
       // ---- sphere mapping: patch coords (metres) → direction on the planet.
       // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
@@ -302,7 +309,7 @@ export class Grass {
       // packed clump exactly like the spawn area; only bare gaps stay empty.
       const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
       const patchFactor = smoothstep(0.32, 0.52, patchNoise);
-      const visibility = rimFade.mul(this.waterSuppression(direction).oneMinus());
+      const visibility = rimCull.mul(this.waterSuppression(direction).oneMinus());
       // Outside the patches a sparse baseline remains (small random tufts), so
       // bare zones still have some grass — but the dark soil shading in the
       // terrain keys on the patch CORE only (full-blade zone), so it can never

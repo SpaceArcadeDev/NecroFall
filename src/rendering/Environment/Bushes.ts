@@ -59,7 +59,7 @@ export class Bushes {
       uniform(color(RADIOACTIVE_PALETTE.foliageDark)),
       uniform(color(RADIOACTIVE_PALETTE.foliage)),
       ticker,
-      { planeCount: 46, planeSize: 0.62, seed: 907, seeThrough: true, castShadow: false },
+      { planeCount: 72, planeSize: 0.56, seed: 907, seeThrough: true, castShadow: false },
     );
     this.count = placements.length;
   }

@@ -437,9 +437,10 @@ export class VegetationGenerator {
         kind === 'SLAB' ? rand.range(0.6, 1.6) :
         kind === 'CRYSTAL' ? rand.range(1.0, 2.6) :
         rand.range(0.7, 1.6);
-      // Rocks sink DEEP relative to their size: a boulder reads as anchored only when a good
-      // fraction of it is under the contour.
-      this.frameFor(dir, rand, 8, scale, 0.22 * scale);
+      // Per-kind sink: flat slabs need to bury deep or their downhill edge floats on slopes
+      // (live review 2026-09-30: "rocks floating in air") — the sink is along the surface normal.
+      const sink = kind === 'SLAB' ? 0.42 * scale : kind === 'CRYSTAL' ? 0.28 * scale : 0.22 * scale;
+      this.frameFor(dir, rand, 8, scale, sink);
       const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind };
       placements.rocks.push(rock);
       placed++;

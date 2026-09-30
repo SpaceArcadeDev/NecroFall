@@ -20,8 +20,15 @@ class FolioLighting {
   readonly direction = uniform(new THREE.Vector3(0.55, 0.5, 0.35).normalize());
   readonly color = uniform(color('#fff3dd'));
   readonly intensity = uniform(1.32);
-  /** Tint used for the shadowed side of a surface (Folio's signature soft-shadow look). */
-  readonly shadowColor = uniform(color('#4a3f63'));
+  /**
+   * Tint used for the shadowed side of a surface — Folio's signature COLOURED shadow (their day
+   * preset #6d3fff, night #2f00db: shadows are saturated blue-violet, never dark grey).
+   *
+   * The old near-black #4a3f63 made every shade-side surface almost invisible: tree canopies
+   * (leaf planes half face away from the sun at all times) read as if the trees had no leaves
+   * at all — the user's "trees canopy missing" report (live review 2026-09-30).
+   */
+  readonly shadowColor = uniform(color('#5b4bc4'));
   /** Colour of the "light bounce" — ground/sky light smeared back onto undersides. */
   readonly bounceColor = uniform(color('#7f6a9e'));
 

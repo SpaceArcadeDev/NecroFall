@@ -18,8 +18,11 @@
 // Planet adaptations (documented per site, everything else is folio's logic untouched):
 //   • the field plane is a TANGENT FRAME on the sphere: blades are stored in metres of arc around
 //     an anchor direction, and the vertex shader maps the wrapped offset onto the sphere surface;
-//   • a re-anchor pass re-projects the stored offsets when the camera walks ~15 m, which is the
-//     spherical equivalent of folio's `center.value` update (their world is flat, ours is not);
+//   • `shiftFrame` re-projects the stored offsets into a new tangent frame when the view leaves
+//     the frame's centre — a pure coordinate change (every blade keeps its world position). It is
+//     NOT a re-scatter: folio never touches its blade positions after `setGeometry`, and neither
+//     do we (live bug 2026-09-30: the old re-anchor re-scattered 90 % of the field inside the
+//     view = "the grass pops in and changes as I move").
 //   • the per-blade terrain data is sampled from two baked equirect textures (slope/height01/
 //     moisture/corruption + vegetation) — folio's `terrain.terrainNode(bladePosition)`;
 //   • blades hide below the waterline and grow along the surface normal.
@@ -28,6 +31,7 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn,
+  asin,
   attribute,
   atan,
   cameraPosition,
@@ -70,18 +74,22 @@ export interface GrassOptions {
   castShadows?: boolean;
 }
 
-/** Folio's density: 280² = 78 400 blades. Quality tiers scale the subdivisions. */
-const BASE_SUBDIVISIONS = 280;
+/** Folio's density: 280² = 78 400 blades per 280 m of field. Our field covers the full visible
+ *  ground (~95 m half-extent at high quality), so the subdivisions scale up with the area to keep
+ *  a folio-like blades-per-m² (≈5/m²); quality tiers scale it back down through `density`. */
+const BASE_SUBDIVISIONS = 420;
 /** Folio's ideal field surface (m²) — drives the blade-size overflow formula. */
 const SURFACE_IDEAL = 2000;
-/** Re-anchor when the camera walks this fraction of the half-extent from the frame's centre. */
-const REANCHOR_FRACTION = 0.55;
+/** Re-centre (pure coordinate shift, never a re-scatter) once the view leaves this fraction of
+ *  the half-extent — keeps the stored offsets small; folio's flat world never needs it, the
+ *  sphere does. The blades' world positions are untouched. */
+const RECENTER_FRACTION = 0.55;
 /** Equirect data texture size (per-texel ≈ 2.9 m at the equator on a 118 m planet). */
 const TEX_W = 512;
 const TEX_H = 256;
 
 /**
- * Deterministic tangent basis of a direction. The CPU (re-anchor) and the shader (blade
+ * Deterministic tangent basis of a direction. The CPU (frame rebase) and the shader (blade
  * mapping) MUST agree bit-for-bit, so both use this exact rule: the helper axis flips from +Y
  * to +X beyond |y| = 0.9 (a hard switch, no blending).
  */
@@ -126,8 +134,7 @@ export class Grass {
   private readonly sizeUniform = uniform(1);
   private readonly positionAttribute: THREE.BufferAttribute;
 
-  // Re-anchor scratch.
-  private readonly rand: Rand;
+  // Frame-rebase scratch.
   private readonly _dir = new THREE.Vector3();
   private readonly _t1n = new THREE.Vector3();
   private readonly _t2n = new THREE.Vector3();
@@ -137,8 +144,11 @@ export class Grass {
     this.reliefMinU.value = options.reliefMin;
     this.reliefMaxU.value = options.reliefMax;
     this.waterlineU.value = options.waterline01 ?? -1;
-    this.rand = new Rand((options.seed ^ 0x51a55) >>> 0);
-    this.halfExtent = clamp(options.maxDistance * 0.5, 22, 36);
+    // The field reach = the visible ground distance (FolioWorld passes the per-quality value).
+    // The wrap recycles blades AT this radius, so it must sit at/beyond the visible edge — the
+    // old 36 m cap put the recycling rim INSIDE the view ("grass pops in and changes as I move",
+    // live review 2026-09-30).
+    this.halfExtent = clamp(options.maxDistance, 48, 200);
     this.size = this.halfExtent * 2;
     this.subdivisions = Math.max(48, Math.round(BASE_SUBDIVISIONS * Math.sqrt(clamp(options.density, 0.25, 1.2))));
     this.bladeCount = this.subdivisions * this.subdivisions;
@@ -212,7 +222,7 @@ export class Grass {
     const geometry = new THREE.BufferGeometry();
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
     const field = new THREE.BufferAttribute(fields, 2);
-    field.setUsage(THREE.DynamicDrawUsage); // re-anchoring rewrites it
+    field.setUsage(THREE.DynamicDrawUsage); // frame rebases rewrite it
     geometry.setAttribute('aField', field);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('heightRandomness', new THREE.BufferAttribute(heightRandomness, 1));
@@ -284,10 +294,12 @@ export class Grass {
   readonly bladeRandomnessU: any = uniform(0.6);
 
   private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture): MeshDefaultMaterial {
-    // --- folio's overflow formulas, tuned to NecroFall's scale: tall enough to read as folio's
-    // lush field in third person (≈0.6 m after the overflow term) without swallowing the camera.
+    // --- folio's overflow formula, CLAMPED: folio grows the blades when the field grows (their
+    // field resizes with the view LOD). Our field now covers the whole visible ground (190 m
+    // wide), which would push the raw overflow to 17 → 3.8 m blades. The clamp keeps the tuned
+    // third-person scale (≈0.1 m wide / 0.7 m tall) at every quality tier.
     const surface = this.size * this.size;
-    const surfaceOverflow = Math.max(0, surface - SURFACE_IDEAL) / SURFACE_IDEAL;
+    const surfaceOverflow = clamp((surface - SURFACE_IDEAL) / SURFACE_IDEAL, 0, 1.6);
     this.bladeWidthU.value = 0.055 * (1 + surfaceOverflow * 0.5);
     this.bladeHeightU.value = 0.4 * (1 + surfaceOverflow * 0.5);
     const bladeWidth = this.bladeWidthU;
@@ -332,6 +344,7 @@ export class Grass {
 
     // --- the vertex stage: folio's blade construction on the tangent frame ---------------------
     const anchor = this.anchorUniform;
+    const centerU = this.centerUniform;
     const sizeU = this.sizeUniform;
     const radiusU = uniform(this.radius);
 
@@ -344,17 +357,18 @@ export class Grass {
       const t1 = normalize(cross(helper, anchor));
       const t2 = normalize(cross(anchor, t1));
 
-      // The blade's field offset — WORLD-PINNED. Folio's flat wrap subtracted the view centre
-      // every frame; on the sphere that slid every blade with the camera ("the grass is moving
-      // as I move" — live review 2026-09-30). The blade keeps its stored offset; the re-anchor
-      // pass is the ONLY thing that re-bases blades, and it preserves their world spot. The mod
-      // stays as pure robustness (scatter/projection always write in range anyway).
+      // Folio's infinite scroll (Grass.js exactly): wrap the blade's stored offset around the
+      // VIEW CENTRE, then add the centre back. While the blade is inside the window its world
+      // spot is unchanged (world-pinned); when the view scrolls past it, the wrap recycles it to
+      // the far rim — out of sight — so nothing ever pops or drifts inside the view.
       const raw = attribute('aField', 'vec2') as any;
       const half = sizeU.mul(0.5);
       const loopPosition = raw
+        .sub(centerU)
         .add(half)
         .mod(sizeU)
-        .sub(half);
+        .sub(half)
+        .add(centerU);
 
       // Map the wrapped tangent offset onto the sphere (metres of arc around the anchor).
       const offsetLength = loopPosition.length().max(1e-4);
@@ -365,17 +379,21 @@ export class Grass {
         .normalize();
 
       // Per-blade terrain data at the blade's CURRENT position (folio's terrainNode call).
+      // The v coordinate is LATITUDE-LINEAR (asin), because the baked equirect texture's rows
+      // are latitude rows — the sine-based `dir.y*0.5+0.5` sampled the wrong latitude and left
+      // blades up to 4.4 m off the ground ("grass floats", live review 2026-09-30: measured
+      // -2.8..-4.4 m error vs 0.00 m with the angle-based v).
       const uv = vec2(
         atan(dir.z, dir.x).mul(1 / (Math.PI * 2)).add(0.5),
-        dir.y.mul(0.5).add(0.5),
+        asin(dir.y.clamp(-1, 1)).mul(1 / Math.PI).add(0.5),
       );
       vUv.assign(uv);
       vUp.assign(dir);
 
-      // Folio's grass mask, derived from the sampled terrain data. The gates are NecroFall's
-      // own (folia's island is gentle): the planet must read as MOSTLY grass — rock, corruption
-      // and genuinely steep faces are the only bare ground (live review 2026-09-30). The
-      // shoreline gate is deliberately gentle so only the actual waterline thins out.
+      // Folio's grass mask, derived from the sampled terrain data. NecroFall reads as a GRASS
+      // planet (folio's island is lush everywhere): the terrain data MODULATES the grass — it
+      // never erases it except on genuinely steep rock. No water gate (folio has none — the sea
+      // covers its own ground), so the carpet runs right down to the waterline.
       const a = sampleA(uv) as any;
       const height01 = a.y;
       const flatness = a.x.smoothstep(1.35, 0.05);
@@ -384,24 +402,25 @@ export class Grass {
         .add(0.45)
         .clamp(0, 1)
         .mul(a.w.oneMinus().mul(0.45).add(0.55));
-      const aboveWater = height01.sub(this.waterlineU).max(0).mul(18).clamp(0, 1);
-      const mask = flatness.mul(lush).mul(aboveWater).clamp(0, 1);
+      const mask = flatness.mul(lush).clamp(0, 1);
       vMask.assign(mask);
 
-      // Height: folio's bladeHeight × mix(1, random, 0.6) × noise variation × grass mask.
-      const baseRadius = this.reliefMinU.add(
-        height01.mul(this.reliefMaxU.sub(this.reliefMinU)),
-      );
-      const heightVariation = mx_noise_float(vec3(loopPosition.x, float(0), loopPosition.y).mul(0.0321))
+      // Height variation from the blade's WORLD direction (folio samples its perlin at the
+      // blade's world position) — wrapping never changes a blade's height.
+      const heightVariation = mx_noise_float(dir.mul(this.radius * 0.0321))
         .mul(0.5)
         .add(1);
       const randomness = mix(float(1), attribute('heightRandomness', 'float') as any, bladeHeightRandomness);
-      // Density mask as a SMOOTH SIZE factor: bare ground shrinks blades to nothing at their base.
-      // (A far-push driven by the mask stretched single vertices into giant shards — live bug
-      // 2026-09-30; a scale cannot stretch anything.)
-      const maskScale = mask.smoothstep(0.12, 0.42);
-      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(maskScale);
-      const width = bladeWidth.mul(maskScale);
+      // Folio scales geometry by the RAW density; a modest floor keeps ground cover even on the
+      // barren biomes, so no planet reads as "no grass".
+      const densityScale = mask.mul(0.65).add(0.35);
+      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(densityScale);
+      const width = bladeWidth.mul(densityScale);
+
+      // The blade's base radius, from the sampled relief of the ground it stands on.
+      const baseRadius = this.reliefMinU.add(
+        height01.mul(this.reliefMaxU.sub(this.reliefMinU)),
+      );
 
       // Shape (vertices: tip / left / right) along the surface up.
       const corner = vertexIndex.toFloat().mod(3);
@@ -423,19 +442,17 @@ export class Grass {
       const right = t1.mul(facing.cos()).add(t2.mul(facing.sin()));
       vertex = vertex.add(right.mul(shapeX));
 
-      // Wind: folio's `wind.offsetNode(...) × tipness × height × 2`, along the surface tangent.
+      // Wind: folio's `wind.offsetNode(...) × tipness × height × 2` along the surface tangent.
+      // The gust samples the blade's STORED offset (constant per blade) so wrapping never
+      // re-rolls a blade's wind state.
       const windWorld = vec3(FOLIO.wind.direction.x, float(0), FOLIO.wind.direction.y);
       const windTangent = normalize(windWorld.sub(dir.mul(windWorld.dot(dir))).add(right.mul(1e-4)));
-      const gust = FOLIO.wind.offset(loopPosition).length().mul(0.5).add(FOLIO.wind.strength.mul(0.5));
+      const gust = FOLIO.wind.offset(raw).length().mul(0.5).add(FOLIO.wind.strength.mul(0.5));
       const sway = gust.mul(vTipness).mul(height).mul(2);
       vertex = vertex.add(windTangent.mul(sway));
 
-      // Hide: only the PROVEN distance cull pushes blades off the planet (the mask now shrinks
-      // blades instead — see maskScale).
-      const distance = base.sub(cameraPosition as any).length();
-      const culled = distance.step(this.cullDistance as any);
-      vertex = vertex.add(dir.mul(culled.mul(9999)));
-
+      // Folio has no per-blade distance cull: the wrap keeps the field around the view, so
+      // every blade is near by construction.
       return vertex;
     })();
 
@@ -451,28 +468,31 @@ export class Grass {
   update(focus: THREE.Vector3): void {
     const dir = this._dir.copy(focus).normalize();
 
-    // The view's angular offset inside the current field frame.
+    // The view's angular offset inside the current field frame (folio's `center`).
     const cx = Math.atan2(dir.dot(this.basisT1), dir.dot(this.anchor)) * this.radius;
     const cy = Math.atan2(dir.dot(this.basisT2), dir.dot(this.anchor)) * this.radius;
     this.center2D.set(cx, cy);
     this.centerUniform.value.set(cx, cy);
 
-    if (Math.hypot(cx, cy) > this.halfExtent * REANCHOR_FRACTION) {
-      this.reanchor(dir);
+    // The tangent cap distorts when the view walks far from the anchor: re-base the frame.
+    // This is a PURE COORDINATE SHIFT — folio's field never re-scatters, and the shader's
+    // wrap-around-view keeps every blade's world spot through the rebase.
+    if (Math.hypot(cx, cy) > this.halfExtent * RECENTER_FRACTION) {
+      this.shiftFrame(dir);
     }
   }
 
   /**
-   * Move the field frame under the view.
+   * Re-base the tangent frame under the view.
    *
-   * Folio's flat world never needs this; on a sphere the tangent frame must follow the camera or
-   * the cap projection distorts. Blades whose world spot stays inside the NEW field are
-   * re-projected there (they never move on screen); the rest are re-scattered into the outer
-   * annulus — the same edge recycling folio's `mod` wrap does, at the same distance from the
-   * viewer (live bug 2026-09-30: projecting everything and letting the wrap fold it produced a
-   * degenerate band of grass instead of a field).
+   * Folio's flat world never needs this; on a sphere the cap projection distorts when the view
+   * walks far from the anchor. Every blade's WORLD direction is transformed into the new frame
+   * and stored back (wrapped into one field-size window — the shader wraps anyway, so this is
+   * display-lossless). NOTHING is re-scattered: no blade ever moves relative to the terrain and
+   * nothing pops inside the view (live review 2026-09-30 — the old scatter-based re-anchor was
+   * the "grass pops in and changes as I move" bug).
    */
-  private reanchor(newAnchor: THREE.Vector3): void {
+  private shiftFrame(newAnchor: THREE.Vector3): void {
     const pos = this.positionAttribute.array as Float32Array;
     const count = this.bladeCount;
     const size = this.size;
@@ -486,38 +506,12 @@ export class Grass {
     const oldT1 = this.basisT1;
     const oldT2 = this.basisT2;
     const oldAnchor = this.anchor;
-    const keepLimit = half * 0.995;
-
-    // How far apart are the two anchors? (metres of arc)
-    const far = Math.acos(clamp(this.anchor.dot(newAnchor), -1, 1)) * radius;
-    const project = far <= this.halfExtent;
-
-    const scatter = (i: number, includeCentre: boolean): void => {
-      const a = this.rand.next() * Math.PI * 2;
-      const rMin = includeCentre ? 0 : 0.5;
-      const r = half * (rMin + (1 - rMin) * this.rand.next());
-      const u = Math.cos(a) * r;
-      const v = Math.sin(a) * r;
-      // `aField` carries one value PER VERTEX (3 consecutive entries per blade). Every write
-      // must replicate to all THREE vertices — writing a single slot leaves the blade's corners
-      // reading DIFFERENT field values, and the triangle stretches across the planet (the giant
-      // screen-filling facets — live bug 2026-09-30: any re-anchor, e.g. landing, exploded the
-      // whole field).
-      const o = i * 6;
-      pos[o] = u; pos[o + 2] = u; pos[o + 4] = u;
-      pos[o + 1] = v; pos[o + 3] = v; pos[o + 5] = v;
-    };
 
     for (let i = 0; i < count; i++) {
-      if (!project) {
-        scatter(i, true);
-        continue;
-      }
       const o = i * 6;
-      // The blade's offset in the old frame — the shader displays exactly this (no centre term).
-      // All three vertices are identical by construction, so vertex 0's value is the blade's.
-      const lu = (((pos[o] + half) % size + size) % size - half);
-      const lv = (((pos[o + 1] + half) % size + size) % size - half);
+      // The blade's stored offset (all three vertices are identical; vertex 0 is the blade's).
+      const lu = pos[o];
+      const lv = pos[o + 1];
       const len = Math.max(1e-4, Math.hypot(lu, lv));
       const r = len / radius;
       const sinR = Math.sin(r);
@@ -527,16 +521,14 @@ export class Grass {
       const dy = oldAnchor.y * Math.cos(r) + (oldT1.y * lu + oldT2.y * lv) * (sinR / len);
       const dz = oldAnchor.z * Math.cos(r) + (oldT1.z * lu + oldT2.z * lv) * (sinR / len);
 
-      // Project into the new frame (angular offsets, metres of arc).
+      // Into the new frame (angular offsets, metres of arc), wrapped into the field window.
       const ca = dx * newAnchor.x + dy * newAnchor.y + dz * newAnchor.z;
       const nu = Math.atan2(dx * t1n.x + dy * t1n.y + dz * t1n.z, ca) * radius;
       const nv = Math.atan2(dx * t2n.x + dy * t2n.y + dz * t2n.z, ca) * radius;
-      if (Math.hypot(nu, nv) <= keepLimit) {
-        pos[o] = nu; pos[o + 2] = nu; pos[o + 4] = nu;
-        pos[o + 1] = nv; pos[o + 3] = nv; pos[o + 5] = nv;
-      } else {
-        scatter(i, false); // outside the new disk: recycle it at the field's rim
-      }
+      const wu = (((nu + half) % size) + size) % size - half;
+      const wv = (((nv + half) % size) + size) % size - half;
+      pos[o] = wu; pos[o + 2] = wu; pos[o + 4] = wu;
+      pos[o + 1] = wv; pos[o + 3] = wv; pos[o + 5] = wv;
     }
     this.positionAttribute.needsUpdate = true;
 

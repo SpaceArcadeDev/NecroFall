@@ -79,6 +79,14 @@ export class FolioResources {
       texture.colorSpace = THREE.NoColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
+      // Folio loads its foliage SDF with NEAREST filtering and NO mipmaps (Game.js resources
+      // list). Mipmapped linear filtering averages the soft leaf blobs down to the texture mean
+      // (~0.35) at canopy distances, and the foliage alpha chain (`- 0.3`, discard `< 0.1`)
+      // then erases almost every leaf pixel — the "trees have no canopy" bug. Nearest keeps
+      // each leaf's own value at every distance (and is folio's actual look: crisp cutouts).
+      texture.minFilter = THREE.NearestFilter;
+      texture.magFilter = THREE.NearestFilter;
+      texture.generateMipmaps = false;
       return texture;
     });
   }

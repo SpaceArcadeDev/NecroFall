@@ -214,13 +214,16 @@ export class Foliage {
       return alpha;
     })();
 
-    // --- colour: lit→shadow mix, washed towards the planet's vein colour by local corruption
+    // --- colour: lit→shadow mix, washed towards the planet's vein colour by local corruption.
+    // The wash stays light (0.22): folio's canopy is `mix(colorA, colorB, lighting)` only, and a
+    // strong wash turned every crown on corrupt worlds into the vein's teal — the trees then read
+    // as bare trunks with odd blue balls (live review 2026-09-30).
     const data = terrainDataNode();
     const colorNode = Fn(() => {
       const mixStrength = normalWorld.dot(FOLIO.lighting.direction).smoothstep(0, 1);
       const canopyColor = mix(this.options.colorA, this.options.colorB, mixStrength);
       const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.4)).min(1);
-      return canopyColor.mix(TERRAIN_PALETTE.vein, corruption.mul(0.45));
+      return canopyColor.mix(TERRAIN_PALETTE.vein, corruption.mul(0.22));
     })();
 
     const material = new MeshDefaultMaterial({

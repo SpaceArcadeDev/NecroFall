@@ -1,0 +1,119 @@
+# Terrain & Vegetation Review — folio-2025 port (2026-09-30)
+
+Self-test review of the grass / trees / water work against the folio-2025 source
+(`https://github.com/brunosimon/folio-2025`, local clone `.folio-ref`), run in the **dev world**
+(no enemies, frozen clock, unlimited time) on both the user's planet (VOLCANIC) and the lush
+JUNGLE planet.
+
+## How to reproduce the test world
+
+Boot the game, open the console, and run:
+
+```js
+const pg = await import('/src/rankmap/procedural/PlanetGenerator.ts');
+const seeds = await import('/src/rankmap/procedural/SeedHash.ts');
+// planet key: 0=VOLCANIC 1=DEAD 2=OCEANIC 3=FUNGAL 4=DESERT 5=JUNGLE · coords 0:0:0:<key>
+const planet = pg.planetAt(seeds.DEFAULT_UNIVERSE_SEED, 0, 0, 0, 5);
+nfShell.startSoloRun('survival', planet, { dev: true });
+// pick a class (VOLT card), then:
+nfShell.hideShell(true);
+```
+
+Dev mode = no enemy spawns, no match clock, invulnerability — terrain/vegetation can be
+inspected forever. Use the debug handle `window.necrofall` (`g.folioWorld`, `g.planet`,
+`g.localPlayer`, `g.cam.camera`) to teleport the player/camera and to `g.planet.aimSunAt(dir)`
+when shooting screenshots (a real match aims the sun at the tower ring automatically).
+
+## Evidence
+
+| Screenshot | What it shows |
+| --- | --- |
+| `before-01-ground-volcanic.png` | Before: VOLCANIC plain — canopy visible, but **no grass anywhere** on the field. |
+| `after-01-grass-volcanic.png` | After: VOLCANIC — dense blade carpet around the player, rooted, wind-lit. |
+| `after-02-grass-jungle.png` | After: JUNGLE — the carpet reaches the horizon; no bare edge, no visible recycling line. |
+| `after-03-trees-jungle.png` | After: JUNGLE — trees with **full blue-green dappled canopies** + folio's coloured shadow on the grass. |
+
+## Root causes found (all fixed)
+
+### 1. Grass floats above the ground (up to 4.4 m measured)
+The baked terrain-data textures are **equirectangular with latitude-linear rows**, but the grass
+vertex stage sampled v = `dir.y * 0.5 + 0.5` (sine-spaced). Every blade read the terrain data of
+a **different latitude** than the ground it stood on — measured height error −2.8…−4.4 m; with the
+correct sampling (`v = asin(dir.y)/π + 0.5`) the error is 0.00 m.
+Fix: `src/world/folio/vegetation/Grass.ts` — `asin`-based v (documented at the site).
+
+### 2. Grass pops in / changes while moving
+The old per-frame “re-anchor” **re-scattered** the blade positions whenever the view moved ~15 m —
+90 % of the field inside the view jumped to new spots each time. folio never touches its blade
+positions after `setGeometry`; the per-frame update only sets `center.value` and the **vertex
+shader wraps the field around the view** (`mod(position − centre + half, size) − half`).
+Fix: folio's exact wrap in the shader; the CPU now only *re-bases the tangent frame* (pure
+coordinate shift — every blade keeps its world position). No re-scatter exists anymore.
+
+### 3. Grass only existed in a 36 m radius (hard bare edge inside the view)
+The field half-extent was clamped to 36 m while the third-person view sees 100+ m. The wrap
+recycled blades *inside the visible ground* → “pops in as I move” + a visible field edge.
+Fix: the field reach now follows the quality setting (95 m half-extent at high — the full visible
+ground), with the blade count raised to keep folio-like density (420² = 176 400 blades at high).
+Blade width/height keep the tuned folio scale (the overflow formula is clamped, not unbounded).
+
+### 4. Trees have no canopy (user: “canopy missing or floating in air”)
+Two stacked causes:
+- **Mipmap averaging of the foliage SDF.** folio loads its foliage SDF with
+  `NearestFilter` **and no mipmaps** (`Game.js` resources list). Ours used default mipmapped
+  linear: beyond a few metres every leaf plane sampled an averaged mip of the soft leaf blobs
+  (mean ≈ 0.35), and the alpha chain (`sample − 0.3`, discard `< 0.1`) then erased **every**
+  leaf pixel — trees rendered as bare trunks. Fix: `FolioResources.loadTexture` now uses
+  folio's exact filtering (`NearestFilter`, no mipmaps) — `src/world/folio/FolioResources.ts`.
+- **Near-black shadow tint.** folio's shadowed side is a *saturated colour* (day `#6d3fff`,
+  night `#2f00db` — their signature coloured shadows). Ours was near-black `#4a3f63`, so every
+  canopy plane facing away from the sun (half of every cluster, always) rendered black — also
+  reading as “no canopy”. Fix: `FOLIO.lighting.shadowColor` → `#5b4bc4`
+  (`src/world/folio/FolioShaderGlobals.ts`).
+
+Also softened the canopy corruption wash (`0.45` → `0.22` in `Foliage.ts`): on corrupt worlds
+every crown was tinted the vein's teal, which read as odd blue balls. folio's own canopy is
+`mix(colorA, colorB, lighting)` only; the wash is a NecroFall art addition and now stays subtle.
+
+### 5. Rocks floating on slopes (previous pass, kept)
+Per-kind sink in `VegetationGenerator.frameFor` (SLAB × 0.42, CRYSTAL × 0.28, others × 0.22 of
+scale) — slabs/crystals now sit in the ground on steep terrain.
+
+## folio-2025 source references (the ground truth for this port)
+
+- `sources/Game/World/Grass.js` — field = `subdivisions²` blades, static positions; per-frame
+  `center.value.set(view…)`; vertex wrap `mod(position − center + half, size) − half`;
+  `hidden = step(terrainData.g − 0.4, 0.1)` (blades vanish on barren ground); wind =
+  `offset(worldXZ) × tipness × height × 2`; blade shape = 3-vertex triangle from `vertexIndex`;
+  camera-facing rotation via `atan2(worldZ − camZ, worldX − camX) − π/2`; **no distance cull**.
+- `sources/Game/World/Foliage.js` — ONE merged 80-plane cluster geometry; alpha = SDF sample
+  minus `threshold = 0.3`; see-through fade around the player; references = per-(tree × leaf
+  mesh) matrices.
+- `sources/Game/World/Trees.js` — `finalMatrix = leaves.matrix.premultiply(treeReference.matrixWorld)`
+  (the exact composition we use).
+- `sources/Game/Game.js` — foliage SDF loaded with `NearestFilter` + no mipmaps (the fix above).
+- `sources/Game/Materials/MeshDefaultMaterial.js` — `alphaTest = 0.1`, shadow mix into
+  `shadowColor`, core shadow `smoothstep(-0.25, 1, N·L)`.
+
+## Known remaining notes (not blockers)
+
+- `THREE.GLTFLoader: Couldn't load texture blob:…` console warnings appear on every load for a
+  set of GLB-embedded textures (trunk bark, kit props). The tree/foliage system does not depend
+  on them (canopies use the external SDF; trunks render the kit material), and everything
+  renders correctly — but the warnings should be investigated when the asset pipeline is next
+  touched (likely the compressed GLB export).
+- At 80+ m a canopy cluster (≈1.6 m, folio's real cluster size) is only a few pixels — trees read
+  as silhouettes at long range, same as folio at distance. Not a bug; could be improved later
+  with larger reference scales or an impostor pass.
+- High quality now grows 176 400 blades (420²). The performance rescue system (DPR + budgets)
+  applies as usual; drop the quality tier to scale the field down (density multiplies the
+  subdivisions).
+
+## Files changed in this pass
+
+- `src/world/folio/vegetation/Grass.ts` — asin-v, folio wrap, no re-scatter (pure frame rebase),
+  full-reach field, clamped blade-size overflow, folio-local uniforms.
+- `src/world/folio/FolioResources.ts` — folio-exact SDF sampling (Nearest, no mipmaps).
+- `src/world/folio/FolioShaderGlobals.ts` — folio-style coloured shadow tint.
+- `src/world/folio/vegetation/Foliage.ts` — softer corruption wash.
+- `src/world/vegetation/VegetationGenerator.ts` — per-kind rock sink (slabs/crystals on slopes).

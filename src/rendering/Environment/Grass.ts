@@ -220,9 +220,10 @@ export class Grass {
       const loopZ = mod(offset.y.sub(this.uCenter2.y).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.y);
       const patch = vec2(loopX, loopZ);
 
-      // ---- rim fade — recycling happens at zero size (no popping, no hard edge)
+      // ---- rim fade — recycling happens at zero size (no popping, no hard edge).
+      // Wide taper: the moving field boundary must never read as a sweeping ring.
       const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
-      const rimFade = smoothstep(0.55, 0.95, rimDistance).oneMinus();
+      const rimFade = smoothstep(0.3, 0.98, rimDistance).oneMinus();
 
       // ---- sphere mapping: patch coords (metres) → direction on the planet.
       // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
@@ -234,7 +235,8 @@ export class Grass {
       // ---- terrain data at the blade's own location (the ONE source, plan §17)
       const terrainData = nodes.terrainNode(direction);
       const grass = terrainData.y;
-      const density = smoothstep(0.24, 0.42, grass).mul(rimFade);
+      // soft gate: thin the lawn gradually instead of punching holes
+      const density = smoothstep(0.16, 0.4, grass).mul(rimFade);
 
       // ---- surface position
       const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));

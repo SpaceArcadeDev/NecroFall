@@ -87,6 +87,9 @@ export class Foliage {
     const material = new MeshDefaultMaterial({
       colorNode,
       alphaNode,
+      // leaf cards are viewed from every angle (under canopies included) —
+      // single-sided cards made whole trees look leafless from below
+      side: THREE.DoubleSide,
       hasWater: false,
       hasLightBounce: false,
       hasFog: true,

@@ -163,7 +163,7 @@ export class PlanetRenderer {
 
     // 6 — water films
     onProgress?.(0.86, 'flooding puddles');
-    this.puddles = new Puddles(deps.surface, deps.generator, deps.time, { direction: deps.spawnDirection, radius: 6 });
+    this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
     this.group.add(this.puddles.mesh);
 
     // 7 — atmosphere
@@ -182,10 +182,10 @@ export class PlanetRenderer {
   }
 
   /** Per-frame world pass, called from the environment tick. */
-  update(focusPoint: THREE.Vector3): void {
+  update(focusPoint: THREE.Vector3, camera?: THREE.Camera): void {
     void this.focusScratch;
     this.grass.update(focusPoint);
-    this.particles.update(focusPoint);
+    this.particles.update(focusPoint, camera);
   }
 
   /** Debug switches (plan §90). */

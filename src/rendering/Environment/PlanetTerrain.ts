@@ -135,6 +135,9 @@ export class PlanetTerrain {
         const terrainData = nodes.terrainNode(positionLocal);
         return nodes.colorNode(terrainData);
       })(),
+      // A convex planet constantly presents far-slope BACKFACES to a low camera;
+      // single-sided terrain left see-through voids wherever grass didn't cover.
+      side: THREE.DoubleSide,
       hasCoreShadows: true,
       hasDropShadows: true,
       hasLightBounce: false,

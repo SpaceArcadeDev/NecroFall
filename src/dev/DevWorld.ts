@@ -427,7 +427,7 @@ export async function startDevWorld(): Promise<void> {
 
   ticker.on(9, () => {
     focusScratch.set(playerState.position.x, playerState.position.y, playerState.position.z);
-    world.update(focusScratch);
+    world.update(focusScratch, camera);
   });
 
   ticker.on(10, () => {

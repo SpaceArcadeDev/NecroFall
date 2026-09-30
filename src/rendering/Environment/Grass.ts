@@ -1,0 +1,355 @@
+/**
+ * NECROFALL — spherical GPU grass (folio `World/Grass.js` architecture,
+ * plan §14–§18/§68–§70).
+ *
+ * Folio's design is kept 1:1: ONE geometry, `subdivisions²` blades of three
+ * vertices, blade shape + wind + camera-facing rotation entirely in the vertex
+ * shader, density straight from the terrain data. The ONLY adaptation is the
+ * coordinate frame — the flat X/Z field becomes a TANGENT PATCH on the sphere:
+ *
+ *   blade patch offset (x, z) → direction = normalize(centreDir + T·x + B·z)
+ *
+ * The frame re-bases onto the player as they walk (every blade is re-projected
+ * EXACTLY, so the world stays pinned — no sliding), the wrap recycles blades
+ * around the moving centre, and the rim fades to zero size so every recycle
+ * happens invisibly (plan §68/§39).
+ */
+import * as THREE from 'three/webgpu';
+import {
+  attribute,
+  cameraPosition,
+  color,
+  float,
+  Fn,
+  mix,
+  mod,
+  normalize,
+  positionWorld,
+  select,
+  smoothstep,
+  texture,
+  uniform,
+  vec2,
+  vec3,
+  vertexIndex,
+} from 'three/tsl';
+import type { PlanetSurface } from '../../planet/PlanetSurface';
+import type { Quality } from '../Quality';
+import type { Ticker } from '../Ticker';
+import type { TerrainNodeBundle } from './PlanetTerrainNodes';
+import type { Wind } from './Wind';
+import type { Noises } from './Noises';
+import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+
+export class Grass {
+  readonly mesh: THREE.Mesh;
+
+  private geometry: THREE.BufferGeometry;
+  private material: MeshDefaultMaterial;
+
+  private readonly uCenterDir = uniform(vec3(0, 1, 0));
+  private readonly uTangent = uniform(vec3(1, 0, 0));
+  private readonly uBitangent = uniform(vec3(0, 0, 1));
+  private readonly uCenter2 = uniform(vec2(0, 0));
+  private readonly uSize = uniform(80);
+  private readonly uBladeWidth = uniform(0.075);
+  private readonly uBladeHeight = uniform(0.5);
+  private readonly uBladeRandomness = uniform(0.6);
+  private readonly uSwayStrength = uniform(1.35);
+
+  private subdivisions: number;
+  private halfExtent: number;
+
+  // CPU frame state (mirrors the three frame uniforms)
+  private readonly frameDir = new THREE.Vector3(0, 1, 0);
+  private readonly frameT = new THREE.Vector3(1, 0, 0);
+  private readonly frameB = new THREE.Vector3(0, 0, 1);
+  private readonly scratchDir = new THREE.Vector3();
+  private readonly scratchOffset = new THREE.Vector3();
+
+  constructor(
+    private readonly surface: PlanetSurface,
+    private readonly nodes: TerrainNodeBundle,
+    private quality: Quality,
+    private readonly wind: Wind,
+    private readonly noises: Noises,
+    ticker: Ticker,
+    initialDirection: THREE.Vector3,
+  ) {
+    this.subdivisions = quality.grassSubdivisions();
+    this.halfExtent = quality.grassHalfExtent();
+    this.uSize.value = this.halfExtent * 2;
+
+    // Anchor the patch frame at the SPAWN before any data exists — the first
+    // update must be a near-identity re-base, never a far-side projection.
+    this.frameDir.copy(initialDirection).normalize();
+    this.stableTangent(this.frameDir, this.frameT);
+    this.frameB.crossVectors(this.frameDir, this.frameT);
+    this.uCenterDir.value.copy(this.frameDir);
+    this.uTangent.value.copy(this.frameT);
+    this.uBitangent.value.copy(this.frameB);
+
+    this.geometry = this.createGeometry(this.subdivisions, this.halfExtent);
+    this.material = this.createMaterial();
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.receiveShadow = true;
+    this.mesh.name = 'grass';
+
+    ticker.on(11, () => this.update());
+
+    quality.events.on('change', () => {
+      const subs = this.quality.grassSubdivisions();
+      const half = this.quality.grassHalfExtent();
+      if (subs !== this.subdivisions || half !== this.halfExtent) {
+        this.subdivisions = subs;
+        this.halfExtent = half;
+        this.uSize.value = half * 2;
+        this.geometry.dispose();
+        this.geometry = this.createGeometry(subs, half);
+        this.mesh.geometry = this.geometry;
+      }
+      this.updateScale();
+    });
+    this.updateScale();
+  }
+
+  private updateScale(): void {
+    // folio's surfaceOverflow ratio — bigger fields hold slightly larger blades
+    const surface = Math.pow(this.halfExtent * 2, 2);
+    const overflow = Math.max(0, surface - 2000) / 2000;
+    this.uBladeWidth.value = 0.07 * (1 + overflow * 0.3);
+    this.uBladeHeight.value = 0.46 * (1 + overflow * 0.3);
+  }
+
+  /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14). */
+  private createGeometry(subdivisions: number, halfExtent: number): THREE.BufferGeometry {
+    const count = subdivisions * subdivisions;
+    const half = halfExtent;
+    const size = halfExtent * 2;
+    const fragment = size / subdivisions;
+
+    const offsets = new Float32Array(count * 3 * 2);
+    const positions = new Float32Array(count * 3 * 3);
+    const randomness = new Float32Array(count * 3);
+
+    // deterministic scatter (same field every run)
+    let seed = 0x9e3779b9;
+    const random = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+
+    let v = 0;
+    for (let ix = 0; ix < subdivisions; ix++) {
+      const fragmentX = (ix / subdivisions - 0.5) * size + fragment * 0.5;
+      for (let iz = 0; iz < subdivisions; iz++) {
+        const fragmentZ = (iz / subdivisions - 0.5) * size + fragment * 0.5;
+        const x = fragmentX + (random() - 0.5) * fragment;
+        const z = fragmentZ + (random() - 0.5) * fragment;
+
+        for (let i = 0; i < 3; i++) {
+          const index = v++;
+          offsets[index * 2] = x;
+          offsets[index * 2 + 1] = z;
+          // a valid vec3 position so the pipeline stays happy — replaced in the shader
+          positions[index * 3] = x;
+          positions[index * 3 + 1] = 0;
+          positions[index * 3 + 2] = z;
+          randomness[index] = random();
+        }
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('bladeOffset', new THREE.BufferAttribute(offsets, 2));
+    geometry.setAttribute('bladeRandom', new THREE.BufferAttribute(randomness, 1));
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), half * 1.6);
+    return geometry;
+  }
+
+  private createMaterial(): MeshDefaultMaterial {
+    const surface = this.surface;
+    const nodes = this.nodes;
+    const wind = this.wind;
+    const inverseRadius = 1 / surface.radius;
+
+    const vertexLoop = vertexIndex.toFloat().mod(3);
+    const isTip = vertexLoop.lessThan(0.5);
+    const isLeft = vertexLoop.greaterThan(1.5); // vertex 2 gets -width
+
+    const material = new MeshDefaultMaterial({
+      colorNode: (() => nodes.colorNode(nodes.terrainNode(positionWorld)))(),
+      normalNode: normalize(positionWorld) as any,
+      // blade winding is handedness-dependent on the sphere — one triangle per
+      // blade is cheaper than a guaranteed orientation
+      side: THREE.DoubleSide,
+      hasWater: false,
+      hasLightBounce: false,
+      shadowNode: (() => {
+        // shadow creeps along the blade base (folio's tipnessShadowMix, softened)
+        const terrainData = nodes.terrainNode(positionWorld);
+        return isTip.select(float(0), terrainData.y.mul(0.35)) as any;
+      })(),
+    });
+
+    material.positionNode = Fn(() => {
+      const offset = attribute('bladeOffset') as any; // vec2 patch coords
+      const randomVertex = attribute('bladeRandom') as any;
+
+      // ---- wrap around the moving centre (folio's infinite scroll, sphere edition)
+      const halfSize = this.uSize.mul(0.5);
+      const loopX = mod(offset.x.sub(this.uCenter2.x).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.x);
+      const loopZ = mod(offset.y.sub(this.uCenter2.y).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.y);
+      const patch = vec2(loopX, loopZ);
+
+      // ---- rim fade — recycling happens at zero size (no popping, no hard edge)
+      const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
+      const rimFade = smoothstep(0.55, 0.95, rimDistance).oneMinus();
+
+      // ---- sphere mapping: patch coords (metres) → direction on the planet.
+      // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
+      const patchScaled = patch.mul(inverseRadius);
+      const direction: any = normalize(
+        this.uCenterDir.add(this.uTangent.mul(patchScaled.x)).add(this.uBitangent.mul(patchScaled.y)) as any,
+      );
+
+      // ---- terrain data at the blade's own location (the ONE source, plan §17)
+      const terrainData = nodes.terrainNode(direction);
+      const grass = terrainData.y;
+      const density = smoothstep(0.24, 0.42, grass).mul(rimFade);
+
+      // ---- surface position
+      const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));
+      const basePosition = direction.mul(surfaceRadius);
+
+      // ---- tangent frame at the blade
+      const up = vec3(0, 1, 0);
+      const reference: any = select(direction.y.abs().lessThan(0.95), up, vec3(1, 0, 0));
+      const tangent: any = normalize(reference.cross(direction));
+      const bitangent: any = direction.cross(tangent);
+
+      // ---- blade shape (folio: tip / left / right)
+      const bladeWidth = this.uBladeWidth.mul(density);
+      const bladeHeight = this.uBladeHeight
+        .mul(this.uBladeRandomness.mul(randomVertex).add(this.uBladeRandomness.oneMinus()))
+        .mul(texture(this.noises.perlin, patch.mul(0.0321)).r.add(0.5))
+        .mul(density);
+
+      const sideX = select(isLeft, bladeWidth.negate(), bladeWidth) as any;
+      const shapeX = isTip.select(float(0), sideX);
+      const shapeUp = isTip.select(bladeHeight, float(0));
+
+      // ---- camera-facing rotation in the tangent plane: the blade's WIDTH axis
+      // must be PERPENDICULAR to the view direction so the quad faces the eye
+      const toCamera = cameraPosition.sub(basePosition);
+      const sideAxis = bitangent
+        .mul(toCamera.dot(tangent))
+        .sub(tangent.mul(toCamera.dot(bitangent)))
+        .add(bitangent.mul(0.0001));
+      const facing = normalize(sideAxis as any);
+
+      // ---- wind (ONE field for the whole world — plan §18)
+      const windOffset = wind.offsetNode(patch) as any;
+      const tipness = isTip.select(float(1), float(0));
+      const sway = windOffset.mul(tipness).mul(shapeUp).mul(this.uSwayStrength);
+
+      const vertexPosition = basePosition
+        .add(facing.mul(shapeX))
+        .add(direction.mul(shapeUp))
+        .add(facing.mul(sway.x))
+        .add(bitangent.mul(sway.y));
+
+      return vertexPosition;
+    })() as any;
+
+    return material;
+  }
+
+  /** Called every frame from the environment tick — the field follows the player (plan §39/§68). */
+  update(focusPlanetPosition?: THREE.Vector3): void {
+    const focus = focusPlanetPosition ?? this.lastFocus;
+    if (!focus) return;
+    this.lastFocus = focus;
+    this.scratchDir.copy(focus).normalize();
+
+    // Re-base the frame when the player walks away from its centre — every
+    // blade is re-projected EXACTLY so the world stays pinned (no sliding).
+    const alignment = this.scratchDir.dot(this.frameDir);
+    if (alignment < 0.99) {
+      this.rebase(this.scratchDir);
+    }
+
+    // The player's own patch coordinates drive the wrap.
+    const patchCoords = this.patchCoordsOf(this.scratchDir, this.scratchOffset);
+    this.uCenter2.value.set(patchCoords.x, patchCoords.y);
+  }
+
+  private lastFocus: THREE.Vector3 | null = null;
+
+  /** Exact gnomonic projection of a direction into the CURRENT frame (metres). */
+  private patchCoordsOf(direction: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
+    const denom = Math.max(0.2, direction.dot(this.frameDir));
+    out.copy(direction).divideScalar(denom).sub(this.frameDir).multiplyScalar(this.surface.radius);
+    return out;
+  }
+
+  private rebase(newDir: THREE.Vector3): void {
+    const newT = new THREE.Vector3();
+    const newB = new THREE.Vector3();
+    this.stableTangent(newDir, newT);
+    newB.crossVectors(newDir, newT);
+
+    // Re-project every blade: world direction stays identical, coordinates change.
+    const offsets = this.geometry.getAttribute('bladeOffset') as THREE.BufferAttribute;
+    const array = offsets.array as Float32Array;
+    const world = new THREE.Vector3();
+    const local = new THREE.Vector3();
+
+    for (let i = 0; i < array.length; i += 2) {
+      world
+        .copy(this.frameDir)
+        .addScaledVector(this.frameT, array[i] * (1 / this.surface.radius))
+        .addScaledVector(this.frameB, array[i + 1] * (1 / this.surface.radius))
+        .normalize();
+      const denom = world.dot(newDir);
+      if (denom < 0.25) continue; // unreachable in normal operation — never explode an offset
+      local.copy(world).divideScalar(denom).sub(newDir);
+      array[i] = local.dot(newT) * this.surface.radius;
+      array[i + 1] = local.dot(newB) * this.surface.radius;
+    }
+    offsets.needsUpdate = true;
+
+    this.frameDir.copy(newDir);
+    this.frameT.copy(newT);
+    this.frameB.copy(newB);
+    this.uCenterDir.value.set(newDir.x, newDir.y, newDir.z);
+    this.uTangent.value.set(newT.x, newT.y, newT.z);
+    this.uBitangent.value.set(newB.x, newB.y, newB.z);
+  }
+
+  /** Pole-safe tangent (plan §70). */
+  private stableTangent(normal: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
+    const reference = Math.abs(normal.y) < 0.95 ? UP : SIDE;
+    return out.crossVectors(reference, normal).normalize();
+  }
+
+  setVisible(visible: boolean): void {
+    this.mesh.visible = visible;
+  }
+
+  dispose(): void {
+    this.geometry.dispose();
+    this.material.dispose();
+  }
+
+  get bladeCount(): number {
+    return this.subdivisions * this.subdivisions;
+  }
+}
+
+const UP = new THREE.Vector3(0, 1, 0);
+const SIDE = new THREE.Vector3(1, 0, 0);

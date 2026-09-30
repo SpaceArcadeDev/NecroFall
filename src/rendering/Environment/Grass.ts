@@ -325,15 +325,15 @@ export class Grass {
       const behind = (horizontal as any).dot(this.uPlayerDir); // + = ahead of motion
       const lateralVec = horizontal.sub(this.uPlayerDir.mul(behind));
       const lateralDistance = (lateralVec as any).length();
-      const trailLength = this.uTrail.mul(5.2).add(0.9);
-      const behindMask = smoothstep(trailLength.add(0.6), trailLength.sub(0.2), behind.negate());
-      const frontMask = smoothstep(0.85, 0.15, behind);
-      const lateralMask = smoothstep(1.25, 0.6, lateralDistance);
+      const trailLength = this.uTrail.mul(7.5).add(1.0);
+      const behindMask = smoothstep(trailLength.add(0.8), trailLength.sub(0.2), behind.negate());
+      const frontMask = smoothstep(1.05, 0.15, behind);
+      const lateralMask = smoothstep(1.6, 0.8, lateralDistance);
       const trailInfluence = max(behindMask, frontMask).mul(lateralMask).mul(this.uTrail);
       const lateralDir = normalize(lateralVec.add(vec3(0.0001, 0.0001, 0.0001)) as any);
       const trailBend = this.uPlayerDir
-        .mul(trailInfluence.mul(0.5))
-        .add(lateralDir.mul(trailInfluence.mul(0.22)));
+        .mul(trailInfluence.mul(0.85))
+        .add(lateralDir.mul(trailInfluence.mul(0.35)));
 
       const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
 

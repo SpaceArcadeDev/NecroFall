@@ -25,8 +25,8 @@ export class Spikes {
       minRadiation: 0.22,
       maxSlope: 0.6,
       aboveWater: 0.3,
-      scaleMin: 0.8,
-      scaleMax: 1.6,
+      scaleMin: 1.0,
+      scaleMax: 1.9,
       sinkFactor: 0.04,
       attemptsPerInstance: 14,
       excludeDirection: spawnClear?.direction,
@@ -34,10 +34,10 @@ export class Spikes {
     });
 
     const random = generator.rand(78);
-    const geometry = new THREE.ConeGeometry(0.2, 1.25, 5);
-    geometry.translate(0, 0.625, 0);
+    const geometry = new THREE.ConeGeometry(0.24, 1.55, 5);
+    geometry.translate(0, 0.775, 0);
 
-    for (const cluster of clusters) obstacles?.add(cluster, 0.95 * cluster.scale, 1.6 * cluster.scale, false);
+    for (const cluster of clusters) obstacles?.add(cluster, 1.05 * cluster.scale, 2.0 * cluster.scale, false);
 
     const material = new MeshDefaultMaterial({
       colorNode: mix(
@@ -59,8 +59,8 @@ export class Spikes {
       const perCluster = 4 + Math.floor(random() * 6); // 4–9 chunky spikes per cluster
       for (let i = 0; i < perCluster; i++) {
         const angle = random() * Math.PI * 2;
-        const distance = 0.08 + random() * 0.62;
-        const scale = 0.8 + random() * 1.15;
+        const distance = 0.08 + random() * 0.7;
+        const scale = 1.0 + random() * 1.4;
 
         dummy.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
         dummy.rotation.set((random() - 0.5) * 0.2, random() * Math.PI * 2, (random() - 0.5) * 0.2);

@@ -44,7 +44,7 @@ export class Bushes {
       scaleMin: 0.55,
       scaleMax: 1.35,
       sinkFactor: 0.12,
-      attemptsPerInstance: 8,
+      attemptsPerInstance: 10,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
     });

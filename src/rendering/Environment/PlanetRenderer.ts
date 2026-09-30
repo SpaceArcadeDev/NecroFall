@@ -138,7 +138,7 @@ export class PlanetRenderer {
     this.group.add(this.grass.mesh);
 
     // 4 — bushes (leaf-card canopies)
-    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 240, spawnClear, this.obstacles);
+    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 520, spawnClear, this.obstacles);
     this.group.add(this.bushes.foliage.mesh);
 
     // 4 — trees (trunk instancing + leaf-card canopies)

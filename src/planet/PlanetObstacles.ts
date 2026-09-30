@@ -26,8 +26,8 @@ interface Obstacle {
   reachCos: number;
 }
 
-/** Objects at most this tall are stepped onto automatically. */
-const STEP_HEIGHT = 0.68;
+/** Objects at most this tall are stepped onto automatically (all rock sizes). */
+const STEP_HEIGHT = 1.5;
 
 export class PlanetObstacles {
   private readonly list: Obstacle[] = [];

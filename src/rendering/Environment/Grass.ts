@@ -287,19 +287,15 @@ export class Grass {
 
       // ---- terrain data at the blade's own location (the ONE source, plan §17)
       const terrainData = nodes.terrainNode(direction);
-      const grass = terrainData.y;
-      // Soft gate + SIZE DECOUPLING: low biome-grass masks thin the lawn's
-      // DENSITY, but must not shrink blades into "fingernails" — vegetated
-      // ground anywhere on the planet keeps full-size blades (foliaged look
-      // like the spawn area); only truly bare ground (mask ≈ 0) stays empty.
-      const maskDensity = smoothstep(0.05, 0.16, grass);
-      // PATCHES: planet-stable noise sampled on the blade's world direction
-      // (never frame-local patch coords — those shift on re-base) groups the
-      // lawn into clumps with bare soil between, like the reference world.
+      // PATCHES EVERYWHERE: the lawn is grouped purely by the planet-stable
+      // patch noise (sampled on the blade's world direction — never frame-local
+      // coords, which shift on re-base). The biome grass mask no longer
+      // suppresses blades — ANY patch on the planet grows a full, tightly
+      // packed clump exactly like the spawn area; only bare gaps stay empty.
       const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
-      const patchFactor = smoothstep(0.3, 0.55, patchNoise);
+      const patchFactor = smoothstep(0.32, 0.52, patchNoise);
       const visibility = rimFade.mul(this.waterSuppression(direction).oneMinus());
-      const sizeScale = maskDensity.pow(0.4).mul(patchFactor).mul(visibility);
+      const sizeScale = patchFactor.mul(visibility);
 
       // ---- surface position
       const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));
@@ -359,7 +355,7 @@ export class Grass {
           const toTrail = basePosition.sub(packed.xyz);
           const horizontalTrail = toTrail.sub(direction.mul((toTrail as any).dot(direction)));
           const trailDistance = (horizontalTrail as any).length();
-          const influence = smoothstep(1.15, 0.25, trailDistance).mul(smoothstep(2.8, 1.3, age));
+          const influence = smoothstep(1.35, 0.3, trailDistance).mul(smoothstep(2.4, 1.1, age));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
@@ -539,9 +535,10 @@ const SIDE = new THREE.Vector3(1, 0, 0);
 const DENSE_FRACTION = 0.34;
 
 /** Trample-trail ring buffer: recent player positions (xyz + drop time). */
-const TRAIL_SLOTS = 24;
+const TRAIL_SLOTS = 30;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
-const TRAIL_DROP_STEP = 1.35; // metres between trail samples
+const TRAIL_DROP_STEP = 0.8; // metres between trail samples — overlapping, so
+// the parted path reads as ONE continuous channel, never separate circles
 
 /** CPU smoothstep (matches the shader semantics). */
 function smoothstepCpu01(edge0: number, edge1: number, x: number): number {

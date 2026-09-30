@@ -40,6 +40,16 @@ export interface WaterSurfaceOptions {
 }
 
 const DEPTH_FADE = 0.45;
+/**
+ * The local depth map is stored as 8-BIT, not float.
+ *
+ * History: float32 red sampled as zeros on devices without WebGPU's `float32-filterable`
+ * feature; half-float red ALSO ended up sampling as zeros in the live pipeline (verified
+ * 2026-09-30 — the patch mesh rendered, but every fragment's depth sampled 0 → alpha 0 → no
+ * water anywhere). An 8-bit channel filters everywhere, and the water's depth ramp only needs
+ * ~0.04 m precision. Depth is encoded as `min(depth, DEPTH_ENCODE_MAX) / DEPTH_ENCODE_MAX`.
+ */
+const DEPTH_ENCODE_MAX = 10;
 
 export class WaterSurface {
   readonly mesh: THREE.Mesh;
@@ -49,7 +59,7 @@ export class WaterSurface {
 
   private readonly patchSize: number;
   private readonly resolution: number;
-  private readonly depthData: Float32Array;
+  private readonly depthData: Uint8Array;
   private readonly depthTexture: THREE.DataTexture;
 
   private readonly center = uniform(new THREE.Vector3(0, 1, 0));
@@ -64,12 +74,13 @@ export class WaterSurface {
     const surface = options.surface;
     this.patchSize = options.patchSize ?? 96;
     this.resolution = options.resolution ?? 64;
-    this.depthData = new Float32Array(this.resolution * this.resolution);
+    this.depthData = new Uint8Array(this.resolution * this.resolution);
 
-    // HalfFloat, on purpose: float32 colour textures sample with nearest on devices without the
-    // WebGPU `float32-filterable` feature, which silently zeroed the depth map — and a zeroed
-    // depth map is invisible water (live review 2026-09-30: "no water"). fp16 filters everywhere.
-    this.depthTexture = new THREE.DataTexture(this.depthData, this.resolution, this.resolution, THREE.RedFormat, THREE.HalfFloatType);
+    // 8-bit depth, on purpose: float32 red needs the WebGPU `float32-filterable` feature (it
+    // sampled zeros without it), and half-float red ALSO sampled zeros in the live pipeline —
+    // both silently produce invisible water (live review 2026-09-30: "no water"). U8 filters
+    // on every backend; the shader decodes with `× DEPTH_ENCODE_MAX`.
+    this.depthTexture = new THREE.DataTexture(this.depthData, this.resolution, this.resolution, THREE.RedFormat, THREE.UnsignedByteType);
     this.depthTexture.minFilter = THREE.LinearFilter;
     this.depthTexture.magFilter = THREE.LinearFilter;
     this.depthTexture.needsUpdate = true;
@@ -112,7 +123,8 @@ export class WaterSurface {
     const depthAtUv = Fn(() => {
       const u = positionLocal.x.add(0.5);
       const v = positionLocal.z.add(0.5);
-      return texture(this.depthTexture, vec2(u, v)).r;
+      // 8-bit encoded: decode back to metres.
+      return texture(this.depthTexture, vec2(u, v)).r.mul(DEPTH_ENCODE_MAX);
     });
 
     const waterColorShallow = uniform(new THREE.Color('#6fc7c0'));
@@ -218,7 +230,7 @@ export class WaterSurface {
         // Depth against the DRAWN surface so the shore ring lines up with the seen terrain.
         const h = surface.visualHeightAtDir(_sample.x, _sample.y, _sample.z);
         const depth = Math.max(0, surface.waterLevel - h);
-        this.depthData[j * res + i] = depth;
+        this.depthData[j * res + i] = Math.min(255, Math.round(Math.min(depth, DEPTH_ENCODE_MAX) / DEPTH_ENCODE_MAX * 255));
         if (depth > 0.2) submerged++;
       }
     }

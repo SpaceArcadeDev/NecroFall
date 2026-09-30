@@ -32,6 +32,7 @@ when shooting screenshots (a real match aims the sun at the tower ring automatic
 | `after-01-grass-volcanic.png` | After: VOLCANIC — dense blade carpet around the player, rooted, wind-lit. |
 | `after-02-grass-jungle.png` | After: JUNGLE — the carpet reaches the horizon; no bare edge, no visible recycling line. |
 | `after-03-trees-jungle.png` | After: JUNGLE — trees with **full blue-green dappled canopies** + folio's coloured shadow on the grass. |
+| `after-04-water-volcanic.png` | After: VOLCANIC — the basin water surface renders (foam ring, ripple sparkles) with the blade carpet and canopied trees around it. |
 
 ## Root causes found (all fixed)
 
@@ -75,7 +76,18 @@ Also softened the canopy corruption wash (`0.45` → `0.22` in `Foliage.ts`): on
 every crown was tinted the vein's teal, which read as odd blue balls. folio's own canopy is
 `mix(colorA, colorB, lighting)` only; the wash is a NecroFall art addition and now stays subtle.
 
-### 5. Rocks floating on slopes (previous pass, kept)
+### 5. No water anywhere (user: “no water found”)
+The water patch mesh was rendering (right position, right radius) but **every fragment was
+transparent**: the local depth map was a `RedFormat` float texture and it sampled as zeros.
+History: float32 red needs WebGPU's `float32-filterable` feature (silently zeroed without it);
+half-float red *also* sampled zeros in the live pipeline (verified by swapping in a plain
+material — the patch appeared instantly, proving the geometry and the depth build were fine).
+Fix: the depth map is now **8-bit encoded** (`min(depth, 10) / 10 × 255`, `RedFormat +
+UnsignedByteType`) and the shader decodes with `× 10` — an 8-bit channel filters on every
+backend, and the water's depth ramp only needs ~0.04 m precision.
+Fix file: `src/world/folio/environment/WaterSurface.ts`.
+
+### 6. Rocks floating on slopes (previous pass, kept)
 Per-kind sink in `VegetationGenerator.frameFor` (SLAB × 0.42, CRYSTAL × 0.28, others × 0.22 of
 scale) — slabs/crystals now sit in the ground on steep terrain.
 
@@ -117,3 +129,4 @@ scale) — slabs/crystals now sit in the ground on steep terrain.
 - `src/world/folio/FolioShaderGlobals.ts` — folio-style coloured shadow tint.
 - `src/world/folio/vegetation/Foliage.ts` — softer corruption wash.
 - `src/world/vegetation/VegetationGenerator.ts` — per-kind rock sink (slabs/crystals on slopes).
+- `src/world/folio/environment/WaterSurface.ts` — 8-bit encoded depth map (water renders again).

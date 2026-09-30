@@ -136,12 +136,15 @@ export class PlanetTerrain {
       colorNode: (() => {
         const terrainData = nodes.terrainNode(positionLocal);
         const base = nodes.colorNode(terrainData);
-        // DARK SOIL UNDER THE LAWN (the reference look): wherever the ground is
-        // vegetated it renders as shadowed soil — including the bare gaps
-        // between grass patches — so blades pop against it exactly like the
-        // reference world.
-        const grassShade = smoothstep(0.05, 0.3, terrainData.y);
-        return base.mul(mix(1.0, 0.4, grassShade)) as any;
+        // DARK SOIL UNDER THE GRASS PATCHES ONLY (the reference look): the
+        // terrain darkens exactly where the grass clumps grow — the SAME
+        // planet-stable patch field the grass samples (world direction ×9,
+        // same thresholds) — so the bare soil between patches stays bright
+        // like folio's dunes instead of the whole terrain going dark.
+        const direction = normalize(positionLocal);
+        const patchNoise = texture(noises.perlin, direction.xz.mul(9.0)).r;
+        const patchFactor = smoothstep(0.32, 0.52, patchNoise);
+        return base.mul(mix(1.0, 0.4, patchFactor)) as any;
       })(),
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.

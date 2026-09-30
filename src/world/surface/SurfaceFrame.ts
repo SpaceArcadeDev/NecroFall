@@ -32,6 +32,8 @@ export class SurfaceFrame {
 
   /** Terrain data sampled while filling (for shader attributes and placement rules). */
   height = 0;
+  /** Rendered-mesh height — what `position` (and every sink below it) is built on. */
+  visualHeight = 0;
   slope = 0;
   vegetation = 0;
   water = 0;
@@ -45,12 +47,15 @@ export class SurfaceFrame {
 
     // --- terrain data through the ONE shared surface
     this.height = surface.heightAtDir(this.direction.x, this.direction.y, this.direction.z);
+    // Placement rides the DRAWN surface: the mesh interpolates between its vertices, and an item
+    // anchored on the analytic field hangs in the air (or sinks) wherever the two disagree.
+    this.visualHeight = surface.visualHeightAtDir(this.direction.x, this.direction.y, this.direction.z);
     surface.normalAtDir(this.direction.x, this.direction.y, this.direction.z, this.normal);
     this.slope = surface.slopeAtDir(this.direction.x, this.direction.y, this.direction.z);
     this.vegetation = surface.vegetationAtDir(this.direction.x, this.direction.y, this.direction.z);
-    this.water = Math.max(0, surface.waterLevel - this.height);
+    this.water = Math.max(0, surface.waterLevel - this.visualHeight);
 
-    this.position.copy(this.direction).multiplyScalar(this.height);
+    this.position.copy(this.direction).multiplyScalar(this.visualHeight);
 
     // --- tangent basis in the terrain plane (for props that need an explicit frame)
     tangentBasis(this.normal, _t1, _t2);

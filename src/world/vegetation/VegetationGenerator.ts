@@ -90,8 +90,9 @@ export class VegetationGenerator {
     this.generateTrees(placements, treeHash);
     this.generateBushes(placements);
     this.generateFlowers(placements);
-    this.generateScenery(placements);
     this.generateRocks(placements);
+    // NOTE: the scenery kit (benches / lampposts / crates / bricks &c) is no longer placed —
+    // user call 2026-09-30 (it did not fit the game and its nested GLB transforms hovered).
 
     return { placements, treeHash };
   }
@@ -144,17 +145,24 @@ export class VegetationGenerator {
   /**
    * Fill the shared frame for a direction, including the root-sink height (plan §80) and the
    * packed terrain data every shader + rule reads afterwards.
+   *
+   * `probeScale` widens the sink probe ring with the item's size and `sinkExtra` buries the base
+   * by a fraction of it — together they keep big rocks and bushes ON the contour instead of
+   * hovering at a slope's downhill edge (live review 2026-09-30: "items floating in space").
    */
-  private frameFor(dir: THREE.Vector3, rand: Rand, sinkProbes: number): void {
+  private frameFor(dir: THREE.Vector3, rand: Rand, sinkProbes: number, probeScale = 1, sinkExtra = 0): void {
     const surface = this.options.surface;
     const yaw = rand.range(0, Math.PI * 2);
     SHARED_FRAME.setFromDirection(dir, surface, yaw);
 
+    // Everything below works on the DRAWN surface (visualHeight), not the analytic field: the
+    // rendered mesh interpolates between its vertices, so an item anchored on the field alone
+    // hovers wherever the two disagree (live review 2026-09-30: "items floating in space").
     if (sinkProbes > 0 && SHARED_FRAME.slope > 0.02) {
       // Sink to the minimum of the tangent probes so trunks meet the uphill side of the ground.
       tangentBasis(SHARED_FRAME.normal, _t1, _t2);
-      const probeDist = 0.35 / surface.radius;
-      let minHeight = SHARED_FRAME.height;
+      const probeDist = (0.35 * probeScale) / surface.radius;
+      let minHeight = SHARED_FRAME.visualHeight;
       for (let k = 0; k < sinkProbes; k++) {
         const angle = (k / sinkProbes) * Math.PI * 2;
         _probe
@@ -162,11 +170,19 @@ export class VegetationGenerator {
           .addScaledVector(_t1, Math.cos(angle) * probeDist)
           .addScaledVector(_t2, Math.sin(angle) * probeDist)
           .normalize();
-        const h = surface.heightAtDir(_probe.x, _probe.y, _probe.z);
+        const h = surface.visualHeightAtDir(_probe.x, _probe.y, _probe.z);
         if (h < minHeight) minHeight = h;
       }
+      SHARED_FRAME.visualHeight = minHeight;
       SHARED_FRAME.height = minHeight;
       SHARED_FRAME.position.copy(dir).multiplyScalar(minHeight);
+    }
+
+    if (sinkExtra > 0) {
+      const sunk = SHARED_FRAME.visualHeight - sinkExtra;
+      SHARED_FRAME.visualHeight = sunk;
+      SHARED_FRAME.height = sunk;
+      SHARED_FRAME.position.copy(dir).multiplyScalar(sunk);
     }
   }
 
@@ -250,8 +266,10 @@ export class VegetationGenerator {
       if (!rand.chance(chance * rule.density)) continue;
 
       const kind = pickTreeKind(rule, rand.next());
-      this.frameFor(dir, rand, 4);
       const scale = rand.range(0.85, 1.35) * (kind === 'CHERRY' ? 0.85 : 1);
+      // Deep sink: probes widen with the trunk's radius, and the base buries slightly so a slope
+      // never shows daylight under the uphill roots.
+      this.frameFor(dir, rand, 6, scale, 0.04 * scale);
       const placement: TreePlacement = { ...this.makeBase(0x100000 + placed, scale), kind };
       placements.trees.push(placement);
 
@@ -298,8 +316,9 @@ export class VegetationGenerator {
       const rule = ruleForWeights(this.weights);
       if (!rand.chance(rule.bushChance * (0.4 + this.weights.grass + this.weights.forest))) continue;
 
-      this.frameFor(dir, rand, 0);
-      const bush: BushPlacement = { ...this.makeBase(0x200000 + placed, rand.range(0.5, 1.0)), kind: 'BUSH' };
+      const scale = rand.range(0.5, 1.0);
+      this.frameFor(dir, rand, 5, scale, 0.09 * scale);
+      const bush: BushPlacement = { ...this.makeBase(0x200000 + placed, scale), kind: 'BUSH' };
       placements.bushes.push(bush);
 
       const entry = { dir: dir.clone() };
@@ -335,8 +354,9 @@ export class VegetationGenerator {
       const rule = ruleForWeights(this.weights);
       if (!rand.chance(rule.flowerChance * (0.3 + this.weights.grass))) continue;
 
-      this.frameFor(dir, rand, 0);
-      const flower: FlowerPlacement = { ...this.makeBase(0x300000 + placed, rand.range(0.7, 1.15)), kind: 'FLOWER' };
+      const scale = rand.range(0.7, 1.15);
+      this.frameFor(dir, rand, 4, scale, 0.06 * scale);
+      const flower: FlowerPlacement = { ...this.makeBase(0x300000 + placed, scale), kind: 'FLOWER' };
       placements.flowers.push(flower);
       placed++;
     }
@@ -407,10 +427,13 @@ export class VegetationGenerator {
       if (slope < 0.12 && !rand.chance(0.2)) continue; // rocks live on slopes, some anywhere
       if (this.inClearance(dir, 1)) continue;
 
-      this.frameFor(dir, rand, 2);
+      const scale = rand.range(0.45, 1.5);
+      // Rocks sink DEEP relative to their size: a boulder read as anchored only when a good
+      // fraction of it is under the contour.
+      this.frameFor(dir, rand, 8, scale, 0.22 * scale);
       const roll = rand.next();
       const kind = roll < 0.66 ? 'ROCK' : roll < 0.88 ? 'SLAB' : 'CRYSTAL';
-      const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, rand.range(0.45, 1.5)), kind };
+      const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind };
       placements.rocks.push(rock);
       placed++;
     }

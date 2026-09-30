@@ -1,32 +1,42 @@
-// NECROFALL — Grass (plan §9, §10, §59, §60): Folio's grass architecture
-// (folio-2025/sources/Game/World/Grass.js, MIT, Bruno Simon) adapted to the spherical planet,
-// with NecroFall's grass zoning preserved.
+// NECROFALL — Grass (plan §9, §10, §59, §60): Folio 2025's grass, ported 1:1 from
+// folio-2025/sources/Game/World/Grass.js (MIT, Bruno Simon) to the spherical planet.
 //
 // Folio's architecture, kept exactly:
-//   • ONE geometry made of 3-vertex blades (tip + two base corners), no per-blade meshes;
-//   • the blade SHAPE lives in the vertex shader (bladeShape uniform array + vertexIndex % 3);
-//   • every blade rotates to face the camera;
-//   • wind displacement in the vertex stage from the shared wind;
-//   • colour straight out of the terrain palette so grass and ground read as one surface.
+//   • ONE flat field of `subdivisions²` camera-scrolling blades — a fixed, dense local patch that
+//     follows the view instead of a planet-wide scatter;
+//   • the field WRAPS modulo its own size around the view centre in the vertex shader
+//     (`mod(position − centre + half, size) − half`), so blades recycle seamlessly with zero CPU;
+//   • every blade is a 3-vertex triangle (tip + 2 base corners) whose SHAPE lives in the vertex
+//     shader (`bladeShape` uniform array + vertexIndex % 3) and which ROTATES TO FACE THE CAMERA;
+//   • blade size = folio's `surfaceOverflow` formula (a bigger field grows bigger blades);
+//   • terrain data comes from TEXTURES sampled at the blade's own position, so a recycled blade
+//     always wears the colours/mask of the ground it currently stands on;
+//   • `normalNode` is the surface up, so blades light exactly like the ground beneath them;
+//   • wind displacement, per-blade height randomness (0.6) and density-mask thinning: folio's
+//     constants verbatim.
 //
-// Planet adaptations:
-//   • blade bases carry their surface frame (position + terrain normal), so blades grow ALONG
-//     the sphere's normal instead of world +Y (no floating, no clipping — plan §81);
-//   • wind flows in the local TANGENT plane towards the shared wind direction;
-//   • distance culling collapses blades far from the camera in the vertex shader (plan §88);
-//   • placement is the deterministic zoning NecroFall already had: dense rings around the tower
-//     zones grown once when the match is laid out, plus seeded wild meadows around the planet.
+// Planet adaptations (documented per site, everything else is folio's logic untouched):
+//   • the field plane is a TANGENT FRAME on the sphere: blades are stored in metres of arc around
+//     an anchor direction, and the vertex shader maps the wrapped offset onto the sphere surface;
+//   • a re-anchor pass re-projects the stored offsets when the camera walks ~15 m, which is the
+//     spherical equivalent of folio's `center.value` update (their world is flat, ours is not);
+//   • the per-blade terrain data is sampled from two baked equirect textures (slope/height01/
+//     moisture/corruption + vegetation) — folio's `terrain.terrainNode(bladePosition)`;
+//   • blades hide below the waterline and grow along the surface normal.
 //
-// Grass is ONE mesh and ONE draw call. Nothing about it updates on the CPU after it is built.
+// Grass is ONE mesh and ONE draw call. The CPU only writes a 2-float uniform per frame.
 import * as THREE from 'three/webgpu';
 import {
   Fn,
   attribute,
+  atan,
   cameraPosition,
   cross,
   float,
   mix,
+  mx_noise_float,
   normalize,
+  texture,
   uniform,
   uniformArray,
   varying,
@@ -34,23 +44,22 @@ import {
   vec3,
   vertexIndex,
 } from 'three/tsl';
-import { clamp, Rand, tangentBasis } from '../../../utils/Utils';
+import { clamp, Rand } from '../../../utils/Utils';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { terrainAlbedoNode, TERRAIN_PALETTE } from '../terrain/NecroFallTerrainNode';
 import { FOLIO } from '../FolioShaderGlobals';
-import { packTerrainData } from '../terrain/NecroFallTerrainNode';
 import type { TerrainSurface } from '../../TerrainSurface';
 
 export interface GrassOptions {
   surface: TerrainSurface;
   seed: number;
-  /** 0..1 blade-density multiplier (quality tier). */
+  /** Blade-density multiplier (quality tier): scales the field's subdivisions. */
   density: number;
-  /** Metres beyond which blades are collapsed (plan §88: 40 m). */
+  /** Field reach in metres (the patch follows the camera). */
   maxDistance: number;
-  /** Tower zones: the dense rings. */
+  /** Unused by the folio field (kept for the world builder's signature). */
   towers: THREE.Vector3[];
-  /** Seeded meadow patches (already computed by the caller). */
+  /** Unused by the folio field (kept for the world builder's signature). */
   meadows: THREE.Vector3[];
   moistureAt(x: number, y: number, z: number): number;
   corruptionAt(x: number, y: number, z: number): number;
@@ -59,246 +68,457 @@ export interface GrassOptions {
   castShadows?: boolean;
 }
 
-/** Full-density blade budget (HIGH). Lower tiers scale it (plan §10). */
-const BASE_BLADES = 26000;
-/** Dense ring around each tower, in metres of arc. */
-const TOWER_RING = 34;
-/** Meadow patch size, in metres of arc. */
-const MEADOW_RING = 26;
+/** Folio's density: 280² = 78 400 blades. Quality tiers scale the subdivisions. */
+const BASE_SUBDIVISIONS = 280;
+/** Folio's ideal field surface (m²) — drives the blade-size overflow formula. */
+const SURFACE_IDEAL = 2000;
+/** Re-anchor when the camera walks this fraction of the half-extent from the frame's centre. */
+const REANCHOR_FRACTION = 0.55;
+/** Equirect data texture size (per-texel ≈ 2.9 m at the equator on a 118 m planet). */
+const TEX_W = 512;
+const TEX_H = 256;
+
+/**
+ * Deterministic tangent basis of a direction. The CPU (re-anchor) and the shader (blade
+ * mapping) MUST agree bit-for-bit, so both use this exact rule: the helper axis flips from +Y
+ * to +X beyond |y| = 0.9 (a hard switch, no blending).
+ */
+function helperAxis(y: number): THREE.Vector3 {
+  return Math.abs(y) > 0.9 ? _axisX : _axisY;
+}
+const _axisX = new THREE.Vector3(1, 0, 0);
+const _axisY = new THREE.Vector3(0, 1, 0);
 
 export class Grass {
   readonly mesh: THREE.Mesh;
   readonly material: MeshDefaultMaterial;
-  /** LOD seam: max distance blades are drawn at (written by VegetationVisibility). */
+  /** LOD seam: blades farther than this are collapsed (registered with the visibility system). */
   cullDistance!: { value: number };
   bladeCount = 0;
 
-  private geometry: THREE.BufferGeometry | null = null;
+  /** Half-size of the field, in metres of arc. */
+  private readonly halfExtent: number;
+  private readonly size: number;
+  private readonly subdivisions: number;
+  private readonly radius: number;
+
+  /** Field frame: anchor direction + tangent basis (the sphere's replacement for world XZ). */
+  private readonly anchor = new THREE.Vector3(0, 1, 0);
+  private readonly basisT1 = new THREE.Vector3(1, 0, 0);
+  private readonly basisT2 = new THREE.Vector3(0, 0, 1);
+  private readonly center2D = new THREE.Vector2();
+
+  private readonly anchorUniform = uniform(vec3(0, 1, 0));
+  private readonly centerUniform = uniform(vec2(0, 0));
+  private readonly sizeUniform = uniform(1);
+  private readonly positionAttribute: THREE.BufferAttribute;
+
+  // Re-anchor scratch.
+  private readonly rand: Rand;
+  private readonly _dir = new THREE.Vector3();
+  private readonly _t1n = new THREE.Vector3();
+  private readonly _t2n = new THREE.Vector3();
 
   constructor(private readonly options: GrassOptions) {
-    this.material = this.buildMaterial();
-    this.rebuild(options.towers);
+    this.radius = options.surface.radius;
+    this.rand = new Rand((options.seed ^ 0x51a55) >>> 0);
+    this.halfExtent = clamp(options.maxDistance * 0.5, 22, 36);
+    this.size = this.halfExtent * 2;
+    this.subdivisions = Math.max(48, Math.round(BASE_SUBDIVISIONS * Math.sqrt(clamp(options.density, 0.25, 1.2))));
+    this.bladeCount = this.subdivisions * this.subdivisions;
 
-    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
-    this.mesh.name = 'folie-grass';
-    this.mesh.frustumCulled = false; // instances span the planet; the shader culls by distance
+    this.positionAttribute = this.buildGeometry();
+    const data = this.bakeTerrainTextures();
+
+    this.material = this.buildMaterial(data.texA, data.texB);
+    this.mesh = new THREE.Mesh(this.geometry!, this.material);
+    this.mesh.name = 'folio-grass';
+    this.mesh.frustumCulled = false; // the field follows the camera; a baked bound would lie
     this.mesh.castShadow = options.castShadows ?? false;
     this.mesh.receiveShadow = true;
-    this.applyGeometry(this.geometry!);
+
+    this.sizeUniform.value = this.size;
+    this.buildBasis(this.anchor, this.basisT1, this.basisT2);
+    this.anchorUniform.value.copy(this.anchor);
   }
 
-  /** Grow the field: called once per match with the tower positions (plan §10 — never per frame). */
-  rebuild(towers: THREE.Vector3[]): void {
-    this.geometry?.dispose();
-    this.geometry = this.buildGeometry(towers);
-    if (this.mesh) this.applyGeometry(this.geometry);
-  }
+  private geometry: THREE.BufferGeometry | null = null;
 
-  private applyGeometry(geometry: THREE.BufferGeometry): void {
-    // One non-instanced draw of the whole blade buffer: the vertex shader derives every corner
-    // from `vertexIndex` + the per-vertex attributes (aBase/aUp/aRand). Setting `mesh.count` here
-    // would turn this into an instanced draw of `count` copies of the entire field.
-    this.mesh.geometry = geometry;
-  }
+  // ------------------------------------------------------------------ field (CPU, once)
 
-  // ------------------------------------------------------------------ placement (CPU, once)
+  /** Folio's grid: one random blade centre per fragment, replicated across its 3 vertices. */
+  private buildGeometry(): THREE.BufferAttribute {
+    const count = this.bladeCount;
+    const rect = this.subdivisions;
+    const fragment = this.size / rect;
+    const radius = this.radius;
 
-  private buildGeometry(towers: THREE.Vector3[]): THREE.BufferGeometry {
-    const surface = this.options.surface;
+    // `aField` = the wrapped field offset (the shader's real input); `position` stays a VALID
+    // vec3 so the material pipeline's internal reads (fog/normal transforms) never see the
+    // two-component layout — folio's itemSize-2 `position` collides with three r183's vec3
+    // positionLocal and produced garbage vertex data (live bug 2026-09-30: giant blade spray).
+    const fields = new Float32Array(count * 3 * 2);
+    const positions = new Float32Array(count * 3 * 3);
+    const heightRandomness = new Float32Array(count * 3);
     const rand = new Rand((this.options.seed ^ 0x6a55) >>> 0);
 
-    const budget = Math.round(BASE_BLADES * clamp(this.options.density, 0.05, 1.6));
-    const zones: Array<{ dir: THREE.Vector3; ring: number; weight: number }> = [];
-    for (const tower of towers) zones.push({ dir: tower.clone().normalize(), ring: TOWER_RING / surface.radius, weight: 2.2 });
-    for (const meadow of this.options.meadows) zones.push({ dir: meadow.clone().normalize(), ring: MEADOW_RING / surface.radius, weight: 1 });
-    if (zones.length === 0) return this.emptyGeometry();
+    for (let iX = 0; iX < rect; iX++) {
+      const fragmentX = (iX / rect - 0.5) * this.size + fragment * 0.5;
+      for (let iZ = 0; iZ < rect; iZ++) {
+        const fragmentZ = (iZ / rect - 0.5) * this.size + fragment * 0.5;
+        const i = iX * rect + iZ;
+        const x = fragmentX + (rand.next() - 0.5) * fragment;
+        const z = fragmentZ + (rand.next() - 0.5) * fragment;
+        const r = 0.55 + rand.next() * 0.9;
 
-    const totalWeight = zones.reduce((sum, z) => sum + z.weight, 0);
+        // Initial-frame world position (anchor +Y): the pipeline's internal reads get sane data;
+        // the vertex shader positions everything itself regardless.
+        const len = Math.max(1e-4, Math.hypot(x, z));
+        const angle = len / radius;
+        const s = Math.sin(angle) / len;
+        const px = z * s * radius;
+        const py = Math.cos(angle) * radius;
+        const pz = x * s * radius;
 
-    const count = budget;
-    const base = new Float32Array(count * 3 * 3);
-    const up = new Float32Array(count * 3 * 3);
-    const data = new Float32Array(count * 3 * 4);
-    const veg = new Float32Array(count * 3);
-    const randoms = new Float32Array(count * 3 * 2);
-    const position = new Float32Array(count * 3 * 3); // three needs a `position` attribute
-
-    const dir = new THREE.Vector3();
-    const height01Span = Math.max(1e-3, this.options.reliefMax - this.options.reliefMin);
-
-    let blade = 0;
-    let guard = 0;
-    while (blade < count && guard++ < count * 6) {
-      // weighted zone pick
-      let pick = rand.next() * totalWeight;
-      let zone = zones[0];
-      for (const z of zones) {
-        pick -= z.weight;
-        if (pick <= 0) {
-          zone = z;
-          break;
+        for (let v = 0; v < 3; v++) {
+          const i2 = (i * 3 + v) * 2;
+          const i3 = (i * 3 + v) * 3;
+          fields[i2] = x;
+          fields[i2 + 1] = z;
+          positions[i3] = px;
+          positions[i3 + 1] = py;
+          positions[i3 + 2] = pz;
+          heightRandomness[i * 3 + v] = r;
         }
       }
-
-      // uniform point in the zone cap
-      tangentBasis(zone.dir, _t1, _t2);
-      const angle = rand.range(0, Math.PI * 2);
-      const radius = Math.sqrt(rand.next()) * zone.ring;
-      dir
-        .copy(zone.dir)
-        .multiplyScalar(Math.cos(radius))
-        .addScaledVector(_t1, Math.cos(angle) * Math.sin(radius))
-        .addScaledVector(_t2, Math.sin(angle) * Math.sin(radius))
-        .normalize();
-
-      const h = surface.heightAtDir(dir.x, dir.y, dir.z);
-      const slope = surface.slopeAtDir(dir.x, dir.y, dir.z);
-      const water = surface.waterAtDir(dir.x, dir.y, dir.z);
-      if (water > 0.05) continue;
-      if (slope > 0.5 && !rand.chance(0.25)) continue;
-
-      surface.normalAtDir(dir.x, dir.y, dir.z, _normal);
-      const surfacePos = _probe.copy(dir).multiplyScalar(h - 0.02);
-      const height01 = clamp((h - this.options.reliefMin) / height01Span, 0, 1);
-      const terrain = packTerrainData(
-        slope,
-        height01,
-        this.options.moistureAt(dir.x, dir.y, dir.z),
-        this.options.corruptionAt(dir.x, dir.y, dir.z),
-      );
-      const vegetation = surface.vegetationAtDir(dir.x, dir.y, dir.z);
-      // Sparse ground still gets SOME grass; bare rock and corruption thin it.
-      if (rand.next() > clamp(vegetation / 1.6 + 0.15, 0.05, 1)) continue;
-
-      const heightRandom = rand.range(0.55, 1.25);
-      const phase = rand.next();
-
-      for (let v = 0; v < 3; v++) {
-        const i = (blade * 3 + v) * 3;
-        base[i] = surfacePos.x;
-        base[i + 1] = surfacePos.y;
-        base[i + 2] = surfacePos.z;
-        position[i] = surfacePos.x;
-        position[i + 1] = surfacePos.y;
-        position[i + 2] = surfacePos.z;
-        up[i] = _normal.x;
-        up[i + 1] = _normal.y;
-        up[i + 2] = _normal.z;
-
-        const di = (blade * 3 + v) * 4;
-        data[di] = terrain[0];
-        data[di + 1] = terrain[1];
-        data[di + 2] = terrain[2];
-        data[di + 3] = terrain[3];
-
-        veg[blade * 3 + v] = vegetation;
-
-        const ri = (blade * 3 + v) * 2;
-        randoms[ri] = heightRandom;
-        randoms[ri + 1] = phase;
-      }
-      blade++;
     }
 
-    this.bladeCount = blade;
-
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(position.subarray(0, blade * 9), 3));
-    geometry.setAttribute('aBase', new THREE.BufferAttribute(base.subarray(0, blade * 9), 3));
-    geometry.setAttribute('aUp', new THREE.BufferAttribute(up.subarray(0, blade * 9), 3));
-    geometry.setAttribute('aTerrain', new THREE.BufferAttribute(data.subarray(0, blade * 12), 4));
-    geometry.setAttribute('aVeg', new THREE.BufferAttribute(veg.subarray(0, blade * 3), 1));
-    geometry.setAttribute('aRand', new THREE.BufferAttribute(randoms.subarray(0, blade * 6), 2));
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), surface.radius * 2);
-    return geometry;
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
+    const field = new THREE.BufferAttribute(fields, 2);
+    field.setUsage(THREE.DynamicDrawUsage); // re-anchoring rewrites it
+    geometry.setAttribute('aField', field);
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('heightRandomness', new THREE.BufferAttribute(heightRandomness, 1));
+    this.geometry = geometry;
+    return field;
   }
 
-  private emptyGeometry(): THREE.BufferGeometry {
-    this.bladeCount = 0;
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
-    geometry.setAttribute('aBase', new THREE.BufferAttribute(new Float32Array(9), 3));
-    geometry.setAttribute('aUp', new THREE.BufferAttribute(new Float32Array(9), 3));
-    geometry.setAttribute('aTerrain', new THREE.BufferAttribute(new Float32Array(12), 4));
-    geometry.setAttribute('aVeg', new THREE.BufferAttribute(new Float32Array(3), 1));
-    geometry.setAttribute('aRand', new THREE.BufferAttribute(new Float32Array(6), 2));
-    return geometry;
+  /**
+   * Bake the per-direction terrain data into two equirect textures — the spherical stand-in for
+   * folio's `terrain.terrainNode(bladePosition)`. A = (slope, height01, moisture, corruption),
+   * B = vegetation (0..1.6 → 0..255). Sampled per blade in the vertex/fragment shaders, so a
+   * wrapped blade always wears the data of the ground it currently stands on.
+   */
+  private bakeTerrainTextures(): { texA: THREE.DataTexture; texB: THREE.DataTexture } {
+    const surface = this.options.surface;
+    const reliefSpan = Math.max(1e-3, this.options.reliefMax - this.options.reliefMin);
+    const texA = new Uint8Array(TEX_W * TEX_H * 4);
+    const texB = new Uint8Array(TEX_W * TEX_H);
+
+    for (let y = 0; y < TEX_H; y++) {
+      const lat = (y / (TEX_H - 1) - 0.5) * Math.PI;
+      const cosLat = Math.cos(lat);
+      const sinLat = Math.sin(lat);
+      for (let x = 0; x < TEX_W; x++) {
+        const lon = (x / TEX_W - 0.5) * Math.PI * 2;
+        const dx = cosLat * Math.cos(lon);
+        const dz = cosLat * Math.sin(lon);
+
+        const h = surface.heightAtDir(dx, sinLat, dz);
+        const slope = surface.slopeAtDir(dx, sinLat, dz);
+        const moisture = this.options.moistureAt(dx, sinLat, dz);
+        const corruption = this.options.corruptionAt(dx, sinLat, dz);
+        const veg = surface.vegetationAtDir(dx, sinLat, dz);
+
+        const i = (y * TEX_W + x) * 4;
+        texA[i] = clamp(slope, 0, 1) * 255;
+        texA[i + 1] = clamp((h - this.options.reliefMin) / reliefSpan, 0, 1) * 255;
+        texA[i + 2] = clamp(moisture, 0, 1) * 255;
+        texA[i + 3] = clamp(corruption, 0, 1) * 255;
+        texB[y * TEX_W + x] = clamp(veg / 1.6, 0, 1) * 255;
+      }
+    }
+
+    const wrap = (data: Uint8Array, format: THREE.PixelFormat, channels: number): THREE.DataTexture => {
+      const tex = new THREE.DataTexture(data, TEX_W, TEX_H, format, THREE.UnsignedByteType);
+      tex.wrapS = THREE.RepeatWrapping; // the longitude seam must filter across ±π
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      void channels;
+      return tex;
+    };
+
+    return { texA: wrap(texA, THREE.RGBAFormat, 4), texB: wrap(texB, THREE.RedFormat, 1) };
   }
 
-  // ------------------------------------------------------------------ material (TSL)
+  private buildBasis(dir: THREE.Vector3, t1: THREE.Vector3, t2: THREE.Vector3): void {
+    const helper = helperAxis(dir.y);
+    t1.crossVectors(helper, dir).normalize();
+    t2.crossVectors(dir, t1).normalize();
+  }
 
-  private buildMaterial(): MeshDefaultMaterial {
-    const bladeWidth = uniform(0.085);
-    const bladeHeight = uniform(0.72);
+  // ------------------------------------------------------------------ material (folio port)
+
+  /** Blade shape uniforms — public so the field can be tuned (and diagnosed) live. */
+  readonly bladeWidthU: any = uniform(0.1);
+  readonly bladeHeightU: any = uniform(0.6);
+  readonly bladeRandomnessU: any = uniform(0.6);
+
+  private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture): MeshDefaultMaterial {
+    // --- folio's overflow formulas (constructor values: ×0.5 growth per unit of overflow)
+    const surface = this.size * this.size;
+    const surfaceOverflow = Math.max(0, surface - SURFACE_IDEAL) / SURFACE_IDEAL;
+    this.bladeWidthU.value = 0.1 * (1 + surfaceOverflow * 0.5);
+    this.bladeHeightU.value = 0.6 * (1 + surfaceOverflow * 0.5);
+    const bladeWidth = this.bladeWidthU;
+    const bladeHeight = this.bladeHeightU;
+    const bladeHeightRandomness = this.bladeRandomnessU;
     this.cullDistance = uniform(this.options.maxDistance);
-    const maxDistance = this.cullDistance as unknown as ReturnType<typeof uniform>;
-
-    // Attribute nodes are created once and shared by both shader stages.
-    const aBase = attribute('aBase', 'vec3') as any;
-    const aUp = attribute('aUp', 'vec3') as any;
-    const aTerrain = attribute('aTerrain', 'vec4') as any;
-    const aVeg = (attribute('aVeg', 'float') as any).div(1.6);
-    const aRand = attribute('aRand', 'vec2') as any;
 
     const bladeShape = uniformArray([
       0, 1, // tip
-      1, 0, // left
-      -1, 0, // right
+      1, 0, // left side
+      -1, 0, // right side
     ]);
 
-    const tipness = varying(vertexIndex.toFloat().mod(3).step(0.5).oneMinus());
+    // --- varyings shared by both stages
+    const vertexLoopIndex = varying(vertexIndex.toFloat().mod(3));
+    const vTipness = varying(vertexLoopIndex.step(0.5).oneMinus()); // 1 on the tip corner
+    const vUv = varying(vec2());
+    const vUp = varying(vec3());
+    const vMask = varying(float());
+
+    // --- folio's terrain lookups, from the baked textures. The samplers take the UV as a
+    // parameter so the VERTEX stage reads its local uv node (reading the varying back inside the
+    // same stage diverges per vertex and sprayed giant shards — live bug 2026-09-30), while the
+    // fragment stage samples at the interpolated `vUv`.
+    const sampleA = Fn(([uvNode]: any[]) => texture(texA, uvNode));
+    const sampleVeg = Fn(([uvNode]: any[]) => (texture(texB, uvNode) as any).r.mul(1.6));
 
     const material = new MeshDefaultMaterial({
       colorNode: Fn(() => {
-        const baseColor = terrainAlbedoNode(aTerrain, TERRAIN_PALETTE.mid, aVeg);
-        // Root → tip gradient keeps blades readable without a texture.
-        return mix(baseColor.mul(0.7), baseColor.mul(1.18), tipness);
+        // Folio: the terrain's own colour function, evaluated at this blade's data.
+        return terrainAlbedoNode(sampleA(vUv), TERRAIN_PALETTE.grass, sampleVeg(vUv).div(1.6));
       })(),
+      // Folio passes a constant (0, 1, 0); on the sphere that is the blade's surface up.
+      normalNode: vUp,
       hasWater: false,
       hasLightBounce: false,
-      alphaTest: 0,
+      // Folio's shadow tip mix: tips read lit, roots sit in the ground's shadow.
+      shadowNode: vTipness.oneMinus().mul(vMask),
+      side: THREE.DoubleSide, // thin camera-facing blades — never let winding hide the field
       shadowSide: THREE.DoubleSide,
     });
 
-    // --- vertex construction: Folio's blade shape, spherical frame, camera-facing, wind.
+    // --- the vertex stage: folio's blade construction on the tangent frame ---------------------
+    const anchor = this.anchorUniform;
+    const center = this.centerUniform;
+    const sizeU = this.sizeUniform;
+    const radiusU = uniform(this.radius);
+
     material.positionNode = Fn(() => {
+      // The field's tangent frame (must mirror `buildBasis` bit-for-bit: hard switch at |y|=0.9).
+      const helper = (vec3(0, 1, 0) as any).mix(
+        vec3(1, 0, 0),
+        (anchor.y.abs() as any).step(0.9),
+      );
+      const t1 = normalize(cross(helper, anchor));
+      const t2 = normalize(cross(anchor, t1));
+
+      // Folio's infinite scroll: wrap the blade around the view centre modulo the field size.
+      const raw = attribute('aField', 'vec2') as any;
+      const half = sizeU.mul(0.5);
+      const loopPosition = raw
+        .sub(center)
+        .add(half)
+        .mod(sizeU)
+        .sub(half);
+
+      // Map the wrapped tangent offset onto the sphere (metres of arc around the anchor).
+      const offsetLength = loopPosition.length().max(1e-4);
+      const angle = offsetLength.div(radiusU);
+      const dir = anchor
+        .mul(angle.cos())
+        .add(t1.mul(loopPosition.x).add(t2.mul(loopPosition.y)).mul(angle.sin().div(offsetLength)))
+        .normalize();
+
+      // Per-blade terrain data at the blade's CURRENT position (folio's terrainNode call).
+      const uv = vec2(
+        atan(dir.z, dir.x).mul(1 / (Math.PI * 2)).add(0.5),
+        dir.y.mul(0.5).add(0.5),
+      );
+      vUv.assign(uv);
+      vUp.assign(dir);
+
+      // Folio's grass mask, derived from the sampled terrain data. The gates are NecroFall's
+      // own (folia's island is gentle): the planet must read as MOSTLY grass — rock, corruption
+      // and genuinely steep faces are the only bare ground (live review 2026-09-30).
+      const a = sampleA(uv) as any;
+      const height01 = a.y;
+      const flatness = a.x.smoothstep(1.35, 0.05);
+      const lush = sampleVeg(uv)
+        .mul(0.55)
+        .add(0.45)
+        .clamp(0, 1)
+        .mul(a.w.oneMinus().mul(0.45).add(0.55));
+      const aboveWater = height01.sub(TERRAIN_PALETTE.waterline01).max(0).mul(50).clamp(0, 1);
+      const mask = flatness.mul(lush).mul(aboveWater).clamp(0, 1);
+      vMask.assign(mask);
+
+      // Height: folio's bladeHeight × mix(1, random, 0.6) × noise variation × grass mask.
+      const baseRadius = TERRAIN_PALETTE.reliefMin.add(
+        height01.mul(TERRAIN_PALETTE.reliefMax.sub(TERRAIN_PALETTE.reliefMin)),
+      );
+      const heightVariation = mx_noise_float(vec3(loopPosition.x, float(0), loopPosition.y).mul(0.0321))
+        .mul(0.5)
+        .add(1);
+      const randomness = mix(float(1), attribute('heightRandomness', 'float') as any, bladeHeightRandomness);
+      // Density mask as a SMOOTH SIZE factor: bare ground shrinks blades to nothing at their base.
+      // (A far-push driven by the mask stretched single vertices into giant shards — live bug
+      // 2026-09-30; a scale cannot stretch anything.)
+      const maskScale = mask.smoothstep(0.12, 0.42);
+      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(maskScale);
+      const width = bladeWidth.mul(maskScale);
+
+      // Shape (vertices: tip / left / right) along the surface up.
       const corner = vertexIndex.toFloat().mod(3);
-      const isBase = corner.step(0.5); // 1 on the two base corners
-      const shapeX = (bladeShape.element(corner.mul(2)) as any);
-      const shapeY = (bladeShape.element(corner.mul(2).add(1)) as any);
+      const shapeX = (bladeShape.element(corner.mul(2)) as any).negate().mul(width);
+      const shapeY = (bladeShape.element(corner.mul(2).add(1)) as any).mul(height);
 
-      // Height: random per blade, thinned by rock/corruption through the baked attributes.
-      const height = bladeHeight
-        .mul(aRand.x)
-        .mul(aVeg.mul(0.5).add(0.6))
-        .mul(aTerrain.w.oneMinus().mul(0.4).add(0.6));
+      const base = dir.mul(baseRadius);
+      let vertex: any = base.add(dir.mul(shapeY));
 
-      // Camera-facing right vector in the blade's tangent plane.
-      const toCamera = (cameraPosition as any).sub(aBase);
-      const right = normalize(cross(aUp, toCamera));
+      // Camera-facing rotation — folio's `angleToCamera` (atan2 of the blade→camera vector),
+      // evaluated in the blade's TANGENT plane. Two sphere hazards: a cross-product version
+      // degenerates for blades radially under the camera, and atan2(0,0) itself is NaN — so the
+      // arguments carry a tiny bias. NaN inputs sprayed giant triangles over the field.
+      const toCamera = (cameraPosition as any).sub(base);
+      const facing = atan(
+        toCamera.dot(t2).add(1e-4),
+        toCamera.dot(t1).add(1e-4),
+      ).sub(Math.PI * 0.5);
+      const right = t1.mul(facing.cos()).add(t2.mul(facing.sin()));
+      vertex = vertex.add(right.mul(shapeX));
 
-      const width = bladeWidth.mul(isBase);
-
-      let vertex: any = aBase.add(aUp.mul(shapeY.mul(height))).add(right.mul(shapeX.mul(width)));
-
-      // Wind: flow along the surface tangent towards the shared wind direction.
+      // Wind: folio's `wind.offsetNode(...) × tipness × height × 2`, along the surface tangent.
       const windWorld = vec3(FOLIO.wind.direction.x, float(0), FOLIO.wind.direction.y);
-      const windTangent = normalize(windWorld.sub(aUp.mul(windWorld.dot(aUp))).add(right.mul(1e-4)));
-      const gust = FOLIO.wind.offset(aBase.xy).length().mul(0.5).add(FOLIO.wind.strength.mul(0.5));
-      const sway = gust.mul(tipness).mul(height).mul(1.6);
-      // A slow per-blade phase so the field ripples instead of moving as one sheet.
-      const ripple = FOLIO.wind.localTime.mul(1.6).add(aRand.y.mul(6.2831)).sin().mul(0.35).add(0.65);
-      vertex = vertex.add(windTangent.mul(sway).mul(ripple));
+      const windTangent = normalize(windWorld.sub(dir.mul(windWorld.dot(dir))).add(right.mul(1e-4)));
+      const gust = FOLIO.wind.offset(loopPosition).length().mul(0.5).add(FOLIO.wind.strength.mul(0.5));
+      const sway = gust.mul(vTipness).mul(height).mul(2);
+      vertex = vertex.add(windTangent.mul(sway));
 
-      // Distance culling: blades past the grass horizon are pushed off the planet entirely.
-      const distance = aBase.sub(cameraPosition as any).length();
-      const hidden = distance.step(maxDistance);
-      vertex = vertex.add(aUp.mul(hidden.mul(9999)));
+      // Hide: only the PROVEN distance cull pushes blades off the planet (the mask now shrinks
+      // blades instead — see maskScale).
+      const distance = base.sub(cameraPosition as any).length();
+      const culled = distance.step(this.cullDistance as any);
+      vertex = vertex.add(dir.mul(culled.mul(9999)));
 
       return vertex;
     })();
 
     return material;
+  }
+
+  // ------------------------------------------------------------------ per-frame
+
+  /**
+   * Follow the view (folio's `center.value.set(...)` — their flat-world version). `focus` is the
+   * camera/player position in WORLD space; the field centres on the surface point beneath it.
+   */
+  update(focus: THREE.Vector3): void {
+    const dir = this._dir.copy(focus).normalize();
+
+    // The view's angular offset inside the current field frame.
+    const cx = Math.atan2(dir.dot(this.basisT1), dir.dot(this.anchor)) * this.radius;
+    const cy = Math.atan2(dir.dot(this.basisT2), dir.dot(this.anchor)) * this.radius;
+    this.center2D.set(cx, cy);
+    this.centerUniform.value.set(cx, cy);
+
+    if (Math.hypot(cx, cy) > this.halfExtent * REANCHOR_FRACTION) {
+      this.reanchor(dir);
+    }
+  }
+
+  /**
+   * Move the field frame under the view.
+   *
+   * Folio's flat world never needs this; on a sphere the tangent frame must follow the camera or
+   * the cap projection distorts. Blades whose world spot stays inside the NEW field are
+   * re-projected there (they never move on screen); the rest are re-scattered into the outer
+   * annulus — the same edge recycling folio's `mod` wrap does, at the same distance from the
+   * viewer (live bug 2026-09-30: projecting everything and letting the wrap fold it produced a
+   * degenerate band of grass instead of a field).
+   */
+  private reanchor(newAnchor: THREE.Vector3): void {
+    const pos = this.positionAttribute.array as Float32Array;
+    const count = this.bladeCount;
+    const size = this.size;
+    const half = size * 0.5;
+    const radius = this.radius;
+
+    const t1n = this._t1n;
+    const t2n = this._t2n;
+    this.buildBasis(newAnchor, t1n, t2n);
+
+    const oldT1 = this.basisT1;
+    const oldT2 = this.basisT2;
+    const oldAnchor = this.anchor;
+    const c2u = this.center2D.x;
+    const c2v = this.center2D.y;
+    const keepLimit = half * 0.995;
+
+    // How far apart are the two anchors? (metres of arc)
+    const far = Math.acos(clamp(this.anchor.dot(newAnchor), -1, 1)) * radius;
+    const project = far <= this.halfExtent;
+
+    const scatter = (i: number, includeCentre: boolean): void => {
+      const a = this.rand.next() * Math.PI * 2;
+      const rMin = includeCentre ? 0 : 0.5;
+      const r = half * (rMin + (1 - rMin) * this.rand.next());
+      pos[i * 2] = Math.cos(a) * r;
+      pos[i * 2 + 1] = Math.sin(a) * r;
+    };
+
+    for (let i = 0; i < count; i++) {
+      if (!project) {
+        scatter(i, true);
+        continue;
+      }
+      const i2 = i * 2;
+      // The blade's DISPLAYED offset in the old frame (same wrap the shader applies).
+      const lu = (((pos[i2] - c2u + half) % size + size) % size - half);
+      const lv = (((pos[i2 + 1] - c2v + half) % size + size) % size - half);
+      const len = Math.max(1e-4, Math.hypot(lu, lv));
+      const r = len / radius;
+      const sinR = Math.sin(r);
+
+      // Its world direction (inverse of the shader's cap mapping).
+      const dx = oldAnchor.x * Math.cos(r) + (oldT1.x * lu + oldT2.x * lv) * (sinR / len);
+      const dy = oldAnchor.y * Math.cos(r) + (oldT1.y * lu + oldT2.y * lv) * (sinR / len);
+      const dz = oldAnchor.z * Math.cos(r) + (oldT1.z * lu + oldT2.z * lv) * (sinR / len);
+
+      // Project into the new frame (angular offsets, metres of arc).
+      const ca = dx * newAnchor.x + dy * newAnchor.y + dz * newAnchor.z;
+      const nu = Math.atan2(dx * t1n.x + dy * t1n.y + dz * t1n.z, ca) * radius;
+      const nv = Math.atan2(dx * t2n.x + dy * t2n.y + dz * t2n.z, ca) * radius;
+      if (Math.hypot(nu, nv) <= keepLimit) {
+        pos[i2] = nu;
+        pos[i2 + 1] = nv;
+      } else {
+        scatter(i, false); // outside the new disk: recycle it at the field's rim
+      }
+    }
+    this.positionAttribute.needsUpdate = true;
+
+    this.anchor.copy(newAnchor);
+    this.anchorUniform.value.copy(newAnchor);
+    this.basisT1.copy(t1n);
+    this.basisT2.copy(t2n);
+    this.center2D.set(0, 0);
+    this.centerUniform.value.set(0, 0);
   }
 
   setVisible(visible: boolean): void {
@@ -311,8 +531,3 @@ export class Grass {
     this.mesh.removeFromParent();
   }
 }
-
-const _t1 = new THREE.Vector3();
-const _t2 = new THREE.Vector3();
-const _normal = new THREE.Vector3();
-const _probe = new THREE.Vector3();

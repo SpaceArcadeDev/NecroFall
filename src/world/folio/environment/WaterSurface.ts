@@ -66,7 +66,10 @@ export class WaterSurface {
     this.resolution = options.resolution ?? 64;
     this.depthData = new Float32Array(this.resolution * this.resolution);
 
-    this.depthTexture = new THREE.DataTexture(this.depthData, this.resolution, this.resolution, THREE.RedFormat, THREE.FloatType);
+    // HalfFloat, on purpose: float32 colour textures sample with nearest on devices without the
+    // WebGPU `float32-filterable` feature, which silently zeroed the depth map — and a zeroed
+    // depth map is invisible water (live review 2026-09-30: "no water"). fp16 filters everywhere.
+    this.depthTexture = new THREE.DataTexture(this.depthData, this.resolution, this.resolution, THREE.RedFormat, THREE.HalfFloatType);
     this.depthTexture.minFilter = THREE.LinearFilter;
     this.depthTexture.magFilter = THREE.LinearFilter;
     this.depthTexture.needsUpdate = true;
@@ -212,7 +215,8 @@ export class WaterSurface {
           .addScaledVector(this.tangent.value, Math.tan(theta))
           .addScaledVector(this.bitangent.value, Math.tan(phi))
           .normalize();
-        const h = surface.heightAtDir(_sample.x, _sample.y, _sample.z);
+        // Depth against the DRAWN surface so the shore ring lines up with the seen terrain.
+        const h = surface.visualHeightAtDir(_sample.x, _sample.y, _sample.z);
         const depth = Math.max(0, surface.waterLevel - h);
         this.depthData[j * res + i] = depth;
         if (depth > 0.2) submerged++;

@@ -16,11 +16,11 @@ export interface LodBudget {
 
 /** Base draw distances at HIGH quality (plan §88 — tune with profiling, these are the anchors). */
 const BASE: Record<LodCategory, number> = {
-  grass: 42,
-  flowers: 46,
-  bushes: 70,
+  grass: 62,
+  flowers: 72,
+  bushes: 115,
   scenery: 85,
-  trees: 130,
+  trees: 240,
   water: 260,
   particles: 60,
 };

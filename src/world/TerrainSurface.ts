@@ -14,6 +14,12 @@ export interface TerrainSurface {
 
   /** Terrain radius (distance from planet centre) along a unit direction. */
   heightAtDir(x: number, y: number, z: number): number;
+  /**
+   * Radius of the RENDERED mesh along a unit direction — where the drawn triangles actually
+   * interpolate. Visual placement (grass bases, props, water depth) uses this so nothing hovers
+   * over or buries under the surface the player sees; gameplay keeps `heightAtDir`.
+   */
+  visualHeightAtDir(x: number, y: number, z: number): number;
   /** Terrain (not radial) normal at a unit direction. */
   normalAtDir(x: number, y: number, z: number, out: THREE.Vector3): THREE.Vector3;
   /** Rise/run slope at a unit direction (0 = flat). */
@@ -29,6 +35,8 @@ export interface TerrainSurfaceSource {
   readonly radius: number;
   readonly waterLevel: number;
   heightAtDir(x: number, y: number, z: number): number;
+  /** Optional: the rendered-mesh height lookup (Planet exposes it once the mesh is built). */
+  meshHeightAtDir?(x: number, y: number, z: number): number;
   terrainNormalAt(p: THREE.Vector3, out: THREE.Vector3): THREE.Vector3;
   slopeAt(p: THREE.Vector3): number;
   biome: { plantDensityAt(x: number, y: number, z: number): number };
@@ -47,6 +55,13 @@ export function createTerrainSurface(planet: TerrainSurfaceSource): TerrainSurfa
       return planet.waterLevel;
     },
     heightAtDir: (x, y, z) => planet.heightAtDir(x, y, z),
+    visualHeightAtDir: (x, y, z) => {
+      if (planet.meshHeightAtDir) {
+        const h = planet.meshHeightAtDir(x, y, z);
+        if (Number.isFinite(h) && h > 0) return h;
+      }
+      return planet.heightAtDir(x, y, z);
+    },
     normalAtDir: (x, y, z, out) => {
       _p.set(x, y, z);
       return planet.terrainNormalAt(_p, out);

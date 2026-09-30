@@ -25,7 +25,6 @@ import { Bushes } from './vegetation/Bushes';
 import { Flowers } from './vegetation/Flowers';
 import { Grass } from './vegetation/Grass';
 import { Rocks } from './vegetation/Rocks';
-import { Scenery } from './scenery/Scenery';
 import { WaterSurface } from './environment/WaterSurface';
 import { Sky } from './environment/Sky';
 import { EnvironmentParticles } from './environment/EnvironmentParticles';
@@ -94,7 +93,6 @@ export class FolioWorld {
   trees: Trees[] = [];
   bushes: Bushes | null = null;
   flowers: Flowers | null = null;
-  scenery: Scenery | null = null;
   rocks: Rocks | null = null;
   waterSurface: WaterSurface | null = null;
   particles: EnvironmentParticles | null = null;
@@ -184,7 +182,9 @@ export class FolioWorld {
     const seed = planet.seed;
     const focus = planet.focusDir ? planet.focusDir.clone() : null;
 
-    // ---- 1. procedural placement (plan §66 pipeline)
+    // ---- 1. procedural placement (plan §66 pipeline). Scenery kit REMOVED (user call
+    // 2026-09-30): benches / lampposts / crates & friends did not fit the game (and their
+    // nested GLB transforms made them hover). Budget 0 keeps the pipeline intact.
     const generator = new VegetationGenerator({
       surface: this.surface,
       seed,
@@ -192,7 +192,7 @@ export class FolioWorld {
         trees: Math.round(240 * quality.environmentDensity * quality.treeDensity),
         bushes: Math.round(280 * quality.environmentDensity),
         flowers: Math.round(150 * quality.environmentDensity * quality.flowerDensity),
-        scenery: Math.round(110 * quality.environmentDensity),
+        scenery: 0,
         rocks: Math.round(420 * quality.environmentDensity),
       },
       zones: { towers: [], focus, spawns: [] },
@@ -256,26 +256,11 @@ export class FolioWorld {
     this.flowers = new Flowers({ placements: result.placements.flowers });
     scene.add(this.flowers.mesh);
 
-    this.scenery = new Scenery({
-      models: {
-        BRICKS: assets.bricks,
-        FENCE: assets.fences,
-        BENCH: assets.benches,
-        CRATE: assets.crates,
-        LANTERN: assets.lanterns,
-        POLE_LIGHT: assets.poleLights,
-      },
-      placements: result.placements.scenery,
-      castShadows: shadows,
-    });
-    for (const mesh of this.scenery.meshes) scene.add(mesh);
-
     this.rocks = new Rocks({ placements: result.placements.rocks, castShadows: shadows });
     for (const mesh of this.rocks.meshes) scene.add(mesh);
 
     // ---- 3. physics registration + occlusion candidates
     this.physics.registerTrees(result.placements.trees);
-    this.physics.registerScenery(result.placements.scenery, this.scenery);
     for (const tree of result.placements.trees) {
       this.treeHash.insert({ dir: tree.direction.clone(), position: tree.position.clone(), radius: 2.4 * tree.scale + 1.4 });
     }
@@ -286,7 +271,6 @@ export class FolioWorld {
       this.visibility.registerShaderCulled({ category: 'trees', cullDistance: trees.leaves.cullDistance });
     }
     this.visibility.registerShaderCulled({ category: 'bushes', cullDistance: this.bushes.foliage.cullDistance });
-    this.visibility.registerToggle({ category: 'scenery', setVisible: (v) => this.scenery?.setVisible(v) });
   }
 
   /**
@@ -324,7 +308,7 @@ export class FolioWorld {
       surface: this.surface,
       seed: planet.seed,
       density: quality.grassDensity,
-      maxDistance: 42 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
+      maxDistance: 62 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
       towers,
       meadows: this.meadows,
       moistureAt: (x, y, z) => planet.terrain.moistureAt(x, y, z),
@@ -365,6 +349,9 @@ export class FolioWorld {
     // Water patch recentring (throttled internally).
     this.waterSurface?.update(focuses[0] ?? cameraPosition);
 
+    // Grass: folio's camera-scrolling field follows the view (a uniform write per frame).
+    this.grass?.update(focuses[0] ?? cameraPosition);
+
     // Foliage see-through edge scaling (throttled to ~10 Hz internally by the distance check).
     this.cpuTimer -= dt;
     if (this.cpuTimer <= 0) {
@@ -400,7 +387,6 @@ export class FolioWorld {
     }
     this.bushes?.setVisible(visible);
     this.flowers?.setVisible(visible);
-    this.scenery?.setVisible(visible);
     this.rocks?.setVisible(visible);
     this.grass?.setVisible(visible);
     if (this.particles) this.particles.points.visible = visible && this.active;
@@ -411,7 +397,6 @@ export class FolioWorld {
     this.trees = [];
     this.bushes?.dispose();
     this.flowers?.dispose();
-    this.scenery?.dispose();
     this.rocks?.dispose();
     this.grass?.dispose();
     this.waterSurface?.dispose();

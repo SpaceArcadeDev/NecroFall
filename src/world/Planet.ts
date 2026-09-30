@@ -36,11 +36,11 @@ const _ll = new Float64Array(2);
 const POLE_ROW = 0.9945;
 
 /**
- * Sea level below the mean surface: basins deeper than this fill with water (plan §19). The
- * waterline is a RADIUS: everything below renders submerged and dry land above it. One value for
- * the whole planet — the water system queries it through TerrainSurface.
+ * Sea level as a fraction of the planet's MEASURED relief band (plan §19). The waterline is a
+ * RADIUS: everything below renders submerged and dry land above it. One value for the whole
+ * planet — the water system queries it through TerrainSurface.
  */
-const WATER_DEPTH = 3.5;
+const WATER_FRACTION = 0.24;
 
 /** Grid coordinates of a direction — insertion and query must agree on this exactly. */
 function lonLatOf(x: number, y: number, z: number): void {
@@ -108,8 +108,13 @@ function buildIcosphere(subdiv: number): THREE.BufferGeometry {
 export class Planet {
   readonly radius = CONFIG.planetRadius;
   readonly seed: number;
-  /** Waterline in radius space (plan §19). */
-  readonly waterLevel = CONFIG.planetRadius - WATER_DEPTH;
+  /**
+   * Waterline in radius space (plan §19). Derived from THIS planet's measured relief once the
+   * terrain is baked: a fixed depth below the mean left whole planets with no submerged basin at
+   * all ("no water anywhere", live review 2026-09-30), so the sea level sits at a fraction of the
+   * relief band and low basins always fill.
+   */
+  readonly waterLevel: number;
   /** Quality tier for the match. */
   private readonly quality: QualitySettings;
   /** The terrain: one mesh per sector (see `buildTerrainChunks`) so the far side can be skipped. */
@@ -188,6 +193,13 @@ export class Planet {
     }
     this.reliefMin = Number.isFinite(reliefMin) ? reliefMin : this.radius - 8;
     this.reliefMax = Number.isFinite(reliefMax) ? reliefMax : this.radius + 20;
+    // Sea level from the measured band: everything below floods, so every planet ships water in
+    // its low basins. Capped just below the mean surface so plains stay dry.
+    const reliefSpan = Math.max(1e-3, this.reliefMax - this.reliefMin);
+    this.waterLevel = Math.min(
+      this.reliefMin + reliefSpan * WATER_FRACTION,
+      this.radius - 1,
+    );
     geo.computeVertexNormals();
     // PASS 2 — colours from the BIOME classifier: palette ramp + slope rock + veins + landmarks
     const nrm = geo.attributes.normal as THREE.BufferAttribute;

@@ -77,11 +77,13 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
     .toVar();
 
   // Vegetation creeps over flat low ground; rock takes over on steep faces (plan §83 — the same
-  // slope value that gates placement, so nothing grows where the material shows cliffs).
-  const flatness = slope.smoothstep(0.38, 0.05);
-  const highland = height01.smoothstep(0.75, 0.4);
-  const grassy = flatness.mul(highland).mul(vegetation).min(1);
-  albedo.assign(albedo.mix(TERRAIN_PALETTE.grass.mul(grain.mul(1.0).add(0.55)), grassy.mul(0.72)));
+  // slope value that gates placement, so nothing grows where the material shows cliffs). The
+  // cover is generous on purpose: the world reads as a GRASS planet with rock breaking through,
+  // not a rock with occasional green (live review 2026-09-30: "mostly filled with grass").
+  const flatness = slope.smoothstep(1.3, 0.05);
+  const highland = height01.smoothstep(0.88, 0.22);
+  const grassy = flatness.mul(highland).mul(vegetation.mul(0.7).add(0.45)).min(1);
+  albedo.assign(albedo.mix(TERRAIN_PALETTE.grass.mul(grain.mul(1.0).add(0.55)), grassy.mul(0.85)));
 
   const rocky = slope.smoothstep(0.26, 0.6);
   albedo.assign(albedo.mix(TERRAIN_PALETTE.rock.mul(fine.mul(0.6).add(0.7)), rocky.mul(0.6)));

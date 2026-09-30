@@ -68,16 +68,16 @@ class FolioWind {
    */
   readonly direction = uniform(new THREE.Vector2(Math.sin(Math.PI * 0.6), Math.cos(Math.PI * 0.6)));
   /**
-   * Folio drives this from the weather (remapClamp(wind, 0, 1, 0.1, 1)) — 0.5 is their average
-   * day. We run near the top of their live range so the travel waves clearly read at gameplay
-   * camera heights (user review 2026-09-30: "more visible wavy animation").
+   * Folio drives this from the weather (remapClamp(wind, 0, 1, 0.1, 1)) — 1 is their storm end
+   * of the live range. We run at the top so the travel waves clearly read at gameplay camera
+   * heights (user review 2026-09-30: "more prominent waves").
    */
-  readonly strength = uniform(0.95);
+  readonly strength = uniform(1);
   /** Folio's constant angle (kept for any debug UI). */
   readonly angle = Math.PI * 0.6;
   readonly localTime = uniform(0);
-  /** Folio's Wind.js `timeFrequency = 0.1` exactly. */
-  readonly timeFrequency = 0.1;
+  /** Folio's Wind.js `timeFrequency = 0.1`, nudged to 0.15 for more prominent travel. */
+  readonly timeFrequency = 0.15;
   readonly positionFrequency = uniform(0.5);
 
   /**

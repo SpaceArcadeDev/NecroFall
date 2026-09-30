@@ -471,12 +471,13 @@ export class VegetationGenerator {
       const scale =
         kind === 'ROCK' ? rand.range(0.7, 2.1) :
         kind === 'SLAB' ? rand.range(0.6, 1.6) :
-        rand.range(1.0, 2.6);
+        rand.range(0.7, 1.6); // crystals: slender shards (tall via `stretch`) — the pre-rework look
+      const stretch = kind === 'CRYSTAL' ? rand.range(2.0, 2.6) : undefined;
       // Per-kind sink: flat slabs need to bury deep or their downhill edge floats on slopes
       // (live review 2026-09-30: "rocks floating in air") — the sink is along the surface normal.
-      const sink = kind === 'SLAB' ? 0.42 * scale : kind === 'CRYSTAL' ? 0.28 * scale : 0.22 * scale;
+      const sink = kind === 'SLAB' ? 0.42 * scale : kind === 'CRYSTAL' ? 0.18 * scale : 0.22 * scale;
       this.frameFor(dir, rand, 8, scale, sink);
-      const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind };
+      const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind, stretch };
       placements.rocks.push(rock);
       placed++;
     }

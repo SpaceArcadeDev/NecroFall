@@ -171,6 +171,7 @@ export class FolioWorld {
     this.waterSurface = new WaterSurface({
       surface: this.surface,
       quality: this.options.quality.waterQuality,
+      reliefMin: planet.reliefMin,
     });
     scene.add(this.waterSurface.mesh);
     this.visibility.registerToggle({ category: 'water', setVisible: (v) => this.waterSurface?.setQuality(v ? 1 : 0) });

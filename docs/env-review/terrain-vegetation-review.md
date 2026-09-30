@@ -267,3 +267,38 @@ be grey cones in groups like the pre-rework world, not coloured pyramids.
 
 Evidence: `grass-01-desert.png` (grass on a desert classic planet), `grass-02-jungle-lawn.png`
 (the folio lawn), `spikes-01-cluster.png` (grey cone groups).
+
+## Round 5 — floating grass · rim pops · wind · crystals · missing water (2026-09-30)
+
+User report: grasses **floating in mid air** ("need to zoom out to see"), grass **appearing and
+disappearing while moving** instead of staying fixed on the terrain, the waves should be **more
+prominent**, the **purple glowing crystals** should be back (not "pyramids"), and **water was
+missing** where it should be.
+
+- **Floating grass = folio's `hidden × 100` lift.** Density-culled blades were lifted 100 m up the
+  radial and left to the camera cull — on a planet whose horizon is a few dozen metres away those
+  lifted blades render as a halo of grass in the sky. Fixed: culled blades now SHRINK to zero
+  (`densityMask`) — a degenerate point on the ground, no lift (verified from 45 m up: no floaters,
+  `grass-03-no-floaters.png`).
+- **"Appearing/disappearing as I move" = the field-rim recycling.** Measured with a live walk:
+  no blade closer than 45 m to the view centre ever changes its world spot (world-pinning is
+  exact); the pops are blades RECYCLED at ±56 m, visible down slopes. Fixed with a radial fade:
+  blades shrink to zero over 72→90 % of the half-extent, so every wrap jump happens at zero size
+  (invisible). No other motion artefacts.
+- **Wind**: strength 0.95→1.0 (folio's storm end), `timeFrequency` 0.1→0.15, grass sway ×2→×2.75
+  (grass-only amplification on folio's formula, per the user's "more prominent"). A/B frames 1.6 s
+  apart show the lean travel (`wind-01/02`).
+- **Crystals** (user: "can have back the purple glowing crystals, i dont want pyramids"): the glow
+  rode the PLANET's vein colour (green on JUNGLE, orange on DESERT) and the shards were wide —
+  they read as flat coloured pyramids. Now: fixed purple glow `#9a6bff`, slender tall shards
+  (scale 0.7–1.6 × stretch 2.0–2.6), rooted — the pre-rework crystal read.
+- **Missing water — two bugs:**
+  1. `hasWater` was a 256-probe lottery over the sphere. The user's classic DESERT planet has a
+     real sea (1.4 % of the surface, up to 6.35 m deep) that the probes missed → `hasWater=false`
+     → NO water surface rendered anywhere on the planet. Now analytic: `waterLevel − reliefMin`
+     (the waterline is derived from reliefMin, so this is the deepest possible water). The local
+     per-patch test still decides where the surface shows.
+  2. The shoreline FOAM mask was inverted (`.oneMinus()` on `smoothstep(0.28, 0.02, depth)`), so
+     every DEEP fragment got 55 % of the pale `#e8f6f2` foam colour — whole seas rendered sand-pale
+     and camouflaged as beach. Fixed: foam = the shallow band only (`water-01-classic-shore.png` —
+     deep water reads dark blue with a proper shore ring).

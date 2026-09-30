@@ -37,6 +37,11 @@ export interface WaterSurfaceOptions {
   resolution?: number;
   /** Quality multiplier on ripple detail (0..1). */
   quality?: number;
+  /**
+   * The planet's relief floor. The waterline is derived from it (`reliefMin + span × 0.24`), so
+   * `waterLevel − reliefMin` IS the deepest possible water. Passed so `hasWater` is analytic.
+   */
+  reliefMin?: number;
 }
 
 const DEPTH_FADE = 0.45;
@@ -96,8 +101,16 @@ export class WaterSurface {
     this.mesh.receiveShadow = false;
     this.mesh.castShadow = false;
 
-    // Is there water anywhere? Sample a coarse ring of directions once.
-    this.hasWater = this.detectWater(surface);
+    // Does water exist anywhere? ANALYTIC, not probe-sampled (user review 2026-09-30: "missing
+    // water that was supposed to be there" — a classic desert planet whose sea covers 1.4 % of
+    // the surface slipped through the old 256-probe gate, so NO water rendered anywhere on it,
+    // its own sea included). The waterline is `reliefMin + span × 0.24`, so the deepest point is
+    // always below it — the gate is really 'is the sea more than ankle-deep'; the per-location
+    // patch test below still decides WHERE the surface shows.
+    this.hasWater =
+      options.reliefMin !== undefined
+        ? options.surface.waterLevel - options.reliefMin > 0.35
+        : this.detectWater(surface);
     this.waterRadius.value = surface.waterLevel;
     this.mesh.visible = false;
   }
@@ -143,7 +156,11 @@ export class WaterSurface {
       const deepMix = depth.div(DEPTH_FADE).clamp(0, 1);
       const waterCol = (mix(waterColorShallow, waterColorDeep, deepMix) as any).toVar();
       waterCol.addAssign(ripple.mul(0.08));
-      const foam = depth.smoothstep(0.28, 0.02).oneMinus();
+      // Foam rides the SHALLOW band (1 at the waterline → 0 by 0.28 m of depth). The old
+      // `.oneMinus()` inverted the mask: every DEEP fragment got 55 % of the pale foam colour,
+      // which painted whole seas sand-pale — "missing water that was supposed to be there"
+      // (user review 2026-09-30; the sea was rendering, just camouflaged as beach).
+      const foam = depth.smoothstep(0.28, 0.02);
       waterCol.assign(mix(waterCol, color('#e8f6f2'), foam.mul(0.55)));
       // Necrotic contamination in corrupted water reads through the shared vein colour.
       waterCol.assign(mix(waterCol, FOLIO.necro.veinColor, FOLIO.necro.intensity.mul(0.12)));

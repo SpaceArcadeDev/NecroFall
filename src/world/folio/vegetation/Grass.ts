@@ -459,10 +459,24 @@ export class Grass {
       const veg = sampleVeg(uv).div(1.6) as any;
       const g = veg.mul(walkable.mul(0.8).add(0.2)).min(1);
       vMask.assign(g);
-      // Folio's `hidden` trick: below the density floor the blade is LIFTED 100 m off the
-      // surface — culled by geometry, not faded, so patch boundaries are crisp like the
-      // island's. (The band 0.45→0.5 shrinks the blade first, then it disappears.)
-      const hidden = smoothstep(0.45, 0.5, g).oneMinus();
+
+      // VISIBILITY (user review 2026-09-30: "grasses floating in mid air" + "appearing and
+      // disappearing as I move"). Folio lifts density-culled blades 100 m up (`hidden × 100`)
+      // and lets the camera cull them — on a planet whose horizon is a few dozen metres away,
+      // those lifted blades ARE visible (a halo of grass in the sky), and the field-rim
+      // recycling at ±half-extent pops in view. So instead:
+      //   • patch edges: blades SHRINK to zero (densityMask) — a degenerate, invisible point
+      //     ON the ground; nothing floats, nothing pops;
+      //   • field rim: a radial fade shrinks blades before their offset wraps (a recycled blade
+      //     jumps to the far rim — at zero size the jump can never be seen).
+      const densityMask = smoothstep(0.45, 0.5, g);
+      const rimFade = loopPosition
+        .sub(centerU)
+        .length()
+        .div(sizeU.mul(0.5))
+        .smoothstep(0.72, 0.9)
+        .oneMinus();
+      const bladeVisibility = densityMask.mul(rimFade);
 
       // Height variation from the blade's WORLD direction (folio samples its perlin at the
       // blade's world position) — wrapping never changes a blade's height.
@@ -472,8 +486,8 @@ export class Grass {
       const randomness = mix(float(1), attribute('heightRandomness', 'float') as any, bladeHeightRandomness);
       // Folio scales BOTH dimensions by the density channel — blades read as "smaller towards
       // the edge of the patch" instead of one uniform carpet.
-      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(g);
-      const width = bladeWidth.mul(g);
+      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(g).mul(bladeVisibility);
+      const width = bladeWidth.mul(g).mul(bladeVisibility);
 
       // The blade's base radius, from the sampled relief of the ground it stands on.
       const baseRadius = this.reliefMinU.add(
@@ -506,15 +520,15 @@ export class Grass {
       // sampled at the blade's WORLD position, so gust waves TRAVEL across the field as the
       // shared wind time scrolls — the rippling, wavy sway of the island's lawn. (The old port
       // sampled the stored field offset and kept only its LENGTH, so every blade pulsed along
-      // one fixed tangent with no traveling waves.)
+      // one fixed tangent with no traveling waves.) The ×2.75 is a grass-only amplification on
+      // folio's ×2 (user review 2026-09-30: "the grass waves animation should be more prominent").
       const windVec = FOLIO.wind.offset(vec2(base.x, base.z)) as any;
       const wind3 = vec3(windVec.x, float(0), windVec.y);
-      const sway = tipness.mul(height).mul(2);
+      const sway = tipness.mul(height).mul(2.75);
       vertex = vertex.add(wind3.sub(dir.mul(wind3.dot(dir))).mul(sway));
 
-      // Folio's visibility gate (`hidden × 100` up): a density-culled blade leaves the surface
-      // entirely — the patch edge is a hard lawn boundary, not a shrink-to-invisible.
-      vertex = vertex.add(dir.mul(hidden.mul(100)));
+      // NO folio `hidden × 100` lift: density-culled and rim-faded blades are already zero-size
+      // (see the visibility block above), so nothing ever floats off the ground.
 
       // Folio has no per-blade distance cull: the wrap keeps the field around the view, so
       // every blade is near by construction.

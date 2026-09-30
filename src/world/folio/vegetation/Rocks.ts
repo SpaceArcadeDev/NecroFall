@@ -34,10 +34,13 @@ export class Rocks {
       },
       {
         kind: 'CRYSTAL',
+        // The purple glowing crystals (user review 2026-09-30: "can have back the purple glowing
+        // crystals, i dont want pyramids"): slender tall shards, rooted, with a FIXED purple
+        // glow — the planet's vein colour used to tint them green/orange on most worlds, which
+        // read as flat coloured pyramids instead of crystals.
         geometry: new THREE.OctahedronGeometry(1, 0),
-        material: this.buildMaterial(0x7a4fd0, 0.95),
-        // Tall shards, like the original crystals — a stretched octahedron reads as a growth.
-        yStretch: 1.7,
+        material: this.buildMaterial(0x7a4fd0, 0.9, 0.3, 0x9a6bff),
+        yStretch: 2.1,
       },
       {
         kind: 'SPIKE',
@@ -90,13 +93,16 @@ export class Rocks {
     }
   }
 
-  private buildMaterial(baseHex: number, emissive: number, vein = 0.3): MeshDefaultMaterial {
+  private buildMaterial(baseHex: number, emissive: number, vein = 0.3, emissiveHex?: number): MeshDefaultMaterial {
     const baseColor = uniform(new THREE.Color(baseHex));
     const colorNode = weatheredNode(baseColor, vein);
+    // `emissiveHex` pins the glow colour (crystals stay purple on every planet); without it the
+    // glow rides the planet's vein colour like the rest of the necrotic world.
+    const glowColor = emissiveHex !== undefined ? uniform(new THREE.Color(emissiveHex)) : FOLIO.necro.veinColor;
     return new MeshDefaultMaterial({
       colorNode,
       hasWater: false,
-      emissiveNode: emissive > 0 ? FOLIO.necro.veinColor.mul(emissive) : undefined,
+      emissiveNode: emissive > 0 ? glowColor.mul(emissive) : undefined,
     });
   }
 

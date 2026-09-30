@@ -27,6 +27,7 @@ import {
   mix,
   normalWorld,
   positionLocal,
+  positionWorld,
   rotateUV,
   screenSize,
   screenUV,
@@ -70,7 +71,7 @@ export interface FoliageOptions {
 }
 
 export class Foliage {
-  readonly mesh: THREE.InstancedMesh;
+  readonly mesh: THREE.Mesh;
   readonly material: MeshDefaultMaterial;
 
   readonly counts: { instances: number; planes: number };
@@ -81,6 +82,8 @@ export class Foliage {
   private readonly instanceMatrix: THREE.InstancedBufferAttribute;
   private readonly geometry: THREE.BufferGeometry;
   private readonly seeThroughPosition = uniform(vec2());
+  /** Camera→player distance: leaves closer than this can fade, leaves beyond never do. */
+  private readonly seeThroughFocusDistance = uniform(1e3);
 
   constructor(private readonly options: FoliageOptions) {
     this.geometry = this.buildGeometry();
@@ -88,15 +91,11 @@ export class Foliage {
     this.instanceMatrix = this.buildInstances();
     this.counts = { instances: this.options.references.length, planes: PLANE_COUNT };
 
-    // Folio renders foliage through an InstancedMesh whose `count` IS the draw's instance count —
-    // the mesh's own (zeroed) instanceMatrix is never read because the material's positionNode
-    // consumes our custom matrix attribute instead. A plain Mesh here collapses to ONE cluster.
-    this.mesh = new THREE.InstancedMesh(
-      this.geometry,
-      this.material,
-      Math.max(1, this.options.references.length),
-    );
-    this.mesh.count = this.options.references.length;
+    // Folio renders foliage through a PLAIN Mesh: the instancing lives entirely in the shader
+    // (`instance(count, customMatrix)`), exactly like the Grass field. Do NOT use an
+    // InstancedMesh here — three injects the mesh's own (zeroed) `instanceMatrix` on top of the
+    // custom one and every leaf collapses into a single point (invisible canopies).
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.name = options.name ?? 'foliage';
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = true;
@@ -162,7 +161,10 @@ export class Foliage {
       let alpha: any = float(1);
 
       if (this.options.seeThrough) {
-        // Fade foliage between the camera and the player, exactly like Folio's vehicle fade.
+        // Fade foliage between the camera and the player, exactly like Folio's vehicle fade — but
+        // ONLY foliage that actually sits in front of the player. Without the depth gate any tree
+        // you merely LOOK AT has its canopy at the screen's centre; the screen-space core then
+        // erased those leaves, which read as "bare trees everywhere".
         const toFocus = screenUV.sub(this.seeThroughPosition);
         toFocus.mulAssign(vec2(screenSize.x.div(screenSize.y), 1));
         const distanceToFocus = toFocus.length();
@@ -171,7 +173,14 @@ export class Foliage {
           this.seeThroughEdgeMax,
           distanceToFocus,
         );
-        alpha.assign(foliageAlpha().mul(distanceFade.mul(threshold.oneMinus()).add(threshold)));
+        const fragmentDistance = positionWorld.sub(cameraPosition).length();
+        const beyondPlayer = smoothstep(
+          this.seeThroughFocusDistance.sub(2.0),
+          this.seeThroughFocusDistance.add(1.0),
+          fragmentDistance,
+        );
+        const fade = max(distanceFade, beyondPlayer);
+        alpha.assign(foliageAlpha().mul(fade.mul(threshold.oneMinus()).add(threshold)));
       } else {
         alpha.assign(foliageAlpha());
       }
@@ -206,17 +215,21 @@ export class Foliage {
       if (!useCulling) return positionLocal;
 
       // Instance culling in the vertex stage: past the category distance, or on the planet's
-      // far side (behind the horizon), the whole leaf cluster is pushed off the planet.
+      // far side, the whole leaf cluster is moved off the planet.
+      //
+      // The horizon test: from a camera at distance d from the centre, the horizon circle sits
+      // at `acos(R/d)` from the camera's own radial — so the cosine threshold is simply R/d
+      // (times a small safety margin). Using sqrt(1 - (R/d)^2) here hid a huge visible band of
+      // foliage (~36°..54° at typical camera heights), which read as "most tree canopies empty".
       const center = aCenter as any;
       const radial = center.normalize();
 
       const tooFar = center.sub(cameraPosition as any).length().step(this.cullDistance);
 
       const cameraDistance = (cameraPosition as any).length();
-      const horizonCos = float(1)
-        .sub(FOLIO.planetRadius.div(cameraDistance.max(1)).pow(2))
-        .max(0)
-        .sqrt()
+      const horizonCos = FOLIO.planetRadius
+        .div(cameraDistance.max(1))
+        .min(1)
         .mul(0.985);
       const behindHorizon = horizonCos.sub(radial.dot((cameraPosition as any).normalize())).step(0.0);
 
@@ -298,8 +311,9 @@ export class Foliage {
    * player's screen position; when there is no local player (menus), the fade disables itself by
    * parking the anchor far outside the screen.
    */
-  update(cameraDistance: number): void {
+  update(cameraDistance: number, focusDistance = 1e3): void {
     if (!this.options.seeThrough) return;
+    this.seeThroughFocusDistance.value = focusDistance;
 
     const focus = this.options.focusScreenPosition?.() ?? null;
     if (focus) {

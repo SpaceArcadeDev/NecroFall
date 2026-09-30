@@ -268,11 +268,13 @@ export class Grass {
   readonly bladeRandomnessU: any = uniform(0.6);
 
   private buildMaterial(texA: THREE.DataTexture, texB: THREE.DataTexture): MeshDefaultMaterial {
-    // --- folio's overflow formulas (constructor values: ×0.5 growth per unit of overflow)
+    // --- folio's overflow formulas, tuned to NecroFall's scale: the third-person camera sits a
+    // couple of metres up, so grass must stay ankle-to-knee high (~0.3–0.5 m) instead of folio's
+    // chest-high blades, or it fills the frame from any ground-level position.
     const surface = this.size * this.size;
     const surfaceOverflow = Math.max(0, surface - SURFACE_IDEAL) / SURFACE_IDEAL;
-    this.bladeWidthU.value = 0.1 * (1 + surfaceOverflow * 0.5);
-    this.bladeHeightU.value = 0.6 * (1 + surfaceOverflow * 0.5);
+    this.bladeWidthU.value = 0.04 * (1 + surfaceOverflow * 0.5);
+    this.bladeHeightU.value = 0.22 * (1 + surfaceOverflow * 0.5);
     const bladeWidth = this.bladeWidthU;
     const bladeHeight = this.bladeHeightU;
     const bladeHeightRandomness = this.bladeRandomnessU;

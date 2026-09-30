@@ -313,7 +313,12 @@ export class Planet {
     const n = this.terrainChunks.length;
     if (n === 0) return;
     const d = cameraPos.length();
-    if (d <= this.radius) {
+    // The horizon test below is only valid for an eye clearly above the planet's terrain
+    // envelope. The surface itself climbs past the base radius (reliefMax > radius), and the
+    // third-person camera flies ~20 m above the player, so anything short of "obviously in
+    // orbit" must keep every chunk; otherwise the far-side cull wipes out nearby terrain and
+    // the background shows through.
+    if (d <= this.reliefMax + 60) {
       for (let i = 0; i < n; i++) this.terrainChunks[i].visible = true;
       return;
     }

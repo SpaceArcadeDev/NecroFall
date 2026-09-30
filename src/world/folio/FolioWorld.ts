@@ -357,8 +357,9 @@ export class FolioWorld {
     if (this.cpuTimer <= 0) {
       this.cpuTimer = 0.1;
       const cameraDistance = cameraPosition.length();
-      for (const trees of this.trees) trees.leaves.update(cameraDistance * this.occlusion.fadeMultiplier);
-      this.bushes?.foliage.update(cameraDistance * this.occlusion.fadeMultiplier);
+      const focusDistance = cameraPosition.distanceTo(focuses[0] ?? cameraPosition);
+      for (const trees of this.trees) trees.leaves.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance);
+      this.bushes?.foliage.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance);
     }
 
     // Physics (Rapier) — environment bodies only; terrain stays analytical (plan §25).

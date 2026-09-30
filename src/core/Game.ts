@@ -27,6 +27,27 @@ import {
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
+import { Rendering } from '../rendering/Rendering';
+import { Viewport } from '../rendering/Viewport';
+import { Quality, type QualityLevel } from '../rendering/Quality';
+import { Ticker } from '../rendering/Ticker';
+import { Time } from '../rendering/Time';
+import { Lighting } from '../rendering/Environment/Lighting';
+import { Fog } from '../rendering/Environment/Fog';
+import { Wind } from '../rendering/Environment/Wind';
+import { Noises } from '../rendering/Environment/Noises';
+import { WorldGlobals } from '../rendering/WorldGlobals';
+import { Materials } from '../rendering/materials/Materials';
+import { createTerrainGradient } from '../rendering/materials/PlanetPalette';
+import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
+import { PreRenderer } from '../rendering/PreRenderer';
+import { createTerrainNodes } from '../rendering/Environment/PlanetTerrainNodes';
+import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
+import { PlanetGenerator } from '../planet/PlanetGenerator';
+import { PlanetSurfaceData } from '../planet/PlanetSurfaceData';
+import { PlanetSurface } from '../planet/PlanetSurface';
+import { makePlanetSpec } from '../planet/PlanetSeed';
+import type { WebGPURenderer } from 'three/webgpu';
 import { Effects } from '../effects/Effects';
 import { TelegraphSystem } from '../effects/Telegraphs';
 import { CombatSystem } from '../combat/Combat';
@@ -250,9 +271,43 @@ const BERSERK_RADIUS = 2.2;
 const SURRENDER_VOTE_SECONDS = 60;
 const _tmpEnemies: Enemy[] = [];
 
+/** Game preset → renderer quality level (bloom mip count / DOF availability). */
+function qualityLevelForPreset(name: QualitySettings['name']): QualityLevel {
+  return name === 'ultra' ? 0 : name === 'high' || name === 'medium' ? 1 : 2;
+}
+
 export class Game {
   scene = new THREE.Scene();
-  renderer: THREE.WebGLRenderer;
+  /** The canonical renderer: Three.js WebGPU (folio architecture), WebGL2 fallback backend. */
+  renderer: WebGPURenderer;
+  /** 'webgpu' | 'webgl' — which backend actually came up (telemetry / debug overlay). */
+  rendererBackend: 'webgpu' | 'webgl' = 'webgl';
+  /**
+   * The folio rendering core (plan §4–§7): viewport → quality → renderer + post pipeline, and
+   * the ordered ticker that drives every environment stage (Time … Rendering at 998).
+   */
+  readonly viewport: Viewport;
+  readonly quality: Quality;
+  readonly rendering: Rendering;
+  readonly ticker = new Ticker();
+  readonly envTime: Time;
+  /** The folio lighting rig (plan §33): the ONE shadow-casting sun the environment shades with. */
+  readonly lighting: Lighting;
+  /** The folio atmosphere: screen-space sky + the distance fog every folio material mixes in. */
+  readonly fog: Fog;
+  /** The folio match world (terrain/grass/foliage/water/particles) for the CURRENT planet. */
+  envWorld: PlanetRenderer | null = null;
+  /** One loader + wind field, shared by every planet rebuild (materials are per-build: their
+   *  MeshDefaultMaterial binds the match's OWN terrain nodes at construction). */
+  private envLoader: ResourcesLoader | null = null;
+  private envWind: Wind | null = null;
+  /** Stale-build guard: only the latest world build may attach itself to the running planet. */
+  private worldToken = 0;
+  /** True once the renderer backend finished initialising — `render()` throws before that. */
+  private rendererReady = false;
+  /** Resolves once the backend is initialised. World builds MUST await it: KTX2/GLTF loading
+   *  calls `renderer.hasFeature()` which throws before `init()` on the WebGPU backend. */
+  private rendererInitPromise: Promise<void> = Promise.resolve();
   cam: GameCamera;
   planet: Planet;
   effects: Effects;
@@ -426,7 +481,7 @@ export class Game {
   };
   private menuOrbit = 0;
 
-  private rangeRing!: THREE.LineLoop;
+  private rangeRing!: THREE.Line;
   private rangeRingSegments = 96;
   /** Flat "BERSERK" sigil (burning ring + bull's head) painted over the ground under the runner. */
   private berserkSigil!: THREE.Mesh;
@@ -603,23 +658,37 @@ export class Game {
     this.qualityPref = loadQualityPref();
     this.fpsPref = loadFpsPref();
     this.settings = qualitySettings(resolveQuality(this.qualityPref));
-    this.renderer = new THREE.WebGLRenderer({
-      antialias: this.settings.name !== 'low',
-      powerPreference: 'high-performance',
-    });
+    // The folio rendering core (plan §4–§7): ONE WebGPURenderer (WebGL2 fallback backend), the
+    // viewport + quality owners, and the ordered ticker every environment stage subscribes to.
+    const canvas = document.createElement('canvas');
+    Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100vw', height: '100vh', display: 'block' });
+    this.app.appendChild(canvas);
+    this.viewport = new Viewport(canvas);
+    this.quality = new Quality();
+    // The game keeps its OWN adaptive ladder + rescue watchdog — the renderer's heat monitor off.
+    this.quality.adaptive = false;
+    this.rendering = new Rendering(canvas, this.viewport, this.quality);
+    this.envTime = new Time(this.ticker);
+    this.renderer = this.rendering.renderer;
+    this.rendererBackend = this.rendering.backend;
     // NEVER the raw devicePixelRatio on a phone: a 3x panel would triple the shaded pixels for no
     // visible gain at arm's length. See `baseDpr` / `currentDpr` and DPR_CAP in Config.ts.
-    this.renderer.setPixelRatio(this.currentDpr());
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.applyRenderScale();
     this.renderer.setClearColor(0x09060f);
-    this.app.appendChild(this.renderer.domElement);
 
+    // Shared folio infrastructure: one asset loader + one wind field (materials are built per
+    // match inside `wireWorld` — they bind the match planet's OWN terrain data at construction).
+    this.envLoader = new ResourcesLoader(this.renderer);
+    this.envWind = new Wind(new Noises(0x51ab0ff5), this.ticker);
+
+    // The folio atmosphere + lighting rig. Fog drives the screen-space sky; the legacy FogExp2
+    // mirror keeps three's standard materials fogged like before. Lighting owns the ONE
+    // shadow-casting sun; the hemisphere fill + rim keep the classic (non-TSL) materials lit.
+    this.fog = new Fog(this.scene, { near: 34, far: 270 });
+    this.lighting = new Lighting(this.scene, this.quality, CONFIG.planetRadius, { shadowAmplitude: 46 });
     this.scene.fog = new THREE.FogExp2(0x171029, 0.0012);
     const hemi = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
     this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xfff0d8, 1.5);
-    sun.position.set(1, 0.85, 0.6).multiplyScalar(400);
-    this.scene.add(sun);
     const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
     rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
     this.scene.add(rim);
@@ -627,6 +696,19 @@ export class Game {
 
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
     this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
+    // Bring the backend up IMMEDIATELY: the world build below (and every GLB/KTX load inside
+    // it) needs an initialised renderer — `KTX2Loader.detectSupport(renderer)` throws before
+    // `init()` resolves. The loop and the world build both gate on this promise.
+    this.rendererInitPromise = this.rendering
+      .init(this.scene, this.cam.camera)
+      .then(() => {
+        this.rendererBackend = this.rendering.backend;
+        this.rendererReady = true;
+      })
+      .catch((error) => {
+        console.warn('[NECROFALL] renderer init failed', error);
+      });
+    this.wireWorld(null);
     this.effects = new Effects(this.scene, this.settings);
     this.cosmeticFx = new CosmeticFxRunner(this.scene);
     this.telegraphs = new TelegraphSystem(this.scene);
@@ -866,12 +948,17 @@ export class Game {
   }
 
   private buildIndicators(): void {
-    // Auto-attack range indicator: a line loop that follows the planet surface
+    // Auto-attack range indicator: a closed line loop that follows the planet surface
     // (geodesic circle at exactly `autoRange` metres), so it always reads as "on the ground".
+    // WebGPU does not support THREE.LineLoop — the ring is a THREE.Line whose last point
+    // duplicates the first (written by the update pass below).
     this.rangeRingSegments = 96;
     const ringGeo = new THREE.BufferGeometry();
-    ringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.rangeRingSegments * 3), 3));
-    this.rangeRing = new THREE.LineLoop(
+    ringGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array((this.rangeRingSegments + 1) * 3), 3),
+    );
+    this.rangeRing = new THREE.Line(
       ringGeo,
       new THREE.LineBasicMaterial({
         color: 0xffffff,
@@ -973,8 +1060,9 @@ export class Game {
   }
 
   onResize(): void {
+    this.viewport.measure();
     this.applyRenderScale();
-    this.cam.resize(window.innerWidth / window.innerHeight);
+    this.cam.resize(this.viewport.ratio);
   }
 
   // ------------------------------------------------------------ render scale (DPR)
@@ -995,10 +1083,9 @@ export class Game {
     return Math.max(0.5, Math.round(base * PERF.dprLadder[this.dprStep] * 100) / 100);
   }
 
-  /** Applies the render scale. Only the WebGL buffer changes — the CSS/UI keeps the device DPR. */
+  /** Applies the render scale through the ONE renderer owner. The CSS/UI keeps the device DPR. */
   private applyRenderScale(): void {
-    this.renderer.setPixelRatio(this.currentDpr());
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.rendering.setRenderScale(this.currentDpr());
   }
 
   /**
@@ -1191,6 +1278,8 @@ export class Game {
     this.applyRenderScale();
     this.resetRescue();
     this.enemyBudget = next.maxEnemies;
+    // The renderer's own quality level follows the preset (bloom mip count / DOF availability).
+    this.quality.changeLevel(qualityLevelForPreset(next.name));
     this.enemies.cullTo(this.enemyBudget);
 
     // Menu world: rebuild it so the terrain detail / decoration change is visible right away.
@@ -1200,8 +1289,108 @@ export class Game {
       this.planet = new Planet(this.scene, this.settings, PLANET_SEED);
       this.telegraphs.setPlanet(this.planet);
       this.effects.setPlanet(this.planet);
+      this.wireWorld(null);
       old.dispose();
     }
+  }
+
+  /**
+   * Build the folio world (terrain/grass/foliage/water/particles) for the CURRENT planet. The
+   * heavy bake + GLB loads run asynchronously behind a handle guard: if the planet changed again
+   * while loading, the stale world is thrown away instead of attaching itself to the new planet.
+   * Gameplay queries answer from the analytic generator until the world reports its rendered mesh.
+   */
+  private wireWorld(focusDir: THREE.Vector3 | null): void {
+    const loader = this.envLoader;
+    const wind = this.envWind;
+    if (!loader || !wind) return;
+    const token = ++this.worldToken;
+    const planet = this.planet;
+    this.envWorld?.dispose();
+    this.envWorld = null;
+
+    void (async () => {
+      // The backend must be initialised before any asset (KTX2/GLTF) loading can probe it.
+      await this.rendererInitPromise;
+      const spec = makePlanetSpec(
+        planet.seed,
+        planet.ring,
+        CONFIG.planetRadius,
+        `${planet.archetype.biome} · seed ${planet.seed}`,
+      );
+      // MUST match the planet facade's own TerrainGenerator (rank matches bias the battlefield
+      // towards the tower centre; menus/classic do not) or the rendered ground and the analytic
+      // gameplay field would drift apart.
+      if (planet.focusDir) spec.focusDir = planet.focusDir;
+      const generator = new PlanetGenerator(spec);
+      const surfaceData = await PlanetSurfaceData.bake(generator);
+      if (token !== this.worldToken || this.planet !== planet) return;
+      const surface = new PlanetSurface(generator, surfaceData);
+      const gradientTexture = createTerrainGradient(generator.gradientStops());
+      const nodes = createTerrainNodes(surfaceData, gradientTexture, spec.radius);
+      const noises = new Noises(planet.seed ^ 0x51ab);
+      const globals = new WorldGlobals();
+      globals.radius = spec.radius;
+      globals.lighting = this.lighting;
+      globals.fog = this.fog;
+      globals.terrain = nodes;
+      globals.wind = wind;
+      WorldGlobals.current = globals;
+      // Materials bind the globals at construction — build them AFTER the match's nodes exist.
+      const materials = new Materials({});
+      // Spawn clearing: the battlefield centre (towers), the planet's focus, or the local player.
+      const spawnDirection = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
+      const focus = focusDir ?? planet.focusDir ?? this.localPlayer?.position ?? null;
+      if (focus) spawnDirection.copy(focus).normalize();
+      const world = await PlanetRenderer.create({
+        scene: this.scene,
+        ticker: this.ticker,
+        quality: this.quality,
+        materials,
+        loader,
+        preRenderer: new PreRenderer((planet.seed + 3) >>> 0),
+        wind,
+        noises,
+        fog: this.fog,
+        lighting: this.lighting,
+        surface,
+        generator,
+        nodes,
+        time: this.envTime.uTime,
+        spawnDirection,
+      });
+      if (token !== this.worldToken || this.planet !== planet) {
+        world.dispose();
+        return;
+      }
+      this.envWorld = world;
+      planet.attachWorld({
+        terrainMesh: world.terrain.mesh,
+        reliefMin: surfaceData.reliefMin,
+        reliefMax: surfaceData.reliefMax,
+        waterLevel: surfaceData.waterLevel,
+        setDecorationsVisible: (visible) => world.applyVisibility({
+          grass: true,
+          foliage: visible,
+          rocks: visible,
+          spikes: visible,
+          crystals: visible,
+          water: true,
+          particles: true,
+        }),
+        setAmbienceBudget: (mul) => world.applyVisibility({
+          grass: true,
+          foliage: true,
+          rocks: true,
+          spikes: true,
+          crystals: true,
+          water: true,
+          particles: mul > 0.3,
+        }),
+      });
+    })().catch((error) => {
+      console.warn('[NECROFALL] folio world failed to build', error);
+    });
   }
 
   start(): void {
@@ -1223,6 +1412,18 @@ export class Game {
       this.ui.banner('GRAPHICS RESTORED', 2600);
     });
     PerformanceMonitor.init();
+    // The render step is the ticker's LAST stage (folio 998) — everything the frame draws has
+    // already been advanced by the stages before it.
+    this.ticker.on(998, () => {
+      if (this.rendererReady) this.rendering.render(this.ticker.delta);
+    });
+    // The environment ticks at its own stage (after the environment's inner stages 10–12): the
+    // world always renders the frame the player is in. `PlanetRenderer` owns the order of
+    // the systems inside this stage.
+    this.ticker.on(20, () => {
+      const focus = this.localPlayer?.position ?? this.camTarget.position;
+      this.envWorld?.update(focus, this.cam.camera);
+    });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
     const wake = (): void => { this.lastInteractionAt = performance.now(); };
     for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const) {
@@ -1274,7 +1475,10 @@ export class Game {
         // be attributed to the GPU draw or the CPU simulation instead of guessed at.
         PerformanceMonitor.beginRender();
         const r0 = performance.now();
-        this.renderer.render(this.scene, this.cam.camera);
+        // The ordered tick (plan §43): Time → … → gameplay VFX → Rendering(998). The game's own
+        // `update(dt)` ran directly above; every environment stage lands after it, and the render
+        // step itself waits for `init()`.
+        this.ticker.update(dt);
         this.renderMs += (performance.now() - r0 - this.renderMs) * 0.1;
         PerformanceMonitor.endRender(this.renderer, this.phase, this.settings.name);
       } catch (err) {
@@ -2350,9 +2554,9 @@ export class Game {
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
     this.planet.aimSunAt(this.towers.centerDir);
-    // Dense grass is grown once, around the tower zones where the fighting happens, and then left
-    // alone for the whole match — generated at match start, never re-grown while you move.
-    this.planet.growGrass(this.towers.towers.map(t => t.position));
+    // The folio world is rebuilt per planet; terrain/grass/foliage/water stream in behind the
+    // analytic queries (attached to the planet facade the moment the build completes).
+    this.wireWorld(this.towers.centerDir);
     this.ui.show('game');
     this.input.setEnabled(true);
     this.cam.snap();
@@ -5026,10 +5230,15 @@ export class Game {
   private applyRescueLevel(): void {
     const level = Math.min(this.rescueLevel, 3);
     this.effects.setBudget([1, 0.65, 0.65, 0.4][level]);
+    // The environment trims FIRST: particles → decorations → resolution. Gameplay systems are
+    // never sacrificed before every environment knob is spent.
     this.planet.setAmbienceBudget([1, 0.6, 0.35, 0.35][level]);
     // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
     // the one players actually see, which is why every path back up must restore it.
     this.planet.setDecorationsVisible(this.rescueLevel < 2);
+    // The LAST rescue step turns cheapDOF off (a full-screen pass). Bloom stays, so the
+    // radioactive accents never lose their glow under load.
+    this.quality.changeLevel(this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));
   }
 
   /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */
@@ -5188,7 +5397,12 @@ export class Game {
     this.cosmeticFx.update(dt);
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
+    // Keep the sun's lit disc over the local player (a static sun leaves a day/night terminator
+    // for the player to walk into). The planet eases the sun smoothly.
+    if (this.localPlayer) this.planet.aimSunAt(this.localPlayer.position);
     this.planet.update(dt, this.cam.camera.position);
+    // The folio sun follows the action, texel-snapped so the shadows never shimmer.
+    this.lighting.update((this.localPlayer ?? this.camTarget).position);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());
     this.updateIndicators(dt);
     this.updateModalTimers(dt);
@@ -5382,8 +5596,8 @@ export class Game {
           this.ringAir = airQ;
           tangentBasis(p.up, _v, _v2);
           const segs = this.rangeRingSegments;
-          for (let i = 0; i < segs; i++) {
-            const a = (i / segs) * Math.PI * 2;
+          for (let i = 0; i <= segs; i++) {
+            const a = ((i % segs) / segs) * Math.PI * 2;
             // rotate "up" around a tangent axis -> the direction where the range sphere meets the
             // surface, which is `theta` radians away (less than the full reach while airborne)
             _v3.copy(_v).multiplyScalar(Math.cos(a)).addScaledVector(_v2, Math.sin(a)).normalize();

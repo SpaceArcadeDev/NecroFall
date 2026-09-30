@@ -121,8 +121,8 @@ const dirtNoise = Fn(([p]: any[]) => {
 
 /**
  * GLSL `groundDirt` (Vegetation): 0 = lush grass, 1 = bare dirt.
- * The CPU mirror lives at `world/Vegetation.ts: dirtAmount()` — keep both in
- * sync (placement decisions use the CPU side).
+ * The legacy `world/Vegetation.ts` CPU mirror was decommissioned in the migration's final phase;
+ * the folio stack's own grass placement owns ground variation now.
  */
 export const groundDirt = Fn(([worldXZ]: any[]) => {
   const n = dirtNoise(worldXZ.mul(0.055)).mul(0.65).add(dirtNoise(worldXZ.mul(0.19)).mul(0.35));

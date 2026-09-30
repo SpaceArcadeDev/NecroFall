@@ -1,9 +1,10 @@
 // NECROFALL — pooled, allocation-free visual effects: particles, shockwave rings,
 // ground circles, beams/tracers, floating damage numbers and screen shake.
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { MAX_PARTICLES, type QualitySettings } from '../core/Config';
 import { clamp, lerp, tangentBasis } from '../utils/Utils';
 import type { Planet } from '../world/Planet';
+import { BillboardParticles } from './BillboardParticles';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -439,8 +440,7 @@ export class Effects {
   private pAlpha: Float32Array;
   private pGrav: Float32Array;
   private pDrag: Float32Array;
-  private points: THREE.Points;
-  private geo: THREE.BufferGeometry;
+  private bb: BillboardParticles;
 
   private rings: RingFX[] = [];
   private beams: BeamFX[] = [];
@@ -528,40 +528,18 @@ export class Effects {
     this.pGrav = new Float32Array(this.max);
     this.pDrag = new Float32Array(this.max);
 
-    this.geo = new THREE.BufferGeometry();
-    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.max * 3), 3));
-    this.geo.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(this.max * 3), 3));
-    this.geo.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(this.max), 1));
-    this.geo.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(this.max), 1));
-    this.geo.setDrawRange(0, 0);
-
-    const mat = new THREE.ShaderMaterial({
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      vertexShader: `
-        attribute float aSize; attribute float aAlpha; attribute vec3 aColor;
-        varying vec3 vColor; varying float vAlpha;
-        void main() {
-          vColor = aColor; vAlpha = aAlpha;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = aSize * (420.0 / max(1.0, -mv.z));
-          gl_Position = projectionMatrix * mv;
-        }`,
-      fragmentShader: `
-        varying vec3 vColor; varying float vAlpha;
-        void main() {
-          vec2 c = gl_PointCoord * 2.0 - 1.0;
-          float d = dot(c, c);
-          if (d > 1.0) discard;
-          gl_FragColor = vec4(vColor, vAlpha * (1.0 - d));
-        }`,
+    // Instanced camera-facing quads instead of THREE.Points: WebGPU has no gl_PointCoord /
+    // gl_PointSize, and a single Points material using them invalidates the whole frame.
+    // The CPU pools ARE the GPU buffers (zero-copy); the disc falloff is `max(0, 1 − r²)` —
+    // bit-identical to the old `1.0 − dot(c, c)` clamped at the rim.
+    this.bb = new BillboardParticles({
+      capacity: this.max,
+      shape: 'disc',
+      worldScale: 0.45, // gl_PointSize ≈ aSize * 420 / dist → world size (1080p, 60° fov)
+      renderOrder: 5,
+      arrays: { center: this.pPos, size: this.pSize, color: this.pCol, alpha: this.pAlpha },
     });
-
-    this.points = new THREE.Points(this.geo, mat);
-    this.points.frustumCulled = false;
-    this.points.renderOrder = 5;
-    scene.add(this.points);
+    scene.add(this.bb.mesh);
 
     // eruption pool: two clusters, each a ring of tapered shards grown from a shared unit cone
     const shardGeo = new THREE.ConeGeometry(1, 1, 5, 1);
@@ -2168,19 +2146,13 @@ export class Effects {
       i++;
     }
 
-    const gpos = this.geo.attributes.position as THREE.BufferAttribute;
-    const gcol = this.geo.attributes.aColor as THREE.BufferAttribute;
-    const gsize = this.geo.attributes.aSize as THREE.BufferAttribute;
-    const galpha = this.geo.attributes.aAlpha as THREE.BufferAttribute;
-    // Upload only the live prefix: the buffers are sized for the top preset but a low-preset frame
-    // holds a few hundred particles, and copying the whole capacity every frame was pure waste.
-    const n = this.pCount;
-    (gpos.array as Float32Array).set(this.pPos.subarray(0, n * 3));
-    (gcol.array as Float32Array).set(this.pCol.subarray(0, n * 3));
-    (gsize.array as Float32Array).set(this.pSize.subarray(0, n));
-    (galpha.array as Float32Array).set(this.pAlpha.subarray(0, n));
-    gpos.needsUpdate = true; gcol.needsUpdate = true; gsize.needsUpdate = true; galpha.needsUpdate = true;
-    this.geo.setDrawRange(0, n);
+    // Zero-copy upload: the instance buffers are the CPU pools, so only the dirty flags and the
+    // live count need updating (the draw reads only the first `pCount` instances).
+    this.bb.setCount(this.pCount);
+    this.bb.aCenter.needsUpdate = true;
+    this.bb.aColor.needsUpdate = true;
+    this.bb.aSize.needsUpdate = true;
+    this.bb.aAlpha.needsUpdate = true;
 
     // rings & disks
     for (const fx of this.rings) {
@@ -2518,6 +2490,6 @@ export class Effects {
       fx.mesh.visible = false;
       fx.glow.visible = false;
     }
-    this.geo.setDrawRange(0, 0);
+    this.bb.setCount(0);
   }
 }

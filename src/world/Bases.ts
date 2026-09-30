@@ -92,9 +92,9 @@ export interface ColonyBase {
   padGroup: THREE.Group;
   /** The colony shield bubble that wraps the deck. */
   dome: THREE.Mesh;
-  domeMat: THREE.ShaderMaterial;
+  domeMat: THREE.Material;
   /** The shield skirt rising off the landing footprint below the fortress. */
-  groundConeMat: THREE.ShaderMaterial;
+  groundConeMat: THREE.Material;
   deckMat: THREE.MeshBasicMaterial;
   /** The colony logo painted on the deck: a flat ring, three spokes and a hub. */
   emblem: THREE.Object3D;
@@ -519,10 +519,10 @@ export class BaseManager {
 
       // the bubble and the shield skirt both breathe, so they read as energy and not as painted glass
       const pulse = 0.5 + 0.5 * Math.sin(this.t * 1.3 + b.colony * 2.1);
-      b.domeMat.uniforms.uOpacity.value = 0.28 + pulse * 0.08 + b.flash * 0.4;
+      (b.domeMat as unknown as { uOpacity: { value: number } }).uOpacity.value = 0.28 + pulse * 0.08 + b.flash * 0.4;
       // The skirt carries a little more weight than it used to: the shader now drops the top third
       // of the cone entirely, so the part that IS drawn has to read as a wall on its own.
-      b.groundConeMat.uniforms.uOpacity.value = 0.62 + pulse * 0.16 + b.flash * 0.45;
+      (b.groundConeMat as unknown as { uOpacity: { value: number } }).uOpacity.value = 0.62 + pulse * 0.16 + b.flash * 0.45;
       b.rimMat.opacity = 0.34 + pulse * 0.14 + b.flash * 0.5;
       b.deckMat.opacity = 0.24 + pulse * 0.1 + b.flash * 0.35;
       b.emblem.rotation.y += dt * 0.35;

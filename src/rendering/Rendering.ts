@@ -22,7 +22,7 @@ export interface RenderingOptions {
 }
 
 export class Rendering {
-  renderer!: THREE.WebGPURenderer;
+  renderer: THREE.WebGPURenderer;
   postProcessing!: THREE.RenderPipeline;
   ready = false;
 
@@ -36,15 +36,10 @@ export class Rendering {
     private readonly viewport: Viewport,
     private readonly quality: Quality,
     private readonly options: RenderingOptions = {},
-  ) {}
-
-  get drawCalls(): number {
-    return (this.renderer?.info as any)?.render?.drawCalls ?? 0;
-  }
-
-  async init(scene: THREE.Scene, camera: THREE.Camera): Promise<this> {
+  ) {
+    // The renderer is created SYNCHRONOUSLY (device init still awaits in `init()`): the game
+    // wiring needs its canvas/capabilities immediately (input listeners, resource loader).
     const webgpu = typeof navigator !== 'undefined' && 'gpu' in navigator;
-
     this.renderer = new THREE.WebGPURenderer({
       canvas: this.canvas,
       powerPreference: 'high-performance',
@@ -57,9 +52,25 @@ export class Rendering {
     this.renderer.shadowMap.enabled = true;
     this.renderer.setOpaqueSort((a, b) => (a?.renderOrder ?? 0) - (b?.renderOrder ?? 0));
     this.renderer.setTransparentSort((a, b) => (a?.renderOrder ?? 0) - (b?.renderOrder ?? 0));
+  }
 
+  /** 'webgpu' | 'webgl' — which backend actually came up (telemetry / debug overlay). */
+  get backend(): 'webgpu' | 'webgl' {
+    return (this.renderer as any)?.backend?.isWebGPUBackend === true ? 'webgpu' : 'webgl';
+  }
+
+  /** The ONE place the render resolution is written (game DPR ladder + viewport changes). */
+  setRenderScale(scale: number): void {
+    this.renderer.setPixelRatio(scale);
+    this.renderer.setSize(this.viewport.width, this.viewport.height);
+  }
+
+  get drawCalls(): number {
+    return (this.renderer?.info as any)?.render?.drawCalls ?? 0;
+  }
+
+  async init(scene: THREE.Scene, camera: THREE.Camera): Promise<this> {
     await this.renderer.init();
-
     this.createPostProcessing(scene, camera);
     this.ready = true;
     return this;

@@ -1,10 +1,27 @@
 // NECROFALL — procedural Necrophage creature models.
 // Every archetype is assembled from shared low-poly primitives and shaded with two
-// custom shaders: a veined *carapace* material and an emissive *energy* material.
-import * as THREE from 'three';
+// hand-written TSL node materials: a veined *carapace* material and an emissive *energy* one.
+import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import {
+  Fn,
+  If,
+  attribute,
+  cross,
+  dFdx,
+  dFdy,
+  mix,
+  mul,
+  normalWorld,
+  positionLocal,
+  positionWorld,
+  uniform,
+  varying,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import type { EnemyGenome } from './EnemyGenomes';
-import { nfUniforms, NF_UNIFORMS_GLSL, NF_LIGHTING_GLSL, NF_FOG_GLSL } from '../world/ShaderGlobals';
+import { NECRO_UNIFORMS } from '../rendering/materials/NecroChunks';
 import { Rand } from '../utils/Utils';
 
 const GEO = {
@@ -25,130 +42,63 @@ const GEO = {
 const _m4 = new THREE.Matrix4();
 
 /** The one colour every freeze surface is built from: pale, cold, unmistakably "ice". */
-const ICE_GLSL = /* glsl */ `
-  const vec3 ICE_COL = vec3(0.60, 0.90, 1.00);
-`;
+const iceCol = (): any => vec3(0.6, 0.9, 1.0);
 
-const CARAPACE_VERT = /* glsl */ `
-  varying vec3 vColor;
-  varying vec3 vN;
-  varying vec3 vW;
-  varying vec3 vUp;
-  varying vec3 vLocal;
-  void main() {
-    vLocal = position;
-    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
-    vW = wp;
-    vUp = normalize(vec3(0.0, 0.0, 0.0) - wp);
-    vN = normalize(mat3(modelMatrix) * normal);
-    vColor = color;
-    gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
-  }
-`;
+/**
+ * TSL port of the shared `nfLight` chunk (`world/ShaderGlobals.ts`): sun + hemisphere ambient,
+ * slope darkening, rim light and the vibrance pass. It reads NECRO_UNIFORMS, the TSL mirror of
+ * the shared globals that `Planet.update()` keeps in sync every frame (NecroChunks).
+ */
+function nfLight(albedo: any, n: any, radialUp: any, wp: any, rimStrength: number): any {
+  const ndl = n.dot(NECRO_UNIFORMS.uSunDir).max(0);
+  const hemi = n.dot(radialUp).mul(0.5).add(0.5).clamp(0, 1);
+  const ambient = mix(NECRO_UNIFORMS.uGroundColor, NECRO_UNIFORMS.uSkyColor, hemi);
+  const lit = albedo.mul(ambient.add(NECRO_UNIFORMS.uSunColor.mul(ndl)));
+  const slope = radialUp.dot(n).clamp(0, 1).oneMinus();
+  const shaded = lit.mul(mix(1.0, 0.86, slope));
+  const viewDir = (NECRO_UNIFORMS.uCamPos as any).sub(wp).normalize();
+  const rim = n.dot(viewDir).clamp(0, 1).oneMinus().pow(3);
+  const withRim = shaded.add(NECRO_UNIFORMS.uRimColor.mul(rim).mul(rimStrength));
+  // Vibrance: push saturation a touch so stylised colours stay vivid under the atmosphere
+  // instead of washing toward the fog/sky tints (reference: Folio's saturated readability).
+  const lum = withRim.dot(vec3(0.299, 0.587, 0.114));
+  return withRim.add(withRim.sub(lum).mul(0.18));
+}
 
-const CARAPACE_FRAG = /* glsl */ `
-  ${NF_UNIFORMS_GLSL}
-  ${ICE_GLSL}
-  uniform vec3 uShell;
-  uniform vec3 uAccent;
-  uniform float uAggro;
-  uniform float uMembrane;
-  uniform float uFlash;
-  uniform float uFreeze;
-  uniform float uIcePhase;
-  varying vec3 vColor;
-  varying vec3 vN;
-  varying vec3 vW;
-  varying vec3 vUp;
-  varying vec3 vLocal;
-  ${NF_LIGHTING_GLSL}
-  ${NF_FOG_GLSL}
+/** TSL port of the shared `nfFog` chunk (`world/ShaderGlobals.ts`): exponential-squared distance fog. */
+function nfFog(wp: any): any {
+  const d = (NECRO_UNIFORMS.uCamPos as any).sub(wp).length();
+  return d.mul(NECRO_UNIFORMS.uFogDensity).pow(2).negate().exp().oneMinus().clamp(0, 1);
+}
 
-  void main() {
-    // faceted (flat) normals reconstructed from screen-space derivatives -> crisp low-poly carapace
-    vec3 n = normalize(vN);
-    vec3 facet = normalize(cross(dFdx(vW), dFdy(vW)));
-    if (dot(facet, facet) > 0.001) n = facet * sign(dot(facet, n));
+/**
+ * The uniform handles other files animate the creature materials through. They are attached to
+ * the material objects as named properties (`mat.uFlash.value = ...`): a node material has no
+ * `.uniforms` table like the old GLSL ShaderMaterial did.
+ */
+export interface CarapaceUniforms {
+  uShell: { value: THREE.Color };
+  uAccent: { value: THREE.Color };
+  uAggro: { value: number };
+  uMembrane: { value: number };
+  uFlash: { value: number };
+  uFreeze: { value: number };
+  uIcePhase: { value: number };
+}
 
-    vec3 radialUp = normalize(vW);           // planet centre at origin
-    vec3 base = uShell * (0.78 + 0.45 * vColor.r);
-    vec3 lit = nfLight(base, n, radialUp, vW, 0.3);
-    // carapace energy veins
-    float vein = sin(vW.x * 1.7) * sin(vW.y * 1.35 + uTime * 0.6) * sin(vW.z * 1.55);
-    float v = smoothstep(0.55, 0.98, vein * 0.5 + 0.5);
-    lit += uAccent * v * (0.3 + uAggro * 0.8);
-    lit = mix(lit, uFogColor, nfFog(vW));
+export interface EnergyUniforms {
+  uGlow: { value: THREE.Color };
+  uPulse: { value: number };
+  uFlash: { value: number };
+  uFreeze: { value: number };
+  uIcePhase: { value: number };
+}
 
-    vec3 viewDir = normalize(uCamPos - vW);
-
-    // translucent jelly membranes glow from the inside
-    if (uMembrane > 0.01) {
-      float inner = pow(1.0 - clamp(abs(dot(n, viewDir)), 0.0, 1.0), 1.5);
-      lit += uAccent * (0.35 + inner * 0.9) * uMembrane;
-    }
-
-    // FROST: the WHOLE carapace crusts over in pale blue. uFreeze says how frozen the body is
-    // (0 chilled .. 1 solid); the throb is applied here off uTime so it pulses on every client, not
-    // just the host that runs the simulation, and a fresh ice phase per creature stops a frozen
-    // crowd from breathing in unison. Frost crystals ride on the local position so the crust reads
-    // as a growth over the shell rather than a flat blue wash.
-    if (uFreeze > 0.001) {
-      float rim = pow(1.0 - clamp(abs(dot(n, viewDir)), 0.0, 1.0), 1.35);
-      float crust = sin(vLocal.x * 2.3) * sin(vLocal.y * 2.9) * sin(vLocal.z * 2.1);
-      crust = smoothstep(-0.1, 0.85, crust);
-      float throb = 0.78 + 0.22 * sin(uTime * 3.6 + uIcePhase);
-      float k = clamp(uFreeze * throb * (0.62 + 0.24 * rim + 0.2 * crust), 0.0, 0.86);
-      lit = mix(lit, ICE_COL, k) + ICE_COL * rim * uFreeze * throb * 0.35;
-    }
-
-    // short white flash on every hit so damage always reads instantly
-    lit = mix(lit, vec3(1.0), clamp(uFlash, 0.0, 1.0));
-    float alpha = uMembrane > 0.01 ? mix(1.0, 0.72, uMembrane) : 1.0;
-    gl_FragColor = vec4(lit, alpha);
-  }
-`;
-
-const ENERGY_VERT = /* glsl */ `
-  varying vec3 vN;
-  varying vec3 vW;
-  varying float vX;
-  varying vec3 vLocal;
-  void main() {
-    vLocal = position;
-    vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
-    vW = wp;
-    vX = position.x + position.y;
-    vN = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
-  }
-`;
-
-const ENERGY_FRAG = /* glsl */ `
-  ${NF_UNIFORMS_GLSL}
-  ${ICE_GLSL}
-  uniform vec3 uGlow;
-  uniform float uPulse;
-  uniform float uFlash;
-  uniform float uFreeze;
-  uniform float uIcePhase;
-  varying vec3 vN;
-  varying vec3 vW;
-  varying float vX;
-  varying vec3 vLocal;
-  void main() {
-    vec3 viewDir = normalize(uCamPos - vW);
-    float fres = pow(1.0 - clamp(dot(normalize(vN), viewDir), 0.0, 1.0), 1.6);
-    float pulse = 0.65 + 0.35 * sin(uTime * 4.0 * uPulse + vX * 2.0);
-    vec3 col = uGlow * (0.55 + 0.9 * fres) * pulse;
-    // FROST: the glowing bits (eyes, cores, maw) ice over too, or the body reads half-frozen.
-    if (uFreeze > 0.001) {
-      float throb = 0.78 + 0.22 * sin(uTime * 3.6 + uIcePhase);
-      col = mix(col, ICE_COL * 1.25, clamp(uFreeze * 0.85 * throb, 0.0, 0.92));
-    }
-    col = mix(col, vec3(1.0), clamp(uFlash, 0.0, 1.0));
-    gl_FragColor = vec4(col, 1.0);
-  }
-`;
+/** The TSL twins of the two creature shaders — the full custom pipeline lives in `colorNode`. */
+export type CarapaceMaterial = THREE.MeshBasicNodeMaterial & CarapaceUniforms;
+export type EnergyMaterial = THREE.MeshBasicNodeMaterial & EnergyUniforms;
+/** Every material that carries uFlash — hit feedback whitens the whole body. */
+export type CreatureMaterial = CarapaceMaterial | EnergyMaterial;
 
 export interface CreatureLeg {
   root: THREE.Group;
@@ -174,10 +124,10 @@ export interface CreatureRig {
   core: THREE.Mesh | null;
   coreBase: number;
   tail: THREE.Group | null;
-  carapace: THREE.ShaderMaterial;
-  energy: THREE.ShaderMaterial;
+  carapace: CarapaceMaterial;
+  energy: EnergyMaterial;
   /** Every material that carries uFlash — hit feedback whitens the whole body. */
-  flashMats: THREE.ShaderMaterial[];
+  flashMats: CreatureMaterial[];
   scale: number;
   jelly: number;
   jellyBase: THREE.Vector3;
@@ -191,40 +141,127 @@ export interface CreatureRig {
   neck: THREE.Group[];
 }
 
-function makeCarapace(shellHex: number, accentHex: number, glowStrength: number, membrane: number): THREE.ShaderMaterial {
-  const mat = new THREE.ShaderMaterial({
-    vertexShader: CARAPACE_VERT,
-    fragmentShader: CARAPACE_FRAG,
-    vertexColors: true,
-    uniforms: nfUniforms({
-      uShell: { value: new THREE.Color(shellHex) },
-      uAccent: { value: new THREE.Color(accentHex) },
-      uAggro: { value: 0 },
-      uMembrane: { value: membrane },
-      uFlash: { value: 0 },
-      uFreeze: { value: 0 },
-      uIcePhase: { value: 0 },
-    }),
-  });
+function makeCarapace(shellHex: number, accentHex: number, glowStrength: number, membrane: number): CarapaceMaterial {
+  const uShell = uniform(new THREE.Color(shellHex));
+  const uAccent = uniform(new THREE.Color(accentHex));
+  const uAggro = uniform(0);
+  const uMembrane = uniform(membrane);
+  const uFlash = uniform(0);
+  const uFreeze = uniform(0);
+  const uIcePhase = uniform(0);
+
+  // The old GLSL vertex stage handed these to the fragment stage as varyings; the node shader
+  // declares the same ones (vUp was computed but never read by the fragment — it stays dropped).
+  const vW = varying(positionWorld) as any;
+  const vN = varying(normalWorld) as any;
+  const vLocal = varying(positionLocal) as any;
+  const vColor = varying(attribute('color', 'vec3')) as any;
+
+  const mat = new THREE.MeshBasicNodeMaterial();
+  // The GLSL material rolled its own `nfFog` and three's scene fog was off for it
+  // (`ShaderMaterial.fog` defaults to false) — keep the node twin on the same contract.
+  mat.fog = false;
+
+  mat.colorNode = Fn(() => {
+    // faceted (flat) normals reconstructed from screen-space derivatives -> crisp low-poly carapace
+    const vn = vN.normalize();
+    const rawFacet = cross(dFdx(vW) as any, dFdy(vW) as any);
+    const facet = rawFacet.normalize();
+    const n = rawFacet.dot(rawFacet).greaterThan(0.001).select(facet.mul(facet.dot(vn).sign()), vn);
+
+    const radialUp = vW.normalize();           // planet centre at origin
+    const base = uShell.mul(vColor.x.mul(0.45).add(0.78));
+    const lit = nfLight(base, n, radialUp, vW, 0.3).toVar();
+    // carapace energy veins
+    const vein = vW.x.mul(1.7).sin().mul(vW.y.mul(1.35).add(NECRO_UNIFORMS.uTime.mul(0.6)).sin()).mul(vW.z.mul(1.55).sin());
+    const v = vein.mul(0.5).add(0.5).smoothstep(0.55, 0.98);
+    lit.addAssign(uAccent.mul(v).mul(uAggro.mul(0.8).add(0.3)));
+    lit.assign(mix(lit, NECRO_UNIFORMS.uFogColor, nfFog(vW)));
+
+    const viewDir = (NECRO_UNIFORMS.uCamPos as any).sub(vW).normalize();
+
+    // translucent jelly membranes glow from the inside
+    If(uMembrane.greaterThan(0.01), () => {
+      const inner = n.dot(viewDir).abs().clamp(0, 1).oneMinus().pow(1.5);
+      lit.addAssign(uAccent.mul(inner.mul(0.9).add(0.35)).mul(uMembrane));
+    });
+
+    // FROST: the WHOLE carapace crusts over in pale blue. uFreeze says how frozen the body is
+    // (0 chilled .. 1 solid); the throb is applied here off the shared shader clock so it pulses
+    // on every client, not just the host that runs the simulation, and a fresh ice phase per
+    // creature stops a frozen crowd from breathing in unison. Frost crystals ride on the local
+    // position so the crust reads as a growth over the shell rather than a flat blue wash.
+    const ice = iceCol();
+    If(uFreeze.greaterThan(0.001), () => {
+      const rim = n.dot(viewDir).abs().clamp(0, 1).oneMinus().pow(1.35);
+      const crust = vLocal.x.mul(2.3).sin().mul(vLocal.y.mul(2.9).sin()).mul(vLocal.z.mul(2.1).sin()).smoothstep(-0.1, 0.85);
+      const throb = NECRO_UNIFORMS.uTime.mul(3.6).add(uIcePhase).sin().mul(0.22).add(0.78);
+      const k = mul(uFreeze, throb, crust.mul(0.2).add(rim.mul(0.24)).add(0.62)).clamp(0, 0.86);
+      lit.assign(mix(lit, ice, k).add(ice.mul(rim).mul(uFreeze).mul(throb).mul(0.35)));
+    });
+
+    // short white flash on every hit so damage always reads instantly
+    lit.assign(mix(lit, vec3(1.0), uFlash.clamp(0, 1)));
+    const alpha = uMembrane.greaterThan(0.01).select(mix(1.0, 0.72, uMembrane), 1.0);
+    return vec4(lit, alpha);
+  })();
+
   if (membrane > 0.05) {
     mat.transparent = true;
     mat.depthWrite = true;
   }
-  return mat;
+  // Attach the uniform nodes under their GLSL names — callers animate the material through these
+  // handles (`mat.uFlash.value = ...`) exactly like they did with `material.uniforms`.
+  const attached = mat as unknown as CarapaceMaterial;
+  attached.uShell = uShell;
+  attached.uAccent = uAccent;
+  attached.uAggro = uAggro;
+  attached.uMembrane = uMembrane;
+  attached.uFlash = uFlash;
+  attached.uFreeze = uFreeze;
+  attached.uIcePhase = uIcePhase;
+  return attached;
 }
 
-function makeEnergy(glowHex: number, pulse: number): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: ENERGY_VERT,
-    fragmentShader: ENERGY_FRAG,
-    uniforms: nfUniforms({
-      uGlow: { value: new THREE.Color(glowHex) },
-      uPulse: { value: pulse },
-      uFlash: { value: 0 },
-      uFreeze: { value: 0 },
-      uIcePhase: { value: 0 },
-    }),
-  });
+function makeEnergy(glowHex: number, pulse: number): EnergyMaterial {
+  const uGlow = uniform(new THREE.Color(glowHex));
+  const uPulse = uniform(pulse);
+  const uFlash = uniform(0);
+  const uFreeze = uniform(0);
+  const uIcePhase = uniform(0);
+
+  // The old GLSL vertex stage handed these to the fragment stage as varyings; the node shader
+  // declares the same ones (the energy fragment never read vLocal — it stays dropped).
+  const vW = varying(positionWorld) as any;
+  const vN = varying(normalWorld) as any;
+  const vX = varying(positionLocal.x.add(positionLocal.y)) as any;
+
+  const mat = new THREE.MeshBasicNodeMaterial();
+  // The GLSL energy shader never fogged — keep the node twin unfogged.
+  mat.fog = false;
+
+  mat.colorNode = Fn(() => {
+    const viewDir = (NECRO_UNIFORMS.uCamPos as any).sub(vW).normalize();
+    const fres = vN.normalize().dot(viewDir).clamp(0, 1).oneMinus().pow(1.6);
+    const pulseN = NECRO_UNIFORMS.uTime.mul(4.0).mul(uPulse).add(vX.mul(2.0)).sin().mul(0.35).add(0.65);
+    const col = uGlow.mul(fres.mul(0.9).add(0.55)).mul(pulseN).toVar();
+    // FROST: the glowing bits (eyes, cores, maw) ice over too, or the body reads half-frozen.
+    If(uFreeze.greaterThan(0.001), () => {
+      const throb = NECRO_UNIFORMS.uTime.mul(3.6).add(uIcePhase).sin().mul(0.22).add(0.78);
+      col.assign(mix(col, iceCol().mul(1.25), uFreeze.mul(0.85).mul(throb).clamp(0, 0.92)));
+    });
+    col.assign(mix(col, vec3(1.0), uFlash.clamp(0, 1)));
+    return vec4(col, 1.0);
+  })();
+
+  // Attach the uniform nodes under their GLSL names (see makeCarapace).
+  const attached = mat as unknown as EnergyMaterial;
+  attached.uGlow = uGlow;
+  attached.uPulse = uPulse;
+  attached.uFlash = uFlash;
+  attached.uFreeze = uFreeze;
+  attached.uIcePhase = uIcePhase;
+  return attached;
 }
 
 /**
@@ -357,8 +394,8 @@ export function buildCreature(genome: EnemyGenome, variantGate: number): Creatur
   // One shared frost phase per creature (the two materials breathe together) and a per-instance
   // offset, so a herd of frozen Necrophages throbs out of step instead of in lockstep.
   const icePhase = rand.range(0, Math.PI * 2);
-  carapace.uniforms.uIcePhase.value = icePhase;
-  energy.uniforms.uIcePhase.value = icePhase;
+  carapace.uIcePhase.value = icePhase;
+  energy.uIcePhase.value = icePhase;
 
   const group = new THREE.Group();
   const body = new THREE.Group();

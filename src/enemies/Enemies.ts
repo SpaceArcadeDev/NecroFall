@@ -444,8 +444,8 @@ export class Enemy {
     this.rig = assembleEnemy(genome, this.id);
     this.group = this.rig.group;
     // Remember the rig's base shader colours: the enraged wash is applied and removed every frame.
-    this.rigBaseGlow = (this.rig.energy.uniforms.uGlow.value as THREE.Color).clone();
-    this.rigBaseAccent = (this.rig.carapace.uniforms.uAccent.value as THREE.Color).clone();
+    this.rigBaseGlow = (this.rig.energy.uGlow.value as THREE.Color).clone();
+    this.rigBaseAccent = (this.rig.carapace.uAccent.value as THREE.Color).clone();
     this.group.visible = false;
     this.ensureStatusFx();
   }
@@ -472,8 +472,8 @@ export class Enemy {
     this.iceAmt = 0;
     this.frostT = 0;
     if (this.rig) {
-      this.rig.carapace.uniforms.uFreeze.value = 0;
-      this.rig.energy.uniforms.uFreeze.value = 0;
+      this.rig.carapace.uFreeze.value = 0;
+      this.rig.energy.uFreeze.value = 0;
     }
   }
 
@@ -2243,8 +2243,8 @@ export class Enemy {
       const broken = this.stunnedT > 0;
       const k = broken ? 0.9 : this.enraged ? 0.85 : this.bossState === 'enrage_transition' ? 0.6 : 0;
       const wash = broken ? _stunCol : _rageCol;
-      const glow = rig.energy.uniforms.uGlow.value as THREE.Color;
-      const accent = rig.carapace.uniforms.uAccent.value as THREE.Color;
+      const glow = rig.energy.uGlow.value as THREE.Color;
+      const accent = rig.carapace.uAccent.value as THREE.Color;
       if (k > 0) {
         glow.copy(this.rigBaseGlow).lerp(wash, k);
         accent.copy(this.rigBaseAccent).lerp(wash, k * 0.75);
@@ -2256,7 +2256,7 @@ export class Enemy {
     // A stunned boss droops the whole body: the punish window has to be legible in the world,
     // not only on the health plate. Enraged bosses burn hotter than anything else on the field.
     const stunSag = this.stunnedT > 0 ? 1 : 0;
-    rig.carapace.uniforms.uAggro.value = this.aggro + (this.guardT > 0 ? 1.2 : 0) + stunSag * 0.6 + (this.enraged ? 1.6 : 0);
+    rig.carapace.uAggro.value = this.aggro + (this.guardT > 0 ? 1.2 : 0) + stunSag * 0.6 + (this.enraged ? 1.6 : 0);
     this.corePulse += 0.06;
     if (rig.core) {
       const pulse = 1 + Math.sin(this.corePulse) * 0.12 + this.aggro * 0.25 + (this.enraged ? 0.25 : 0);
@@ -2267,9 +2267,9 @@ export class Enemy {
     if (this.flashAmt > 0) {
       this.flashAmt = Math.max(0, this.flashAmt - 0.14);
       const f = this.flashAmt * 0.92;
-      for (const m of rig.flashMats) m.uniforms.uFlash.value = f;
-    } else if (rig.flashMats[0].uniforms.uFlash.value !== 0) {
-      for (const m of rig.flashMats) m.uniforms.uFlash.value = 0;
+      for (const m of rig.flashMats) m.uFlash.value = f;
+    } else if (rig.flashMats[0].uFlash.value !== 0) {
+      for (const m of rig.flashMats) m.uFlash.value = 0;
     }
 
     this.updateStatusFx(dt);
@@ -2310,8 +2310,8 @@ export class Enemy {
     if (Math.abs(iceTarget - this.iceAmt) < 0.002) this.iceAmt = iceTarget;
     const rig = this.rig;
     if (rig) {
-      rig.carapace.uniforms.uFreeze.value = this.iceAmt;
-      rig.energy.uniforms.uFreeze.value = this.iceAmt;
+      rig.carapace.uFreeze.value = this.iceAmt;
+      rig.energy.uFreeze.value = this.iceAmt;
     }
 
     toxin.visible = toxinDps > 0;

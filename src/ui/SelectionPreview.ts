@@ -11,7 +11,7 @@
 // The preview is deliberately self-contained: its own renderer/canvas/scene, its own rAF loop that
 // only runs while a selection screen is open, no shadows and flat-shaded primitives, so it costs a
 // couple of dozen draw calls while a menu is up and nothing at all during a match.
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { COLONIES, IS_TOUCH } from '../core/Config';
 import { NecrotechDef } from '../necrotech/NecrotechData';
 import { buildWeaponModel } from '../necrotech/WeaponModels';
@@ -384,8 +384,10 @@ export class SelectionPreview {
   private canvas: HTMLCanvasElement;
   /** The box the canvas is mounted in while its screen is open — also the size source. */
   private host: HTMLElement | null = null;
-  /** Created on first use: a menu that never opens a selection screen never makes a GL context. */
-  private renderer: THREE.WebGLRenderer | null = null;
+  /** Created on first use: a menu that never opens a selection screen never makes a GPU context. */
+  private renderer: THREE.WebGPURenderer | null = null;
+  /** True once `renderer.init()` has resolved — `render()` before that throws (WebGPU backend). */
+  private rendererReady = false;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(38, 4, 0.1, 60);
   private mode: PreviewMode | null = null;
@@ -490,11 +492,22 @@ export class SelectionPreview {
     this.camera.lookAt(0, 1, 0);
   }
 
-  private ensureRenderer(): THREE.WebGLRenderer {
+  private ensureRenderer(): THREE.WebGPURenderer {
     if (!this.renderer) {
-      this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, alpha: true, antialias: true });
+      // The game's canonical renderer family (three/webgpu). `render()` must NOT be called before
+      // `init()` has resolved: the WebGPU backend throws and the preview loop spams page errors
+      // (observed 2026-09-30), so the ready flag gates every frame until then.
+      this.renderer = new THREE.WebGPURenderer({ canvas: this.canvas, alpha: true, antialias: true });
+      this.renderer.toneMapping = THREE.NoToneMapping;
       this.renderer.setClearColor(0x000000, 0);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.rendererReady = false;
+      this.renderer
+        .init()
+        .then(() => {
+          this.rendererReady = true;
+        })
+        .catch(() => undefined);
     }
     return this.renderer;
   }
@@ -964,7 +977,10 @@ export class SelectionPreview {
         }
       }
     }
-    this.renderer?.render(this.scene, this.mode === 'lobby' ? this.lobbyCam : this.camera);
+    // Never render before the backend exists — `render()` on an uninitialised WebGPURenderer throws.
+    if (this.renderer && this.rendererReady) {
+      this.renderer.render(this.scene, this.mode === 'lobby' ? this.lobbyCam : this.camera);
+    }
   }
 
   // ------------------------------------------------------------ lobby line-up
@@ -1285,5 +1301,6 @@ export class SelectionPreview {
     this.buildScene();       // drops every child (lights survive, which is all we need to keep)
     this.renderer?.dispose();
     this.renderer = null;
+    this.rendererReady = false;
   }
 }

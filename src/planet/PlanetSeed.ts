@@ -13,6 +13,12 @@ export interface PlanetSpec {
   radius: number;
   /** Optional label for the debug overlay. */
   label?: string;
+  /**
+   * Battlefield bias (rank matches pass the tower centre): the terrain pipeline biases
+   * landmarks/scenery towards this direction. MUST match whatever the game's planet facade
+   * uses, or the rendered ground and the analytic gameplay field drift apart.
+   */
+  focusDir?: { x: number; y: number; z: number };
 }
 
 export function makePlanetSpec(seed: number, ring = 0, radius = 118, label?: string): PlanetSpec {

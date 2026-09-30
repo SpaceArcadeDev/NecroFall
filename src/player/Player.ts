@@ -2681,10 +2681,10 @@ export class Player {
     bubble.visible = shieldOn && !this.blitzing;
     if (shieldOn) {
       const frac = clamp(this.shield / Math.max(1, this.shieldMax), 0, 1);
-      const mat = bubble.material as THREE.ShaderMaterial;
+      const mat = bubble.material as unknown as { uOpacity: { value: number }; uColor: { value: THREE.Color } };
       const pulse = 0.5 + 0.5 * Math.sin(this.game.clock * 3.4);
-      mat.uniforms.uOpacity.value = (0.1 + frac * 0.3) * (0.85 + pulse * 0.15);
-      (mat.uniforms.uColor.value as THREE.Color).setHex(0x7fe0ff);
+      mat.uOpacity.value = (0.1 + frac * 0.3) * (0.85 + pulse * 0.15);
+      mat.uColor.value.setHex(0x7fe0ff);
       bubble.scale.setScalar(1 + pulse * 0.03);
     }
 

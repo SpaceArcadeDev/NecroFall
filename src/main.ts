@@ -6,13 +6,13 @@
 //     classic and rank matches run exactly as they always have.
 //   • Anything else → the existing game boots exactly as it always has.
 //
-// PLANET WORLD (the new folio-style environment + architecture stack):
-//   • `#/world` (or `#/dev`, `?world`, `?devworld`) boots the planet scene —
-//     fully procedurally generated per seed/ring through the game's planet
-//     pipeline (planetAt + makePlanetSpec).
-//   • The gameplay migration (classic/rank matches running ON the planet
-//     world) lands as a staged port: world adapter → entity bridge → mode
-//     wiring → netcode — the routes above are where it will become default.
+// THE MIGRATION LANDED (2026-10-01): the playable game (classic + ranked matches) runs ON the
+// folio-style WebGPU planet world — `Game` drives the WebGPURenderer + RenderPipeline, the
+// environment streams in per match, and every gameplay material is a TSL node material.
+//
+// DEV WORLD (the same planet stack standalone, for world inspection):
+//   • `#/world` (or `#/dev`, `?world`, `?devworld`) boots the planet scene directly —
+//     fully procedurally generated per seed/ring through the game's planet pipeline.
 import { AppShell } from './app/AppShell';
 import { SpacetimeConnection } from './app/spacetimedb/connection';
 import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';

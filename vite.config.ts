@@ -59,6 +59,12 @@ function contentStableHotUpdate(): Plugin {
 
 export default defineConfig({
   plugins: [contentStableHotUpdate()],
+  resolve: {
+    // ONE three instance: the bare `three` specifier resolves to the WebGPU build, which
+    // re-exports the whole core. Mixing `three` and `three/webgpu` in one bundle would duplicate
+    // every class (two Vector3s, two scenes) and the renderer would silently ignore half the game.
+    alias: [{ find: /^three$/, replacement: 'three/webgpu' }],
+  },
   server: {
     host: true,
     port: 5173,
@@ -73,7 +79,7 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2020',
+    target: 'es2022',
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
   },

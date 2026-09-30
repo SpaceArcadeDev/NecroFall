@@ -28,7 +28,11 @@ export class PlanetGenerator {
     this.seed = spec.seed;
     this.ring = spec.ring;
     this.radius = spec.radius;
-    this.terrain = new TerrainGenerator(spec.seed, spec.radius, undefined, spec.ring);
+    // The focus direction must flow into the SAME TerrainGenerator the game's Planet facade
+    // builds, or the baked/visual terrain would drift from the analytic gameplay field.
+    this.terrain = spec.focusDir
+      ? new TerrainGenerator(spec.seed, spec.radius, undefined, spec.ring, spec.focusDir as any)
+      : new TerrainGenerator(spec.seed, spec.radius, undefined, spec.ring);
     this.biomes = new BiomeGenerator(this.terrain.archetype, this.terrain);
     this.archetype = this.terrain.archetype;
     this.profile = biomeProfileOf(this.archetype.biome);

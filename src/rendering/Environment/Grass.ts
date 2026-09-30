@@ -19,6 +19,7 @@ import {
   attribute,
   cameraPosition,
   color,
+  cross,
   float,
   Fn,
   Loop,
@@ -326,13 +327,17 @@ export class Grass {
       const shapeUp = isTip.select(bladeHeight, float(0));
 
       // ---- camera-facing rotation in the tangent plane: the blade's WIDTH axis
-      // must be PERPENDICULAR to the view direction so the quad faces the eye
+      // must be PERPENDICULAR to the view direction so the quad faces the eye.
+      // FIXED: single continuous expression cross(surfaceNormal, toCamera) —
+      // mathematically identical to the old B·(toCam·T) − T·(toCam·B) form but
+      // with NO epsilon term. The old form normalized a near-zero vector inside
+      // a thin degenerate band, so its sign FLIPPED there and individual blades
+      // snapped to new orientations as the camera moved — the flickering /
+      // 'lighting angle suddenly changes' wave. The cross only vanishes when
+      // the camera looks exactly along a blade's radial, which the chase camera
+      // never does.
       const toCamera = cameraPosition.sub(basePosition);
-      const sideAxis = bitangent
-        .mul(toCamera.dot(tangent))
-        .sub(tangent.mul(toCamera.dot(bitangent)))
-        .add(bitangent.mul(0.0001));
-      const facing = normalize(sideAxis as any);
+      const facing = normalize(cross(direction, toCamera as any) as any);
 
       // ---- wind (ONE field for the whole world — plan §18)
       const windOffset = wind.offsetNode(patch) as any;

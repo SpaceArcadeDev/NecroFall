@@ -1,12 +1,11 @@
 // NECROFALL — bootstrap.
 //
-// The account shell decides what boots:
-//   • SpacetimeDB configured + signed in → login/onboarding → MOBA shell →
-//     official (SpacetimeDB-authoritative) or P2P (existing WebRTC) play.
-//   • Anything else → the existing game boots exactly as it always has.
-//
-// DEV WORLD (plan §91): `#/dev` (or `?devworld`) boots the folio-style planet
-// scene directly — no shell, no auth, no enemies, unlimited time, ground spawn.
+// DEFAULT: the folio-style WebGPU PLANET WORLD boots directly — the new
+// environment + architecture stack, generated fully procedurally per seed/ring
+// through the game's planet pipeline (`planetAt` + `makePlanetSpec`).
+//   • `#/dev` / `?devworld` — aliases of the default (kept for scripts/tests).
+//   • `?legacy` / `#/legacy` — the previous account shell + WebGL game, exactly
+//     as it was (SpacetimeDB login/onboarding → MOBA shell → matches).
 import { AppShell } from './app/AppShell';
 import { SpacetimeConnection } from './app/spacetimedb/connection';
 import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
@@ -14,13 +13,11 @@ import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
 const app = document.getElementById('app');
 if (!app) throw new Error('#app container missing');
 
-const devRoute =
-  /^#\/?(dev-world|dev|world)\b/i.test(window.location.hash) ||
-  new URLSearchParams(window.location.search).has('devworld');
+const legacyRoute =
+  new URLSearchParams(window.location.search).has('legacy') ||
+  /^#\/?(legacy|shell)\b/i.test(window.location.hash);
 
-if (devRoute) {
-  void import('./dev/DevWorld').then((module) => module.startDevWorld());
-} else {
+if (legacyRoute) {
   const shell = new AppShell(app);
   void shell.boot();
 
@@ -32,4 +29,7 @@ if (devRoute) {
   // familiar `necrofall`.
   (window as unknown as { necrofallShell: AppShell }).necrofallShell = shell;
   (window as unknown as { necrofallDb: SpacetimeConnection }).necrofallDb = SpacetimeConnection.shared;
+} else {
+  // THE PLANET WORLD — the new default environment + architecture.
+  void import('./dev/DevWorld').then((module) => module.startDevWorld());
 }

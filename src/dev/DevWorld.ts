@@ -1,13 +1,14 @@
 /**
- * NECROFALL — DEV WORLD (plan §91/§92 + user request).
+ * NECROFALL — PLANET WORLD (plan §91/§92 + user request).
  *
- * A standalone planet scene running the new folio-style stack:
- *   • NO enemies, NO timer (unlimited time), NO bases
+ * THE DEFAULT WORLD of NECROFALL: a folio-style WebGPU planet scene generated
+ * fully procedurally per seed/ring through the game's planet pipeline
+ * (`planetAt` + `makePlanetSpec`).
  *   • the player SPAWNS ON THE GROUND
- *   • one walker + a chase/free camera to inspect terrain, grass, foliage,
- *     water and crystals — this is the rendering benchmark scene.
+ *   • one walker + a chase/free camera with the full environment stack
+ *     (terrain, grass patches, foliage, water, contamination)
  *
- * Boot: `#/dev` hash (or `?devworld`). Debug switches per plan §90.
+ * Boot: default route. `#/dev` / `?devworld` and `?legacy` variants retained.
  */
 import * as THREE from 'three/webgpu';
 import { Viewport } from '../rendering/Viewport';
@@ -73,7 +74,7 @@ export async function startDevWorld(): Promise<void> {
     color: '#b6ff54', font: '13px/1.6 ui-monospace, monospace', letterSpacing: '0.08em',
   });
   const loadingTitle = document.createElement('div');
-  loadingTitle.textContent = 'NECROFALL · DEV WORLD';
+  loadingTitle.textContent = 'NECROFALL';
   loadingTitle.style.fontSize = '17px';
   const loadingStatus = document.createElement('div');
   loadingStatus.textContent = 'booting renderer…';
@@ -130,7 +131,7 @@ export async function startDevWorld(): Promise<void> {
   const descriptor = planetAt(0, ring, 0, 0, planetIndex);
   const seed = switches.number('seed', descriptor.seed);
   const spec = makePlanetSpec(seed, ring, CONFIG.planetRadius, `${descriptor.name} · ${descriptor.biomeLabel}`);
-  document.title = `DEV WORLD — ${spec.label} (seed ${seed})`;
+  document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
 
   const generator = new PlanetGenerator(spec);
   setProgress(0.05, 'baking planet data');
@@ -475,7 +476,7 @@ export async function startDevWorld(): Promise<void> {
   // ---------------------------------------------------------------- HUD + loop
   function hudText(): string {
     return [
-      `DEV WORLD — ${spec.label} · seed ${spec.seed} · ring ${spec.ring}`,
+      `NECROFALL — ${spec.label} · seed ${spec.seed} · ring ${spec.ring}`,
       'no enemies · unlimited time · ground spawn',
       'WASD move · SHIFT run · SPACE jump · drag orbit · wheel zoom',
       'V free camera · 1/2/3 quality · R respawn · H hide UI',

@@ -32,6 +32,7 @@ import { Rendering } from '../rendering/Rendering';
 import { Viewport } from '../rendering/Viewport';
 import { Quality, qualityLevelForPreset } from '../rendering/Quality';
 import { Ticker, TICK } from '../rendering/Ticker';
+import { applyDebugSwitches } from '../rendering/DebugSwitches';
 import { Time } from '../rendering/Time';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { Fog } from '../rendering/Environment/Fog';
@@ -1314,6 +1315,15 @@ export class Game {
         world.growGrass(towers, focusDir);
         world.setRescueLevel(this.rescueLevel);
         world.setActive(this.phase === 'playing' || this.phase === 'ended');
+        // Plan §90 — URL debug switches + the extended `?renderstats` counts.
+        applyDebugSwitches({ rendering: this.rendering, world, ticker: this.ticker });
+        this.rendering.setStatsProvider(() => ({
+          grassBlades: world.grass?.bladeCount ?? 0,
+          foliageInstances:
+            world.trees.reduce((total, trees) => total + trees.leaves.counts.instances, 0) +
+            (world.bushes?.foliage.counts.instances ?? 0),
+          particles: world.particles?.count ?? 0,
+        }));
       })
       .catch((error) => {
         console.warn('[NECROFALL] Folio world failed to load', error);

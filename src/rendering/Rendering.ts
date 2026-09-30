@@ -33,6 +33,13 @@ export interface RenderingOptions {
 
 type SortFn = (a: { renderOrder: number | null }, b: { renderOrder: number | null }) => number;
 
+/** Extra world counts for the `?renderstats` overlay (plan §90). */
+export interface RenderStatsExtra {
+  grassBlades?: number;
+  foliageInstances?: number;
+  particles?: number;
+}
+
 export class Rendering {
   readonly renderer: THREE.WebGPURenderer;
   /** Which backend actually came up (filled in when `init()` resolves). */
@@ -54,6 +61,7 @@ export class Rendering {
   private statsFrames = 0;
   private statsTimer = 0;
   private statsFps = 0;
+  private statsProvider: (() => RenderStatsExtra) | null = null;
 
   constructor(private readonly options: RenderingOptions) {
     const capabilities = detectRendererCapabilities();
@@ -158,6 +166,11 @@ export class Rendering {
     this.updateStats();
   }
 
+  /** Plan §90: world counts appended to the `?renderstats` overlay (set once per world). */
+  setStatsProvider(provider: () => RenderStatsExtra): void {
+    this.statsProvider = provider;
+  }
+
   /**
    * The adaptive DPR ladder's write path. `pixelRatio` is the final value the lidar chose —
    * `currentDpr()` in the game — this module never second-guesses it.
@@ -210,7 +223,7 @@ export class Rendering {
       render: { drawCalls: number; triangles: number; points: number; lines: number };
       memory: { geometries: number; textures: number };
     };
-    this.statsElement.textContent =
+    let text =
       `fps         ${this.statsFps}\n` +
       `draw calls  ${info.render.drawCalls}\n` +
       `triangles   ${info.render.triangles.toLocaleString()}\n` +
@@ -219,5 +232,12 @@ export class Rendering {
       `textures    ${info.memory.textures.toLocaleString()}\n` +
       `pixel ratio ${this.renderer.getPixelRatio().toFixed(2)}\n` +
       `backend     ${this.backend}`;
+
+    const extra = this.statsProvider?.();
+    if (extra?.grassBlades !== undefined) text += `\ngrass blades ${extra.grassBlades.toLocaleString()}`;
+    if (extra?.foliageInstances !== undefined) text += `\nfoliage inst ${extra.foliageInstances.toLocaleString()}`;
+    if (extra?.particles !== undefined) text += `\nparticles    ${extra.particles.toLocaleString()}`;
+
+    this.statsElement.textContent = text;
   }
 }

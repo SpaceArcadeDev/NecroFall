@@ -407,6 +407,28 @@ export class World {
     if (this.particles) this.particles.points.visible = visible && this.active;
   }
 
+  /** Facts for the `?planet` debug overlay (plan §90). */
+  debugInfoLines(): string[] {
+    const planet = this.options.planet;
+    const lines = [
+      `planet    ${planet.seed}`,
+      `radius    ${planet.radius.toFixed(1)} m`,
+      `water     ${planet.waterLevel.toFixed(2)}`,
+      `relief    ${planet.reliefMin.toFixed(1)} .. ${planet.reliefMax.toFixed(1)}`,
+      `quality   ${this.options.quality.name}`,
+      `rescue    ${this.rescueLevel}`,
+    ];
+    if (this.placements) {
+      lines.push(
+        `trees     ${this.placements.trees.length}`,
+        `bushes    ${this.placements.bushes.length}`,
+        `flowers   ${this.placements.flowers.length}`,
+        `rocks     ${this.placements.rocks.length}`,
+      );
+    }
+    return lines;
+  }
+
   dispose(): void {
     for (const trees of this.trees) trees.dispose();
     this.trees = [];

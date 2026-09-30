@@ -95,8 +95,10 @@ export class Grass {
   }
 
   private applyGeometry(geometry: THREE.BufferGeometry): void {
+    // One non-instanced draw of the whole blade buffer: the vertex shader derives every corner
+    // from `vertexIndex` + the per-vertex attributes (aBase/aUp/aRand). Setting `mesh.count` here
+    // would turn this into an instanced draw of `count` copies of the entire field.
     this.mesh.geometry = geometry;
-    this.mesh.count = this.bladeCount * 3;
   }
 
   // ------------------------------------------------------------------ placement (CPU, once)

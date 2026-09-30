@@ -11,7 +11,8 @@
 // shield", and unlike a shader gradient it reads as something physically travelling down a wire.
 //
 // Per line: one cable mesh + one Points cloud = two draw calls, four lines = eight.
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { Fn, attribute, mix, uniform, varying, vec4 } from 'three/tsl';
 import type { Planet } from '../world/Planet';
 import { COLONIES } from '../core/Config';
 
@@ -64,45 +65,6 @@ const SEAL_COLOR = 0xff2d4a;
 const SEAL_CSS = '#ff2d4a';
 export { SEAL_COLOR, SEAL_CSS };
 
-const VERT = `
-  attribute float aT;
-  attribute float aSide;
-  varying float vT;
-  varying float vSide;
-  void main() {
-    vT = aT;
-    vSide = aSide;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-/**
- * The cable itself: a dark metal casing with an energy seam down its spine. `vSide` is -1..1 across
- * the width, so the casing fades out at the rails and the seam stays bright in the middle.
- */
-const FRAG = `
-  uniform vec3 uColor;
-  uniform float uTime;
-  uniform float uOpacity;
-  uniform float uPulse;
-  varying float vT;
-  varying float vSide;
-  void main() {
-    float band = abs(vSide);
-    // the casing: solid over the middle three quarters, gone at the rails
-    float casing = 1.0 - smoothstep(0.68, 1.0, band);
-    // the energy seam running down the spine of the cable
-    float seam = 1.0 - smoothstep(0.0, 0.34, band);
-    // a slow ripple so a live cable never looks like a static stripe
-    float flow = 0.5 + 0.5 * sin(vT * 30.0 - uTime * 9.0);
-    float energy = (0.55 + 0.45 * flow) * uPulse;
-    vec3 shell = uColor * (0.13 + 0.2 * energy);
-    vec3 col = mix(shell, uColor * (1.1 + 0.8 * flow), seam);
-    float a = casing * uOpacity * (0.5 + 0.5 * seam);
-    gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
-  }
-`;
-
 /**
  * One conduit: the terrain-hugging cable, its colour, and the streak stream travelling down it.
  *
@@ -112,7 +74,8 @@ const FRAG = `
  */
 interface Line {
   mesh: THREE.Mesh;
-  mat: THREE.ShaderMaterial;
+  mat: THREE.MeshBasicNodeMaterial;
+  uniforms: { color: any; time: any; opacity: any; pulse: any };
   /** The centre line of the cable, one point per node — where the energy dots ride. */
   path: Float32Array;
   tail: THREE.Mesh;
@@ -172,19 +135,29 @@ export class PowerLines {
   }
 
   private makeLine(planet: Planet, beacon: THREE.Vector3, nexus: THREE.Vector3): Line {
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(SEAL_COLOR) },
-        uTime: { value: 0 },
-        uOpacity: { value: 0.9 },
-        uPulse: { value: 1 },
-      },
-      vertexShader: VERT,
-      fragmentShader: FRAG,
+    // TSL port of the cable shader: casing fade at the rails, bright energy seam on the spine.
+    const uColor = uniform(new THREE.Color(SEAL_COLOR));
+    const uTime = uniform(0);
+    const uOpacity = uniform(0.9);
+    const uPulse = uniform(1);
+    const mat = new THREE.MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
+    const vT = varying(attribute('aT', 'float')) as any;
+    const vSide = varying(attribute('aSide', 'float')) as any;
+    mat.colorNode = Fn(() => {
+      const band = vSide.abs();
+      const casing = band.smoothstep(0.68, 1.0).oneMinus();
+      const seam = band.smoothstep(0.0, 0.34).oneMinus();
+      const flow = vT.mul(30).sub(uTime.mul(9)).sin().mul(0.5).add(0.5);
+      const energy = flow.mul(0.45).add(0.55).mul(uPulse);
+      const shell = uColor.mul(energy.mul(0.2).add(0.13));
+      const col = mix(shell, uColor.mul(flow.mul(0.8).add(1.1)), seam);
+      const a = casing.mul(uOpacity).mul(seam.mul(0.5).add(0.5)).clamp(0, 1);
+      return vec4(col, a);
+    })();
 
     const start = beacon.clone().normalize();
     const end = nexus.clone().normalize();
@@ -288,7 +261,9 @@ export class PowerLines {
     this.group.add(tail);
 
     return {
-      mesh, mat, path,
+      mesh, mat,
+      uniforms: { color: uColor, time: uTime, opacity: uOpacity, pulse: uPulse },
+      path,
       tail, tailGeo, tailMat, tailPos, tailCol,
       pBase,
       color: new THREE.Color(SEAL_COLOR), target: new THREE.Color(SEAL_COLOR),
@@ -311,10 +286,10 @@ export class PowerLines {
       line.target.setHex(owner >= 0 ? COLONIES[owner].color : SEAL_COLOR);
       // ease so a capture sweeps the cable into the colony's colour instead of snapping
       line.color.lerp(line.target, Math.min(1, dt * 3.2));
-      (line.mat.uniforms.uColor.value as THREE.Color).copy(line.color);
-      line.mat.uniforms.uTime.value = this.time;
-      line.mat.uniforms.uPulse.value = flow;
-      line.mat.uniforms.uOpacity.value = opacity;
+      (line.uniforms.color.value as THREE.Color).copy(line.color);
+      line.uniforms.time.value = this.time;
+      line.uniforms.pulse.value = flow;
+      line.uniforms.opacity.value = opacity;
 
       // The stream: every streak rides the centre line of the cable, perpetually beacon -> nexus.
       // Each ring of a streak is sampled from the cable's own path, so the flow hugs the terrain

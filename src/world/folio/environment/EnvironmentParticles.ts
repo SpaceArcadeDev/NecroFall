@@ -1,11 +1,15 @@
 // NECROFALL — environment particles (plan §74/§75): ONE GPU particle field for the whole
 // atmosphere — drifting spores, dust motes and corrupted glints — replacing the old GLSL
-// Ambience system. The field is a single Points object whose positions wrap in a box around the
-// camera; every particle is two vertex reads, no CPU simulation.
+// Ambience system. The field is a single instanced-quad billboard object whose positions wrap in
+// a box around the camera; every particle is two vertex reads, no CPU simulation.
+//
+// (Was THREE.Points — migrated to BillboardParticles because point sprites cannot exist on the
+// WebGPU backend: gl_PointCoord invalidates the frame. See BillboardParticles.ts.)
 import * as THREE from 'three/webgpu';
-import { Fn, attribute, mix, positionLocal, uniform, vec3 } from 'three/tsl';
+import { instanceIndex, vec3 } from 'three/tsl';
 import { Rand, clamp } from '../../../utils/Utils';
 import { FOLIO } from '../FolioShaderGlobals';
+import { BillboardParticles } from '../../../effects/BillboardParticles';
 
 export interface EnvironmentParticlesOptions {
   seed: number;
@@ -19,12 +23,10 @@ export interface EnvironmentParticlesOptions {
 }
 
 export class EnvironmentParticles {
-  readonly points: THREE.Points;
-  private readonly material: THREE.PointsNodeMaterial;
+  readonly points: THREE.InstancedMesh;
+  private readonly bb: BillboardParticles;
   private readonly basePositions: Float32Array;
-  private readonly phases: Float32Array;
   private readonly extent: number;
-  private readonly sizes: THREE.InstancedBufferAttribute;
 
   constructor(options: EnvironmentParticlesOptions) {
     const count = clamp(Math.round(options.budget), 0, 4000);
@@ -40,47 +42,50 @@ export class EnvironmentParticles {
       phases[i] = rng.next();
     }
     this.basePositions = positions;
-    this.phases = phases;
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
-    geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
-    this.sizes = new THREE.InstancedBufferAttribute(new Float32Array(count).fill(0), 1);
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), this.extent * 3);
-
-    const tintA = uniform(new THREE.Color(options.tintA ?? 0xbfd8ff));
-    const tintB = uniform(new THREE.Color(options.tintB ?? 0x8d6bff));
-    const camera = FOLIO.cameraPosition;
-
-    this.material = new THREE.PointsNodeMaterial({
-      transparent: true,
-      depthWrite: false,
-      size: 1.35,
-      sizeAttenuation: true,
-    });
-    this.material.colorNode = Fn(() => {
-      const phase = attribute('aPhase', 'float') as any;
-      const mixT = phase.mul(0.5).add(0.5);
-      const alpha = phase.mul(0.6).add(0.4);
-      return mix(tintA, tintB, mixT).mul(alpha);
-    })();
+    // Per-particle constants baked on the CPU: colour pair mix, brightness and size jitter.
+    const colors = new Float32Array(count * 3);
+    const alphas = new Float32Array(count);
+    const sizes = new Float32Array(count);
+    const tintA = new THREE.Color(options.tintA ?? 0xbfd8ff);
+    const tintB = new THREE.Color(options.tintB ?? 0x8d6bff);
+    const tint = new THREE.Color();
+    for (let i = 0; i < count; i++) {
+      const phase = phases[i];
+      tint.copy(tintA).lerp(tintB, phase * 0.5 + 0.5);
+      colors[i * 3] = tint.r;
+      colors[i * 3 + 1] = tint.g;
+      colors[i * 3 + 2] = tint.b;
+      alphas[i] = phase * 0.6 + 0.4;
+      sizes[i] = 0.8 + phase * 0.6;
+    }
 
     // The whole box follows the camera; inside it, particles drift and wrap so the field never
-    // runs out (no CPU simulation — two vertex reads per particle).
+    // runs out (no CPU simulation — two vertex reads per particle). The per-particle phase comes
+    // from `instanceIndex` (a golden-ratio hash): a vertex attribute for it would push the draw
+    // past WebGPU's 8-vertex-buffer ceiling and invalidate the pipeline.
     const extent = this.extent;
-    this.material.positionNode = Fn(() => {
-      const p = positionLocal as any;
-      const phase = attribute('aPhase', 'float') as any;
-      const y = p.y.add(FOLIO.time.mul(1.1)).add(phase.mul(extent)).mod(extent).sub(extent * 0.25);
-      const wobbleX = FOLIO.time.mul(0.4).add(phase.mul(6.2831)).sin().mul(1.2);
-      const wobbleZ = FOLIO.time.mul(0.33).add(phase.mul(6.2831).add(1.7)).sin().mul(1.2);
-      return vec3(p.x.add(wobbleX), y, p.z.add(wobbleZ));
-    })();
+    this.bb = new BillboardParticles({
+      capacity: count,
+      shape: 'soft',
+      worldScale: 0.05, // a mote is a few centimetres across
+      renderOrder: 900,
+      arrays: { center: positions, color: colors, alpha: alphas, size: sizes },
+      displace: (p: any) => {
+        const phase = (instanceIndex as any).toFloat().mul(0.6180339887498949).fract();
+        const y = p.y.add(FOLIO.time.mul(1.1)).add(phase.mul(extent)).mod(extent).sub(extent * 0.25);
+        const wobbleX = FOLIO.time.mul(0.4).add(phase.mul(6.2831)).sin().mul(1.2);
+        const wobbleZ = FOLIO.time.mul(0.33).add(phase.mul(6.2831).add(1.7)).sin().mul(1.2);
+        return vec3(p.x.add(wobbleX), y, p.z.add(wobbleZ));
+      },
+    });
+    this.bb.setCount(count);
+    this.bb.aColor.needsUpdate = true;
+    this.bb.aAlpha.needsUpdate = true;
+    this.bb.aSize.needsUpdate = true;
 
-    this.points = new THREE.Points(geometry, this.material);
+    this.points = this.bb.mesh;
     this.points.name = 'environment-particles';
-    this.points.frustumCulled = false;
-    this.points.renderOrder = 900;
   }
 
   /** Follow the camera: the whole field recentres with it (particles are ambient, not world-fixed). */
@@ -90,13 +95,11 @@ export class EnvironmentParticles {
 
   setBudget(multiplier: number): void {
     this.points.visible = multiplier > 0.02;
-    this.material.size = 1.35 * clamp(multiplier, 0.4, 1.4);
+    this.bb.setSizeScale(clamp(multiplier, 0.4, 1.4));
   }
 
   dispose(): void {
-    this.points.geometry.dispose();
-    this.material.dispose();
-    this.points.removeFromParent();
+    this.bb.dispose();
   }
 
   /** Particle count (telemetry). */

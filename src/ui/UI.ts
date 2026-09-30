@@ -2289,18 +2289,31 @@ export class UI {
   }
 
   /** Rebuilds the category strip (tabs + cards) from the catalog and the worn selection. */
+  /**
+   * Item thumbnails render asynchronously (WebGPU readback — see ItemThumbs). When one lands the
+   * accessory strip is rebuilt once, debounced, so the squircles fill in without a manual refresh.
+   */
+  private accRefreshPending = false;
+  private scheduleAccStripRefresh(): void {
+    if (this.accRefreshPending) return;
+    this.accRefreshPending = true;
+    window.setTimeout(() => {
+      this.accRefreshPending = false;
+      this.renderAccStrip();
+    }, 120);
+  }
+
   private renderAccStrip(icons = true): void {
     for (const [cat, b] of this.accTabs) b.classList.toggle('active', cat === this.accTab);
     const defs = defsOf(this.accTab);
-    this.accStrip.innerHTML = '';
-    const worn = this.accSel[this.accTab];
+    this.accStrip.innerHTML = '';    const worn = this.accSel[this.accTab];
     const mk = (idx: number, name: string, desc: string): void => {
       const card = el('div', idx === worn ? 'acc-card sel' : 'acc-card');
       // ---- the squircle: a real render of the item, so the list reads as a shelf of objects
       // instead of a wall of names (idx -1 = NONE, which has no model: an empty slot instead)
       const icon = el('div', idx < 0 ? 'acc-ico none' : 'acc-ico');
       if (idx >= 0 && icons) {
-        const url = itemThumb(this.accTab, idx);
+        const url = itemThumb(this.accTab, idx, () => this.scheduleAccStripRefresh());
         if (url) {
           const img = el('img', 'acc-ico-img') as HTMLImageElement;
           img.src = url;

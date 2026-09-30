@@ -7,7 +7,7 @@ import { COLONIES, CONFIG, beaconName } from '../core/Config';
 import { Rand, clamp, dirFromAngles, randomUnitVector, tangentBasis } from '../utils/Utils';
 import type { Planet } from '../world/Planet';
 import { conformingBand, type GroundFrame } from '../world/GroundShapes';
-import { createBeamMaterial, createShieldMaterial } from './ShieldMaterial';
+import { createBeamMaterial, createShieldMaterial, type ShieldUniforms } from './ShieldMaterial';
 import { PowerLines, SEAL_COLOR, SEAL_CSS } from './PowerLines';
 
 /** Local +Y, the axis every surface orientation rotates from. */
@@ -120,8 +120,8 @@ export class Tower {
   /** The ray of light out of the core: a bright needle inside a wide, soft halo. */
   beamCore!: THREE.Mesh;
   beamHalo!: THREE.Mesh;
-  beamCoreMat!: THREE.ShaderMaterial;
-  beamHaloMat!: THREE.ShaderMaterial;
+  beamCoreMat!: THREE.Material;
+  beamHaloMat!: THREE.Material;
 
   constructor(idx: number, kind: 'beacon' | 'nexus', position: THREE.Vector3, planet: Planet) {
     this.idx = idx;
@@ -577,23 +577,23 @@ export class TowerManager {
       t.crystal.rotation.y += dt * (t.state === 'vulnerable' ? 2.4 : 0.8);
       t.crystal.rotation.x += dt * 0.4;
       (t.zone.material as THREE.MeshBasicMaterial).color.setHex(t.ownerColor());
-      const shieldMat = t.shield.material as THREE.ShaderMaterial;
+      const shieldMat = t.shield.material as unknown as { uColor: { value: THREE.Color }; uOpacity: { value: number } };
       const shieldTaken = t.shieldUp;
       t.shield.visible = shieldTaken;
       if (shieldTaken) {
-        (shieldMat.uniforms.uColor.value as THREE.Color).setHex(t.shieldColor());
+        shieldMat.uColor.value.setHex(t.shieldColor());
         // A ward nobody owns (a guarded Beacon, the sealed Nexus) breathes harder: it is the tell
         // that the tower is not just occupied, it is untouchable for now.
         const guarded = t.state === 'boss' || (t.kind === 'nexus' && t.nexusSeal && t.owner < 0);
-        shieldMat.uniforms.uOpacity.value = (guarded ? 0.5 : 0.42) + Math.sin(g.clock * (guarded ? 3.4 : 2.4) + t.idx) * (guarded ? 0.12 : 0.08);
+        shieldMat.uOpacity.value = (guarded ? 0.5 : 0.42) + Math.sin(g.clock * (guarded ? 3.4 : 2.4) + t.idx) * (guarded ? 0.12 : 0.08);
         t.shield.rotation.y += dt * 0.08;
       }
 
       // The ray of light out of the core carries the owner's colours and flares while the tower is
       // exposed and up for grabs.
       const beamCol = t.beamColor();
-      (t.beamCoreMat.uniforms.uColor.value as THREE.Color).setHex(beamCol);
-      (t.beamHaloMat.uniforms.uColor.value as THREE.Color).setHex(beamCol);
+      (t.beamCoreMat as unknown as ShieldUniforms).uColor.value.setHex(beamCol);
+      (t.beamHaloMat as unknown as ShieldUniforms).uColor.value.setHex(beamCol);
       const flare = t.state === 'vulnerable' ? 1.5 : 1;
       // The needle carries most of the light and the halo is the soft glow wrapped around it. Both
       // were raised alongside the much steeper falloff in the shader: a fast fade spreads far less
@@ -604,8 +604,8 @@ export class TowerManager {
       // step with the model scale — a wider tube adds more light per unit of opacity, and an
       // over-bright additive result clips to white, which is what makes every tower look identical.
       const beamMul = (t.kind === 'nexus' ? 0.52 : 1) * flare;
-      t.beamCoreMat.uniforms.uOpacity.value = (0.62 + Math.sin(g.clock * 1.7 + t.idx) * 0.08) * beamMul;
-      t.beamHaloMat.uniforms.uOpacity.value = (0.4 + Math.sin(g.clock * 1.1 + t.idx * 2.3) * 0.06) * beamMul;
+      (t.beamCoreMat as unknown as ShieldUniforms).uOpacity.value = (0.62 + Math.sin(g.clock * 1.7 + t.idx) * 0.08) * beamMul;
+      (t.beamHaloMat as unknown as ShieldUniforms).uOpacity.value = (0.4 + Math.sin(g.clock * 1.1 + t.idx * 2.3) * 0.06) * beamMul;
       const pulse = t.state === 'vulnerable' ? 0.5 + Math.sin(g.clock * 6) * 0.4 : 0.12;
       // The core glow tracks the SAME colour as the ward: the owner's banner, or seal red while the
       // tower is still nobody's. (The crystal's base colour is set here too — leaving it at the

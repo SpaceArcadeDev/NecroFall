@@ -2,12 +2,17 @@
 // customize list: every hat / backpack / pet gets ONE real render (the same builder the game
 // wears), cached as a data URL for the session.
 //
-// It runs on its own little WebGL context that is created the first time a category is asked for
+// It runs on its own little WebGPU context that is created the first time a category is asked for
 // and then kept: the menu preview's own renderer belongs to whichever selection screen is open and
 // must not be resized or have its scene swapped out from under it. Rendering is done once per item
 // — 16 small models, one frame each — so the cost is a few tens of milliseconds, paid lazily on
 // the first time a category is displayed.
-import * as THREE from 'three';
+//
+// WebGPU migration: the whole item is rendered into a render target and copied back with
+// `readRenderTargetPixelsAsync` (the WebGPU renderer's readback path). That readback is ASYNC, so
+// `itemThumb` fills its cache in the background and returns null until the picture exists; callers
+// may pass `onReady` to rebuild their list when the data URL lands (the accessory strip does).
+import * as THREE from 'three/webgpu';
 import { AccessoryDef, AccessoryCategory } from '../customization/AccessoryTypes';
 import { defsOf } from '../customization/AccessoryCatalog';
 import { disposeObject } from '../customization/AvatarAccessories';
@@ -18,10 +23,21 @@ const FOV = 32;
 /** Untouched categories are absent from `built`; a failed category caches nulls and is not retried. */
 const cache = new Map<string, string | null>();
 const built = new Set<AccessoryCategory>();
+/** Callbacks waiting on one key's thumbnail (re-render the strip when it lands). */
+const listeners = new Map<string, Set<() => void>>();
 
-let renderer: THREE.WebGLRenderer | null = null;
+let renderer: THREE.WebGPURenderer | null = null;
+let renderTarget: THREE.RenderTarget | null = null;
+let ready: Promise<void> | null = null;
 let scene: THREE.Scene | null = null;
 let camera: THREE.PerspectiveCamera | null = null;
+
+function notify(key: string): void {
+  const set = listeners.get(key);
+  if (!set) return;
+  listeners.delete(key);
+  for (const fn of set) fn();
+}
 
 /** A soft round falloff, drawn once — the halo every item is back-lit with. */
 let glowTex: THREE.CanvasTexture | null = null;
@@ -44,35 +60,56 @@ function glowTexture(): THREE.CanvasTexture {
 
 /**
  * The data URL for one catalog item (`idx` < 0 = NONE, which has no model), or null while the
- * item has none (WebGL unavailable). Requesting any item generates its whole category in one go.
+ * picture has not rendered yet (the WebGPU readback is async). Requesting any item generates its
+ * whole category in one go; `onReady` fires (once) when this key's thumbnail lands.
  */
-export function itemThumb(cat: AccessoryCategory, idx: number): string | null {
+export function itemThumb(cat: AccessoryCategory, idx: number, onReady?: () => void): string | null {
   if (idx < 0) return null;
   const key = `${cat}:${idx}`;
   if (cache.has(key)) return cache.get(key) ?? null;
+  if (onReady) {
+    let set = listeners.get(key);
+    if (!set) {
+      set = new Set();
+      listeners.set(key, set);
+    }
+    set.add(onReady);
+  }
   if (!built.has(cat)) buildCategory(cat);
-  return cache.get(key) ?? null;
+  return null;
 }
 
 function buildCategory(cat: AccessoryCategory): void {
   built.add(cat);
   const defs = defsOf(cat);
-  try {
-    ensureStage();
-    defs.forEach((def, idx) => cache.set(`${cat}:${idx}`, renderOne(def)));
-  } catch (err) {
-    // no WebGL (or a builder threw): the list simply shows empty squircles, never a broken screen
-    console.warn('[NECROFALL] item thumbnails unavailable:', err);
-    defs.forEach((_d, idx) => cache.set(`${cat}:${idx}`, null));
-  }
+  void (async () => {
+    try {
+      await ensureStage();
+      for (let i = 0; i < defs.length; i++) {
+        const url = await renderOne(defs[i]);
+        const key = `${cat}:${i}`;
+        cache.set(key, url);
+        notify(key);
+      }
+    } catch (err) {
+      // no WebGPU (or a builder threw): the list simply shows empty squircles, never a broken screen
+      console.warn('[NECROFALL] item thumbnails unavailable:', err);
+      defs.forEach((_d, idx) => {
+        cache.set(`${cat}:${idx}`, null);
+        notify(`${cat}:${idx}`);
+      });
+    }
+  })();
 }
 
-function ensureStage(): void {
-  if (renderer) return;
-  renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
+function ensureStage(): Promise<void> {
+  if (ready) return ready;
+  renderer = new THREE.WebGPURenderer({ alpha: true, antialias: true });
+  renderer.toneMapping = THREE.NoToneMapping;
   renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(1);
   renderer.setSize(SIZE, SIZE, false);
+  renderTarget = new THREE.RenderTarget(SIZE, SIZE, { depthBuffer: true, stencilBuffer: false });
 
   scene = new THREE.Scene();
   // Brighter than the big preview scene ON PURPOSE: a chip is one item in a 96 px frame, and the
@@ -94,12 +131,15 @@ function ensureStage(): void {
   scene.add(front);
 
   camera = new THREE.PerspectiveCamera(FOV, 1, 0.05, 40);
+  ready = renderer.init().then(() => undefined);
+  return ready;
 }
 
-function renderOne(def: AccessoryDef): string | null {
+async function renderOne(def: AccessoryDef): Promise<string | null> {
   const stage = scene!;
   const cam = camera!;
   const view = renderer!;
+  const target = renderTarget!;
   const build = def.build();
   const group = build.group;
   group.scale.setScalar(def.scale ?? 1);
@@ -137,8 +177,12 @@ function renderOne(def: AccessoryDef): string | null {
     const dist = (half / tan) * 1.18 + size.z * 0.5;
     cam.position.set(0, 0, dist);
     cam.lookAt(0, 0, 0);
-    view.render(stage, cam);
-    return view.domElement.toDataURL('image/png');
+    // Render into a readback target (the WebGPU canvas itself is not readable synchronously).
+    view.setRenderTarget(target);
+    await view.renderAsync(stage, cam);
+    view.setRenderTarget(null);
+    const pixels = (await view.readRenderTargetPixelsAsync(target, 0, 0, SIZE, SIZE)) as Uint8Array;
+    return pixelsToDataUrl(pixels);
   } finally {
     if (backlight) {
       stage.remove(backlight);
@@ -148,4 +192,20 @@ function renderOne(def: AccessoryDef): string | null {
     disposeObject(group);
     build.dispose?.();
   }
+}
+
+/** RGBA pixels (bottom-left origin, like every three.js readback) → a PNG data URL. */
+function pixelsToDataUrl(pixels: Uint8Array): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = SIZE;
+  canvas.height = SIZE;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+  const image = ctx.createImageData(SIZE, SIZE);
+  for (let y = 0; y < SIZE; y++) {
+    const src = (SIZE - 1 - y) * SIZE * 4;
+    image.data.set(pixels.subarray(src, src + SIZE * 4), y * SIZE * 4);
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas.toDataURL('image/png');
 }

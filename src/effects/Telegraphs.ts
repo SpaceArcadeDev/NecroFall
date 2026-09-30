@@ -16,7 +16,8 @@
 //  - a lift as tall as the reticle's, so the analytic-height decal never sinks under the rendered
 //    mesh where the two disagree.
 //  - enough radial bands that the fill follows a bumpy contour instead of cutting through it.
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
+import { Fn, attribute, uniform, varying, vec4 } from 'three/tsl';
 import type { Planet } from '../world/Planet';
 import { tangentBasis } from '../utils/Utils';
 
@@ -31,37 +32,10 @@ const DISC_SEGS = 48;
 const RING_SEGS = 64;
 const LANE_STEPS = 30;
 
-const VERT = /* glsl */ `
-  attribute float aDist;
-  attribute float aRim;
-  varying float vDist;
-  varying float vRim;
-  void main() {
-    vDist = aDist;
-    vRim = aRim;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const FRAG = /* glsl */ `
-  uniform vec3 uColor;
-  uniform float uProgress;
-  uniform float uOpacity;
-  varying float vDist;
-  varying float vRim;
-  void main() {
-    // The fill sweeps out to the danger boundary: the shape is legible immediately, and when the
-    // fill reaches the edge the attack lands. One glance answers "where" and "when".
-    float fill = 1.0 - smoothstep(uProgress - 0.08, uProgress, vDist);
-    float a = (0.085 + fill * 0.30 + vRim * 0.40) * uOpacity;
-    if (a <= 0.003) discard;
-    gl_FragColor = vec4(uColor * (0.72 + fill * 0.55 + vRim * 0.45), a);
-  }
-`;
-
 interface Slot {
   mesh: THREE.Mesh;
-  mat: THREE.ShaderMaterial;
+  mat: THREE.MeshBasicNodeMaterial;
+  uniforms: { color: any; progress: any; opacity: any };
   geo: THREE.BufferGeometry;
   pos: Float32Array;
   dist: Float32Array;
@@ -115,14 +89,15 @@ export class TelegraphSystem {
     geo.setDrawRange(0, 0);
     // The decal already lives in world space, so the mesh never needs a transform.
     geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      uniforms: {
-        uColor: { value: new THREE.Color(0xff2d2d) },
-        uProgress: { value: 0 },
-        uOpacity: { value: 1 },
-      },
+
+    // TSL port of the decal shader: same sweep-to-boundary fill and rim highlight.
+    const uColor = uniform(new THREE.Color(0xff2d2d));
+    const uProgress = uniform(0);
+    const uOpacity = uniform(1);
+    const vDist = varying(attribute('aDist', 'float')) as any;
+    const vRim = varying(attribute('aRim', 'float')) as any;
+
+    const mat = new THREE.MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
       // The decal must read over grass and across the terrain it lies on — the same call the player's
@@ -131,13 +106,19 @@ export class TelegraphSystem {
       depthTest: false,
       side: THREE.DoubleSide,
     });
+    mat.colorNode = Fn(() => {
+      const fill = vDist.smoothstep(uProgress.sub(0.08), uProgress).oneMinus();
+      const a = fill.mul(0.30).add(vRim.mul(0.40)).add(0.085).mul(uOpacity);
+      const col = uColor.mul(fill.mul(0.55).add(vRim.mul(0.45)).add(0.72));
+      return vec4(col, a);
+    })();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.matrixAutoUpdate = false;
     mesh.renderOrder = 12;
     mesh.visible = false;
     this.group.add(mesh);
-    return { mesh, mat, geo, pos, dist, rim, life: 0, max: 0, lead: 0, verts: 0 };
+    return { mesh, mat, uniforms: { color: uColor, progress: uProgress, opacity: uOpacity }, geo, pos, dist, rim, life: 0, max: 0, lead: 0, verts: 0 };
   }
 
   /** The planet is rebuilt every match, so the system is re-pointed at it each time. */
@@ -191,9 +172,9 @@ export class TelegraphSystem {
     slot.life = dur + 0.18;
     slot.max = slot.life;
     slot.lead = Math.max(0.05, dur);
-    slot.mat.uniforms.uColor.value.setHex(color);
-    slot.mat.uniforms.uProgress.value = 0;
-    slot.mat.uniforms.uOpacity.value = 1;
+    slot.uniforms.color.value.setHex(color);
+    slot.uniforms.progress.value = 0;
+    slot.uniforms.opacity.value = 1;
     slot.geo.attributes.position.needsUpdate = true;
     slot.geo.attributes.aDist.needsUpdate = true;
     slot.geo.attributes.aRim.needsUpdate = true;
@@ -333,9 +314,9 @@ export class TelegraphSystem {
         continue;
       }
       const elapsed = s.max - s.life;
-      s.mat.uniforms.uProgress.value = Math.min(1, elapsed / s.lead);
+      s.uniforms.progress.value = Math.min(1, elapsed / s.lead);
       // after the fill completes the decal blinks out
-      s.mat.uniforms.uOpacity.value = s.life > 0.18 ? 1 : Math.max(0, s.life / 0.18);
+      s.uniforms.opacity.value = s.life > 0.18 ? 1 : Math.max(0, s.life / 0.18);
     }
   }
 }

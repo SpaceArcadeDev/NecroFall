@@ -14,7 +14,7 @@
 //   z: moisture       0 dry .. 1 soaked (biome classifier, 0 on props)
 //   w: corruption     0 clean .. 1 necrotic (biome classifier + vein strength)
 import * as THREE from 'three/webgpu';
-import { attribute, color, float, mx_noise_float, positionWorld, uniform, vec3, vec4 } from 'three/tsl';
+import { Fn, attribute, color, float, mx_noise_float, positionWorld, uniform, vec3, vec4 } from 'three/tsl';
 import { clamp } from '../../../utils/Utils';
 import { FOLIO } from '../FolioShaderGlobals';
 import { necroticGlowNode, necroticVeinNode } from '../materials/NecroticTerrainNodes';
@@ -62,8 +62,9 @@ export function packTerrainData(
  * rocks) evaluates the same thing at its own terrain data, so the world reads as one surface.
  */
 export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): any {
-  const slope = data.x;
-  const height01 = data.y;
+  return Fn(() => {
+    const slope = data.x;
+    const height01 = data.y;
 
   // Ground grain: two bands so close-ups and wide shots both read as terrain.
   const grain = mx_noise_float(positionWorld.mul(1.35)).mul(0.5).add(0.5);
@@ -101,16 +102,19 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
   const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.7)).min(1);
   albedo.assign(albedo.mix(TERRAIN_PALETTE.vein, corruption.mul(0.3)));
 
-  return albedo;
+    return albedo;
+  })();
 }
 
 /** The emissive half: vein glow, thicker where the corruption field is strong. */
 export function terrainEmissiveNode(data: any, time: any): any {
-  const corruption = data.w;
-  const veins = necroticVeinNode(positionWorld.mul(0.08));
-  const pulse = time.mul(0.9).add(positionWorld.x.mul(0.05)).sin().mul(0.12).add(0.3);
-  const glow = veins.mul(pulse).mul(corruption.mul(0.75).add(0.25));
-  return necroticGlowNode(glow, corruption);
+  return Fn(() => {
+    const corruption = data.w;
+    const veins = necroticVeinNode(positionWorld.mul(0.08));
+    const pulse = time.mul(0.9).add(positionWorld.x.mul(0.05)).sin().mul(0.12).add(0.3);
+    const glow = veins.mul(pulse).mul(corruption.mul(0.75).add(0.25));
+    return necroticGlowNode(glow, corruption);
+  })();
 }
 
 /** Vector form for callers that pass plain numbers (CPU bake) into a uniform-like node. */

@@ -439,7 +439,7 @@ export class Game {
   };
   private menuOrbit = 0;
 
-  private rangeRing!: THREE.LineLoop;
+  private rangeRing!: THREE.Line;
   private rangeRingSegments = 96;
   /** Flat "BERSERK" sigil (burning ring + bull's head) painted over the ground under the runner. */
   private berserkSigil!: THREE.Mesh;
@@ -546,6 +546,8 @@ export class Game {
   };
 
   private frames = 0;
+  /** True once the renderer backend finished initialising — `render()` throws before that. */
+  private rendererReady = false;
   private fpsT = 0;
   private fps = 60;
   private frameMs = 16;
@@ -621,6 +623,7 @@ export class Game {
     this.rendererBackend = rendererHandle.backend;
     void rendererHandle.ready.then(() => {
       this.rendererBackend = rendererHandle.backend;
+      this.rendererReady = true;
     });
     // Shadows: the Folio materials catch the shadow map through `receivedShadowNode`; the single
     // directional light below is the caster. Environment shadow depth is a quality tier (plan §36).
@@ -896,12 +899,17 @@ export class Game {
   }
 
   private buildIndicators(): void {
-    // Auto-attack range indicator: a line loop that follows the planet surface
+    // Auto-attack range indicator: a closed line loop that follows the planet surface
     // (geodesic circle at exactly `autoRange` metres), so it always reads as "on the ground".
+    // WebGPU does not support THREE.LineLoop — the ring is a THREE.Line whose last point
+    // duplicates the first (written by the update pass below).
     this.rangeRingSegments = 96;
     const ringGeo = new THREE.BufferGeometry();
-    ringGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.rangeRingSegments * 3), 3));
-    this.rangeRing = new THREE.LineLoop(
+    ringGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array((this.rangeRingSegments + 1) * 3), 3),
+    );
+    this.rangeRing = new THREE.Line(
       ringGeo,
       new THREE.LineBasicMaterial({
         color: 0xffffff,
@@ -1355,7 +1363,11 @@ export class Game {
         // be attributed to the GPU draw or the CPU simulation instead of guessed at.
         PerformanceMonitor.beginRender();
         const r0 = performance.now();
-        this.renderer.render(this.scene, this.cam.camera);
+        // `render()` must wait for `init()`: the WebGPU backend throws until it resolves, and the
+        // frame-error guard would swallow (and log) every boot frame.
+        if (this.rendererReady) {
+          this.renderer.render(this.scene, this.cam.camera);
+        }
         this.renderMs += (performance.now() - r0 - this.renderMs) * 0.1;
         PerformanceMonitor.endRender(this.renderer, this.phase, this.settings.name);
       } catch (err) {
@@ -5467,8 +5479,8 @@ export class Game {
           this.ringAir = airQ;
           tangentBasis(p.up, _v, _v2);
           const segs = this.rangeRingSegments;
-          for (let i = 0; i < segs; i++) {
-            const a = (i / segs) * Math.PI * 2;
+          for (let i = 0; i <= segs; i++) {
+            const a = ((i % segs) / segs) * Math.PI * 2;
             // rotate "up" around a tangent axis -> the direction where the range sphere meets the
             // surface, which is `theta` radians away (less than the full reach while airborne)
             _v3.copy(_v).multiplyScalar(Math.cos(a)).addScaledVector(_v2, Math.sin(a)).normalize();

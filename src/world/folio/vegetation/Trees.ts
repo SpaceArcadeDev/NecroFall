@@ -72,7 +72,11 @@ export class Trees {
     if (body && options.placements.length > 0) {
       const bodyMesh = body as THREE.Mesh;
       this.bodyGeometry = cloneGeometryForInstancing(bodyMesh.geometry);
-      const material = adoptMeshMaterial(bodyMesh.material, { weathered: true, emissive: 0 });
+      const material = adoptMeshMaterial(bodyMesh.material, {
+        weathered: true,
+        emissive: 0,
+        geometry: bodyMesh.geometry,
+      });
 
       this.bodies = new THREE.InstancedMesh(this.bodyGeometry, material, options.placements.length);
       this.bodies.name = `${options.name} bodies`;

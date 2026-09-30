@@ -12,10 +12,9 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
 // Rapier ships wasm-bindgen "bundler"-target output (a plain `import wasm from './*.wasm'`),
-// which needs the wasm plugin; its glue is written as a top-level-await module, which the es2020
-// build target cannot express — the TLA plugin rewrites it. Both mirror Folio 2025's Vite stack.
+// which needs the wasm plugin. The es2022 build target is required for the wasm glue's module
+// shape (top-level await): every WebGPU-capable browser supports it natively.
 import wasm from 'vite-plugin-wasm';
-import topLevelAwait from 'vite-plugin-top-level-await';
 
 /** What the provider points its own redirects at; those must stay on OUR origin (see api/auth-proxy). */
 const PROVIDER_ORIGIN = 'https://auth.spacetimedb.com';
@@ -63,7 +62,7 @@ function contentStableHotUpdate(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [wasm(), topLevelAwait(), contentStableHotUpdate()],
+  plugins: [wasm(), contentStableHotUpdate()],
   resolve: {
     // Folio 2025's import map: the bare `three` specifier resolves to the WebGPU build, which
     // re-exports the whole core. Addons that `import 'three'` therefore share ONE module instance
@@ -84,7 +83,7 @@ export default defineConfig({
     },
   },
   build: {
-    target: 'es2020',
+    target: 'es2022',
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
   },

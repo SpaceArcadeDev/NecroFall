@@ -48,6 +48,7 @@ export class Scenery {
         const material = adoptMeshMaterial(source.material, {
           weathered: kind !== 'LANTERN' && kind !== 'POLE_LIGHT',
           emissive: kind === 'LANTERN' ? 0.5 : kind === 'POLE_LIGHT' ? 0.35 : 0,
+          geometry: source.geometry,
         });
 
         const mesh = new THREE.InstancedMesh(geometry, material, placements.length);

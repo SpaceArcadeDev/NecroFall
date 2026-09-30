@@ -55,12 +55,15 @@ export class SurfaceFrame {
     // --- tangent basis in the terrain plane (for props that need an explicit frame)
     tangentBasis(this.normal, _t1, _t2);
     this.tangent.copy(_t1).applyAxisAngle(this.normal, yaw);
-    this.bitangent.crossVectors(this.normal, this.tangent).normalize();
+    // Right-handed basis for `makeBasis(tangent, normal, bitangent)`: z must be cross(x, y).
+    // (With the opposite sign the matrix is mirrored, `setFromRotationMatrix` yields a NON-UNIT
+    // quaternion — |q| ≈ 0.75 measured — and every instance matrix built from it comes out
+    // sheared/distorted.)
+    this.bitangent.crossVectors(this.tangent, this.normal).normalize();
 
     // --- quaternion: local +Y → normal, then random yaw around the normal
     _basis.makeBasis(this.tangent, this.normal, this.bitangent);
-    this.quaternion.setFromRotationMatrix(_basis);
-    _qYaw.setFromAxisAngle(_upY, 0); // basis already carries the yaw
+    this.quaternion.setFromRotationMatrix(_basis).normalize();
     return this;
   }
 

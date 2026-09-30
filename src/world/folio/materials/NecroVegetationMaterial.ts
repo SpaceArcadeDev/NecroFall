@@ -7,7 +7,7 @@
 // source material — hundreds of trees, one material), with the planet's grain + corruption wash
 // on top so NecroFall's identity survives the imported art.
 import * as THREE from 'three/webgpu';
-import { attribute, mx_noise_float, positionWorld, uniform } from 'three/tsl';
+import { Fn, attribute, mx_noise_float, positionWorld, uniform } from 'three/tsl';
 import { MeshDefaultMaterial } from './MeshDefaultMaterial';
 import { terrainDataNode } from '../terrain/NecroFallTerrainNode';
 import { TERRAIN_PALETTE } from '../terrain/NecroFallTerrainNode';
@@ -25,16 +25,20 @@ export interface AdoptOptions {
   doubleSided?: boolean;
   /** Skip the fog (used by sky/space sides). */
   noFog?: boolean;
+  /** The geometry the material will render — gates the vertex-colour term (see below). */
+  geometry?: THREE.BufferGeometry;
 }
 
 /** The planet's weathering wash: grain + corruption, shared by every adopted material. */
 export function weatheredNode(baseColor: any): any {
-  const data = terrainDataNode();
-  const grain = mx_noise_float(positionWorld.mul(2.7)).mul(0.5).add(0.5);
-  const col = baseColor.mul(grain.mul(0.28).add(0.86)).toVar();
-  const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.4)).min(1);
-  col.assign(col.mix(TERRAIN_PALETTE.vein, corruption.mul(0.3)));
-  return col;
+  return Fn(() => {
+    const data = terrainDataNode();
+    const grain = mx_noise_float(positionWorld.mul(2.7)).mul(0.5).add(0.5);
+    const col = baseColor.mul(grain.mul(0.28).add(0.86)).toVar();
+    const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.4)).min(1);
+    col.assign(col.mix(TERRAIN_PALETTE.vein, corruption.mul(0.3)));
+    return col;
+  })();
 }
 
 /**
@@ -47,7 +51,11 @@ export function adoptMeshMaterial(source: THREE.Material | THREE.Material[], opt
   if (cached) return cached;
 
   const srcColor = (src as { color?: THREE.Color }).color?.clone() ?? new THREE.Color(0xffffff);
-  const hasVertexColors = (src as { vertexColors?: boolean }).vertexColors === true;
+  // Some GLB materials flag `vertexColors` while the mesh geometry carries none — multiplying by
+  // a missing attribute logs a THREE.AttributeNode warning per draw. Trust the geometry.
+  const hasVertexColors =
+    (src as { vertexColors?: boolean }).vertexColors === true &&
+    (options.geometry ? options.geometry.hasAttribute('color') : true);
 
   let colorNode: any = uniform(srcColor);
   if (hasVertexColors) {

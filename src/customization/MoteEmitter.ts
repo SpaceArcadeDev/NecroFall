@@ -3,10 +3,12 @@
 // player for free — no world-space bookkeeping, no shared pool to starve (the game's Effects pool
 // is for combat and must not be drained by cosmetics).
 //
-// One THREE.Points object per emitter with a fixed pool (32-ish) and per-particle `aLife`; the
-// material is additive and discards on alpha, so a dead particle costs one vertex shade and
-// nothing else.
-import * as THREE from 'three';
+// Rendering is `BillboardParticles` (instanced camera-facing quads): the old THREE.Points version
+// cannot run on the WebGPU backend — a Points material using gl_PointCoord invalidates the whole
+// frame's command buffer (observed live 2026-09-30, black menu). The public surface (`points`,
+// `emitAt`, `setRate`, `setOpacity`, `update`, `dispose`) is unchanged for the ~30 call sites.
+import * as THREE from 'three/webgpu';
+import { BillboardParticles } from '../effects/BillboardParticles';
 
 export interface MoteOptions {
   /** Pool size — the hard cap on live particles. Keep these small (couple of dozen). */
@@ -29,48 +31,27 @@ export interface MoteOptions {
   opacity?: number;
 }
 
-const VERT = `
-  uniform float uSize;
-  attribute float aLife;
-  attribute float aSeed;
-  varying float vLife;
-  void main() {
-    vLife = aLife;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = uSize * (0.5 + aSeed) * (300.0 / max(0.001, -mv.z));
-    gl_Position = projectionMatrix * mv;
-  }
-`;
-
-const FRAG = `
-  uniform vec3 uColor;
-  uniform float uOpacity;
-  varying float vLife;
-  void main() {
-    float d = length(gl_PointCoord - vec2(0.5));
-    float a = smoothstep(0.5, 0.05, d) * clamp(vLife, 0.0, 1.0) * uOpacity;
-    a *= smoothstep(0.0, 0.14, 1.0 - vLife);          // quick fade-in, no pop
-    if (a < 0.012) discard;
-    gl_FragColor = vec4(uColor, a);
-  }
-`;
-
 const _spawn = new THREE.Vector3();
 const _vel = new THREE.Vector3();
 
+/**
+ * gl_PointSize = uSize * (0.5 + seed) * (300 / distance) was pixels at the 1080p/60° reference,
+ * and pixels→world at that distance cancels the attenuation, leaving this constant factor.
+ */
+const POINT_PX_TO_WORLD = (2 * Math.tan((60 * Math.PI) / 180 / 2)) / 1080;
+
 export class MoteEmitter {
-  readonly points: THREE.Points;
+  /** The renderable — add it to the accessory group exactly like the old Points object. */
+  readonly points: THREE.InstancedMesh;
   private pos: Float32Array;
   private vel: Float32Array;
   private life: Float32Array;
-  private aLife: THREE.BufferAttribute;
   private count: number;
   private maxLife: number;
   private head = 0;
   private spawnAcc = 0;
   private opts: MoteOptions;
-  private material: THREE.ShaderMaterial;
-  private geometry: THREE.BufferGeometry;
+  private bb: BillboardParticles;
 
   constructor(opts: MoteOptions) {
     this.opts = opts;
@@ -79,34 +60,34 @@ export class MoteEmitter {
     this.pos = new Float32Array(this.count * 3);
     this.vel = new Float32Array(this.count * 3);
     this.life = new Float32Array(this.count);
-    const seeds = new Float32Array(this.count);
-    this.aLife = new THREE.BufferAttribute(new Float32Array(this.count), 1);
-    this.aLife.setUsage(THREE.DynamicDrawUsage);
-    const aSeed = new THREE.BufferAttribute(seeds, 1);
-    for (let i = 0; i < this.count; i++) seeds[i] = 0.55 + Math.random() * 0.9;
 
-    this.geometry = new THREE.BufferGeometry();
-    const position = new THREE.BufferAttribute(this.pos, 3);
-    position.setUsage(THREE.DynamicDrawUsage);
-    this.geometry.setAttribute('position', position);
-    this.geometry.setAttribute('aLife', this.aLife);
-    this.geometry.setAttribute('aSeed', aSeed);
-
-    this.material = new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(opts.color) },
-        uSize: { value: opts.size ?? 0.07 },
-        uOpacity: { value: opts.opacity ?? 0.9 },
-      },
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      transparent: true,
-      depthWrite: false,
+    this.bb = new BillboardParticles({
+      capacity: this.count,
+      shape: 'soft',
+      fadeIn: 0.14, // quick fade-in, no pop (was `vLife.oneMinus().smoothstep(0, 0.14)`)
       blending: THREE.AdditiveBlending,
+      renderOrder: 8,
+      arrays: { center: this.pos, alpha: new Float32Array(this.count) },
     });
-    this.points = new THREE.Points(this.geometry, this.material);
-    this.points.frustumCulled = false;   // particles move; the baked bounds would lie
-    this.points.renderOrder = 8;
+    this.bb.setOpacity(opts.opacity ?? 0.9);
+    this.bb.setCount(this.count);
+
+    // Per-particle constant data: size converted from the old point-sprite pixels, tinted colour.
+    const sizes = this.bb.aSize.array as Float32Array;
+    const colors = this.bb.aColor.array as Float32Array;
+    const color = new THREE.Color(opts.color);
+    const worldSize = (opts.size ?? 0.07) * POINT_PX_TO_WORLD;
+    for (let i = 0; i < this.count; i++) {
+      sizes[i] = worldSize * (0.5 + 0.55 + Math.random() * 0.9);
+      colors[i * 3] = color.r;
+      colors[i * 3 + 1] = color.g;
+      colors[i * 3 + 2] = color.b;
+    }
+    this.bb.aSize.needsUpdate = true;
+    this.bb.aColor.needsUpdate = true;
+
+    this.points = this.bb.mesh;
+    this.points.frustumCulled = false; // particles move; the baked bounds would lie
   }
 
   /** Spawn one particle at a local-space point. */
@@ -129,7 +110,7 @@ export class MoteEmitter {
   }
 
   setOpacity(op: number): void {
-    this.material.uniforms.uOpacity.value = op;
+    this.bb.setOpacity(op);
   }
 
   update(dt: number): void {
@@ -155,18 +136,19 @@ export class MoteEmitter {
       this.pos[o + 1] += this.vel[o + 1] * dt;
       this.pos[o + 2] += this.vel[o + 2] * dt;
     }
+    // Lifetime → alpha (the old `aLife` buffer), written straight into the instance attribute.
+    const alpha = this.bb.aAlpha.array as Float32Array;
     for (let i = 0; i < this.count; i++) {
-      this.aLife.array[i] = Math.max(0, this.life[i]) / this.maxLife;
+      alpha[i] = Math.max(0, this.life[i]) / this.maxLife;
     }
-    this.aLife.needsUpdate = true;
+    this.bb.aAlpha.needsUpdate = true;
     if (any || rate) {
-      (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+      this.bb.aCenter.needsUpdate = true;
     }
   }
 
   dispose(): void {
-    this.geometry.dispose();
-    this.material.dispose();
+    this.bb.dispose();
   }
 }
 

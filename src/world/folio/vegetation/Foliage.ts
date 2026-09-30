@@ -70,7 +70,7 @@ export interface FoliageOptions {
 }
 
 export class Foliage {
-  readonly mesh: THREE.Mesh;
+  readonly mesh: THREE.InstancedMesh;
   readonly material: MeshDefaultMaterial;
 
   readonly counts: { instances: number; planes: number };
@@ -88,7 +88,15 @@ export class Foliage {
     this.instanceMatrix = this.buildInstances();
     this.counts = { instances: this.options.references.length, planes: PLANE_COUNT };
 
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    // Folio renders foliage through an InstancedMesh whose `count` IS the draw's instance count —
+    // the mesh's own (zeroed) instanceMatrix is never read because the material's positionNode
+    // consumes our custom matrix attribute instead. A plain Mesh here collapses to ONE cluster.
+    this.mesh = new THREE.InstancedMesh(
+      this.geometry,
+      this.material,
+      Math.max(1, this.options.references.length),
+    );
+    this.mesh.count = this.options.references.length;
     this.mesh.name = options.name ?? 'foliage';
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = true;

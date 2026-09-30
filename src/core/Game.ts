@@ -213,6 +213,8 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
+/** Sun offset (direction × distance) — the shadow frustum rides this from the local focus. */
+const _sunOffset = new THREE.Vector3(1, 0.85, 0.6).normalize().multiplyScalar(400);
 /** Local +Y — the axis every ground decal is built around. */
 const _UP = new THREE.Vector3(0, 1, 0);
 const _qAlign = new THREE.Quaternion();
@@ -651,6 +653,10 @@ export class Game {
     sun.shadow.camera.top = 70;
     sun.shadow.camera.bottom = -70;
     this.scene.add(sun);
+    // The frustum is small (±70 m) so it must FOLLOW the action: the shadow box originally sat
+    // at the world origin, which left every match fought anywhere else on the 130-180 m-radius
+    // planet entirely unshadowed.
+    this.scene.add(sun.target);
     this.sunLight = sun;
     const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
     rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
@@ -5284,6 +5290,11 @@ export class Game {
     this.planet.update(dt, this.cam.camera.position);
     // The Folio environment: shared globals, occlusion, water, particles, physics LOD. Menus keep
     // the world visible but put its animation to sleep (plan §106/§107 — the phone stays cool).
+    if (this.sunLight) {
+      const focus = this.localPlayer ?? this.camTarget;
+      this.sunLight.target.position.copy(focus.position);
+      this.sunLight.position.copy(focus.position).add(_sunOffset);
+    }
     this.folioWorld?.setActive(this.phase === 'playing' || this.phase === 'ended');
     this.folioWorld?.update(dt, this.cam.camera.position, this.collectEnvFocuses(), this.clock);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());

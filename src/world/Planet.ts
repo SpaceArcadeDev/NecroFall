@@ -127,7 +127,9 @@ export class Planet {
   private chunkCenters: THREE.Vector3[] = [];
   private chunkRadii: number[] = [];
   private sunBase = new THREE.Vector3(1, 0.85, 0.6).normalize();
-  private sunAxis = new THREE.Vector3(0, 0, 1);
+  /** Where the sun is being aimed (re-aimed at the local player each frame); `sunBase` eases
+   *  towards it so the lit disc follows the action smoothly. */
+  private readonly sunTarget = new THREE.Vector3(1, 0.85, 0.6).normalize();
   /** Region that receives most of the scenery (the battlefield). */
   readonly focusDir: THREE.Vector3 | null = null;
   /** The Folio terrain material + baked attributes (plan §6/§7). */
@@ -345,21 +347,26 @@ export class Planet {
   }
 
   /**
-   * Points the sun at a region of the planet so the contested play area is never
-   * stuck on the night side. Called once per match with the tower-ring centre.
+   * Aim the lit hemisphere at a region of the planet so the contested play area is never
+   * stuck on the night side. Writes the TARGET only — `update()` eases the sun towards it, so
+   * the lit disc keeps following the local player (the local lighting then stays constant
+   * while roaming a whole planet: a static sun always leaves a terminator to walk into —
+   * "the light keeps changing as I move", live review 2026-09-30).
    */
   aimSunAt(dir: THREE.Vector3): void {
     tangentBasis(dir, _t1, _t2);
-    this.sunBase.copy(dir).multiplyScalar(0.62).addScaledVector(_t1, 0.72).addScaledVector(_t2, 0.22).normalize();
-    this.sunAxis.copy(_t2).normalize();
+    this.sunTarget.copy(dir).multiplyScalar(0.62).addScaledVector(_t1, 0.72).addScaledVector(_t2, 0.22).normalize();
   }
 
   /** Per-frame uniform updates (shared by the GLSL gameplay shaders and the Folio materials). */
   update(dt: number, cameraPos: THREE.Vector3): void {
     updateShaderGlobals(dt, cameraPos);
-    // The sun is ROCK-STEADY within a match (like folio's day preset). The old drift
-    // (`sin(time×0.01) × 0.16` rad swing) kept rotating every lit face and every cast shadow —
-    // the "the light keeps changing" report (live review 2026-09-30).
+    // Ease the sun towards its aim (Game re-aims it at the local player every frame): the lit
+    // disc then FOLLOWS the action, and the local lighting stays constant instead of the player
+    // walking into the day/night terminator — the "light keeps flickering/changing as I move"
+    // report (live review 2026-09-30). Slow enough that normal walking never visibly turns the
+    // sun; fast enough that spawn/recall jumps settle within a second.
+    this.sunBase.lerp(this.sunTarget, clamp(dt * 1.6, 0, 1)).normalize();
     SHADER_GLOBALS.uSunDir.value.copy(this.sunBase);
     // The Folio family reads the same sun through its own uniform.
     FOLIO.lighting.direction.value.copy(SHADER_GLOBALS.uSunDir.value);

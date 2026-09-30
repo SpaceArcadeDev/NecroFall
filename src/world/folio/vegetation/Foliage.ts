@@ -85,6 +85,12 @@ export class Foliage {
   private readonly centers: Float32Array;
   /** 1 = shown, 0 = culled; 255 = never written yet (forces the first pass to fill everything). */
   private readonly cullState: Uint8Array;
+  /** Uniform scale per instance — the billboard rebuild needs position + scale, exactly like
+   *  folio's `object.scale.setScalar(_child.scale.x)`. */
+  private readonly instanceScale: Float32Array;
+  /** Fixed random roll per instance — folio's `object.up.set(sin(angle), cos(angle), 0)`. */
+  private readonly rolls: Float32Array;
+  private readonly billboardScratch = new THREE.Object3D();
   private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   /** Scratch for the soft-fade matrices (shrunk copies of the base matrices). */
   private readonly fadeMatrix = new THREE.Matrix4();
@@ -104,6 +110,9 @@ export class Foliage {
     // drew in this pipeline: every tree rendered as bare branches (live review 2026-09-30).
     this.centers = new Float32Array(count * 3);
     this.cullState = new Uint8Array(count).fill(255);
+    this.instanceScale = new Float32Array(count);
+    this.rolls = new Float32Array(count);
+    const rollRand = new Rand((0x5eedb00b ^ count) >>> 0);
     for (const reference of this.options.references) {
       if (reference instanceof THREE.Matrix4) {
         this.baseMatrices.push(reference.clone());
@@ -121,9 +130,12 @@ export class Foliage {
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     for (let i = 0; i < count; i++) {
       const m = this.baseMatrices[i];
-      this.centers[i * 3] = m.elements[12];
-      this.centers[i * 3 + 1] = m.elements[13];
-      this.centers[i * 3 + 2] = m.elements[14];
+      const e = m.elements;
+      this.centers[i * 3] = e[12];
+      this.centers[i * 3 + 1] = e[13];
+      this.centers[i * 3 + 2] = e[14];
+      this.instanceScale[i] = Math.hypot(e[0], e[1], e[2]);
+      this.rolls[i] = rollRand.next() * Math.PI * 2;
       this.mesh.setMatrixAt(i, m);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -278,7 +290,16 @@ export class Foliage {
    * throttles to ~10 Hz — the instance counts are a few hundred).
    */
   update(cameraDistance: number, focusDistance = 1e3, cameraPosition?: THREE.Vector3): void {
-    if (cameraPosition && (this.options.distanceCulling ?? true)) this.cullInstances(cameraPosition);
+    if (cameraPosition) {
+      // folio orients every leaf cluster to face the camera ONCE at build time
+      // (`setFromReferences`: "rotate randomly but always facing the camera"). Our camera can
+      // arrive from any direction on the planet, so the clusters are re-oriented at the update
+      // cadence instead: crowns stay dense and leafy from every angle, and no cluster ever
+      // presents its planes edge-on — the "canopies float / fall apart / go missing" look
+      // (live review 2026-09-30).
+      this.billboard(cameraPosition);
+      if (this.options.distanceCulling ?? true) this.cullInstances(cameraPosition);
+    }
 
     if (!this.options.seeThrough) return;
     this.seeThroughFocusDistance.value = focusDistance;
@@ -294,6 +315,28 @@ export class Foliage {
     const d = Math.max(1, cameraDistance);
     this.seeThroughEdgeMin.value = (3 / d) * multiplier;
     this.seeThroughEdgeMax.value = (15 / d) * multiplier;
+  }
+
+  /**
+   * Orient every leaf cluster towards the camera — folio's `setFromReferences` — keeping each
+   * reference's world position, its uniform scale and a fixed random roll. folio only runs this
+   * once because their camera direction is basically constant; ours is re-run at the update
+   * cadence (a few thousand 4×4 composes, far below the frame budget).
+   */
+  private billboard(cameraPosition: THREE.Vector3): void {
+    const o = this.billboardScratch;
+    for (let i = 0; i < this.counts.instances; i++) {
+      o.position.set(this.centers[i * 3], this.centers[i * 3 + 1], this.centers[i * 3 + 2]);
+      const roll = this.rolls[i];
+      o.up.set(Math.sin(roll), Math.cos(roll), 0);
+      o.lookAt(cameraPosition);
+      o.scale.setScalar(this.instanceScale[i]);
+      o.updateMatrix();
+      this.baseMatrices[i].copy(o.matrix);
+      const state = this.cullState[i];
+      this.writeMatrix(i, state === 255 ? 16 : state);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -339,23 +382,28 @@ export class Foliage {
       }
       if (q !== this.cullState[i]) {
         this.cullState[i] = q;
-        if (q === 0) {
-          this.mesh.setMatrixAt(i, this.hidden);
-        } else if (q === 16) {
-          this.mesh.setMatrixAt(i, this.baseMatrices[i]);
-        } else {
-          const m = this.fadeMatrix.copy(this.baseMatrices[i]);
-          const s = q / 16;
-          const e = m.elements;
-          e[0] *= s; e[1] *= s; e[2] *= s;
-          e[4] *= s; e[5] *= s; e[6] *= s;
-          e[8] *= s; e[9] *= s; e[10] *= s;
-          this.mesh.setMatrixAt(i, m);
-        }
+        this.writeMatrix(i, q);
         changed = true;
       }
     }
     if (changed) this.mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Write an instance matrix for a quantised fade (0 = hidden, 16 = full, else scaled). */
+  private writeMatrix(i: number, q: number): void {
+    if (q === 0) {
+      this.mesh.setMatrixAt(i, this.hidden);
+    } else if (q === 16) {
+      this.mesh.setMatrixAt(i, this.baseMatrices[i]);
+    } else {
+      const m = this.fadeMatrix.copy(this.baseMatrices[i]);
+      const s = q / 16;
+      const e = m.elements;
+      e[0] *= s; e[1] *= s; e[2] *= s;
+      e[4] *= s; e[5] *= s; e[6] *= s;
+      e[8] *= s; e[9] *= s; e[10] *= s;
+      this.mesh.setMatrixAt(i, m);
+    }
   }
 
   dispose(): void {

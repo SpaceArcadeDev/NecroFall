@@ -62,11 +62,17 @@ class FolioFog {
  */
 class FolioWind {
   readonly direction = uniform(new THREE.Vector2(0.86, 0.51).normalize());
-  readonly strength = uniform(0.55);
+  /**
+   * Folio drives this from the weather (remapClamp(wind, 0, 1, 0.1, 1)) — 0.5 is their average
+   * day. We run near the top of their live range so the travel waves clearly read at gameplay
+   * camera heights (user review 2026-09-30: "more visible wavy animation").
+   */
+  readonly strength = uniform(0.95);
   /** Wandering angle the Game nudges over time; the direction is derived from it. */
   angle = 0.6;
   readonly localTime = uniform(0);
-  readonly timeFrequency = 0.1;
+  /** A hair above folio's 0.1 so gust fronts travel visibly while staying their law. */
+  readonly timeFrequency = 0.12;
   readonly positionFrequency = uniform(0.5);
 
   /**

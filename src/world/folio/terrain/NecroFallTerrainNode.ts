@@ -31,7 +31,10 @@ export class TerrainPalette {
   readonly ridge = uniform(color('#6b6478'));
   readonly peak = uniform(color('#b9c0d4'));
   readonly vein = uniform(color('#b06cff'));
-  readonly grass = uniform(color('#5f9a58'));
+  /** folio's exact `grassColor` uniform (`Terrain.js`: `uniform(color('#b8b62e'))`) — the bright
+   *  olive-yellow the island's lawn mixes towards where the density channel carries grass. The
+   *  old mid-green `#5f9a58` rendered every blade "dark green spikes" (user review 2026-09-30). */
+  readonly grass = uniform(color('#b8b62e'));
   readonly rock = uniform(color('#6a6273'));
   /** Waterline as height01 (fills everything below it); -1 = dry world. */
   readonly waterline01 = uniform(-1);
@@ -77,12 +80,15 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
     .toVar();
 
   // Vegetation creeps over flat low ground; rock takes over on steep faces (plan §83 — the same
-  // slope value that gates placement, so nothing grows where the material shows cliffs). The
-  // cover is generous on purpose: the world reads as a GRASS planet with rock breaking through,
-  // not a rock with occasional green (live review 2026-09-30: "mostly filled with grass").
+  // slope value that gates placement, so nothing grows where the material shows cliffs). With
+  // the vegetation channel carved into PATCHES (VegetationPatches), this wash is what paints
+  // the lawn onto the ground: blobs of grass colour over the baked biome palette, exactly like
+  // the island where the lawn ends and the ground's own colour takes over. No floor term —
+  // folio's data goes to zero between patches and the ground shows through
+  // (user review 2026-09-30: "in patches not full all over").
   const flatness = slope.smoothstep(1.3, 0.05);
   const highland = height01.smoothstep(0.88, 0.22);
-  const grassy = flatness.mul(highland).mul(vegetation.mul(0.7).add(0.45)).min(1);
+  const grassy = flatness.mul(highland).mul(vegetation).min(1);
   albedo.assign(albedo.mix(TERRAIN_PALETTE.grass.mul(grain.mul(1.0).add(0.55)), grassy.mul(0.85)));
 
   const rocky = slope.smoothstep(0.26, 0.6);
@@ -101,8 +107,10 @@ export function terrainAlbedoNode(data: any, bakedColor: any, vegetation: any): 
   albedo.assign(albedo.mix(TERRAIN_PALETTE.deep, below.mul(0.35)));
 
   // Necrotic wash: the shared corruption field tinted towards the archetype's vein colour.
+  // Kept light — a strong wash painted dark streaks across whole jungles and the reported
+  // "light keeps flickering" strobing came from a fast emissive pulse below.
   const corruption = data.w.clamp(0, 1).mul(FOLIO.necro.intensity.mul(0.6).add(0.7)).min(1);
-  albedo.assign(albedo.mix(TERRAIN_PALETTE.vein, corruption.mul(0.3)));
+  albedo.assign(albedo.mix(TERRAIN_PALETTE.vein, corruption.mul(0.2)));
 
     return albedo;
   })();
@@ -113,7 +121,9 @@ export function terrainEmissiveNode(data: any, time: any): any {
   return Fn(() => {
     const corruption = data.w;
     const veins = necroticVeinNode(positionWorld.mul(0.08));
-    const pulse = time.mul(0.9).add(positionWorld.x.mul(0.05)).sin().mul(0.12).add(0.3);
+    // Slow, gentle breathing (was 0.9 Hz × 0.12 amplitude — a visible strobe on corrupt worlds,
+    // reported as "the lighting keeps flickering").
+    const pulse = time.mul(0.22).add(positionWorld.x.mul(0.03)).sin().mul(0.05).add(0.22);
     const glow = veins.mul(pulse).mul(corruption.mul(0.75).add(0.25));
     return necroticGlowNode(glow, corruption);
   })();

@@ -40,6 +40,7 @@ import {
   mix,
   mx_noise_float,
   normalize,
+  smoothstep,
   texture,
   uniform,
   uniformArray,
@@ -51,6 +52,7 @@ import {
 import { clamp, Rand } from '../../../utils/Utils';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { terrainAlbedoNode } from '../terrain/NecroFallTerrainNode';
+import { vegetationPatchAt } from '../terrain/VegetationPatches';
 import { FOLIO } from '../FolioShaderGlobals';
 import type { TerrainSurface } from '../../TerrainSurface';
 
@@ -82,10 +84,13 @@ export interface GrassOptions {
   castShadows?: boolean;
 }
 
-/** Folio's density: 280² = 78 400 blades per 280 m of field. Our field covers the full visible
- *  ground (~95 m half-extent at high quality), so the subdivisions scale up with the area to keep
- *  a folio-like blades-per-m² (≈5/m²); quality tiers scale it back down through `density`. */
-const BASE_SUBDIVISIONS = 420;
+/** The island's OWN architecture (Grass.js): subdivisions = 280 over its optimal-view disc, blade
+ *  size growing with the field — the count stays modest while the read is a packed lawn. Our
+ *  field is a 56 m disc at high quality; 480² = 230k blades ≈ 23 blades/m² — folio's packed
+ *  density, concentrated to ≈38/m² inside the patch blobs. The count must stay near folio's
+ *  scale relative to the AREA, with blade SIZE absorbing the difference (700²/490k cost the
+ *  frame rate; 512² read the same as 480² for +12% vertex work — live reviews 2026-09-30). */
+const BASE_SUBDIVISIONS = 480;
 /** Folio's ideal field surface (m²) — drives the blade-size overflow formula. */
 const SURFACE_IDEAL = 2000;
 /** Re-centre (pure coordinate shift, never a re-scatter) once the view leaves this fraction of
@@ -269,7 +274,9 @@ export class Grass {
         const slope = surface.slopeAtDir(dx, sinLat, dz);
         const moisture = this.options.moistureAt(dx, sinLat, dz);
         const corruption = this.options.corruptionAt(dx, sinLat, dz);
-        const veg = surface.vegetationAtDir(dx, sinLat, dz);
+        // Patched: lawns in blobs over bare ground (VegetationPatches) — the same carved channel
+        // TerrainVisual bakes into aVeg, so blades and ground colour agree by construction.
+        const veg = surface.vegetationAtDir(dx, sinLat, dz) * vegetationPatchAt(dx, sinLat, dz, this.options.seed);
 
         const i = (y * TEX_W + x) * 4;
         texA[i] = clamp(slope, 0, 1) * 255;
@@ -326,8 +333,10 @@ export class Grass {
     // third-person scale (≈0.1 m wide / 0.7 m tall) at every quality tier.
     const surface = this.size * this.size;
     const surfaceOverflow = clamp((surface - SURFACE_IDEAL) / SURFACE_IDEAL, 0, 1.6);
-    this.bladeWidthU.value = 0.055 * (1 + surfaceOverflow * 0.5);
-    this.bladeHeightU.value = 0.4 * (1 + surfaceOverflow * 0.5);
+    // folio's blade proportions — slightly enlarged per the live review ("maybe slightly
+    // bigger"): a 0.21 m base under a tall taper ≈ 0.75 m at max overflow.
+    this.bladeWidthU.value = 0.062 * (1 + surfaceOverflow * 0.5);
+    this.bladeHeightU.value = 0.42 * (1 + surfaceOverflow * 0.5);
     const bladeWidth = this.bladeWidthU;
     const bladeHeight = this.bladeHeightU;
     const bladeHeightRandomness = this.bladeRandomnessU;
@@ -341,7 +350,10 @@ export class Grass {
 
     // --- varyings shared by both stages
     const vertexLoopIndex = varying(vertexIndex.toFloat().mod(3));
-    const vTipness = varying(vertexLoopIndex.step(0.5).oneMinus()); // 1 on the tip corner
+    // A local node for the vertex-stage math (reading the varying back inside the vertex stage is
+    // unreliable) + the same value as a varying for the fragment stage.
+    const tipness = vertexLoopIndex.step(0.5).oneMinus(); // 1 on the tip corner
+    const vTipness = varying(tipness);
     const vUv = varying(vec2());
     const vUp = varying(vec3());
     const vMask = varying(float());
@@ -356,15 +368,20 @@ export class Grass {
 
     const material = new MeshDefaultMaterial({
       colorNode: Fn(() => {
-        // Folio: the terrain's own colour function, evaluated at the blade's data AND with the
-        // ground's own baked colour — the blades wear the ground, they are not green-by-default.
-        return terrainAlbedoNode(sampleA(vUv), sampleGround(vUv), sampleVeg(vUv).div(1.6));
+        // Folio exactly: the blade wears the terrain's own colour function evaluated at its data
+        // (`terrain.colorNode(terrainData)`) — the same function the ground mesh runs, with the
+        // same PATCHED density channel. No separate colour ramp: the root→tip gradient the
+        // island shows is the SHADOW term below (roots mixed towards the violet shadow colour),
+        // not a brightness hack on the albedo that turned the whole hillside neon from above.
+        return terrainAlbedoNode(sampleA(vUv), sampleGround(vUv), sampleVeg(vUv).div(1.6)) as any;
       })(),
       // Folio passes a constant (0, 1, 0); on the sphere that is the blade's surface up.
       normalNode: vUp,
       hasWater: false,
       hasLightBounce: false,
-      // Folio's shadow tip mix: tips read lit, roots sit in the ground's shadow.
+      // Folio exactly: `tipness.oneMinus().mul(terrainDataGrass)` — every root sits in shadow
+      // (strength = the patch density), every tip is lit. This IS the visible vertical
+      // gradient: dark violet-tinted bases under sunlit blades.
       shadowNode: vTipness.oneMinus().mul(vMask),
       side: THREE.DoubleSide, // thin camera-facing blades — never let winding hide the field
       shadowSide: THREE.DoubleSide,
@@ -418,20 +435,21 @@ export class Grass {
       vUv.assign(uv);
       vUp.assign(dir);
 
-      // Folio's grass mask, derived from the sampled terrain data. NecroFall reads as a GRASS
-      // planet (folio's island is lush everywhere): the terrain data MODULATES the grass — it
-      // never erases it except on genuinely steep rock. No water gate (folio has none — the sea
-      // covers its own ground), so the carpet runs right down to the waterline.
+      // FOLIO's grass-law, exactly: the baked vegetation channel (our stand-in for the island's
+      // authored density data — see VegetationPatches) is the blade's SIZE (width AND height),
+      // its root-shadow strength, and its VISIBILITY. The carve makes the lawn read as patches
+      // of grass over bare ground instead of a uniform carpet; the density falls towards every
+      // patch edge so the border is a soft taper of shrinking blades.
       const a = sampleA(uv) as any;
       const height01 = a.y;
-      const flatness = a.x.smoothstep(1.35, 0.05);
-      const lush = sampleVeg(uv)
-        .mul(0.55)
-        .add(0.45)
-        .clamp(0, 1)
-        .mul(a.w.oneMinus().mul(0.45).add(0.55));
-      const mask = flatness.mul(lush).clamp(0, 1);
-      vMask.assign(mask);
+      const flatness = a.x.smoothstep(1.3, 0.05);
+      const veg = sampleVeg(uv).div(1.6) as any;
+      const g = veg.mul(flatness.mul(0.8).add(0.2)).min(1);
+      vMask.assign(g);
+      // Folio's `hidden` trick: below the density floor the blade is LIFTED 100 m off the
+      // surface — culled by geometry, not faded, so patch boundaries are crisp like the
+      // island's. (The band 0.45→0.5 shrinks the blade first, then it disappears.)
+      const hidden = smoothstep(0.45, 0.5, g).oneMinus();
 
       // Height variation from the blade's WORLD direction (folio samples its perlin at the
       // blade's world position) — wrapping never changes a blade's height.
@@ -439,11 +457,10 @@ export class Grass {
         .mul(0.5)
         .add(1);
       const randomness = mix(float(1), attribute('heightRandomness', 'float') as any, bladeHeightRandomness);
-      // Folio scales geometry by the RAW density; a modest floor keeps ground cover even on the
-      // barren biomes, so no planet reads as "no grass".
-      const densityScale = mask.mul(0.65).add(0.35);
-      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(densityScale);
-      const width = bladeWidth.mul(densityScale);
+      // Folio scales BOTH dimensions by the density channel — blades read as "smaller towards
+      // the edge of the patch" instead of one uniform carpet.
+      const height = bladeHeight.mul(randomness).mul(heightVariation).mul(g);
+      const width = bladeWidth.mul(g);
 
       // The blade's base radius, from the sampled relief of the ground it stands on.
       const baseRadius = this.reliefMinU.add(
@@ -470,14 +487,20 @@ export class Grass {
       const right = t1.mul(facing.cos()).add(t2.mul(facing.sin()));
       vertex = vertex.add(right.mul(shapeX));
 
-      // Wind: folio's `wind.offsetNode(...) × tipness × height × 2` along the surface tangent.
-      // The gust samples the blade's STORED offset (constant per blade) so wrapping never
-      // re-rolls a blade's wind state.
-      const windWorld = vec3(FOLIO.wind.direction.x, float(0), FOLIO.wind.direction.y);
-      const windTangent = normalize(windWorld.sub(dir.mul(windWorld.dot(dir))).add(right.mul(1e-4)));
-      const gust = FOLIO.wind.offset(raw).length().mul(0.5).add(FOLIO.wind.strength.mul(0.5));
-      const sway = gust.mul(vTipness).mul(height).mul(2);
-      vertex = vertex.add(windTangent.mul(sway));
+      // Wind — folio's exact drive: `offsetNode(worldPosition.xz) × tipness × height × 2`.
+      // The offset is a 2D VECTOR field: two scrolling noise octaves along the wind direction,
+      // sampled at the blade's WORLD position, so gust waves TRAVEL across the field as the
+      // shared wind time scrolls — the rippling, wavy sway of the island's lawn. (The old port
+      // sampled the stored field offset and kept only its LENGTH, so every blade pulsed along
+      // one fixed tangent with no traveling waves.)
+      const windVec = FOLIO.wind.offset(vec2(base.x, base.z)) as any;
+      const wind3 = vec3(windVec.x, float(0), windVec.y);
+      const sway = tipness.mul(height).mul(2);
+      vertex = vertex.add(wind3.sub(dir.mul(wind3.dot(dir))).mul(sway));
+
+      // Folio's visibility gate (`hidden × 100` up): a density-culled blade leaves the surface
+      // entirely — the patch edge is a hard lawn boundary, not a shrink-to-invisible.
+      vertex = vertex.add(dir.mul(hidden.mul(100)));
 
       // Folio has no per-blade distance cull: the wrap keeps the field around the view, so
       // every blade is near by construction.

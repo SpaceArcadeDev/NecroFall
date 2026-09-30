@@ -219,6 +219,8 @@ const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3();
+/** Fixed ground spot every DEV WORLD session spawns on — reproducible world-inspection vista. */
+const devSpawnDir = new THREE.Vector3();
 /** Local +Y — the axis every ground decal is built around. */
 const _UP = new THREE.Vector3(0, 1, 0);
 const _qAlign = new THREE.Quaternion();
@@ -1696,6 +1698,14 @@ export class Game {
     this.hostOrder = [id];
     // The starter-class pick (same screen as every other flow); its clock finalizes locally and
     // `finalizeNecrotechPhase` then boots the world with the PLANET's seed.
+    //
+    // DEV WORLD (user ask 2026-09-30): the picker is skipped entirely — the run boots straight
+    // into the world with the default starter, so world inspection needs zero clicks.
+    if (opts.dev === true) {
+      this.roster.get(id)!.nt = necrotech >= 0 ? necrotech : 1; // 1 = VOLT, the usual test pick
+      this.finalizeNecrotechPhase();
+      return;
+    }
     this.phase = 'necrotech';
     this.phaseTimer = CONFIG.necrotechSelectTime;
     this.onPhaseChanged('necrotech');
@@ -2421,6 +2431,20 @@ export class Game {
       p.up.copy(p.position).normalize();
       p.velocity.set(0, 0, 0);
       p.recompute();
+    }
+    // DEV WORLD (user ask 2026-09-30): the tester walks the terrain, not the fortress deck —
+    // drop the local player on the open surface at a fixed, reproducible spot, so every dev
+    // session starts on grass with the same vista.
+    if (this.devMode) {
+      const p = this.players.get(this.net.myId);
+      if (p) {
+        devSpawnDir.set(0.55, 0.52, 0.65).normalize();
+        const h = this.planet.heightAtDir(devSpawnDir.x, devSpawnDir.y, devSpawnDir.z);
+        p.position.copy(devSpawnDir).multiplyScalar(h + 0.9);
+        p.up.copy(devSpawnDir);
+        p.velocity.set(0, 0, 0);
+        p.recompute();
+      }
     }
     // match-start SPAWN effects: every seat's chosen arrival plays from the first frame (slots
     // with nothing equipped simply stay quiet). Later respawns go through `placeRespawned`.
@@ -5299,6 +5323,10 @@ export class Game {
     this.cosmeticFx.update(dt);
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
+    // Keep the sun's lit disc over the local player: folio's island is lit uniformly — on a
+    // whole planet a static sun leaves a day/night terminator for the player to walk into
+    // ("the light keeps changing as I move", 2026-09-30). Planet eases the sun smoothly.
+    if (this.localPlayer) this.planet.aimSunAt(this.localPlayer.position);
     this.planet.update(dt, this.cam.camera.position);
     // The Folio environment: shared globals, occlusion, water, particles, physics LOD. Menus keep
     // the world visible but put its animation to sleep (plan §106/§107 — the phone stays cool).

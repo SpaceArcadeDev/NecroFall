@@ -70,6 +70,70 @@ Evidence: `after-05-dead-thirdperson.png` (DEAD planet, third-person: blades now
 ground's icy tone — no dark hatch layer; canopies visible; shot taken with the game's own
 camera).
 
+## Round 3 — "match folio's grass implementation" (patches · gradient · wave · bushes)
+
+User report: *"grass should have visible gradient, closer packed, in patches not full all over,
+maybe slightly bigger, missing the wavy animation like folio; bushes floating in the air."*
+Compared blade-by-blade against `.folio-ref` (`World/Grass.js`, `World/Wind.js`,
+`World/Bushes.js`, `Materials/MeshDefaultMaterial.js`) and re-derived every law:
+
+### A. "In patches, not full all over" — the density channel carves the lawn
+Folio's lawn is NOT uniform: their terrain data's density channel gates blade SIZE and — below
+the threshold — **visibility**: `hidden = step(g − 0.4, 0.1)` lifts the blade 100 m off the
+surface (culled by geometry, crisp patch edges). Ours had a `×0.85 + 0.15` floor — blades
+existed everywhere, reading as a carpet. Fix:
+- `src/world/folio/terrain/VegetationPatches.ts` (new): a seeded fbm carved with
+  `smoothstep(0.38 → 0.62)` into ≈14 m lawn blobs over bare ground.
+- The carve multiplies the vegetation channel in BOTH bakers — the terrain's `aVeg` attribute
+  (`TerrainVisual.bake`) and the grass data texture (`Grass.bakeTerrainTextures`) — so blades,
+  the ground's grass wash (`terrainAlbedoNode`, floor removed) and colours agree exactly.
+- The grass vertex stage now reads: `g = patchedVeg × (0.2 + 0.8·flatness)` → blade width AND
+  height `×g`, root-shadow strength `×g`, and `g < 0.45…0.5 ⇒ hidden` (folio's trick).
+
+### B. "Visible gradient" — it is the SHADOW term, not a colour ramp
+A colour root→tip ramp experiment blew the field to neon from above (a 1.6–1.8× tip over a
+whole hillside). Folio truth (`MeshDefaultMaterial`): the gradient is
+`shadowNode = (1 − tipness) × g` (linear `tipness = step(vertexIndex % 3, 0.5)` — tip 1, base 0)
+— roots mix towards the violet shadow colour, tips stay lit. Restored exactly; the colour ramp
+was removed (`Grass.ts` colorNode is now folio's plain `terrainAlbedoNode(...)` call).
+
+### B2. "Dark green spikes" — folio's grass colour is BRIGHT olive, not green
+folio's `Terrain.js`: `grassColor = uniform(color('#b8b62e'))` — the density channel mixes the
+ground towards that bright olive-yellow. Ours was a mid-green `#5f9a58` wash, so lit blades
+rendered dark green and the shadow term turned them almost black — "dark green spikes".
+`TERRAIN_PALETTE.grass` is now folio's exact `#b8b62e`, which both the ground wash and every
+blade wear.
+
+### C. "Missing the wavy animation" — folio's exact drive, near the top of their range
+Wind is folio's `offsetNode(worldPos.xz) × tipness × height × 2` with their two scrolling noise
+octaves (`FolioShaderGlobals.FolioWind`, verified against `Wind.js`). Strength 0.95 (inside
+folio's live weather range `remapClamp(wind, 0, 1, 0.1, 1)`) and timeFrequency 0.12 — A/B
+frames 1.6 s apart show the field leaning and gust fronts travelling.
+
+### D. "Closer packed / slightly bigger" — folio's own count-vs-size architecture
+Folio keeps `subdivisions = 280` and lets blade SIZE absorb field growth. Ours: 480² = 230k
+blades over a 56 m field ≈ **23 blades/m²** (≈38/m² inside the patch blobs — folio's packed
+lawn), blades at 0.062/0.42 base (≈0.21 m wide × 0.76 m tall at the overflow clamp). The 700²
+first pass (490k blades) matched the look but cratered to 35 fps and the 512² step bought only
++12% vertex cost for no extra read — 480²/56 m lands ~47 fps top-down (was 70 at 480²/85 m
+before any of this round's coverage increases).
+
+### E. Bushes floated 5–8 m — the reference GLB stores folio's ISLAND placements
+`bushesReferences.glb`'s children carry folio's own island positions ((22.68, 1.34, 24.4)…).
+Composing their matrices with our placement matrices teleported every bush. Fix (`Bushes.ts`):
+take only each child's SCALE for variation, instance at OUR placement, lift 0.5 × scale along
+the radial. Verified live: bush centre 116.11 vs ground 115.81 = **+0.30 m** (was +8.3 m).
+
+### F. Dev-world DX (user ask): no picker, spawn on the grass
+`startSoloRun(..., { dev: true })` now skips the SELECT NECROTECH screen entirely (default
+starter, one call from the console boots the world) and drops the player on the open surface
+at a fixed reproducible spot instead of the fortress deck (`Game.ts` — `devSpawnDir`).
+
+Evidence: `rework-09-patches.png` (top-down: discrete lawn blobs over bare ground),
+`rework-15-devspawn-top.png` (the auto-spawn gameplay view: dense patchy lawns),
+`rework-16/17-ground-a|b.png` (close-up gradient + wind A/B), `rework-13/14-final-a|b.png`
+(wind A/B), `ref-folio-site.png` (the live folio site for comparison).
+
 ## Evidence
 
 | Screenshot | What it shows |

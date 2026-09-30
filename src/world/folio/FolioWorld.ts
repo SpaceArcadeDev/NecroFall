@@ -315,7 +315,10 @@ export class FolioWorld {
       surface: this.surface,
       seed: planet.seed,
       density: quality.grassDensity,
-      maxDistance: 95 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
+      // Field reach: covers the visible ground on a 118 m planet while keeping folio-like
+      // blades-per-m² — a tighter window with the same count reads as a denser lawn (56 m ≈
+      // 26.6 blades/m² at high quality; ≈44/m² inside the patch blobs — folio's packed lawn).
+      maxDistance: 56 * (quality.name === 'low' ? 0.7 : quality.name === 'medium' ? 0.85 : 1),
       towers,
       meadows: this.meadows,
       moistureAt: (x, y, z) => planet.terrain.moistureAt(x, y, z),
@@ -369,8 +372,13 @@ export class FolioWorld {
     this.cpuTimer -= dt;
     if (this.cpuTimer <= 0) {
       this.cpuTimer = 0.1;
-      const cameraDistance = cameraPosition.length();
-      const focusDistance = cameraPosition.distanceTo(focuses[0] ?? cameraPosition);
+      // folio scales the see-through edges by the camera→target distance (their view's spherical
+      // radius). Ours used `cameraPosition.length()` — the planet radius! — so the fade core was
+      // ~20× too small and canopies dissolved at the wrong places. The core must track the
+      // CAMERA distance so only foliage between the camera and the player fades (2026-09-30).
+      const focus = focuses[0] ?? cameraPosition;
+      const cameraDistance = Math.max(1e-3, cameraPosition.distanceTo(focus));
+      const focusDistance = cameraDistance;
       for (const trees of this.trees) trees.leaves.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance, cameraPosition);
       this.bushes?.foliage.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance, cameraPosition);
     }

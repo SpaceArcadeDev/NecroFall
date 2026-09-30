@@ -9,6 +9,7 @@ import * as THREE from 'three/webgpu';
 import { clamp } from '../../../utils/Utils';
 import { NecroTerrainMaterial } from '../materials/NecroTerrainMaterial';
 import { TERRAIN_PALETTE } from './NecroFallTerrainNode';
+import { vegetationPatchAt } from './VegetationPatches';
 
 /** The Planet surface TerrainVisual needs — structural, so Planet stays free to evolve. */
 export interface TerrainVisualPlanet {
@@ -17,6 +18,8 @@ export interface TerrainVisualPlanet {
   readonly reliefMin: number;
   readonly reliefMax: number;
   heightAtDir(x: number, y: number, z: number): number;
+  /** Planet seed — the vegetation patch field must match the grass texture's bake. */
+  readonly seed?: number;
   terrain: {
     moistureAt(x: number, y: number, z: number): number;
     corruptionAt(x: number, y: number, z: number): number;
@@ -77,7 +80,12 @@ export class TerrainVisual {
       terrain[i * 4 + 1] = this.height01Of(h);
       terrain[i * 4 + 2] = clamp(this.planet.terrain.moistureAt(dir.x, dir.y, dir.z), 0, 1);
       terrain[i * 4 + 3] = clamp(this.planet.terrain.corruptionAt(dir.x, dir.y, dir.z), 0, 1);
-      veg[i] = this.planet.biome.plantDensityAt(dir.x, dir.y, dir.z);
+      // Patched vegetation (VegetationPatches): lawns in blobs over bare ground — the ground's
+      // grass wash and the blades must both read the SAME carved channel (folio's authored
+      // density data). The seed matches the grass texture bake exactly.
+      veg[i] =
+        this.planet.biome.plantDensityAt(dir.x, dir.y, dir.z) *
+        vegetationPatchAt(dir.x, dir.y, dir.z, this.planet.seed ?? 0x51ab51);
     }
 
     geometry.setAttribute('aTerrain', new THREE.BufferAttribute(terrain, 4));

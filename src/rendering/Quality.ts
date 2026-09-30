@@ -87,7 +87,7 @@ export class Quality {
    * ~45 m horizon of the 113 m planet.
    */
   grassHalfExtent(): number {
-    return this.level === 0 ? 110 : this.level === 1 ? 80 : 60;
+    return this.level === 0 ? 90 : this.level === 1 ? 66 : 50;
   }
 
   /** Foliage (leaf cards) fade distance. */

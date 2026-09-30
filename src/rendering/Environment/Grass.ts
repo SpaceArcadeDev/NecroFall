@@ -165,12 +165,14 @@ export class Grass {
     const count = subdivisions * subdivisions;
     const half = halfExtent;
 
-    // ---- distribution: dense core + steep power-law falloff. The core fraction
+    // ---- distribution: dense core + power-law falloff. The core fraction
     // is shared with the shader's rim fade so size and density taper TOGETHER:
     // a blade appearing at the field boundary (world-anchored recycling) is a
     // couple of pixels tall — there is no visible pop while walking.
     const denseRadius = half * DENSE_FRACTION;
-    const falloff = 5;
+    // Gentle falloff (2.5): grass stays plentiful well past the horizon instead
+    // of collapsing into stubble a few metres out from the player.
+    const falloff = 2.5;
 
     const offsets = new Float32Array(count * 3 * 2);
     const positions = new Float32Array(count * 3 * 3);
@@ -273,10 +275,10 @@ export class Grass {
       const patch = vec2(loopX, loopZ);
 
       // ---- rim fade — recycling happens at zero size (no popping, no hard edge).
-      // Fade starts where the CPU density falloff starts (DENSE_FRACTION),
-      // ending far out; appearing blades are sub-pixel there.
+      // Blades keep FULL SIZE through the density falloff and only shrink in the
+      // last 18% of the field, so the mid-distance lawn never reads as stubble.
       const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
-      const rimFade = smoothstep(DENSE_FRACTION, 1.0, rimDistance).oneMinus();
+      const rimFade = smoothstep(0.82, 1.0, rimDistance).oneMinus();
 
       // ---- sphere mapping: patch coords (metres) → direction on the planet.
       // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
@@ -295,7 +297,10 @@ export class Grass {
       const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
       const patchFactor = smoothstep(0.32, 0.52, patchNoise);
       const visibility = rimFade.mul(this.waterSuppression(direction).oneMinus());
-      const sizeScale = patchFactor.mul(visibility);
+      // Outside the patches a sparse baseline remains (small random tufts), so
+      // bare zones still have some grass — but the dark soil shading in the
+      // terrain keys on patchFactor only, so it follows the ACTUAL patches.
+      const sizeScale = patchFactor.mul(0.85).add(0.15).mul(visibility);
 
       // ---- surface position
       const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));
@@ -355,7 +360,7 @@ export class Grass {
           const toTrail = basePosition.sub(packed.xyz);
           const horizontalTrail = toTrail.sub(direction.mul((toTrail as any).dot(direction)));
           const trailDistance = (horizontalTrail as any).length();
-          const influence = smoothstep(1.35, 0.3, trailDistance).mul(smoothstep(2.4, 1.1, age));
+          const influence = smoothstep(1.35, 0.3, trailDistance).mul(smoothstep(1.6, 0.7, age));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
@@ -535,10 +540,9 @@ const SIDE = new THREE.Vector3(1, 0, 0);
 const DENSE_FRACTION = 0.34;
 
 /** Trample-trail ring buffer: recent player positions (xyz + drop time). */
-const TRAIL_SLOTS = 30;
+const TRAIL_SLOTS = 18;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
-const TRAIL_DROP_STEP = 0.8; // metres between trail samples — overlapping, so
-// the parted path reads as ONE continuous channel, never separate circles
+const TRAIL_DROP_STEP = 0.85; // metres between overlapping samples — one channel
 
 /** CPU smoothstep (matches the shader semantics). */
 function smoothstepCpu01(edge0: number, edge1: number, x: number): number {

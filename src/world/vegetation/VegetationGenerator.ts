@@ -427,12 +427,19 @@ export class VegetationGenerator {
       if (slope < 0.12 && !rand.chance(0.2)) continue; // rocks live on slopes, some anywhere
       if (this.inClearance(dir, 1)) continue;
 
-      const scale = rand.range(0.45, 1.5);
-      // Rocks sink DEEP relative to their size: a boulder read as anchored only when a good
+      // Kind mix tuned with the terrain review (2026-09-30): rocks stay the majority, slabs and
+      // spikes dress the slopes, and crystals are common enough to read as "this planet has
+      // crystals" the way the original environment did.
+      const roll = rand.next();
+      const kind = roll < 0.5 ? 'ROCK' : roll < 0.68 ? 'SLAB' : roll < 0.86 ? 'CRYSTAL' : 'SPIKE';
+      const scale =
+        kind === 'ROCK' ? rand.range(0.7, 2.1) :
+        kind === 'SLAB' ? rand.range(0.6, 1.6) :
+        kind === 'CRYSTAL' ? rand.range(1.0, 2.6) :
+        rand.range(0.7, 1.6);
+      // Rocks sink DEEP relative to their size: a boulder reads as anchored only when a good
       // fraction of it is under the contour.
       this.frameFor(dir, rand, 8, scale, 0.22 * scale);
-      const roll = rand.next();
-      const kind = roll < 0.66 ? 'ROCK' : roll < 0.88 ? 'SLAB' : 'CRYSTAL';
       const rock: RockPlacement = { ...this.makeBase(0x500000 + placed, scale), kind };
       placements.rocks.push(rock);
       placed++;

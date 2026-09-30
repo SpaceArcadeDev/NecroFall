@@ -2689,7 +2689,7 @@ export class EnemyManager {
     this.spatial.clear();
     for (const e of this.enemies) if (e.alive) this.spatial.insert(e);
 
-    if (g.isHost && g.phase === 'playing') this.runSpawner(dt);
+    if (g.isHost && g.phase === 'playing' && !g.devMode) this.runSpawner(dt);
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];

@@ -19,7 +19,7 @@ export class Rocks {
   private readonly materials: THREE.Material[] = [];
 
   constructor(options: RocksOptions) {
-    const groups: Array<{ kind: RockPlacement['kind']; geometry: THREE.BufferGeometry; material: MeshDefaultMaterial }> = [
+    const groups: Array<{ kind: RockPlacement['kind']; geometry: THREE.BufferGeometry; material: MeshDefaultMaterial; yStretch?: number }> = [
       {
         kind: 'ROCK',
         geometry: new THREE.DodecahedronGeometry(1, 0),
@@ -33,7 +33,14 @@ export class Rocks {
       {
         kind: 'CRYSTAL',
         geometry: new THREE.OctahedronGeometry(1, 0),
-        material: this.buildMaterial(0x7a4fd0, 0.55),
+        material: this.buildMaterial(0x7a4fd0, 0.95),
+        // Tall shards, like the original crystals — a stretched octahedron reads as a growth.
+        yStretch: 1.7,
+      },
+      {
+        kind: 'SPIKE',
+        geometry: new THREE.ConeGeometry(0.55, 3.2, 5),
+        material: this.buildMaterial(0x6e6678, 0),
       },
     ];
 
@@ -57,7 +64,7 @@ export class Rocks {
         const placement = placements[i];
         // Sink rocks a quarter of their size along the surface normal (no pasted-on look).
         const sunk = placement.position.clone().addScaledVector(placement.direction, -placement.scale * 0.25);
-        scaleVec.setScalar(placement.scale);
+        scaleVec.set(placement.scale, placement.scale * (group.yStretch ?? 1), placement.scale);
         matrix.compose(sunk, placement.quaternion, scaleVec);
         mesh.setMatrixAt(i, matrix);
         terrain.set(placement.terrain, i * 4);

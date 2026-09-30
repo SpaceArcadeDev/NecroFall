@@ -36,6 +36,7 @@ import { VegetationVisibility } from '../vegetation/VegetationVisibility';
 import { VegetationGenerator } from '../vegetation/VegetationGenerator';
 import { VegetationSpatialHash } from '../vegetation/VegetationSpatialHash';
 import { createTerrainSurface, type TerrainSurface } from '../TerrainSurface';
+import { clamp } from '../../utils/Utils';
 import type { QualitySettings } from '../../core/Config';
 import type { EnvironmentPlacements } from '../vegetation/VegetationTypes';
 
@@ -193,7 +194,7 @@ export class FolioWorld {
         bushes: Math.round(280 * quality.environmentDensity),
         flowers: Math.round(150 * quality.environmentDensity * quality.flowerDensity),
         scenery: 0,
-        rocks: Math.round(420 * quality.environmentDensity),
+        rocks: Math.round(560 * quality.environmentDensity),
       },
       zones: { towers: [], focus, spawns: [] },
       moistureAt: (x, y, z) => planet.terrain.moistureAt(x, y, z),
@@ -315,6 +316,7 @@ export class FolioWorld {
       corruptionAt: (x, y, z) => planet.terrain.corruptionAt(x, y, z),
       reliefMin: planet.reliefMin,
       reliefMax: planet.reliefMax,
+      waterline01: clamp((planet.waterLevel - planet.reliefMin) / Math.max(1e-3, planet.reliefMax - planet.reliefMin), 0, 1),
       castShadows: false,
     });
     this.options.scene.add(this.grass.mesh);
@@ -358,8 +360,8 @@ export class FolioWorld {
       this.cpuTimer = 0.1;
       const cameraDistance = cameraPosition.length();
       const focusDistance = cameraPosition.distanceTo(focuses[0] ?? cameraPosition);
-      for (const trees of this.trees) trees.leaves.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance);
-      this.bushes?.foliage.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance);
+      for (const trees of this.trees) trees.leaves.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance, cameraPosition);
+      this.bushes?.foliage.update(cameraDistance * this.occlusion.fadeMultiplier, focusDistance, cameraPosition);
     }
 
     // Physics (Rapier) — environment bodies only; terrain stays analytical (plan §25).

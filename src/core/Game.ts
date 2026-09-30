@@ -81,6 +81,11 @@ export type SoloMode = 'speedrun' | 'survival';
  */
 export interface SoloRunOptions {
   mode: SoloMode;
+  /**
+   * DEV WORLD (live review 2026-09-30): no enemy spawns, no match clock, invulnerable player.
+   * Exists so terrain/vegetation/water passes can be inspected without the swarm ending the run.
+   */
+  dev?: boolean;
   /** Canonical `ring:g:s:p` planet key. */
   planetKey: string;
   /** Rank ring of the planet — shapes the terrain archetype and the ecology. */
@@ -340,6 +345,8 @@ export class Game {
   private soloResult: { timeMs: number; bestMs: number; bestName: string; isNew: boolean; victory: boolean; submitted: boolean } | null = null;
   /** True once the running world is a SURVIVAL match (no towers, count-up clock, death ends it). */
   survivalMode = false;
+  /** Dev world (SoloRunOptions.dev): no spawns, no clock, invulnerable — world inspection mode. */
+  devMode = false;
   /** Enemy difficulty ramp multiplier for the ACTIVE match (survival ramps ~50% faster). */
   enemyRampMul = 1;
   /**
@@ -2358,6 +2365,9 @@ export class Game {
     // enemies ramp harder than a classic match's curve.
     this.survivalMode = this.soloRun?.mode === 'survival';
     this.enemyRampMul = this.survivalMode ? 1.5 : 1;
+    // DEV WORLD: the spawner, the clock and death are all off — everything else boots normally.
+    this.devMode = this.soloRun?.dev === true;
+    if (this.devMode) this.ui.banner('DEV WORLD — no enemies · no clock', 3200);
     // fresh performance budget for the match
     this.enemyBudget = this.settings.maxEnemies;
     this.dprStep = 0;
@@ -5231,7 +5241,8 @@ export class Game {
         this.matchElapsed += dt;
         // The 10-minute Necrorad ends a classic match — SURVIVAL has no clock to race
         // (user ask 2026-09-30): the timer counts UP and only death ends the run.
-        if (!this.survivalMode && this.matchElapsed >= CONFIG.matchTime) {
+        // The DEV WORLD keeps the clock frozen entirely.
+        if (!this.survivalMode && !this.devMode && this.matchElapsed >= CONFIG.matchTime) {
           this.endMatch(null);
         }
         this.updateRespawns(dt);
@@ -5249,6 +5260,8 @@ export class Game {
       // the channel is also the frame the player gets control back (they can move/act at once)
       this.watchRecallInput();
       for (const p of this.players.values()) p.update(dt);
+      // DEV WORLD: the observer can never die — every other system runs untouched.
+      if (this.devMode && this.localPlayer) this.localPlayer.invulnUntil = this.now + 3600;
 
       // Keep this player's own run on disk — a refresh hands it straight back to the room.
       this.saveT -= dt;

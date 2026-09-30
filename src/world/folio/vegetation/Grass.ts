@@ -65,6 +65,8 @@ export interface GrassOptions {
   corruptionAt(x: number, y: number, z: number): number;
   reliefMin: number;
   reliefMax: number;
+  /** Waterline as height01 (0..1 of the relief band); -1 = dry world. */
+  waterline01?: number;
   castShadows?: boolean;
 }
 
@@ -90,6 +92,17 @@ const _axisX = new THREE.Vector3(1, 0, 0);
 const _axisY = new THREE.Vector3(0, 1, 0);
 
 export class Grass {
+  /**
+   * Local copies of the planet's relief band + waterline.
+   *
+   * These MUST be local uniforms fed from the constructor options: reading a module-level
+   * singleton (TERRAIN_PALETTE / FOLIO) left the running match holding 0/0 defaults, which put
+   * every blade's base at radius 0 — the whole field buried at the planet's centre (live bug
+   * 2026-09-30, cost a full review pass). Local uniforms from `options` cannot go stale.
+   */
+  private readonly reliefMinU = uniform(0);
+  private readonly reliefMaxU = uniform(1);
+  private readonly waterlineU = uniform(-1);
   readonly mesh: THREE.Mesh;
   readonly material: MeshDefaultMaterial;
   /** LOD seam: blades farther than this are collapsed (registered with the visibility system). */
@@ -121,6 +134,9 @@ export class Grass {
 
   constructor(private readonly options: GrassOptions) {
     this.radius = options.surface.radius;
+    this.reliefMinU.value = options.reliefMin;
+    this.reliefMaxU.value = options.reliefMax;
+    this.waterlineU.value = options.waterline01 ?? -1;
     this.rand = new Rand((options.seed ^ 0x51a55) >>> 0);
     this.halfExtent = clamp(options.maxDistance * 0.5, 22, 36);
     this.size = this.halfExtent * 2;
@@ -316,7 +332,6 @@ export class Grass {
 
     // --- the vertex stage: folio's blade construction on the tangent frame ---------------------
     const anchor = this.anchorUniform;
-    const center = this.centerUniform;
     const sizeU = this.sizeUniform;
     const radiusU = uniform(this.radius);
 
@@ -329,11 +344,14 @@ export class Grass {
       const t1 = normalize(cross(helper, anchor));
       const t2 = normalize(cross(anchor, t1));
 
-      // Folio's infinite scroll: wrap the blade around the view centre modulo the field size.
+      // The blade's field offset — WORLD-PINNED. Folio's flat wrap subtracted the view centre
+      // every frame; on the sphere that slid every blade with the camera ("the grass is moving
+      // as I move" — live review 2026-09-30). The blade keeps its stored offset; the re-anchor
+      // pass is the ONLY thing that re-bases blades, and it preserves their world spot. The mod
+      // stays as pure robustness (scatter/projection always write in range anyway).
       const raw = attribute('aField', 'vec2') as any;
       const half = sizeU.mul(0.5);
       const loopPosition = raw
-        .sub(center)
         .add(half)
         .mod(sizeU)
         .sub(half);
@@ -356,7 +374,8 @@ export class Grass {
 
       // Folio's grass mask, derived from the sampled terrain data. The gates are NecroFall's
       // own (folia's island is gentle): the planet must read as MOSTLY grass — rock, corruption
-      // and genuinely steep faces are the only bare ground (live review 2026-09-30).
+      // and genuinely steep faces are the only bare ground (live review 2026-09-30). The
+      // shoreline gate is deliberately gentle so only the actual waterline thins out.
       const a = sampleA(uv) as any;
       const height01 = a.y;
       const flatness = a.x.smoothstep(1.35, 0.05);
@@ -365,13 +384,13 @@ export class Grass {
         .add(0.45)
         .clamp(0, 1)
         .mul(a.w.oneMinus().mul(0.45).add(0.55));
-      const aboveWater = height01.sub(FOLIO.terrain.waterline01).max(0).mul(50).clamp(0, 1);
+      const aboveWater = height01.sub(this.waterlineU).max(0).mul(18).clamp(0, 1);
       const mask = flatness.mul(lush).mul(aboveWater).clamp(0, 1);
       vMask.assign(mask);
 
       // Height: folio's bladeHeight × mix(1, random, 0.6) × noise variation × grass mask.
-      const baseRadius = FOLIO.terrain.reliefMin.add(
-        height01.mul(FOLIO.terrain.reliefMax.sub(FOLIO.terrain.reliefMin)),
+      const baseRadius = this.reliefMinU.add(
+        height01.mul(this.reliefMaxU.sub(this.reliefMinU)),
       );
       const heightVariation = mx_noise_float(vec3(loopPosition.x, float(0), loopPosition.y).mul(0.0321))
         .mul(0.5)
@@ -467,8 +486,6 @@ export class Grass {
     const oldT1 = this.basisT1;
     const oldT2 = this.basisT2;
     const oldAnchor = this.anchor;
-    const c2u = this.center2D.x;
-    const c2v = this.center2D.y;
     const keepLimit = half * 0.995;
 
     // How far apart are the two anchors? (metres of arc)
@@ -497,10 +514,10 @@ export class Grass {
         continue;
       }
       const o = i * 6;
-      // The blade's DISPLAYED offset in the old frame (same wrap the shader applies). All three
-      // vertices are identical by construction, so vertex 0's value is the blade's value.
-      const lu = (((pos[o] - c2u + half) % size + size) % size - half);
-      const lv = (((pos[o + 1] - c2v + half) % size + size) % size - half);
+      // The blade's offset in the old frame — the shader displays exactly this (no centre term).
+      // All three vertices are identical by construction, so vertex 0's value is the blade's.
+      const lu = (((pos[o] + half) % size + size) % size - half);
+      const lv = (((pos[o + 1] + half) % size + size) % size - half);
       const len = Math.max(1e-4, Math.hypot(lu, lv));
       const r = len / radius;
       const sinR = Math.sin(r);

@@ -5,8 +5,8 @@
 // This is the shared foliage renderer behind every leafy thing: tree canopies, bushes and (in a
 // simpler form) flowers. Its architecture is preserved exactly:
 //
-//   references → merged plane geometry → ONE material → custom instanceMatrix attribute →
-//   shader-driven variation (wind, lighting) → see-through fade
+//   references → merged plane geometry → ONE material → official InstancedMesh matrices →
+//   shader-driven variation (wind, lighting) → see-through fade → CPU per-instance culling
 //
 // What changed for NecroFall:
 //   • `references` may be plain matrices (tree leaf transforms) — no extra Object3D per leaf;
@@ -19,10 +19,8 @@
 import * as THREE from 'three/webgpu';
 import {
   Fn,
-  attribute,
   cameraPosition,
   float,
-  instance,
   max,
   mix,
   normalWorld,
@@ -71,7 +69,8 @@ export interface FoliageOptions {
 }
 
 export class Foliage {
-  readonly mesh: THREE.Mesh;
+  /** Official InstancedMesh instancing — the same proven path as trunks, rocks and enemies. */
+  readonly mesh: THREE.InstancedMesh;
   readonly material: MeshDefaultMaterial;
 
   readonly counts: { instances: number; planes: number };
@@ -79,8 +78,14 @@ export class Foliage {
   /** LOD seam: the maximum camera distance instances are drawn at (set by VegetationLOD). */
   readonly cullDistance = uniform(140);
 
-  private readonly instanceMatrix: THREE.InstancedBufferAttribute;
   private readonly geometry: THREE.BufferGeometry;
+  /** The reference transforms — the CPU cull writes hidden/visible matrices from these. */
+  private readonly baseMatrices: THREE.Matrix4[] = [];
+  /** Per-instance world position (for the distance/horizon culling pass). */
+  private readonly centers: Float32Array;
+  /** 1 = shown, 0 = culled; 255 = never written yet (forces the first pass to fill everything). */
+  private readonly cullState: Uint8Array;
+  private readonly hidden = new THREE.Matrix4().makeScale(0, 0, 0);
   private readonly seeThroughPosition = uniform(vec2());
   /** Camera→player distance: leaves closer than this can fade, leaves beyond never do. */
   private readonly seeThroughFocusDistance = uniform(1e3);
@@ -88,18 +93,38 @@ export class Foliage {
   constructor(private readonly options: FoliageOptions) {
     this.geometry = this.buildGeometry();
     this.material = this.buildMaterial();
-    this.instanceMatrix = this.buildInstances();
-    this.counts = { instances: this.options.references.length, planes: PLANE_COUNT };
+    const count = this.options.references.length;
+    this.counts = { instances: count, planes: PLANE_COUNT };
 
-    // Folio renders foliage through a PLAIN Mesh: the instancing lives entirely in the shader
-    // (`instance(count, customMatrix)`), exactly like the Grass field. Do NOT use an
-    // InstancedMesh here — three injects the mesh's own (zeroed) `instanceMatrix` on top of the
-    // custom one and every leaf collapses into a single point (invisible canopies).
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    // Folio instancing through the OFFICIAL InstancedMesh path (`setMatrixAt` + the built-in
+    // instanceMatrix attribute) — the same mechanism the trunk/rock/enemy instancing uses and
+    // which provably draws. The previous custom `instance(count, attr)` TSL node silently never
+    // drew in this pipeline: every tree rendered as bare branches (live review 2026-09-30).
+    this.centers = new Float32Array(count * 3);
+    this.cullState = new Uint8Array(count).fill(255);
+    for (const reference of this.options.references) {
+      if (reference instanceof THREE.Matrix4) {
+        this.baseMatrices.push(reference.clone());
+      } else {
+        reference.updateMatrix();
+        this.baseMatrices.push(reference.matrix.clone());
+      }
+    }
+    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, Math.max(1, count));
+    this.mesh.count = count;
     this.mesh.name = options.name ?? 'foliage';
     this.mesh.receiveShadow = true;
     this.mesh.castShadow = true;
-    this.mesh.frustumCulled = false; // instances span the whole planet; culling is cell-based
+    this.mesh.frustumCulled = false; // instances span the whole planet; culling is per-instance below
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < count; i++) {
+      const m = this.baseMatrices[i];
+      this.centers[i * 3] = m.elements[12];
+      this.centers[i * 3 + 1] = m.elements[13];
+      this.centers[i * 3 + 2] = m.elements[14];
+      this.mesh.setMatrixAt(i, m);
+    }
+    this.mesh.instanceMatrix.needsUpdate = true;
   }
 
   // ------------------------------------------------------------------ geometry
@@ -205,37 +230,8 @@ export class Foliage {
       hasLightBounce: false,
     });
 
-    // --- positioning: consume the custom instance matrix in the vertex stage
-    const instanceCount = Math.max(1, this.options.references.length);
-    const aCenter = attribute('aCenter', 'vec3') as any;
-    const useCulling = this.options.distanceCulling ?? true;
-
-    material.positionNode = Fn(() => {
-      (instance(instanceCount, this.instanceMatrix) as any).toStack();
-      if (!useCulling) return positionLocal;
-
-      // Instance culling in the vertex stage: past the category distance, or on the planet's
-      // far side, the whole leaf cluster is moved off the planet.
-      //
-      // The horizon test: from a camera at distance d from the centre, the horizon circle sits
-      // at `acos(R/d)` from the camera's own radial — so the cosine threshold is simply R/d
-      // (times a small safety margin). Using sqrt(1 - (R/d)^2) here hid a huge visible band of
-      // foliage (~36°..54° at typical camera heights), which read as "most tree canopies empty".
-      const center = aCenter as any;
-      const radial = center.normalize();
-
-      const tooFar = center.sub(cameraPosition as any).length().step(this.cullDistance);
-
-      const cameraDistance = (cameraPosition as any).length();
-      const horizonCos = FOLIO.planetRadius
-        .div(cameraDistance.max(1))
-        .min(1)
-        .mul(0.985);
-      const behindHorizon = horizonCos.sub(radial.dot((cameraPosition as any).normalize())).step(0.0);
-
-      const hidden = max(tooFar, behindHorizon);
-      return positionLocal.add(radial.mul(hidden.mul(9999)));
-    })();
+    // Positioning: none — the official `instanceMatrix` of the InstancedMesh applies the
+    // instance transform, and per-instance culling happens on the CPU in `update()`.
 
     // Shadows: offset the shadow sample along the sun so thin leaf planes cast a softer shape.
     (material as any).receivedShadowPositionNode = positionLocal.add(
@@ -259,24 +255,6 @@ export class Foliage {
       );
     }
 
-    // --- per-instance center (vertex-stage culling reads it)
-    const centers = new Float32Array(instanceCount * 3);
-    let ci = 0;
-    for (const reference of this.options.references) {
-      if (reference instanceof THREE.Matrix4) {
-        centers[ci * 3] = reference.elements[12];
-        centers[ci * 3 + 1] = reference.elements[13];
-        centers[ci * 3 + 2] = reference.elements[14];
-      } else {
-        reference.updateMatrix();
-        centers[ci * 3] = reference.matrix.elements[12];
-        centers[ci * 3 + 1] = reference.matrix.elements[13];
-        centers[ci * 3 + 2] = reference.matrix.elements[14];
-      }
-      ci++;
-    }
-    this.geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centers, 3));
-
     return material;
   }
 
@@ -284,34 +262,19 @@ export class Foliage {
   private readonly seeThroughEdgeMin = uniform(0.11);
   private readonly seeThroughEdgeMax = uniform(0.57);
 
-  // ------------------------------------------------------------------ instances
-
-  private buildInstances(): THREE.InstancedBufferAttribute {
-    const count = this.options.references.length;
-    const instanceMatrix = new THREE.InstancedBufferAttribute(new Float32Array(count * 16), 16);
-    instanceMatrix.setUsage(THREE.StaticDrawUsage);
-
-    let i = 0;
-    for (const reference of this.options.references) {
-      if (reference instanceof THREE.Matrix4) {
-        reference.toArray(instanceMatrix.array as Float32Array, i * 16);
-      } else {
-        reference.updateMatrix();
-        reference.matrix.toArray(instanceMatrix.array as Float32Array, i * 16);
-      }
-      i++;
-    }
-    return instanceMatrix;
-  }
-
   // ------------------------------------------------------------------ per-frame
 
   /**
    * Folio updates the see-through anchor + edge distances every tick. The fade target is the
    * player's screen position; when there is no local player (menus), the fade disables itself by
    * parking the anchor far outside the screen.
+   *
+   * The per-instance CPU cull also runs here when a camera position is supplied (the caller
+   * throttles to ~10 Hz — the instance counts are a few hundred).
    */
-  update(cameraDistance: number, focusDistance = 1e3): void {
+  update(cameraDistance: number, focusDistance = 1e3, cameraPosition?: THREE.Vector3): void {
+    if (cameraPosition && (this.options.distanceCulling ?? true)) this.cullInstances(cameraPosition);
+
     if (!this.options.seeThrough) return;
     this.seeThroughFocusDistance.value = focusDistance;
 
@@ -326,6 +289,45 @@ export class Foliage {
     const d = Math.max(1, cameraDistance);
     this.seeThroughEdgeMin.value = (3 / d) * multiplier;
     this.seeThroughEdgeMax.value = (15 / d) * multiplier;
+  }
+
+  /**
+   * Per-instance CPU culling: past the category distance or behind the planet's horizon the
+   * instance is written as a zero-scale matrix (invisible). This replaced the old vertex-stage
+   * cull, which depended on the custom instancing path.
+   *
+   * The horizon circle sits at `acos(R/d)` from the camera's own radial — cosine threshold R/d
+   * (with a small margin). Using sqrt(1-(R/d)^2) used to hide a huge visible band of foliage.
+   */
+  private cullInstances(camera: THREE.Vector3): void {
+    const count = this.counts.instances;
+    const camLen = Math.max(1, camera.length());
+    const horizonCos = Math.min(1, FOLIO.planetRadius.value / camLen) * 0.985;
+    const invCam = 1 / camLen;
+    const camX = camera.x * invCam;
+    const camY = camera.y * invCam;
+    const camZ = camera.z * invCam;
+    const maxD = this.cullDistance.value;
+    const maxD2 = maxD * maxD;
+    let changed = false;
+    for (let i = 0; i < count; i++) {
+      const x = this.centers[i * 3];
+      const y = this.centers[i * 3 + 1];
+      const z = this.centers[i * 3 + 2];
+      const dx = x - camera.x;
+      const dy = y - camera.y;
+      const dz = z - camera.z;
+      const tooFar = dx * dx + dy * dy + dz * dz > maxD2;
+      const len = Math.max(1e-4, Math.sqrt(x * x + y * y + z * z));
+      const behind = (x * camX + y * camY + z * camZ) / len < horizonCos;
+      const shown = tooFar || behind ? 0 : 1;
+      if (shown !== this.cullState[i]) {
+        this.cullState[i] = shown;
+        this.mesh.setMatrixAt(i, shown ? this.baseMatrices[i] : this.hidden);
+        changed = true;
+      }
+    }
+    if (changed) this.mesh.instanceMatrix.needsUpdate = true;
   }
 
   dispose(): void {

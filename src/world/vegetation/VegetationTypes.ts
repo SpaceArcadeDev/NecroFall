@@ -9,7 +9,7 @@ export type TreeKind = 'BIRCH' | 'OAK' | 'CHERRY';
 export type BushKind = 'BUSH';
 export type FlowerKind = 'FLOWER';
 export type SceneryKind = 'BRICKS' | 'FENCE' | 'BENCH' | 'CRATE' | 'LANTERN' | 'POLE_LIGHT';
-export type RockKind = 'ROCK' | 'CRYSTAL' | 'SLAB';
+export type RockKind = 'ROCK' | 'CRYSTAL' | 'SLAB' | 'SPIKE';
 
 /** Terrain data packed exactly like the shader attribute contract (see NecroFallTerrainNode). */
 export type TerrainDataTuple = [number, number, number, number];

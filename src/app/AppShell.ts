@@ -399,7 +399,7 @@ export class AppShell implements ShellContext {
    * START A SOLO RUN on one planet: the record board loads here (so the end screen can beat
    * it), the game takes the screen, and the finish reports through the record reducers.
    */
-  startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor): void {
+  startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor, options?: { dev?: boolean }): void {
     const game = this.ensureGame();
     const cache = ClientCache.shared;
     const me = cache.me(this.myHex());
@@ -416,6 +416,7 @@ export class AppShell implements ShellContext {
     try {
       game.startSoloRun({
         mode,
+        dev: options?.dev === true,
         planetKey: planet.key,
         ring: planet.ring,
         universeSeed,

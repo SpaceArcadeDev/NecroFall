@@ -134,7 +134,17 @@ export class PlanetRenderer {
     this.group.add(this.puddles.mesh);
 
     // 3 — grass field (blades vanish inside basins, wake ripples on water)
-    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, deps.ticker, deps.spawnDirection, this.puddles);
+    this.grass = new Grass(
+      deps.surface,
+      deps.nodes,
+      deps.quality,
+      deps.wind,
+      deps.noises,
+      deps.ticker,
+      deps.spawnDirection,
+      this.puddles,
+      deps.time,
+    );
     this.group.add(this.grass.mesh);
 
     // 4 — bushes (leaf-card canopies)

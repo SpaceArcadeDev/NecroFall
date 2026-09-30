@@ -21,6 +21,7 @@ import {
   color,
   float,
   Fn,
+  Loop,
   max,
   mix,
   mod,
@@ -81,6 +82,13 @@ export class Grass {
   private readonly scratchDir = new THREE.Vector3();
   private readonly scratchOffset = new THREE.Vector3();
 
+  /** Trample-trail data texture (xyz = world pos, w = drop time). */
+  private readonly trailTexture: THREE.DataTexture;
+  private readonly trailData: Float32Array;
+  private readonly lastTrailPoint = new THREE.Vector3();
+  private trailCursor = 0;
+  private trailStarted = false;
+
   constructor(
     private readonly surface: PlanetSurface,
     private readonly nodes: TerrainNodeBundle,
@@ -89,11 +97,23 @@ export class Grass {
     private readonly noises: Noises,
     private readonly ticker: Ticker,
     initialDirection: THREE.Vector3,
-    private readonly water?: Puddles,
+    private readonly water: Puddles | undefined,
+    private readonly uTime: any,
   ) {
     this.subdivisions = quality.grassSubdivisions();
     this.halfExtent = quality.grassHalfExtent();
     this.uSize.value = this.halfExtent * 2;
+
+    // ---- trample-trail buffer (blades stay parted where the player walked)
+    this.trailData = new Float32Array(TRAIL_SLOTS * 4);
+    for (let i = 0; i < TRAIL_SLOTS; i++) this.trailData[i * 4 + 3] = -1e3; // “long dead”
+    this.trailTexture = new THREE.DataTexture(this.trailData, TRAIL_SLOTS, 1, THREE.RGBAFormat, THREE.FloatType);
+    this.trailTexture.minFilter = THREE.NearestFilter;
+    this.trailTexture.magFilter = THREE.NearestFilter;
+    this.trailTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.trailTexture.wrapT = THREE.ClampToEdgeWrapping;
+    this.trailTexture.generateMipmaps = false;
+    this.trailTexture.needsUpdate = true;
 
     // Anchor the patch frame at the SPAWN before any data exists — the first
     // update must be a near-identity re-base, never a far-side projection.
@@ -316,7 +336,29 @@ export class Grass {
       const playerDistance = (horizontal as any).length();
       const pushInfluence = smoothstep(1.25, 0.15, playerDistance);
       const pushDir = normalize(horizontal as any);
-      const pushBend = pushDir.mul(pushInfluence.mul(0.55)).mul(tipness).mul(this.uGrassPush);
+      const clearingBend = pushDir.mul(pushInfluence.mul(0.55));
+
+      // ---- TRAMPLE TRAIL: recent player positions linger, so blades stay
+      // pushed along the walked path and spring back over ~1.7 s — the visible
+      // trail behind a moving player. Standing still, only the clearing holds.
+      const trailBend = (() => {
+        const accumulated = vec3(0, 0, 0).toVar();
+        Loop(TRAIL_SLOTS, ({ i }) => {
+          const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
+          const packed = texture(this.trailTexture as any, slotUv) as any;
+          const age = this.uTime.sub(packed.w);
+          const toTrail = basePosition.sub(packed.xyz);
+          const horizontalTrail = toTrail.sub(direction.mul((toTrail as any).dot(direction)));
+          const trailDistance = (horizontalTrail as any).length();
+          const influence = smoothstep(1.15, 0.25, trailDistance).mul(smoothstep(1.7, 0.6, age));
+          accumulated.addAssign(
+            normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
+          );
+        });
+        return accumulated.mul(0.45);
+      })();
+
+      const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
 
       const vertexPosition = basePosition
         .add(facing.mul(shapeX))
@@ -396,6 +438,19 @@ export class Grass {
     // Parting centre = the player's exact world position.
     this.uPushCenter.value.copy(focus);
 
+    // Drop a trample-trail sample every TRAIL_DROP_STEP metres of travel.
+    if (!this.trailStarted || this.lastTrailPoint.distanceTo(focus) > TRAIL_DROP_STEP) {
+      const offset = (this.trailCursor % TRAIL_SLOTS) * 4;
+      this.trailCursor++;
+      this.trailData[offset] = focus.x;
+      this.trailData[offset + 1] = focus.y;
+      this.trailData[offset + 2] = focus.z;
+      this.trailData[offset + 3] = this.uTime.value as number;
+      this.trailTexture.needsUpdate = true;
+      this.lastTrailPoint.copy(focus);
+      this.trailStarted = true;
+    }
+
     // Keep the water-suppression slots pointed at the basins near the field.
     this.updateWaterSlots();
 
@@ -460,6 +515,7 @@ export class Grass {
   dispose(): void {
     this.geometry.dispose();
     this.material.dispose();
+    this.trailTexture.dispose();
   }
 
   get bladeCount(): number {
@@ -472,6 +528,11 @@ const SIDE = new THREE.Vector3(1, 0, 0);
 
 /** Field fraction that keeps full density; the rest tapers (CPU + shader share it). */
 const DENSE_FRACTION = 0.34;
+
+/** Trample-trail ring buffer: recent player positions (xyz + drop time). */
+const TRAIL_SLOTS = 16;
+const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
+const TRAIL_DROP_STEP = 1.1; // metres between trail samples
 
 /** CPU smoothstep (matches the shader semantics). */
 function smoothstepCpu01(edge0: number, edge1: number, x: number): number {

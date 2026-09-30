@@ -123,7 +123,7 @@ export class PlanetRenderer {
 
     // 1 — terrain first: everything else contours to it (plan §46)
     onProgress?.(0.05, 'building terrain mesh');
-    this.terrain = await PlanetTerrain.create(deps.generator, deps.nodes, (ratio) => {
+    this.terrain = await PlanetTerrain.create(deps.generator, deps.nodes, deps.noises, (ratio) => {
       onProgress?.(0.05 + ratio * 0.25, 'building terrain mesh');
     });
     this.group.add(this.terrain.mesh);

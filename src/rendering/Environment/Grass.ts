@@ -293,9 +293,13 @@ export class Grass {
       // ground anywhere on the planet keeps full-size blades (foliaged look
       // like the spawn area); only truly bare ground (mask ≈ 0) stays empty.
       const maskDensity = smoothstep(0.05, 0.16, grass);
+      // PATCHES: planet-stable noise sampled on the blade's world direction
+      // (never frame-local patch coords — those shift on re-base) groups the
+      // lawn into clumps with bare soil between, like the reference world.
+      const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
+      const patchFactor = smoothstep(0.3, 0.55, patchNoise);
       const visibility = rimFade.mul(this.waterSuppression(direction).oneMinus());
-      const density = maskDensity.mul(visibility);
-      const sizeScale = maskDensity.pow(0.4).mul(visibility);
+      const sizeScale = maskDensity.pow(0.4).mul(patchFactor).mul(visibility);
 
       // ---- surface position
       const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));

@@ -9,9 +9,10 @@
  * The build is chunked so the loading screen keeps running.
  */
 import * as THREE from 'three/webgpu';
-import { positionLocal } from 'three/tsl';
+import { mix, normalize, positionLocal, smoothstep, texture } from 'three/tsl';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
+import type { Noises } from './Noises';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
 const RES_X = 320;
@@ -29,6 +30,7 @@ export class PlanetTerrain {
   static async create(
     generator: PlanetGenerator,
     nodes: TerrainNodeBundle,
+    noises: Noises,
     onProgress?: (ratio: number) => void,
   ): Promise<PlanetTerrain> {
     const width = RES_X;
@@ -133,7 +135,13 @@ export class PlanetTerrain {
     const material = new MeshDefaultMaterial({
       colorNode: (() => {
         const terrainData = nodes.terrainNode(positionLocal);
-        return nodes.colorNode(terrainData);
+        const base = nodes.colorNode(terrainData);
+        // DARK SOIL UNDER THE LAWN (the reference look): wherever the ground is
+        // vegetated it renders as shadowed soil — including the bare gaps
+        // between grass patches — so blades pop against it exactly like the
+        // reference world.
+        const grassShade = smoothstep(0.05, 0.3, terrainData.y);
+        return base.mul(mix(1.0, 0.4, grassShade)) as any;
       })(),
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.

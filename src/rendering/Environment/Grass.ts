@@ -129,7 +129,12 @@ export class Grass {
     this.material = this.createMaterial();
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
-    this.mesh.receiveShadow = true;
+    // NO received dynamic shadows on blades: razor-thin triangles are the worst
+    // case for shadow-map bias — the acne flips lit/dark patches ON the blades
+    // as the shadow-follow camera moves with the player (the 'lighting angle
+    // suddenly changes' flicker at distance). The root-shade gradient + the
+    // terrain's own shadows underneath keep the grounded look.
+    this.mesh.receiveShadow = false;
     this.mesh.name = 'grass';
 
     ticker.on(11, () => this.update());
@@ -354,7 +359,6 @@ export class Grass {
       const pushInfluence = smoothstep(1.25, 0.15, playerDistance);
       const pushDir = normalize(horizontal as any);
       const clearingBend = pushDir.mul(pushInfluence.mul(0.55));
-
       // ---- TRAMPLE TRAIL: recent player positions linger, so blades stay
       // pushed along the walked path and spring back over ~1.7 s — the visible
       // trail behind a moving player. Standing still, only the clearing holds.
@@ -384,7 +388,12 @@ export class Grass {
       const vertexPosition = basePosition
         .add(facing.mul(shapeX))
         .add(direction.mul(shapeUp))
-        .add(facing.mul(sway.x))
+        // Sway rides the blade's WORLD-STABLE tangent frame (a pure function of
+        // the blade's own direction) — never the camera-facing axis. Displacing
+        // along `facing` made every blade's wobble direction rotate with the
+        // camera as the player moved: the whole carpet churned = flicker at
+        // distance. World-anchored sway = folio's fixed-axis wind, no churn.
+        .add(tangent.mul(sway.x))
         .add(bitangent.mul(sway.y))
         .add(pushBend);
 

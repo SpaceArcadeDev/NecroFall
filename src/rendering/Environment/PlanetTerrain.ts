@@ -140,11 +140,14 @@ export class PlanetTerrain {
         // terrain darkens exactly where the grass clumps grow — the SAME
         // planet-stable patch field the grass samples (world direction ×9,
         // same thresholds) — so the bare soil between patches stays bright
-        // like folio's dunes instead of the whole terrain going dark.
+        // like folio's dunes. The threshold sits INSIDE the grass gate and the
+        // intensity is gentle, so dark ground only appears as a soft underlay
+        // of the densest clumps (which fully cover it) and never out in the
+        // transition tufts.
         const direction = normalize(positionLocal);
         const patchNoise = texture(noises.perlin, direction.xz.mul(9.0)).r;
-        const patchFactor = smoothstep(0.32, 0.52, patchNoise);
-        return base.mul(mix(1.0, 0.4, patchFactor)) as any;
+        const patchFactor = smoothstep(0.4, 0.52, patchNoise);
+        return base.mul(mix(1.0, 0.45, patchFactor)) as any;
       })(),
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.

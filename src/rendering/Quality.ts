@@ -75,19 +75,17 @@ export class Quality {
 
   /** Grass blade cells per side (plan §14, raised to folio density). */
   grassSubdivisions(): number {
-    return this.level === 0 ? 620 : this.level === 1 ? 450 : 340;
+    return this.level === 0 ? 660 : this.level === 1 ? 480 : 370;
   }
 
   /**
    * Grass field half extent in metres — the moving detail window (§39/§68).
-   * Folio-density tuning: folio runs ~280² blades over a SMALL near field
-   * (≈50–90 blades/m², heavily overlapped — no ground gaps). Ours must fit
-   * the same density into the dense core (34% of the extent), so the extent
-   * is sized for blade density, not for reach: even Q2 still overshoots the
-   * ~45 m horizon of the 113 m planet.
+   * Coverage-first tuning: the blade budget concentrates into a smaller field
+   * (still well past the ~45 m horizon) so patch cores stay ~50 blades/m² and
+   * blades OVERLAP everywhere in view — the dark patch soil is always covered.
    */
   grassHalfExtent(): number {
-    return this.level === 0 ? 90 : this.level === 1 ? 66 : 50;
+    return this.level === 0 ? 70 : this.level === 1 ? 52 : 40;
   }
 
   /** Foliage (leaf cards) fade distance. */

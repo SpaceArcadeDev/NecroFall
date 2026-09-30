@@ -537,7 +537,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const SIDE = new THREE.Vector3(1, 0, 0);
 
 /** Field fraction that keeps full density; the rest tapers (CPU + shader share it). */
-const DENSE_FRACTION = 0.34;
+const DENSE_FRACTION = 0.5;
 
 /** Trample-trail ring buffer: recent player positions (xyz + drop time). */
 const TRAIL_SLOTS = 18;

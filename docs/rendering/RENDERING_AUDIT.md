@@ -26,7 +26,7 @@
 | WIND | `Environment/Wind.ts` — ONE field; derived from the planet's noises inside `createPlanetWorld` | plan §18 |
 | VISIBILITY / CULLING | CPU-side per system: trees/bushes/rocks/spikes/crystals fade-cull by distance; `Grass` rim fade + per-blade hash cull | no tile streaming in this build (see §4) |
 | PHYSICS SURFACE | `Physics/PlanetCollider.ts` + `Physics/PhysicsSurface.ts` (analytic, samples `PlanetSurface`) | plan §41 |
-| GAMEPLAY VISUALS (TSL) | `towers/ShieldMaterial.ts`, `towers/PowerLines.ts`, `effects/Telegraphs.ts`, `effects/Effects.ts`, `effects/BillboardParticles.ts`, `enemies/EnemyModels.ts`, `customization/MoteEmitter.ts` | gameplay reads `NecroChunks` (the SHADER_GLOBALS mirror) |
+| GAMEPLAY VISUALS (TSL) | `towers/ShieldMaterial.ts`, `towers/PowerLines.ts`, `effects/Telegraphs.ts`, `effects/Effects.ts`, `effects/BillboardParticles.ts`, `enemies/EnemyModels.ts`, `customization/MoteEmitter.ts` | gameplay reads `NecroChunks` — its `NECRO_UNIFORMS` are synced from the folio `WorldGlobals` each frame (same sun, ambient and range fog as the world; `SHADER_GLOBALS` is only the pre-world fallback) |
 | GAMEPLAY VISUALS (classic) | Lambert/Basic materials in `player/`, `towers/`, `world/Bases|Pads`, `effects/`, … — lit by the ONE classic fill owned by `Lighting` | §54: gameplay not rewritten; it consumes the environment owner |
 | UI PREVIEW RENDERERS | `ui/ItemThumbs.ts`, `ui/SelectionPreview.ts` build their own tiny offscreen `WebGPURenderer`s | **Sanctioned exception** (§3): they never render the world and share no resources with the world renderer |
 
@@ -40,10 +40,16 @@
 2. **Wind seed divergence (fixed).** The game previously built a shared wind from a FIXED noise
    seed while the dev world derived it from the planet seed. `createPlanetWorld` now derives ONE
    wind from `seed ^ 0x51ab` for both worlds (§30/§31).
-3. **Two construction paths (fixed).** Dev world and match built the planet stack inline,
+3. **Two lighting models (fixed).** Gameplay TSL materials shaded through `NecroChunks` reading the
+   legacy purple `SHADER_GLOBALS` (its own sun that followed the player, purple ambient, exp²
+   purple fog) while the world shaded with the folio rig — objects never matched the ground under
+   them. `syncNecroChunks` now mirrors the folio environment (same sun direction/colour, warm
+   ambient family, SAME range fog `smoothstep(near, far, d)` + fog colour). `SHADER_GLOBALS`
+   remains only as the pre-world fallback.
+4. **Two construction paths (fixed).** Dev world and match built the planet stack inline,
    duplicating (and drifting): seed handling, bake, node creation, globals, materials order.
    `createPlanetWorld` is now the single path.
-4. **One terrain generator (kept).** `PlanetGenerator` (renderer side) wraps the SAME
+5. **One terrain generator (kept).** `PlanetGenerator` (renderer side) wraps the SAME
    `TerrainGenerator`/`BiomeGenerator` the gameplay `Planet` facade uses; the rank-match bias
    (`focusDir`) flows through both (§48: no camera-relative sampling anywhere).
 
@@ -64,6 +70,14 @@
 3. **Points/`gl_PointSize` do not exist in WGSL** — all particle systems use
    `effects/BillboardParticles.ts` (instanced quads). No `THREE.Points` in `src/`.
 4. **`ShaderMaterial` must never come back** — no GLSL material remains in `src/`.
+5. **Frame-stable shader inputs (the grass "popping while moving" fix).** The grass field re-bases
+   onto the player every ~17 m of walking, which rewrites every blade's frame-local patch coords.
+   Two per-blade inputs were sampled from those coords — the blade height noise (`perlin(patch)`)
+   and the wind phase (`wind.offsetNode(patch)`) — plus a rim cull hash, so each re-base re-rolled
+   the entire field at once. All three now use WORLD-stable data (the blade's surface direction /
+   world position). Rim recycling is additionally a per-blade STAGGERED SHRINK to zero (window
+   shifted by a world-stable hash, always ending before the wrap) instead of a binary cull — no
+   blade ever pops mid-size, and every wrap happens at zero size (§17/§39).
 
 ## 4. Deliberate deviations from the plan's file layout
 

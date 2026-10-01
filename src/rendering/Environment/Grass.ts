@@ -137,7 +137,9 @@ export class Grass {
     this.mesh.receiveShadow = false;
     this.mesh.name = 'grass';
 
-    ticker.on(11, () => this.update());
+    // NOTE: no ticker subscription — the world orchestrator calls `update(focus)` once per
+    // frame at its own stage (PlanetRenderer.update). Subscribing here too ran the re-base
+    // pass twice per frame.
 
     quality.events.on('change', () => {
       const subs = this.quality.grassSubdivisions();
@@ -283,19 +285,6 @@ export class Grass {
       const loopZ = mod(offset.y.sub(this.uCenter2.y).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.y);
       const patch = vec2(loopX, loopZ);
 
-      // ---- rim fade — recycling happens at zero size (no popping, no hard edge).
-      // The boundary CULLS blades one-by-one in hash order (see rimCull) instead
-      // of scaling them all together: a uniform grow/shrink wave at the field
-      // edge is exactly what reads as "grass popping in" while moving; single
-      // blades vanishing among a dense field, far away, do not.
-      const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
-      const rimFade = smoothstep(0.78, 0.97, rimDistance).oneMinus();
-      const bladeHash = (patch.x.mul(12.9898).add(patch.y.mul(78.233)) as any)
-        .sin()
-        .mul(43758.5453)
-        .fract();
-      const rimCull = select(bladeHash.lessThan(rimFade), float(1), float(0));
-
       // ---- sphere mapping: patch coords (metres) → direction on the planet.
       // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
       const patchScaled = patch.mul(inverseRadius);
@@ -312,7 +301,19 @@ export class Grass {
       // packed clump exactly like the spawn area; only bare gaps stay empty.
       const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
       const patchFactor = smoothstep(0.32, 0.52, patchNoise);
-      const visibility = rimCull.mul(this.waterSuppression(direction).oneMinus());
+
+      // ---- rim: every blade SHRINKS smoothly to zero before the wrap boundary. The shrink
+      // window is staggered by a WORLD-STABLE hash (derived from the blade's direction — never
+      // the frame coords, which are rewritten on every re-base) so neighbours fade one by one,
+      // no blade ever pops mid-size, and every recycle at ±half-extent happens at zero size
+      // (plan §17/§39).
+      const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
+      const bladeHash = (direction.x.mul(12.9898).add(direction.y.mul(78.233)).add(direction.z.mul(37.719)) as any)
+        .sin()
+        .mul(43758.5453)
+        .fract();
+      const rimScale = smoothstep(bladeHash.mul(0.22).add(0.72), 0.97, rimDistance).oneMinus();
+      const visibility = rimScale.mul(this.waterSuppression(direction).oneMinus());
       // Outside the patches a sparse baseline remains (small random tufts), so
       // bare zones still have some grass — but the dark soil shading in the
       // terrain keys on the patch CORE only (full-blade zone), so it can never
@@ -334,7 +335,10 @@ export class Grass {
       const bladeWidth = this.uBladeWidth.mul(sizeScale);
       const bladeHeight = this.uBladeHeight
         .mul(this.uBladeRandomness.mul(randomVertex).add(this.uBladeRandomness.oneMinus()))
-        .mul(texture(this.noises.perlin, patch.mul(0.0321)).r.add(0.5))
+        // WORLD-STABLE size noise: sampled from the blade's own surface position, never from the
+        // frame coords — a re-base used to re-roll every blade's size at once (the "grass pops
+        // in as I move" bug).
+        .mul(texture(this.noises.perlin, vec2(basePosition.x, basePosition.z).mul(0.0321)).r.add(0.5))
         .mul(sizeScale);
 
       const sideX = select(isRightBase, bladeWidth, bladeWidth.negate()) as any;
@@ -354,8 +358,11 @@ export class Grass {
       const toCamera = cameraPosition.sub(basePosition);
       const facing = normalize(cross(direction, toCamera as any) as any);
 
-      // ---- wind (ONE field for the whole world — plan §18)
-      const windOffset = wind.offsetNode(patch) as any;
+      // ---- wind (ONE field for the whole world — plan §18). The phase is sampled from the
+      // blade's WORLD position: frame coords are rewritten by the re-base, and feeding them to
+      // the wind made every blade's sway phase jump each time the frame re-centred (~17 m of
+      // walking) — the whole field churned. World coordinates keep the ripple continuous.
+      const windOffset = wind.offsetNode(vec2(basePosition.x, basePosition.z)) as any;
       const tipness = isTip.select(float(1), float(0));
       const sway = windOffset.mul(tipness).mul(shapeUp).mul(this.uSwayStrength);
 

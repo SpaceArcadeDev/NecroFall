@@ -12,21 +12,28 @@
  * SHADER_GLOBALS values into the TSL uniforms (single source of truth).
  */
 import * as THREE from 'three/webgpu';
-import { exp, float, Fn, max, mix, normalize, sin, smoothstep, uniform, vec2, vec3 } from 'three/tsl';
+import { float, Fn, max, mix, normalize, sin, smoothstep, uniform, vec2, vec3 } from 'three/tsl';
 import { SHADER_GLOBALS } from '../../world/ShaderGlobals';
+import { WorldGlobals } from '../WorldGlobals';
 
 // ---------------------------------------------------------------- uniforms
 
-/** TSL uniforms mirroring SHADER_GLOBALS + the shared wind state. */
+/** TSL uniforms mirroring the environment (the legacy store is only the pre-world fallback). */
 export const NECRO_UNIFORMS = {
   uTime: uniform(0),
   uCamPos: uniform(new THREE.Vector3()),
   uSunDir: uniform(new THREE.Vector3(1, 0.85, 0.6).normalize()),
   uSunColor: uniform(new THREE.Color(0xfff0d8).multiplyScalar(0.95)),
-  uSkyColor: uniform(new THREE.Color(0x9f8ce0).multiplyScalar(0.72)),
-  uGroundColor: uniform(new THREE.Color(0x2a1d3d).multiplyScalar(0.8)),
-  uRimColor: uniform(new THREE.Color(0xb9a6ff)),
-  uFogColor: uniform(new THREE.Color(0x171029)),
+  // Ambient family — warm sky / vegetation bounce / soft teal rim, matching the world's palette
+  // (the old purple set made every gameplay object read as washed grey against the warm world).
+  uSkyColor: uniform(new THREE.Color(0xd8e6c8).multiplyScalar(0.55)),
+  uGroundColor: uniform(new THREE.Color(0x2f6b4f).multiplyScalar(0.85)),
+  uRimColor: uniform(new THREE.Color(0x9fd6c9)),
+  uFogColor: uniform(new THREE.Color(0x1d3a30)),
+  /** Range-fog bounds — kept equal to the world's Fog (near 34 / far 270). */
+  uFogNear: uniform(34),
+  uFogFar: uniform(270),
+  /** Legacy exp² density (kept for compatibility; nfFog uses the range form). */
   uFogDensity: uniform(0.00125),
   uWindDir: uniform(new THREE.Vector2(0.82, 0.57)),
   uWindStrength: uniform(1),
@@ -34,9 +41,19 @@ export const NECRO_UNIFORMS = {
 } as const;
 
 /**
- * Mirrors the legacy SHADER_GLOBALS (and shared wind) into the TSL uniforms.
- * Call once per frame while both stacks coexist; after Phase 6 the TSL side
- * becomes the owner and this simply feeds itself.
+ * How much of the world's `sun color × intensity` the gameplay lighting model takes.
+ * `nfLight` adds its ambient on top, and the world's own materials shade at the full
+ * `color × intensity` — 0.9 puts gameplay objects within a few percent of world surfaces.
+ */
+const GAMEPLAY_SUN_SCALE = 0.9;
+
+/**
+ * Mirrors the frame state into the TSL uniforms.
+ *
+ * THE environment owner rule (plan §4/§23): while a world exists, EVERY gameplay material
+ * shades with the SAME sun, ambient and fog the folio environment uses — `WorldGlobals` is the
+ * single source of truth. `SHADER_GLOBALS` remains only as the pre-world (menu/loading)
+ * fallback for time and camera position.
  */
 export function syncNecroChunks(wind?: {
   dir: { x: number; y: number };
@@ -46,13 +63,28 @@ export function syncNecroChunks(wind?: {
   const g = SHADER_GLOBALS;
   NECRO_UNIFORMS.uTime.value = g.uTime.value as number;
   NECRO_UNIFORMS.uCamPos.value.copy(g.uCamPos.value as THREE.Vector3);
-  NECRO_UNIFORMS.uSunDir.value.copy(g.uSunDir.value as THREE.Vector3);
-  NECRO_UNIFORMS.uSunColor.value.copy(g.uSunColor.value as THREE.Color);
-  NECRO_UNIFORMS.uSkyColor.value.copy(g.uSkyColor.value as THREE.Color);
-  NECRO_UNIFORMS.uGroundColor.value.copy(g.uGroundColor.value as THREE.Color);
-  NECRO_UNIFORMS.uRimColor.value.copy(g.uRimColor.value as THREE.Color);
-  NECRO_UNIFORMS.uFogColor.value.copy(g.uFogColor.value as THREE.Color);
-  NECRO_UNIFORMS.uFogDensity.value = g.uFogDensity.value as number;
+
+  const globals = WorldGlobals.current;
+  const lighting = globals?.lighting ?? null;
+  const fog = globals?.fog ?? null;
+  if (lighting) {
+    const direction = lighting.directionUniform.value as THREE.Vector3;
+    NECRO_UNIFORMS.uSunDir.value.copy(direction).normalize();
+    const color = lighting.colorUniform.value as THREE.Color;
+    const intensity = lighting.intensityUniform.value as number;
+    NECRO_UNIFORMS.uSunColor.value.copy(color).multiplyScalar(intensity * GAMEPLAY_SUN_SCALE);
+  } else {
+    NECRO_UNIFORMS.uSunDir.value.copy(g.uSunDir.value as THREE.Vector3);
+    NECRO_UNIFORMS.uSunColor.value.copy(g.uSunColor.value as THREE.Color);
+  }
+  if (fog) {
+    NECRO_UNIFORMS.uFogColor.value.copy(fog.color.value as THREE.Color);
+    NECRO_UNIFORMS.uFogNear.value = fog.near.value as number;
+    NECRO_UNIFORMS.uFogFar.value = fog.far.value as number;
+  } else {
+    NECRO_UNIFORMS.uFogColor.value.copy(g.uFogColor.value as THREE.Color);
+    NECRO_UNIFORMS.uFogDensity.value = g.uFogDensity.value as number;
+  }
   if (wind) {
     NECRO_UNIFORMS.uWindDir.value.set(wind.dir.x, wind.dir.y);
     NECRO_UNIFORMS.uWindStrength.value = wind.strength;
@@ -78,11 +110,14 @@ export const nfLight = Fn(([albedo, n, radialUp, wp, rimStrength]: any[]) => {
   return lit;
 });
 
-/** GLSL `nfFog`: exponential-squared distance fog. */
+/**
+ * Distance fog matching the WORLD's fog exactly: `smoothstep(near, far, distance)` — the same
+ * curve three's `rangeFogFactor(near, far)` (which the world materials use) applies, with the
+ * folio fog colour. Gameplay objects fade into the same haze as the terrain behind them.
+ */
 export const nfFog = Fn(([wp]: any[]) => {
   const d = NECRO_UNIFORMS.uCamPos.sub(wp).length();
-  const inside = d.mul(NECRO_UNIFORMS.uFogDensity).pow(2.0).negate();
-  return float(1).sub(exp(inside).clamp(0.0, 1.0));
+  return smoothstep(NECRO_UNIFORMS.uFogNear, NECRO_UNIFORMS.uFogFar, d).clamp(0.0, 1.0);
 });
 
 // ---------------------------------------------------------------- wind / dirt

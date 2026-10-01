@@ -15,6 +15,7 @@ import {
   normalWorld,
   positionLocal,
   positionWorld,
+  smoothstep,
   uniform,
   uv,
   vec3,
@@ -54,7 +55,10 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     blending: THREE.AdditiveBlending,
   });
   material.colorNode = Fn(() => {
-    const fres = fresnelNode(2.2);
+    const fres = fresnelNode(2.6);
+    // LIT shell: the sun-facing side carries more of the energy colour (plan §42) — the dome
+    // reads as a lit glass bubble with a shaded side, instead of a flat additive wash.
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.6).add(0.4);
 
     // spherical lat/long energy lattice, scrolling over time
     const l = (positionLocal as any).normalize();
@@ -66,10 +70,14 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     // rising containment bands
     const bands = l.y.mul(5).sub(NECRO_UNIFORMS.uTime.mul(0.12)).fract().sub(0.5).abs().smoothstep(0.0, 0.18).oneMinus();
 
-    const alpha = uOpacity.mul(fres.add(grid.mul(0.55)).add(bands.mul(0.35)).add(0.3)).clamp(0, 0.95);
-    const col = uColor.mul(fres.mul(1.3).add(grid.mul(0.7)).add(bands.mul(0.4)).add(0.6));
+    // Edge-weighted bubble: the rim carries the glow, the face stays sheer so the world is
+    // never tinted flat through the dome.
+    const alpha = uOpacity.mul(fres.add(grid.mul(0.5)).add(bands.mul(0.3)).mul(sunLit)).clamp(0, 0.85);
+    const col = uColor.mul(fres.mul(1.5).add(grid.mul(0.6)).add(bands.mul(0.35)).add(0.15).mul(sunLit));
     return vec4(col, alpha);
   })();
+  // The material owns its look — never the scene's legacy fog mirror (plan §24).
+  material.fog = false;
   return attachUniforms(material, { uColor, uOpacity });
 }
 
@@ -89,13 +97,16 @@ export function createBaseConeMaterial(color: number, opacity: number): THREE.Me
     // segments never pile into a bright knot where the cone converges.
     const h = (uv() as any).y.clamp(0, 1);
     const fade = h.smoothstep(0.12, 0.82).oneMinus();
-    const fres = fresnelNode(2.0);
+    const fres = fresnelNode(2.4);
+    // Lit cone: sun-facing facets carry the colour, the back reads as shade.
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.6).add(0.4);
     // containment bands climbing the cone
     const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.0, 0.22).oneMinus();
-    const a = uOpacity.mul(fade).mul(fres.mul(0.85).add(bands.mul(0.55)).add(0.5)).clamp(0, 0.92);
-    const col = uColor.mul(fres.mul(0.8).add(bands.mul(0.6)).add(0.9));
+    const a = uOpacity.mul(fade).mul(fres.mul(0.9).add(bands.mul(0.5)).add(0.12).mul(sunLit)).clamp(0, 0.85);
+    const col = uColor.mul(fres.mul(1.1).add(bands.mul(0.5)).add(0.25).mul(sunLit));
     return vec4(col, a);
   })();
+  material.fog = false;
   return attachUniforms(material, { uColor, uOpacity });
 }
 
@@ -122,17 +133,22 @@ export function createBeamMaterial(color: number, opacity: number, core = 1): TH
     const flick = NECRO_UNIFORMS.uTime.mul(uCore.mul(0.6).add(1.1)).add((uv() as any).y.mul(7)).sin().mul(0.12).add(0.88);
 
     const d = (NECRO_UNIFORMS.uCamPos as any).sub(positionWorld).length();
-    const fog = d.mul(NECRO_UNIFORMS.uFogDensity).pow(2).negate().exp().oneMinus().clamp(0, 1);
+    // WORLD fog (the same range curve + colour the terrain fades with) — the ray dissolves
+    // into the same haze as everything else.
+    const fog = smoothstep(NECRO_UNIFORMS.uFogNear, NECRO_UNIFORMS.uFogFar, d).clamp(0, 1);
 
-    const across = facing.pow(1.7);
-    const profile = mix(0.1, 1.3, across);
+    // Richer edge contrast: the silhouette is bright, the middle sheer (a light ray, not a
+    // flat additive sheet).
+    const across = facing.pow(2.1);
+    const profile = mix(0.1, 1.35, across);
 
     const alpha = uOpacity.mul(rise).mul(flick).mul(profile).mul(fog.mul(0.9).oneMinus());
-    // LIGHTER, not white: the ray keeps its banner's colour.
-    const tint = mix(uColor, vec3(1, 1, 1), uCore.mul(0.12).add(0.2));
+    // The ray keeps its banner colour; only the core tip whitens.
+    const tint = mix(uColor, vec3(1, 1, 1), uCore.mul(0.1).add(0.08));
     const hot = (uv() as any).y.mul(-7).exp();
-    const col = tint.mul(across.mul(0.95).add(hot).add(1.1)).mul(uCore.mul(0.35).add(0.85));
+    const col = tint.mul(across.mul(1.05).add(hot).add(0.62)).mul(uCore.mul(0.35).add(0.85));
     return vec4(col, alpha);
   })();
+  material.fog = false;
   return attachUniforms(material, { uColor, uOpacity, uCore });
 }

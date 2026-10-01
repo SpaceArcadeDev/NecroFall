@@ -34,19 +34,12 @@ import { Ticker } from '../rendering/Ticker';
 import { Time } from '../rendering/Time';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { Fog } from '../rendering/Environment/Fog';
-import { Wind } from '../rendering/Environment/Wind';
-import { Noises } from '../rendering/Environment/Noises';
-import { WorldGlobals } from '../rendering/WorldGlobals';
-import { Materials } from '../rendering/materials/Materials';
-import { createTerrainGradient } from '../rendering/materials/PlanetPalette';
 import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
-import { PreRenderer } from '../rendering/PreRenderer';
-import { createTerrainNodes } from '../rendering/Environment/PlanetTerrainNodes';
+import { createPlanetWorld } from '../rendering/Environment/PlanetWorld';
 import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
-import { PlanetGenerator } from '../planet/PlanetGenerator';
-import { PlanetSurfaceData } from '../planet/PlanetSurfaceData';
+import { DebugSwitches, StatsOverlay } from '../rendering/DebugSwitches';
+import { RenderDebug, printRenderBaseline } from '../rendering/RenderDebug';
 import { PlanetSurface } from '../planet/PlanetSurface';
-import { makePlanetSpec } from '../planet/PlanetSeed';
 import type { WebGPURenderer } from 'three/webgpu';
 import { Effects } from '../effects/Effects';
 import { TelegraphSystem } from '../effects/Telegraphs';
@@ -300,7 +293,11 @@ export class Game {
   /** One loader + wind field, shared by every planet rebuild (materials are per-build: their
    *  MeshDefaultMaterial binds the match's OWN terrain nodes at construction). */
   private envLoader: ResourcesLoader | null = null;
-  private envWind: Wind | null = null;
+  /** Static URL diagnostics (plan §33) — the same vocabulary the Dev World accepts. */
+  private readonly debugSwitches: DebugSwitches;
+  /** `?renderBaseline=1` / `?foliageDebug=1` overlay. */
+  private debugOverlay: StatsOverlay | null = null;
+  private debugOverlayAccum = 0;
   /** Stale-build guard: only the latest world build may attach itself to the running planet. */
   private worldToken = 0;
   /** True once the renderer backend finished initialising — `render()` throws before that. */
@@ -676,22 +673,31 @@ export class Game {
     this.applyRenderScale();
     this.renderer.setClearColor(0x09060f);
 
-    // Shared folio infrastructure: one asset loader + one wind field (materials are built per
-    // match inside `wireWorld` — they bind the match planet's OWN terrain data at construction).
+    // Shared folio infrastructure: one asset loader. Materials + the wind field are built per
+    // match inside `wireWorld` (they bind the match planet's OWN terrain data at construction).
     this.envLoader = new ResourcesLoader(this.renderer);
-    this.envWind = new Wind(new Noises(0x51ab0ff5), this.ticker);
 
-    // The folio atmosphere + lighting rig. Fog drives the screen-space sky; the legacy FogExp2
-    // mirror keeps three's standard materials fogged like before. Lighting owns the ONE
-    // shadow-casting sun; the hemisphere fill + rim keep the classic (non-TSL) materials lit.
-    this.fog = new Fog(this.scene, { near: 34, far: 270 });
-    this.lighting = new Lighting(this.scene, this.quality, CONFIG.planetRadius, { shadowAmplitude: 46 });
-    this.scene.fog = new THREE.FogExp2(0x171029, 0.0012);
-    const hemi = new THREE.HemisphereLight(0xb9a6ff, 0x2a1d3d, 1.15);
-    this.scene.add(hemi);
-    const rim = new THREE.DirectionalLight(0x7a5cff, 0.35);
-    rim.position.set(-1, 0.2, -0.8).multiplyScalar(400);
-    this.scene.add(rim);
+    // The folio atmosphere + lighting rig — the ONE environment owner (plan §4/§24). The legacy
+    // FogExp2 mirror + the classic hemisphere/rim fill live INSIDE these systems, so the classic
+    // (non-TSL) gameplay materials keep their familiar look without a second ad-hoc environment.
+    this.fog = new Fog(this.scene, { near: 34, far: 270, legacyExp2: { color: 0x171029, density: 0.0012 } });
+    this.lighting = new Lighting(this.scene, this.quality, CONFIG.planetRadius, {
+      shadowAmplitude: 46,
+      classicFill: { skyColor: 0xb9a6ff, groundColor: 0x2a1d3d, intensity: 1.15, rimColor: 0x7a5cff, rimIntensity: 0.35 },
+    });
+    this.debugSwitches = new DebugSwitches();
+    PlanetSurface.debugCounters = RenderDebug.foliageDebug;
+    const forcedQuality = this.debugSwitches.bag['quality'];
+    if (forcedQuality !== undefined) {
+      this.quality.changeLevel(Number(forcedQuality) as 0 | 1 | 2);
+      this.quality.adaptive = false;
+    }
+    if (!this.debugSwitches.enabled('shadows', true)) {
+      this.rendering.renderer.shadowMap.enabled = false;
+      this.lighting.setShadowsEnabled(false);
+    }
+    if (!this.debugSwitches.enabled('fog', true)) this.fog.setEnabled(false);
+    if (!this.debugSwitches.enabled('fill', true)) this.lighting.setFillEnabled(false);
     this.buildStarfield();
 
     this.cam = new GameCamera(window.innerWidth / window.innerHeight);
@@ -1302,8 +1308,7 @@ export class Game {
    */
   private wireWorld(focusDir: THREE.Vector3 | null): void {
     const loader = this.envLoader;
-    const wind = this.envWind;
-    if (!loader || !wind) return;
+    if (!loader) return;
     const token = ++this.worldToken;
     const planet = this.planet;
     this.envWorld?.dispose();
@@ -1312,53 +1317,33 @@ export class Game {
     void (async () => {
       // The backend must be initialised before any asset (KTX2/GLTF) loading can probe it.
       await this.rendererInitPromise;
-      const spec = makePlanetSpec(
-        planet.seed,
-        planet.ring,
-        CONFIG.planetRadius,
-        `${planet.archetype.biome} · seed ${planet.seed}`,
-      );
-      // MUST match the planet facade's own TerrainGenerator (rank matches bias the battlefield
-      // towards the tower centre; menus/classic do not) or the rendered ground and the analytic
-      // gameplay field would drift apart.
-      if (planet.focusDir) spec.focusDir = planet.focusDir;
-      const generator = new PlanetGenerator(spec);
-      const surfaceData = await PlanetSurfaceData.bake(generator);
-      if (token !== this.worldToken || this.planet !== planet) return;
-      const surface = new PlanetSurface(generator, surfaceData);
-      const gradientTexture = createTerrainGradient(generator.gradientStops());
-      const nodes = createTerrainNodes(surfaceData, gradientTexture, spec.radius);
-      const noises = new Noises(planet.seed ^ 0x51ab);
-      const globals = new WorldGlobals();
-      globals.radius = spec.radius;
-      globals.lighting = this.lighting;
-      globals.fog = this.fog;
-      globals.terrain = nodes;
-      globals.wind = wind;
-      WorldGlobals.current = globals;
-      // Materials bind the globals at construction — build them AFTER the match's nodes exist.
-      const materials = new Materials({});
       // Spawn clearing: the battlefield centre (towers), the planet's focus, or the local player.
       const spawnDirection = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
       const focus = focusDir ?? planet.focusDir ?? this.localPlayer?.position ?? null;
       if (focus) spawnDirection.copy(focus).normalize();
-      const world = await PlanetRenderer.create({
+      // THE shared factory (plan §30): a production match builds the same world the Dev World
+      // does — same generator, same bake, same environment systems, same visibility rules.
+      const result = await createPlanetWorld({
         scene: this.scene,
         ticker: this.ticker,
         quality: this.quality,
-        materials,
         loader,
-        preRenderer: new PreRenderer((planet.seed + 3) >>> 0),
-        wind,
-        noises,
+        // NOTE: no `wind` here — the factory derives ONE wind field from the planet's own noises,
+        // exactly like the Dev World, so the two can never disagree (plan §30/§31).
         fog: this.fog,
         lighting: this.lighting,
-        surface,
-        generator,
-        nodes,
-        time: this.envTime.uTime,
+        seed: planet.seed,
+        ring: planet.ring,
+        radius: CONFIG.planetRadius,
+        label: `${planet.archetype.biome} · seed ${planet.seed}`,
+        // MUST match the planet facade's own TerrainGenerator (rank matches bias the battlefield
+        // towards the tower centre; menus/classic do not) or the rendered ground and the analytic
+        // gameplay field would drift apart.
+        focusDir: planet.focusDir,
         spawnDirection,
+        time: this.envTime.uTime,
       });
+      const world = result.world;
       if (token !== this.worldToken || this.planet !== planet) {
         world.dispose();
         return;
@@ -1366,9 +1351,9 @@ export class Game {
       this.envWorld = world;
       planet.attachWorld({
         terrainMesh: world.terrain.mesh,
-        reliefMin: surfaceData.reliefMin,
-        reliefMax: surfaceData.reliefMax,
-        waterLevel: surfaceData.waterLevel,
+        reliefMin: result.surfaceData.reliefMin,
+        reliefMax: result.surfaceData.reliefMax,
+        waterLevel: result.surfaceData.waterLevel,
         setDecorationsVisible: (visible) => world.applyVisibility({
           grass: true,
           foliage: visible,
@@ -1388,9 +1373,73 @@ export class Game {
           particles: mul > 0.3,
         }),
       });
+      // Debug switches (plan §33): the SAME vocabulary the Dev World accepts — component toggles
+      // and the baseline/foliage overlays.
+      this.applyDebugVisibility(world);
+      if (this.debugSwitches.wireframe) this.rendering.setWireframeAll(this.scene, true);
+      if (RenderDebug.baseline) {
+        this.debugOverlay ??= new StatsOverlay();
+        printRenderBaseline(this.renderBaselineInput('game', world), this.debugOverlay);
+      } else if (RenderDebug.foliageDebug) {
+        this.debugOverlay ??= new StatsOverlay();
+      }
     })().catch((error) => {
       console.warn('[NECROFALL] folio world failed to build', error);
     });
+  }
+
+  /** One-shot visibility flags from the URL switches (`?grass=0`, `?foliage=0`, …). */
+  private applyDebugVisibility(world: PlanetRenderer): void {
+    world.applyVisibility({
+      grass: this.debugSwitches.enabled('grass', true),
+      foliage: this.debugSwitches.enabled('foliage', true),
+      rocks: this.debugSwitches.enabled('rocks', true),
+      spikes: this.debugSwitches.enabled('spikes', true),
+      crystals: this.debugSwitches.enabled('crystals', true),
+      water: this.debugSwitches.enabled('water', true),
+      particles: this.debugSwitches.enabled('particles', true),
+    });
+  }
+
+  /** The `?renderBaseline=1` payload (§1). */
+  private renderBaselineInput(worldName: string, world: PlanetRenderer) {
+    const renderer = this.rendering.renderer as any;
+    return {
+      world: worldName,
+      renderer: {
+        version: renderer?.constructor?.name === 'WebGPURenderer' ? 'three r183 (webgpu)' : 'three r183',
+        backend: this.rendering.backend,
+        pixelRatio: this.viewport.pixelRatio,
+        toneMapping: renderer?.toneMapping ?? -1,
+        size: { x: this.viewport.width, y: this.viewport.height },
+      },
+      quality: `level ${this.quality.level}`,
+      camera: { fov: this.cam.camera.fov, near: this.cam.camera.near, far: this.cam.camera.far },
+      planet: { radius: CONFIG.planetRadius, seed: this.planet.seed, ring: this.planet.ring },
+      lighting: this.lighting.baseline,
+      fog: this.fog.baseline,
+      foliage: world.stats,
+    };
+  }
+
+  /** `?foliageDebug=1` live counters (plan §33) — refreshed twice per second. */
+  private updateDebugOverlay(): void {
+    if (!RenderDebug.foliageDebug || !this.debugOverlay) return;
+    this.debugOverlayAccum += this.ticker.delta;
+    if (this.debugOverlayAccum < 0.5) return;
+    this.debugOverlayAccum = 0;
+    const overlay = this.debugOverlay;
+    const world = this.envWorld;
+    if (world) {
+      for (const [label, value] of Object.entries(world.stats)) overlay.set(`fol.${label}`, value);
+    }
+    overlay.set('fol.quality', `level ${this.quality.level}`);
+    overlay.set('fol.cull', `${this.quality.grassHalfExtent()} m`);
+    overlay.set('fol.fade', `${(this.quality.grassHalfExtent() * 0.78).toFixed(1)}–${(this.quality.grassHalfExtent() * 0.97).toFixed(1)} m`);
+    overlay.set('terrainSamples', `${PlanetSurface.debugSamples}`);
+    overlay.set('surfaceQueries', `${PlanetSurface.debugQueries}`);
+    PlanetSurface.debugSamples = 0;
+    PlanetSurface.debugQueries = 0;
   }
 
   start(): void {
@@ -1423,6 +1472,7 @@ export class Game {
     this.ticker.on(20, () => {
       const focus = this.localPlayer?.position ?? this.camTarget.position;
       this.envWorld?.update(focus, this.cam.camera);
+      this.updateDebugOverlay();
     });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
     const wake = (): void => { this.lastInteractionAt = performance.now(); };

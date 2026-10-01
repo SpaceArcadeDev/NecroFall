@@ -12,6 +12,13 @@ import type { FogGlobals } from '../WorldGlobals';
 export interface FogOptions {
   near?: number;
   far?: number;
+  /**
+   * Legacy `THREE.FogExp2` mirror for the classic (non-TSL) gameplay materials. OWNED here so
+   * exactly one system controls every fog in the scene (plan §24). Folio materials opt out
+   * (`MeshDefaultMaterial.fog = false`) and shade through `WorldGlobals.fog` instead, so this
+   * mirror can never double-fog the environment.
+   */
+  legacyExp2?: { color: number; density: number };
 }
 
 export class Fog implements FogGlobals {
@@ -28,7 +35,12 @@ export class Fog implements FogGlobals {
 
   readonly near: any;
   readonly far: any;
+  /** 1 = on, 0 = `?fog=0` — multiplied into the one distance-fog factor (§24/§33). */
+  private readonly enabled = uniform(1);
+  /** Distance fog factor — `?fog=0` turns the whole world's fog off through this ONE node. */
   readonly strength: any;
+
+  private readonly legacy: THREE.FogExp2 | null = null;
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -40,7 +52,26 @@ export class Fog implements FogGlobals {
 
     this.near = uniform(options.near ?? 34);
     this.far = uniform(options.far ?? 270);
-    this.strength = rangeFogFactor(this.near, this.far);
+    this.strength = rangeFogFactor(this.near, this.far).mul(this.enabled);
+
+    if (options.legacyExp2) {
+      this.legacy = new THREE.FogExp2(options.legacyExp2.color, options.legacyExp2.density);
+      this.scene.fog = this.legacy;
+    }
+  }
+
+  /** `?fog=0` / `?render=fogoff` — the ONE fog off switch (plan §24/§44). */
+  setEnabled(enabled: boolean): void {
+    this.enabled.value = enabled ? 1 : 0;
+  }
+
+  /** Baseline dump (`?renderBaseline=1`). */
+  get baseline(): { near: number; far: number; color: string } {
+    return {
+      near: this.near.value as number,
+      far: this.far.value as number,
+      color: `#${(this.color.value as THREE.Color).getHexString()}`,
+    };
   }
 
   /** Quality can pull the fog wall closer on weak GPUs. */

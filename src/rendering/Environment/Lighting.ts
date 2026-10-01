@@ -15,6 +15,19 @@ export interface LightingOptions {
   /** Shadow follow window (metres around the focus point). */
   shadowAmplitude?: number;
   distance?: number;
+  /**
+   * Classic-material fill (hemisphere + rim). The non-TSL gameplay materials (player rig, towers,
+   * bases, pads …) still read REAL scene lights, so the ONE lighting owner provides them — instead
+   * of the game adding its own lights next to this rig (plan §4: no duplicate environment
+   * lighting). Folio/TSL materials shade through the uniforms above and ignore scene lights.
+   */
+  classicFill?: {
+    skyColor: number;
+    groundColor: number;
+    intensity: number;
+    rimColor: number;
+    rimIntensity: number;
+  };
 }
 
 export class Lighting implements LightingGlobals {
@@ -36,11 +49,16 @@ export class Lighting implements LightingGlobals {
   private readonly shadowAmplitude: number;
   private readonly distance: number;
   private mapSize: number;
+  private readonly fill: THREE.HemisphereLight | null = null;
+  private readonly rim: THREE.DirectionalLight | null = null;
+  private readonly fillIntensity: number;
+  private readonly rimIntensity: number;
   private readonly focus = new THREE.Vector3();
   private readonly right = new THREE.Vector3();
   private readonly up = new THREE.Vector3();
   private readonly snapped = new THREE.Vector3();
   private readonly stable = new THREE.Vector3();
+  private readonly scratchDirection = new THREE.Vector3();
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -61,6 +79,19 @@ export class Lighting implements LightingGlobals {
     this.applyShadowSettings();
     this.scene.add(this.light);
     this.scene.add(this.light.target);
+
+    // Classic-material fill — OWNED by this rig (plan §4). Off by default: the dev world (no
+    // legacy materials) runs purely on the folio uniforms.
+    const fill = options.classicFill;
+    this.fillIntensity = fill?.intensity ?? 0;
+    this.rimIntensity = fill?.rimIntensity ?? 0;
+    if (fill) {
+      this.fill = new THREE.HemisphereLight(fill.skyColor, fill.groundColor, fill.intensity);
+      this.scene.add(this.fill);
+      this.rim = new THREE.DirectionalLight(fill.rimColor, fill.rimIntensity);
+      this.rim.position.set(-1, 0.2, -0.8).multiplyScalar(this.distance);
+      this.scene.add(this.rim);
+    }
   }
 
   private applyShadowSettings(): void {
@@ -88,15 +119,28 @@ export class Lighting implements LightingGlobals {
     this.light.castShadow = enabled;
   }
 
+  /** Debug switch: `?fill=0` turns the classic-material fill off (diagnostics only). */
+  setFillEnabled(enabled: boolean): void {
+    if (this.fill) this.fill.intensity = enabled ? this.fillIntensity : 0;
+    if (this.rim) this.rim.intensity = enabled ? this.rimIntensity : 0;
+  }
+
+  /** `?renderBaseline=1` dump. */
+  get baseline(): { sunDirection: number[]; sunIntensity: number; shadowMapSize: number; shadowAmplitude: number } {
+    const d = this.directionUniform.value as THREE.Vector3;
+    return {
+      sunDirection: [d.x, d.y, d.z],
+      sunIntensity: this.intensityUniform.value as number,
+      shadowMapSize: this.mapSize,
+      shadowAmplitude: this.shadowAmplitude,
+    };
+  }
+
   /** Follow the gameplay focus; snap to the shadow texel grid (no shimmer). */
   update(focus: THREE.Vector3): void {
     const texel = (this.shadowAmplitude * 2) / this.mapSize;
 
-    const direction = new THREE.Vector3(
-      this.directionUniform.value.x,
-      this.directionUniform.value.y,
-      this.directionUniform.value.z,
-    );
+    const direction = this.scratchDirection.copy(this.directionUniform.value as THREE.Vector3);
     // stable light basis
     this.stable.set(0, 1, 0);
     if (Math.abs(direction.dot(this.stable)) > 0.95) this.stable.set(1, 0, 0);

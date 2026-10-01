@@ -67,6 +67,11 @@ const PROBE_ANGLE = 0.004; // ≈0.5 m arc on a 118 m planet
 export class PlanetSurface {
   readonly center = new THREE.Vector3(0, 0, 0);
 
+  /** `?foliageDebug=1` counters (plan §33) — zero cost unless the debug overlay is armed. */
+  static debugSamples = 0;
+  static debugQueries = 0;
+  static debugCounters = false;
+
   constructor(
     readonly generator: PlanetGenerator,
     readonly data: PlanetSurfaceData,
@@ -85,6 +90,7 @@ export class PlanetSurface {
   }
 
   radiusAt(direction: THREE.Vector3): number {
+    if (PlanetSurface.debugCounters) PlanetSurface.debugQueries++;
     return this.generator.radiusAt(direction.x, direction.y, direction.z);
   }
 
@@ -99,6 +105,7 @@ export class PlanetSurface {
   }
 
   sample(direction: THREE.Vector3, out: SurfaceSample = createSurfaceSample()): SurfaceSample {
+    if (PlanetSurface.debugCounters) PlanetSurface.debugSamples++;
     const up = out.up.copy(direction).normalize();
     const radius = this.radiusAt(up);
     out.radius = radius;

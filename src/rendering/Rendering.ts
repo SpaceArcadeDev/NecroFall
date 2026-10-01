@@ -15,6 +15,7 @@ import { cheapDOF } from './Passes/cheapDOF';
 import type { Quality } from './Quality';
 import type { Viewport } from './Viewport';
 import type { StatsOverlay } from './DebugSwitches';
+import { RenderDebug } from './RenderDebug';
 
 export interface RenderingOptions {
   /** Force WebGL2 backend even when navigator.gpu exists. */
@@ -30,6 +31,8 @@ export class Rendering {
   private scenePassColor!: any;
   private bloomPass!: any;
   private cheapDOFPass: any = null;
+  private scene: THREE.Scene | null = null;
+  private camera: THREE.Camera | null = null;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -71,6 +74,8 @@ export class Rendering {
 
   async init(scene: THREE.Scene, camera: THREE.Camera): Promise<this> {
     await this.renderer.init();
+    this.scene = scene;
+    this.camera = camera;
     this.createPostProcessing(scene, camera);
     this.ready = true;
     return this;
@@ -112,7 +117,13 @@ export class Rendering {
 
   render(delta: number, stats: StatsOverlay | null = null): void {
     if (!this.ready) return;
-    this.postProcessing.render();
+    // `?post=0` (plan §25): raw scene pass — no bloom, no DOF — so a broken post chain can never
+    // be mistaken for a broken world.
+    if (!RenderDebug.postEnabled && this.scene && this.camera) {
+      this.renderer.render(this.scene, this.camera);
+    } else {
+      this.postProcessing.render();
+    }
     if (stats) stats.update(delta, this.renderer as any);
   }
 

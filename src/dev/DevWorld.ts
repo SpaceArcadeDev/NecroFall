@@ -17,21 +17,14 @@ import { Ticker } from '../rendering/Ticker';
 import { Time } from '../rendering/Time';
 import { Rendering } from '../rendering/Rendering';
 import { DebugSwitches, StatsOverlay } from '../rendering/DebugSwitches';
-import { WorldGlobals } from '../rendering/WorldGlobals';
+import { RenderDebug, printRenderBaseline } from '../rendering/RenderDebug';
 import { Materials } from '../rendering/materials/Materials';
-import { createTerrainGradient } from '../rendering/materials/PlanetPalette';
 import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
-import { PreRenderer } from '../rendering/PreRenderer';
-import { Noises } from '../rendering/Environment/Noises';
-import { Wind } from '../rendering/Environment/Wind';
 import { Fog } from '../rendering/Environment/Fog';
 import { Lighting } from '../rendering/Environment/Lighting';
-import { createTerrainNodes } from '../rendering/Environment/PlanetTerrainNodes';
-import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
-import { PlanetGenerator } from '../planet/PlanetGenerator';
-import { PlanetSurfaceData } from '../planet/PlanetSurfaceData';
+import { createPlanetWorld } from '../rendering/Environment/PlanetWorld';
+import type { PlanetGenerator } from '../planet/PlanetGenerator';
 import { PlanetSurface, createSurfaceSample } from '../planet/PlanetSurface';
-import { makePlanetSpec } from '../planet/PlanetSeed';
 import { Physics } from '../rendering/Physics/Physics';
 import { PlanetCollider } from '../rendering/Physics/PlanetCollider';
 import { PhysicsSurface } from '../rendering/Physics/PhysicsSurface';
@@ -42,6 +35,8 @@ const FOOT_OFFSET = 0.05;
 
 export async function startDevWorld(): Promise<void> {
   const switches = new DebugSwitches();
+  // `?foliageDebug=1` arms the PlanetSurface counters before the world build starts.
+  PlanetSurface.debugCounters = RenderDebug.foliageDebug;
 
   // ---------------------------------------------------------------- DOM
   const root = document.createElement('div');
@@ -130,66 +125,60 @@ export async function startDevWorld(): Promise<void> {
   const planetIndex = switches.number('planet', 2); // 0:0:0:2 = SWAMP (lush + water for terrain tests)
   const descriptor = planetAt(0, ring, 0, 0, planetIndex);
   const seed = switches.number('seed', descriptor.seed);
-  const spec = makePlanetSpec(seed, ring, CONFIG.planetRadius, `${descriptor.name} · ${descriptor.biomeLabel}`);
-  document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
+  // spec/title come from the shared world factory below (plan §30).
 
-  const generator = new PlanetGenerator(spec);
-  setProgress(0.05, 'baking planet data');
-  const surfaceData = await PlanetSurfaceData.bake(generator, (ratio, label) => {
-    setProgress(0.05 + ratio * 0.5, `${label} (500×${500})`);
-  });
-  const surface = new PlanetSurface(generator, surfaceData);
-
-  // ---------------------------------------------------------------- world globals
-  const gradientTexture = createTerrainGradient(generator.gradientStops());
-  const nodes = createTerrainNodes(surfaceData, gradientTexture, spec.radius);
-  const noises = new Noises(seed ^ 0x51ab);
-  const wind = new Wind(noises, ticker);
-
-  const globals = new WorldGlobals();
-  globals.radius = spec.radius;
-  const lighting = new Lighting(scene, quality, spec.radius, { shadowAmplitude: 46 });
+  // ---------------------------------------------------------------- environment owners
+  // The ONE lighting + fog rig (plan §4/§23/§24) — the world's systems consume these.
+  const lighting = new Lighting(scene, quality, CONFIG.planetRadius, { shadowAmplitude: 46 });
   const fog = new Fog(scene, { near: 34, far: 270 });
-  globals.lighting = lighting;
-  globals.fog = fog;
-  globals.terrain = nodes;
-  globals.wind = wind;
-  WorldGlobals.current = globals;
-
-  const materials = new Materials({ wireframe: switches.wireframe });
-  const preRenderer = new PreRenderer(spec.seed + 3);
   const loader = new ResourcesLoader(rendering.renderer);
 
-  // ---------------------------------------------------------------- spawn (ON THE GROUND, sunlit)
-  const random = generator.rand(1);
-  const spawnSample = createSurfaceSample();
-  const spawnDirection = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
-  const sunDirection = lighting.sunDirection.clone().normalize();
-  for (let i = 0; i < 800; i++) {
-    surface.randomSample(random, spawnSample);
-    const lit = spawnSample.up.dot(sunDirection) > 0.45;
-    if (
-      lit &&
-      spawnSample.grass > 0.3 &&
-      spawnSample.slope < 0.12 &&
-      spawnSample.height > surface.waterLevel - spec.radius + 0.6
-    ) {
-      spawnDirection.copy(spawnSample.up);
-      break;
+  // Sunlit spawn ON THE GROUND, chosen from the SAME baked surface the world renders (plan §1).
+  const spawnSelector = ({ surface, generator }: { surface: PlanetSurface; generator: PlanetGenerator }) => {
+    const random = generator.rand(1);
+    const spawnSample = createSurfaceSample();
+    const direction = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
+    const sunDirection = lighting.sunDirection.clone().normalize();
+    for (let i = 0; i < 800; i++) {
+      surface.randomSample(random, spawnSample);
+      const lit = spawnSample.up.dot(sunDirection) > 0.45;
+      if (
+        lit &&
+        spawnSample.grass > 0.3 &&
+        spawnSample.slope < 0.12 &&
+        spawnSample.height > surface.waterLevel - surface.radius + 0.6
+      ) {
+        direction.copy(spawnSample.up);
+        break;
+      }
     }
-  }
-  const spawnPoint = new THREE.Vector3().copy(spawnDirection).multiplyScalar(surface.radiusAt(spawnDirection) + FOOT_OFFSET);
+    return direction;
+  };
 
   // ---------------------------------------------------------------- planet world
-  setProgress(0.55, 'building environment');
-  const world = await PlanetRenderer.create(
-    {
-      scene, ticker, quality, materials, loader, preRenderer, wind, noises,
-      fog, lighting, surface, generator, nodes,
-      time: time.uTime, spawnDirection,
-    },
-    (ratio, label) => setProgress(0.55 + ratio * 0.4, label),
-  );
+  // THE shared factory (plan §30): the Dev World and a production match build the identical
+  // world — terrain, grass, foliage, water, particles, physics queries, visibility rules.
+  setProgress(0.05, 'building planet world');
+  const result = await createPlanetWorld({
+    scene,
+    ticker,
+    quality,
+    loader,
+    fog,
+    lighting,
+    materialsOptions: { wireframe: switches.wireframe },
+    seed,
+    ring,
+    radius: CONFIG.planetRadius,
+    label: `${descriptor.name} · ${descriptor.biomeLabel}`,
+    spawnSelector,
+    time: time.uTime,
+    onProgress: (ratio, label) => setProgress(0.05 + ratio * 0.9, label),
+  });
+  const { world, spec, surface, surfaceData, generator, nodes, materials, noises, wind, preRenderer } = result;
+  document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
+  const spawnDirection = result.spawnDirection;
+  const spawnPoint = new THREE.Vector3().copy(spawnDirection).multiplyScalar(surface.radiusAt(spawnDirection) + FOOT_OFFSET);
 
   // ---------------------------------------------------------------- dev player
   const physics = new Physics();
@@ -446,7 +435,7 @@ export async function startDevWorld(): Promise<void> {
     freeStep(ticker.delta);
   });
 
-  const stats = switches.stats ? new StatsOverlay() : null;
+  const stats = switches.stats || RenderDebug.baseline || RenderDebug.foliageDebug ? new StatsOverlay() : null;
   ticker.on(998, () => {
     rendering.render(ticker.delta, stats);
   });
@@ -465,7 +454,33 @@ export async function startDevWorld(): Promise<void> {
     rendering.renderer.shadowMap.enabled = false;
     lighting.setShadowsEnabled(false);
   }
+  if (!switches.enabled('fog', true)) fog.setEnabled(false);
   if (switches.wireframe) rendering.setWireframeAll(scene, true);
+
+  // Debug overlays (plan §1/§33): the SAME dump the game produces — diff the two to verify the
+  // golden rule that both worlds share one rendering system (§30/§31).
+  if (stats) {
+    for (const [label, value] of Object.entries(world.stats)) stats.set(label, value);
+    stats.set('quality', `${quality.level}`);
+  }
+  if (RenderDebug.baseline) {
+    printRenderBaseline({
+      world: 'dev',
+      renderer: {
+        version: 'three r183 (webgpu)',
+        backend: rendering.backend,
+        pixelRatio: viewport.pixelRatio,
+        toneMapping: (rendering.renderer as any)?.toneMapping ?? -1,
+        size: { x: viewport.width, y: viewport.height },
+      },
+      quality: `level ${quality.level}`,
+      camera: { fov: camera.fov, near: camera.near, far: camera.far },
+      planet: { radius: spec.radius, seed: spec.seed, ring: spec.ring },
+      lighting: lighting.baseline,
+      fog: fog.baseline,
+      foliage: world.stats,
+    }, stats ?? undefined);
+  }
 
   quality.events.on('change', (level) => {
     lighting.setQuality(quality);
@@ -485,10 +500,19 @@ export async function startDevWorld(): Promise<void> {
   }
   hud.textContent = hudText();
 
-  if (stats) {
-    for (const [label, value] of Object.entries(world.stats)) stats.set(label, value);
-    stats.set('quality', `${quality.level}`);
-  }
+  // `?foliageDebug=1`: live counters next to the render stats (plan §33).
+  let foliageDebugAccum = 0;
+  ticker.on(999, () => {
+    if (!stats || !RenderDebug.foliageDebug) return;
+    foliageDebugAccum += ticker.delta;
+    if (foliageDebugAccum < 0.5) return;
+    foliageDebugAccum = 0;
+    stats.set('fol.cull', `${quality.grassHalfExtent()} m`);
+    stats.set('terrainSamples', `${PlanetSurface.debugSamples}`);
+    stats.set('surfaceQueries', `${PlanetSurface.debugQueries}`);
+    PlanetSurface.debugSamples = 0;
+    PlanetSurface.debugQueries = 0;
+  });
 
   loading.style.display = 'none';
   setProgress(1, 'ready');

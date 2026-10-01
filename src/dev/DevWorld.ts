@@ -92,7 +92,7 @@ export async function startDevWorld(): Promise<void> {
   };
 
   // ---------------------------------------------------------------- core
-  const viewport = new Viewport(canvas);
+  const viewport = new Viewport();
   const quality = new Quality();
   const forcedQuality = switches.bag['quality'];
   if (forcedQuality !== undefined) {

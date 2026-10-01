@@ -612,6 +612,13 @@ export class Game {
    */
   private rafGapMin = 64;
   private rafGapMinT = 0;
+  /**
+   * Viewport watchdog counter (Android rotation fix): some devices swallow the resize /
+   * orientationchange events during the fullscreen + orientation-lock transition, which left
+   * the render stuck at the previous screen size (the "in-game view is half the screen" bug).
+   * A size compare every 30 frames is free and self-heals any missed event.
+   */
+  private viewportWatchCounter = 0;
   private static readonly RAF_MIN_WINDOW = 3000;
   /**
    * How long after the picker closes a new level-up still counts as the same burst (continuation).
@@ -660,7 +667,7 @@ export class Game {
     const canvas = document.createElement('canvas');
     Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100vw', height: '100vh', display: 'block' });
     this.app.appendChild(canvas);
-    this.viewport = new Viewport(canvas);
+    this.viewport = new Viewport();
     this.quality = new Quality();
     // The game keeps its OWN adaptive ladder + rescue watchdog — the renderer's heat monitor off.
     this.quality.adaptive = false;
@@ -1508,6 +1515,17 @@ export class Game {
         }
       }
       this.lastRawTick = t;
+
+      // Viewport watchdog (Android rotation fix): compares the REAL document viewport against
+      // the size the renderer is using every half second — self-heals a swallowed resize or
+      // orientationchange event without any per-frame layout cost.
+      if (++this.viewportWatchCounter >= 30) {
+        this.viewportWatchCounter = 0;
+        const doc = document.documentElement;
+        if (doc.clientWidth !== this.viewport.width || doc.clientHeight !== this.viewport.height) {
+          this.onResize();
+        }
+      }
 
       // Render pacing (2026-09 thermal pass): matches keep the gameplay budget, menus/shells only
       // the cheap one, and an untouched menu drops further. A skipped frame skips the WHOLE frame —

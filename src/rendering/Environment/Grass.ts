@@ -59,12 +59,12 @@ export class Grass {
   private geometry: THREE.BufferGeometry;
   private material: MeshDefaultMaterial;
 
-  private readonly uBladeWidth = uniform(0.22);
-  /** Tall meadow blades (user ask: "grass needs to be taller"). */
-  private readonly uBladeHeight = uniform(1.05);
+  private readonly uBladeWidth = uniform(0.24);
+  /** Tall meadow blades (user ask: "grass needs to be taller" — raised again to chest-high). */
+  private readonly uBladeHeight = uniform(1.35);
   private readonly uBladeRandomness = uniform(0.6);
-  /** Wind sway amount — the lawn visibly ripples (raised per feedback). */
-  private readonly uSwayStrength = uniform(2.5);
+  /** Wind sway amount — the lawn visibly ripples (raised twice per feedback: "add more sway"). */
+  private readonly uSwayStrength = uniform(3.6);
   /** 0 in the air, 1 on the ground — the player only parts grass at ground level. */
   private readonly uGrassPush = uniform(1);
   /** Player world position (planet space) — the parting is centred EXACTLY here. */

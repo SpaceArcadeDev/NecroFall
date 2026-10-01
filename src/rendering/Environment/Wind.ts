@@ -16,7 +16,8 @@ export class Wind implements WindGlobals {
   readonly positionFrequency = uniform(0.5);
   readonly strength = uniform(0.55);
   readonly localTime = uniform(0);
-  timeFrequency = 0.11;
+  /** Phase speed of the one shared wind field (raised per "add more sway" — grass and trees). */
+  timeFrequency = 0.14;
 
   readonly offsetNode: (position: any) => any;
 

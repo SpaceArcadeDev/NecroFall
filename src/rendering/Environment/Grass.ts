@@ -297,6 +297,10 @@ export class Grass {
         // reads as a lighter coloured tip, never as a washed-out carpet.
         return vivid.mul(0.75).mul(gradient).mul(vary).clamp(0, 0.65);
       })(),
+      // The blades' own glow IS the tuned look; the reciprocal lawn glow (MeshDefaultMaterial)
+      // exists to light the surfaces AROUND the grass — ground, rocks, trunks — so the blades
+      // themselves opt out of receiving it.
+      lawnGlow: false,
     });
 
     material.positionNode = Fn(() => {

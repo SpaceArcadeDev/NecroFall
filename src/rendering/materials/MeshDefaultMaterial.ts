@@ -28,6 +28,14 @@ import {
 import { WorldGlobals } from '../WorldGlobals';
 import { RenderDebug, type MaterialDebugMode } from '../RenderDebug';
 
+/** Lawn glow (see `lawnGlow`): fraction of the local vegetation colour spilled on to the
+ *  surfaces around the glowing blades. Faint by design — the blades' OWN glow (Grass) stays
+ *  the brightest thing in the dark lawn. */
+const LAWN_GLOW_STRENGTH = 0.75;
+/** Metres above the ground where the lawn glow has faded out completely (nothing in orbit
+ *  should catch light from the lawn). */
+const LAWN_GLOW_REACH = 7;
+
 export interface MeshDefaultMaterialParameters {
   colorNode?: any;
   normalNode?: any;
@@ -38,6 +46,15 @@ export interface MeshDefaultMaterialParameters {
    * scaled up where the surface sits in shade — grass uses it for glowing night-side tips.
    */
   glowNode?: any;
+  /**
+   * The reciprocal of `glowNode` (user ask 2026-10-02): the night-side grass glow must also read
+   * as light spilled on to the area AROUND the blades — the ground under them and the props
+   * standing in the lawn. Those surfaces sample the vegetation channel at the terrain under them
+   * and lift by a faint fraction of that spot's palette colour (REAL darkness only, faded with
+   * height above ground). Default ON for every environment surface; the grass blades themselves
+   * opt OUT with `lawnGlow: false` (their own glow is already the tuned look).
+   */
+  lawnGlow?: boolean;
   alphaTest?: number;
   depthWrite?: boolean;
   depthTest?: boolean;
@@ -71,6 +88,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
   private readonly hasWater: boolean;
   private readonly sourceSide: THREE.Side;
   private readonly flipBackfaceNormal: boolean;
+  private readonly lawnGlow: boolean;
   /** Baked material debug mode (`?render=unlit`…, plan §10/§45) — read once, zero cost per frame. */
   private readonly debugMode: MaterialDebugMode;
 
@@ -96,6 +114,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
     this.hasLightBounce = parameters.hasLightBounce ?? true;
     this.hasFog = parameters.hasFog ?? true;
     this.hasWater = parameters.hasWater ?? false;
+    this.lawnGlow = parameters.lawnGlow ?? true;
     this.debugMode = RenderDebug.materialMode;
     // The material owns its fog through WorldGlobals.fog (plan §24). Disable the automatic
     // scene-fog hookup: a legacy THREE.FogExp2 on the scene would otherwise DOUBLE-fog every
@@ -212,6 +231,32 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         const shade = max(coreShadowMix, dropShadowMix).clamp(0, 1);
         const darkness = mix(float(0.1), float(1.0), (shade as any).mul(shade));
         outputColor.addAssign((parameters.glowNode as any).mul(darkness));
+      }
+
+      // ---- lawn glow bounce (user ask 2026-10-02): the night-side grass tips glow (the material
+      // `glowNode` above), and this is their reciprocal — the light those tips would spill on to
+      // the ground around them and the props standing in the lawn. There is no real light to
+      // bounce (the blades are emissive cards), so every receiving surface samples the vegetation
+      // channel at the terrain UNDER it and lifts by a faint fraction of that spot's palette
+      // colour. Gated to REAL darkness exactly like the blade glow (a lit lawn stays untouched),
+      // squared for the same contrast, and faded out with height above ground.
+      if (this.lawnGlow && terrain) {
+        const upDirection = positionWorld.normalize();
+        const lawnData = terrain.terrainNode(upDirection) as any;
+        const lawnRadius = terrain.heightMeters((lawnData as any).x).add(globals.radius);
+        const aboveGround = positionWorld.length().sub(lawnRadius);
+        const reach = float(1)
+          .sub(aboveGround.max(0).div(LAWN_GLOW_REACH))
+          .max(0)
+          .pow(2);
+        const shade = max(coreShadowMix, dropShadowMix).clamp(0, 1);
+        const darkness = mix(float(0.1), float(1.0), (shade as any).mul(shade));
+        outputColor.addAssign(
+          (terrain.colorNode(lawnData) as any)
+            .mul((lawnData as any).y)
+            .mul(LAWN_GLOW_STRENGTH)
+            .mul((reach as any).mul(darkness)),
+        );
       }
 
       // ---- fog (skipped in every isolated debug mode; the `fog` mode renders the factor itself)

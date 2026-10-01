@@ -5399,8 +5399,11 @@ export class Game {
     // `auto` keeps the full thermal ladder.
     const explicit = this.qualityPref !== 'auto';
     // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
-    // the one players actually see, which is why every path back up must restore it.
-    this.planet.setDecorationsVisible(explicit || this.rescueLevel < 2);
+    // the one players actually see, which is why every path back up must restore it. FREEROAM is
+    // exempt (user ask 2026-10-02 — "switch the environment assets back on"): the sandbox IS the
+    // environment, so its scenery never hides no matter how hard the device struggles (the
+    // resolution ladder, the particle budget and the level-3 preset drop still apply).
+    this.planet.setDecorationsVisible(explicit || this.freeroamMode || this.rescueLevel < 2);
     // The LAST rescue step turns cheapDOF off (a full-screen pass). Bloom stays, so the
     // radioactive accents never lose their glow under load.
     this.quality.changeLevel(!explicit && this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));

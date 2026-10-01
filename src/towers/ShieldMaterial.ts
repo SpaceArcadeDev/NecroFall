@@ -64,7 +64,7 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     const grid = lattice.mul(0.5).add(0.5).smoothstep(0.72, 1);
 
     // rising containment bands
-    const bands = l.y.mul(5).sub(NECRO_UNIFORMS.uTime.mul(0.12)).fract().sub(0.5).abs().smoothstep(0.18, 0.0);
+    const bands = l.y.mul(5).sub(NECRO_UNIFORMS.uTime.mul(0.12)).fract().sub(0.5).abs().smoothstep(0.0, 0.18).oneMinus();
 
     const alpha = uOpacity.mul(fres.add(grid.mul(0.55)).add(bands.mul(0.35)).add(0.3)).clamp(0, 0.95);
     const col = uColor.mul(fres.mul(1.3).add(grid.mul(0.7)).add(bands.mul(0.4)).add(0.6));
@@ -91,7 +91,7 @@ export function createBaseConeMaterial(color: number, opacity: number): THREE.Me
     const fade = h.smoothstep(0.12, 0.82).oneMinus();
     const fres = fresnelNode(2.0);
     // containment bands climbing the cone
-    const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.22, 0.0);
+    const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.0, 0.22).oneMinus();
     const a = uOpacity.mul(fade).mul(fres.mul(0.85).add(bands.mul(0.55)).add(0.5)).clamp(0, 0.92);
     const col = uColor.mul(fres.mul(0.8).add(bands.mul(0.6)).add(0.9));
     return vec4(col, a);

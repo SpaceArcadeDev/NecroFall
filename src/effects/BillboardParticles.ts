@@ -125,7 +125,7 @@ export class BillboardParticles {
       const c = (uv() as any).sub(0.5).mul(2); // quad coordinate −1..1 (the gl_PointCoord replacement)
       let shapeAlpha: any;
       if (shape === 'soft') {
-        shapeAlpha = c.length().mul(0.5).smoothstep(0.5, 0.05);
+        shapeAlpha = c.length().mul(0.5).smoothstep(0.05, 0.5).oneMinus();
       } else {
         shapeAlpha = c.dot(c).oneMinus().max(0);
       }

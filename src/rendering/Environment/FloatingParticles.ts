@@ -122,7 +122,7 @@ export class FloatingParticles {
     // soft circular mask + slow personal pulse — spores, not squares
     material.opacityNode = (() => {
       const radius = cornerAttribute.length();
-      const circle = smoothstep(1.0, 0.2, radius);
+      const circle = smoothstep(0.2, 1.0, radius).oneMinus();
       const pulse = sin(this.uTime.mul(0.9).add(seedAttribute.mul(31.0))).mul(0.18).add(0.5);
       return circle.mul(pulse) as any;
     })();

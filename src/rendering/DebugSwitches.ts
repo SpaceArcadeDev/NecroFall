@@ -36,6 +36,18 @@ export function readSwitches(): SwitchBag {
   const hash = window.location.hash;
   const q = hash.indexOf('?');
   if (q >= 0) consume(hash.slice(q));
+  // Plan §33: `?render=fogoff|shadowsOff|grassOff|treesOff|postOff` are aliases of the classic
+  // component switches, normalised HERE so every consumer (game + dev world) reads ONE vocabulary.
+  const render = (bag['render'] ?? '').toLowerCase();
+  const alias: Record<string, string> = {
+    fogoff: 'fog',
+    shadowsoff: 'shadows',
+    grassoff: 'grass',
+    treesoff: 'foliage',
+    postoff: 'post',
+  };
+  const mapped = alias[render];
+  if (mapped && bag[mapped] === undefined) bag[mapped] = '0';
   return bag;
 }
 

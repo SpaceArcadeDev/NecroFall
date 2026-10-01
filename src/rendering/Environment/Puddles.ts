@@ -211,8 +211,8 @@ export class Puddles {
         const delta = distance.sub(radius);
         const band = exp(delta.mul(delta).div(width.mul(width)).negate());
 
-        const fresh = smoothstep(0.0, 0.08, age).mul(smoothstep(2.8, 1.5, age));
-        const reach = smoothstep(2.6, 0.9, distance);
+        const fresh = smoothstep(0.0, 0.08, age).mul(smoothstep(1.5, 2.8, age).oneMinus());
+        const reach = smoothstep(0.9, 2.6, distance).oneMinus();
         total.addAssign(band.mul(fresh).mul(reach));
       });
       return min(total, 1.0) as any;
@@ -222,7 +222,7 @@ export class Puddles {
     // (On gentle terrain a depth band spans many metres, so the only reliable
     // way to keep shores clean is low intensity.) The walking wake stays crisp.
     const detailsMask = (() => {
-      const shore = smoothstep(0.035, 0.006, depth).mul(0.45);
+      const shore = smoothstep(0.006, 0.035, depth).oneMinus().mul(0.45);
       const noise = texture(noises.perlin, positionWorld.xz.mul(0.35)).r;
       const rippleBand = sin(depth.mul(16).sub(timeUniform.mul(0.55)).add(noise.mul(2.2)));
       const ripple = smoothstep(0.95, 1.0, rippleBand).mul(smoothstep(0.05, 0.4, depth)).mul(0.25);
@@ -254,7 +254,7 @@ export class Puddles {
       });
       // contaminated tint over the screen mirror (radioactive puddle water)
       const mirrored = mix(blurOutput.rgb, vec3(0.06, 0.24, 0.25), 0.38);
-      const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(1.0, 0.84, ring));
+      const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(0.84, 1.0, ring).oneMinus());
       // smooth foam compositing (a hard >0.5 cut turned every mask edge into a
       // solid white patch — the over-foamed shores)
       const foamed = mix(mirrored, baseOutput.rgb, detailsMask);

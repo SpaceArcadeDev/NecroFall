@@ -260,6 +260,9 @@ export class Grass {
       normalNode: normalize(positionWorld) as any,
       // safety net for degenerate winding at grazing angles
       side: THREE.DoubleSide,
+      // blades always shade with the surface radial — flipping it for backfaces painted half the
+      // field into core shadow (black clumps) whenever the camera crossed the blade plane
+      flipBackfaceNormal: false,
       hasWater: false,
       hasLightBounce: false,
       shadowNode: (() => {
@@ -363,7 +366,7 @@ export class Grass {
       const toPlayerWorld = basePosition.sub(this.uPushCenter);
       const horizontal = toPlayerWorld.sub(direction.mul((toPlayerWorld as any).dot(direction)));
       const playerDistance = (horizontal as any).length();
-      const pushInfluence = smoothstep(1.25, 0.15, playerDistance);
+      const pushInfluence = smoothstep(0.15, 1.25, playerDistance).oneMinus();
       const pushDir = normalize(horizontal as any);
       const clearingBend = pushDir.mul(pushInfluence.mul(0.55));
       // ---- TRAMPLE TRAIL: recent player positions linger, so blades stay
@@ -380,8 +383,8 @@ export class Grass {
           const trailDistance = (horizontalTrail as any).length();
           // Ramp IN over 0.3 s as well as out: a sample landing must never
           // snap blades to a new angle — that was the moving flicker/pop.
-          const influence = smoothstep(1.35, 0.3, trailDistance)
-            .mul(smoothstep(1.6, 0.7, age))
+          const influence = smoothstep(0.3, 1.35, trailDistance).oneMinus()
+            .mul(smoothstep(0.7, 1.6, age).oneMinus())
             .mul(smoothstep(0.0, 0.3, age));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
@@ -425,6 +428,9 @@ export class Grass {
     return suppression ?? float(0);
   }
 
+  /** Reusable scratch for the water-slot pass — zero allocations per frame (plan §34). */
+  private readonly waterCandidates: { dot: number; site: BasinSite }[] = [];
+
   /** Feed the up-to-6 basins that can overlap the grass field into the shader. */
   private updateWaterSlots(): void {
     const water = this.water;
@@ -432,18 +438,31 @@ export class Grass {
     const radius = this.surface.radius;
     const focus = this.scratchDir; // unit focus direction (set in update())
 
-    const candidates: { dot: number; site: BasinSite }[] = [];
+    const candidates = this.waterCandidates;
+    let count = 0;
     for (const site of water.sites) {
       const dot = focus.dot(site.direction);
       const reach = Math.min(Math.PI, (site.radius + this.halfExtent + 2) / radius);
       if (dot < Math.cos(reach)) continue;
-      candidates.push({ dot, site });
+      const entry = candidates[count] ?? (candidates[count] = { dot: 0, site });
+      entry.dot = dot;
+      entry.site = site;
+      count++;
     }
-    candidates.sort((a, b) => b.dot - a.dot);
+    // insertion sort the used slice, closest first (n is tiny: a handful of basins per planet)
+    for (let i = 1; i < count; i++) {
+      const entry = candidates[i];
+      let j = i - 1;
+      while (j >= 0 && candidates[j].dot < entry.dot) {
+        candidates[j + 1] = candidates[j];
+        j--;
+      }
+      candidates[j + 1] = entry;
+    }
 
     for (let i = 0; i < this.waterSlots.length; i++) {
       const slot = this.waterSlots[i];
-      const candidate = candidates[i];
+      const candidate = i < count ? candidates[i] : null;
       if (candidate) {
         const dir = candidate.site.direction;
         slot.dir.value.set(dir.x, dir.y, dir.z);

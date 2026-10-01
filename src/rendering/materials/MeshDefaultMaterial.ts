@@ -26,6 +26,7 @@ import {
   If,
 } from 'three/tsl';
 import { WorldGlobals } from '../WorldGlobals';
+import { RenderDebug, type MaterialDebugMode } from '../RenderDebug';
 
 export interface MeshDefaultMaterialParameters {
   colorNode?: any;
@@ -43,6 +44,13 @@ export interface MeshDefaultMaterialParameters {
   hasDropShadows?: boolean;
   hasLightBounce?: boolean;
   hasFog?: boolean;
+  /**
+   * DoubleSide backface normal flip. True (default) for surfaces whose back sides should shade
+   * like a solid object (props, terrain viewed from inside). Blade-style foliage sets FALSE:
+   * a grass blade is a one-sided card, its normal is the surface radial, and flipping it for the
+   * half of the blades that face away made entire clumps render as black core-shadow spikes.
+   */
+  flipBackfaceNormal?: boolean;
   /** Kept for API parity with folio; puddle tinting lives in the puddle shader. */
   hasWater?: boolean;
 }
@@ -57,6 +65,9 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
   private readonly hasFog: boolean;
   private readonly hasWater: boolean;
   private readonly sourceSide: THREE.Side;
+  private readonly flipBackfaceNormal: boolean;
+  /** Baked material debug mode (`?render=unlit`…, plan §10/§45) — read once, zero cost per frame. */
+  private readonly debugMode: MaterialDebugMode;
 
   constructor(parameters: MeshDefaultMaterialParameters = {}) {
     super();
@@ -70,6 +81,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
     this.depthTest = parameters.depthTest ?? true;
     this.side = parameters.side ?? THREE.FrontSide;
     this.sourceSide = this.side;
+    this.flipBackfaceNormal = parameters.flipBackfaceNormal ?? true;
     this.wireframe = parameters.wireframe ?? false;
     this.transparent = parameters.transparent ?? false;
     this.shadowSide = parameters.shadowSide ?? THREE.FrontSide;
@@ -79,6 +91,11 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
     this.hasLightBounce = parameters.hasLightBounce ?? true;
     this.hasFog = parameters.hasFog ?? true;
     this.hasWater = parameters.hasWater ?? false;
+    this.debugMode = RenderDebug.materialMode;
+    // The material owns its fog through WorldGlobals.fog (plan §24). Disable the automatic
+    // scene-fog hookup: a legacy THREE.FogExp2 on the scene would otherwise DOUBLE-fog every
+    // folio material (three appends the scene fog to any material whose `fog` flag is true).
+    this.fog = false;
 
     const colorNode = (parameters.colorNode ?? color(0xffffff)) as any;
     const normalNode = (parameters.normalNode ?? normalWorld) as any;
@@ -113,7 +130,10 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
       const outputColor = colorNode.toVar();
 
       const reorientedNormal = normalNode.toVar();
-      if (this.sourceSide === THREE.DoubleSide || this.sourceSide === THREE.BackSide) {
+      if (
+        this.flipBackfaceNormal &&
+        (this.sourceSide === THREE.DoubleSide || this.sourceSide === THREE.BackSide)
+      ) {
         If(frontFacing.not(), () => {
           reorientedNormal.mulAssign(-1);
         });
@@ -148,7 +168,13 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
       // ---- core shadow (facing away from the sun)
       let coreShadowMix: any = float(0);
       if (this.hasCoreShadows) {
-        coreShadowMix = reorientedNormal.dot(directionNode).smoothstep(coreShadowEdgeHigh, coreShadowEdgeLow);
+        // GLSL allowed reversed-edge smoothstep; WGSL defines it only for ascending edges
+        // (Tint evaluated the reversed form to 1 for lit normals — every surface went black).
+        // The equivalent, portal-safe form is `1 - smoothstep(low, high, x)`.
+        coreShadowMix = reorientedNormal
+          .dot(directionNode)
+          .smoothstep(coreShadowEdgeLow, coreShadowEdgeHigh)
+          .oneMinus();
       }
 
       // ---- cast / drop shadow
@@ -157,15 +183,97 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         dropShadowMix = catchedShadow.oneMinus();
       }
 
+      let shadowMixValue: any = null;
       if (this.hasCoreShadows || this.hasDropShadows) {
         const combinedShadowMix = max(coreShadowMix, dropShadowMix, shadowNode).clamp(0, 1);
-        const shadedColor = baseColor.rgb.mul(shadowColorNode);
-        outputColor.assign(mix(outputColor, shadedColor, combinedShadowMix));
+        if (this.debugMode === 'shadow') {
+          // Component breakdown: R = core shadow, G = drop shadow, B = material root shade.
+          shadowMixValue = vec3(coreShadowMix as any, dropShadowMix as any, shadowNode as any);
+        } else if (this.debugMode !== 'lighting') {
+          const shadedColor = baseColor.rgb.mul(shadowColorNode);
+          outputColor.assign(mix(outputColor, shadedColor, combinedShadowMix));
+        }
       }
 
-      // ---- fog
-      if (this.hasFog && fog) {
+      // ---- fog (skipped in every isolated debug mode; the `fog` mode renders the factor itself)
+      const fogVisible =
+        this.debugMode === 'normal' || this.debugMode === 'lighting';
+      if (this.hasFog && fog && fogVisible) {
         outputColor.assign(mix(outputColor, fog.color, fog.strength));
+      }
+
+      // ---- material debug override (plan §10) — built once, no per-frame cost
+      switch (this.debugMode) {
+        case 'unlit':
+          outputColor.assign(baseColor);
+          break;
+        case 'normals':
+          outputColor.assign(reorientedNormal.mul(0.5).add(0.5));
+          break;
+        case 'lighting':
+          break; // direct light with the shadow mix already skipped above
+        case 'shadow': {
+          const value = (shadowMixValue ?? vec3(0, 0, 0)) as any;
+          outputColor.assign(value);
+          break;
+        }
+        case 'dot': {
+          // Raw `dot(surface normal, sun)` — 0.5 gray is perpendicular, white toward the sun.
+          const value = ((reorientedNormal.dot(directionNode) as any).mul(0.5).add(0.5)) as any;
+          outputColor.assign(vec3(value, value, value));
+          break;
+        }
+        case 'core': {
+          const value = coreShadowMix as any;
+          outputColor.assign(vec3(value, value, value));
+          break;
+        }
+        case 'dir': {
+          // The fragment direction from the planet centre — blades must match the ground under them.
+          const value = ((positionWorld.normalize() as any).mul(0.5).add(0.5)) as any;
+          outputColor.assign(vec3(value.x, value.y, value.z));
+          break;
+        }
+        case 'terrain': {
+          // Raw baked data: R height01 · G grass · B wetness · A radiation (A shown as red here).
+          if (terrain) {
+            const data = terrain.terrainNode(positionWorld) as any;
+            outputColor.assign(vec3(data.x, data.y, data.z));
+          } else {
+            outputColor.assign(vec3(0.1, 0.1, 0.1));
+          }
+          break;
+        }
+        case 'biome': {
+          if (terrain) {
+            const channel = terrain.terrainNode(positionWorld).y;
+            outputColor.assign(vec3(channel, channel, channel));
+          } else {
+            outputColor.assign(vec3(0.5, 0, 0.5));
+          }
+          break;
+        }
+        case 'slope': {
+          const slope = float(1).sub(reorientedNormal.dot(positionWorld.normalize() as any)).clamp(0, 1);
+          outputColor.assign(vec3(slope, slope, slope));
+          break;
+        }
+        case 'height': {
+          if (terrain) {
+            const channel = terrain.terrainNode(positionWorld).x;
+            outputColor.assign(vec3(channel, channel, channel));
+          } else {
+            outputColor.assign(vec3(0.2, 0.2, 0.2));
+          }
+          break;
+        }
+        case 'fog': {
+          const strength = (fog ? fog.strength : float(0)) as any;
+          outputColor.assign(vec3(strength, strength, strength));
+          break;
+        }
+        default:
+          break;
       }
 
       // ---- alpha discard

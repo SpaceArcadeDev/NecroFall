@@ -9,7 +9,7 @@
 | Category | Owner (today) | Plan name / notes |
 | --- | --- | --- |
 | CORE RENDERER | `src/rendering/Rendering.ts` — the ONE `WebGPURenderer` + `RenderPipeline` (scene pass → bloom → cheap DOF → `renderOutput`) | plan "RendererSystem" + "RenderPipeline" combined in one file; `?post=0` renders the raw scene |
-| RENDER QUALITY | `src/rendering/Quality.ts` (levels 0/1/2: pixel ratio, grass density/extent, shadow map, bloom mips, DOF) | plan "RenderQuality" |
+| RENDER QUALITY | `src/rendering/Quality.ts` (levels 0/1/2: pixel ratio, grass density, shadow map, bloom mips, DOF) | plan "RenderQuality" |
 | RENDER DEBUG | `src/rendering/DebugSwitches.ts` (URL flags, stats overlay) + `src/rendering/RenderDebug.ts` (material debug modes, baseline dump, foliage debug) | plan "RenderDebug" |
 | VIEW / TIME / LOOP | `Viewport.ts`, `Time.ts`, `Ticker.ts` (ordered stages; render = 998, monitoring = 999) | plan §29 order |
 | ENVIRONMENT | `Environment/Lighting.ts` (sun + shadow follow + classic fill) + `Environment/Fog.ts` (sky, distance fog, legacy fog mirror) + `WorldGlobals.ts` (the shared uniform context) | plan "EnvironmentSystem" + "FogSystem" + "MaterialContext" |
@@ -18,13 +18,13 @@
 | WORLD FACTORY | `Environment/PlanetWorld.ts` — `createPlanetWorld(config)` used by BOTH the Dev World and every match | plan §30 |
 | WORLD ORCHESTRATOR | `Environment/PlanetRenderer.ts` — ordered build + `update(focus, camera)` + `applyVisibility` | plan "Planet" orchestration |
 | TERRAIN | `Environment/PlanetTerrain.ts` + `Environment/PlanetTerrainNodes.ts` — ONE mesh, ONE material; normals = finite differences of the RENDERED field | plan "TerrainRenderer" |
-| GRASS | `Environment/Grass.ts` — ONE instanced field (700² blades at level 0), spherical tangent patch, world-pinned re-base, rim fade, trample trail | plan "GrassSystem" / "FoliageTile" (field model, not tile meshes) |
+| GRASS | `Environment/Grass.ts` + `Environment/GrassField.ts` — ONE static field: every blade's position, patch acceptance and size are BAKED at build over the whole planet (patch-only mask from the smooth `noises.patch` field — large packed clumps, zero blades on bare ground). Runtime = wind + player parting only | plan "GrassSystem" / "FoliageTile" (field model, not tile meshes) |
 | TREES / BUSHES | `Environment/Trees.ts` (3 species, trunk `InstancedMesh` + `Foliage.ts` leaf-card canopies) | plan "TreeSystem"/"BushSystem" |
 | ROCKS / SPIKES / CRYSTALS | `Environment/Rocks.ts`, `Spikes.ts`, `RadioactiveCrystals.ts` (shared `InstancedField` pattern) | plan "RockSystem"/props |
 | WATER | `Environment/Puddles.ts` — basin films bent onto the water sphere + walk-wake | plan "PlanetWaterSurface" |
 | ATMOSPHERE | `Environment/FloatingParticles.ts` (contamination motes), sky = `Fog.skyColor` background node | plan "PROPS"/sky |
 | WIND | `Environment/Wind.ts` — ONE field; derived from the planet's noises inside `createPlanetWorld` | plan §18 |
-| VISIBILITY / CULLING | CPU-side per system: trees/bushes/rocks/spikes/crystals fade-cull by distance; `Grass` rim fade + per-blade hash cull | no tile streaming in this build (see §4) |
+| VISIBILITY / CULLING | CPU-side per system: trees/bushes/rocks/spikes/crystals fade-cull by distance; grass needs none — the field is static and every patch is dense everywhere | no tile streaming in this build (see §4) |
 | PHYSICS SURFACE | `Physics/PlanetCollider.ts` + `Physics/PhysicsSurface.ts` (analytic, samples `PlanetSurface`) | plan §41 |
 | GAMEPLAY VISUALS (TSL) | `towers/ShieldMaterial.ts`, `towers/PowerLines.ts`, `effects/Telegraphs.ts`, `effects/Effects.ts`, `effects/BillboardParticles.ts`, `enemies/EnemyModels.ts`, `customization/MoteEmitter.ts` | gameplay reads `NecroChunks` — its `NECRO_UNIFORMS` are synced from the folio `WorldGlobals` each frame (same sun, ambient and range fog as the world; `SHADER_GLOBALS` is only the pre-world fallback) |
 | GAMEPLAY VISUALS (classic) | Lambert/Basic materials in `player/`, `towers/`, `world/Bases|Pads`, `effects/`, … — lit by the ONE classic fill owned by `Lighting` | §54: gameplay not rewritten; it consumes the environment owner |
@@ -70,14 +70,14 @@
 3. **Points/`gl_PointSize` do not exist in WGSL** — all particle systems use
    `effects/BillboardParticles.ts` (instanced quads). No `THREE.Points` in `src/`.
 4. **`ShaderMaterial` must never come back** — no GLSL material remains in `src/`.
-5. **Frame-stable shader inputs (the grass "popping while moving" fix).** The grass field re-bases
-   onto the player every ~17 m of walking, which rewrites every blade's frame-local patch coords.
-   Two per-blade inputs were sampled from those coords — the blade height noise (`perlin(patch)`)
-   and the wind phase (`wind.offsetNode(patch)`) — plus a rim cull hash, so each re-base re-rolled
-   the entire field at once. All three now use WORLD-stable data (the blade's surface direction /
-   world position). Rim recycling is additionally a per-blade STAGGERED SHRINK to zero (window
-   shifted by a world-stable hash, always ending before the wrap) instead of a binary cull — no
-   blade ever pops mid-size, and every wrap happens at zero size (§17/§39).
+5. **Frame-stable shader inputs (the grass "popping while moving" lineage).** The first field was a
+   tangent patch that re-based onto the player every ~17 m, rewriting every blade's frame-local
+   coords — the height/wind/rim inputs therefore re-rolled the field per re-base. Those inputs were
+   made world-stable, then the whole design was replaced: the field is now STATIC and
+   PLANET-WIDE (every blade baked at build — nothing streams as the player moves, so no pop is
+   possible by construction). Runtime per-blade inputs are wind (world position) + the player
+   parting/trail only. The patch mask is the smooth single-octave `noises.patch` field so clumps
+   read as large fields, never small fragmented islands.
 
 ## 4. Deliberate deviations from the plan's file layout
 
@@ -90,11 +90,14 @@ mapping above is the contract. Behavioural deviations:
   shell IS the simplified far-LOD. Per-tile spherical LOD is only worth it if the base resolution
   rises; `frustumCulled = false` on the planet mesh means horizon tests are unnecessary for a
   closed sphere (backfaces are shaded via DoubleSide instead). Revisit when terrain detail grows.
-* **Foliage tiles (§14):** grass is folio's continuous field (subdivisions² blades in a
-  camera-following spherical window) rather than per-tile InstancedMeshes; trees/bushes/rocks ARE
-  per-instance `InstancedMesh` with CPU distance culling. The field's rim fade + hash cull is the
-  plan §17 fade mechanism, in shader form.
-* **Post pipeline (§25):** `?post=0` renders raw; bloom/DOF run at folio's exact settings.
+* **Foliage tiles (§14):** grass is folio's continuous field (subdivisions² blades, ONE draw)
+  but it is NOT a camera-following window: the field is baked over the entire planet at build
+  (patch-only acceptance from the shared smooth patch mask; blades suppressed in water basins at
+  bake time). Trees/bushes/rocks ARE per-instance `InstancedMesh` with CPU distance culling. The
+  blade's surface position is baked into the geometry, so the vertex stage reads no terrain.
+* **Post pipeline (§25):** `?post=0` renders raw; bloom raised per playtest (threshold 0.85,
+  strength 0.55 — keys on emissives; shields/rays push their colours past 1), DOF keeps folio's
+  cheap level-0 form.
 
 ## 5. Debug tooling (plan §10/§33) — all in `RenderDebug.ts`
 
@@ -115,9 +118,10 @@ page load. All modes work identically in the Dev World and in a production match
 * Nothing is created/destroyed per frame — materials/geometries are per-build; visibility flips
   booleans; `PlanetRenderer.update` only moves uniforms.
 * Per-frame update paths are allocation-free (Lighting/`Wind`/`Puddles`/`FloatingParticles`
-  scratch vectors; Grass' water-slot pass reuses its candidate array).
-* Grass instance budget: 490 k blades (level 0) rendered as ONE draw; trees/bushes/rocks are
-  instanced; terrain is 1 draw.
+  scratch vectors; Grass runs no per-frame pass at all beyond the parting uniforms + trail ring).
+* Grass instance budget: 922 k blades (level 0 — patch-only placement, ~15 % of the planet in
+  packed cores at folio-level density) rendered as ONE draw; the 18-slot trample loop is BRANCHED
+  to blades within 1.7 m of the player. Trees/bushes/rocks are instanced; terrain is 1 draw.
 * Shadow budget (§36): terrain receives; trees/rocks cast+receive; grass neither casts nor
   receives; particles never shadow.
 

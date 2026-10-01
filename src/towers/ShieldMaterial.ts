@@ -73,7 +73,8 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     // Edge-weighted bubble: the rim carries the glow, the face stays sheer so the world is
     // never tinted flat through the dome.
     const alpha = uOpacity.mul(fres.add(grid.mul(0.5)).add(bands.mul(0.3)).mul(sunLit)).clamp(0, 0.85);
-    const col = uColor.mul(fres.mul(1.5).add(grid.mul(0.6)).add(bands.mul(0.35)).add(0.15).mul(sunLit));
+    // HDR boost: the shell's energy rides ABOVE 1 so the bloom pass catches it (glowing dome).
+    const col = uColor.mul(fres.mul(1.5).add(grid.mul(0.6)).add(bands.mul(0.35)).add(0.15).mul(sunLit)).mul(1.6);
     return vec4(col, alpha);
   })();
   // The material owns its look — never the scene's legacy fog mirror (plan §24).
@@ -103,7 +104,8 @@ export function createBaseConeMaterial(color: number, opacity: number): THREE.Me
     // containment bands climbing the cone
     const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.0, 0.22).oneMinus();
     const a = uOpacity.mul(fade).mul(fres.mul(0.9).add(bands.mul(0.5)).add(0.12).mul(sunLit)).clamp(0, 0.85);
-    const col = uColor.mul(fres.mul(1.1).add(bands.mul(0.5)).add(0.25).mul(sunLit));
+    // HDR boost (bloom): the rim facets carry the glow.
+    const col = uColor.mul(fres.mul(1.1).add(bands.mul(0.5)).add(0.25).mul(sunLit)).mul(1.35);
     return vec4(col, a);
   })();
   material.fog = false;
@@ -144,9 +146,10 @@ export function createBeamMaterial(color: number, opacity: number, core = 1): TH
 
     const alpha = uOpacity.mul(rise).mul(flick).mul(profile).mul(fog.mul(0.9).oneMinus());
     // The ray keeps its banner colour; only the core tip whitens.
-    const tint = mix(uColor, vec3(1, 1, 1), uCore.mul(0.1).add(0.08));
+    const tint = mix(uColor, vec3(1, 1, 1), uCore.mul(0.12).add(0.1));
     const hot = (uv() as any).y.mul(-7).exp();
-    const col = tint.mul(across.mul(1.05).add(hot).add(0.62)).mul(uCore.mul(0.35).add(0.85));
+    // HDR boost (bloom): silhouette and core tip push past 1 so the ray reads as LIGHT.
+    const col = tint.mul(across.mul(1.05).add(hot).add(0.62)).mul(uCore.mul(0.35).add(0.85)).mul(1.7);
     return vec4(col, alpha);
   })();
   material.fog = false;

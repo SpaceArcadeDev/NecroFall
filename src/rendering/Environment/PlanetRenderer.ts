@@ -133,18 +133,9 @@ export class PlanetRenderer {
     this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
     this.group.add(this.puddles.mesh);
 
-    // 3 — grass field (blades vanish inside basins, wake ripples on water)
-    this.grass = new Grass(
-      deps.surface,
-      deps.nodes,
-      deps.quality,
-      deps.wind,
-      deps.noises,
-      deps.ticker,
-      deps.spawnDirection,
-      this.puddles,
-      deps.time,
-    );
+    // 3 — grass field (planet-wide and static: every blade is baked at build; the only runtime
+    // inputs are the player's parting push and the shared wind — nothing streams while walking)
+    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time);
     this.group.add(this.grass.mesh);
 
     // 4 — bushes (leaf-card canopies)

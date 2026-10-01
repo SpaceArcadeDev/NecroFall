@@ -13,6 +13,12 @@ import { mix, normalize, positionLocal, smoothstep, texture } from 'three/tsl';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
 import type { Noises } from './Noises';
+import {
+  GRASS_PATCH_UV_SCALE,
+  GRASS_SHADOW_DEPTH,
+  GRASS_SHADOW_EDGE_HIGH,
+  GRASS_SHADOW_EDGE_LOW,
+} from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
 const RES_X = 320;
@@ -136,21 +142,15 @@ export class PlanetTerrain {
       colorNode: (() => {
         const terrainData = nodes.terrainNode(positionLocal);
         const base = nodes.colorNode(terrainData);
-        // DARK SOIL UNDER THE GRASS PATCHES ONLY (the reference look): the
-        // terrain darkens exactly where the grass clumps grow — the SAME
-        // planet-stable patch field the grass samples (world direction ×9,
-        // same thresholds) — so the bare soil between patches stays bright
-        // like folio's dunes. The threshold sits INSIDE the grass gate and the
-        // intensity is gentle, so dark ground only appears as a soft underlay
-        // of the densest clumps (which fully cover it) and never out in the
-        // transition tufts.
+        // THE GRASS SHADOW (fixed): a soft, planet-stable shade that exists EXACTLY where the
+        // blade field grows — the SAME patch sample, scale and thresholds the grass build uses
+        // (GrassField.ts). The band sits INSIDE the clumps (blades are already dense where it
+        // starts), so the ground darkens only under packed grass and can never show as
+        // standalone dark patches on the bare ground.
         const direction = normalize(positionLocal);
-        const patchNoise = texture(noises.perlin, direction.xz.mul(9.0)).r;
-        // INSIDE the full-blade zone only (blades hit 100% at noise ~0.52) and
-        // gentle, so the dark can only ever appear as faint shade BETWEEN
-        // packed blades — never as exposed dark ground.
-        const patchFactor = smoothstep(0.53, 0.64, patchNoise);
-        return base.mul(mix(1.0, 0.62, patchFactor)) as any;
+        const patchNoise = texture(noises.patch, direction.xz.mul(GRASS_PATCH_UV_SCALE)).r;
+        const shade = smoothstep(GRASS_SHADOW_EDGE_LOW, GRASS_SHADOW_EDGE_HIGH, patchNoise);
+        return base.mul(mix(1.0, GRASS_SHADOW_DEPTH, shade)) as any;
       })(),
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.

@@ -508,7 +508,8 @@ export async function startDevWorld(): Promise<void> {
     foliageDebugAccum += ticker.delta;
     if (foliageDebugAccum < 0.5) return;
     foliageDebugAccum = 0;
-    stats.set('fol.cull', `${quality.grassHalfExtent()} m`);
+    const blades = quality.grassSubdivisions();
+    stats.set('fol.field', `planet-wide ${(blades * blades).toLocaleString()} blades`);
     stats.set('terrainSamples', `${PlanetSurface.debugSamples}`);
     stats.set('surfaceQueries', `${PlanetSurface.debugQueries}`);
     PlanetSurface.debugSamples = 0;

@@ -73,19 +73,13 @@ export class Quality {
     return this.level === 0 ? 2 : this.level === 1 ? 1.5 : 1.25;
   }
 
-  /** Grass blade cells per side (plan §14, raised to folio density). */
-  grassSubdivisions(): number {
-    return this.level === 0 ? 700 : this.level === 1 ? 510 : 390;
-  }
-
   /**
-   * Grass field half extent in metres — the moving detail window (§39/§68).
-   * Coverage-first tuning: the blade budget concentrates into a smaller field
-   * (still well past the ~45 m horizon) so patch cores stay ~50 blades/m² and
-   * blades OVERLAP everywhere in view — the dark patch soil is always covered.
+   * Grass blade cells per side (plan §14). The field is PLANET-WIDE and fully static, and it
+   * is PATCH-ONLY: the whole budget lands inside the clumps, so the cores run at folio-level
+   * density (~15 blades/m² at level 0) on every part of the planet.
    */
-  grassHalfExtent(): number {
-    return this.level === 0 ? 70 : this.level === 1 ? 52 : 40;
+  grassSubdivisions(): number {
+    return this.level === 0 ? 960 : this.level === 1 ? 680 : 480;
   }
 
   /** Foliage (leaf cards) fade distance. */

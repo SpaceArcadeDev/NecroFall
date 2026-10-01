@@ -1,31 +1,31 @@
 /**
  * NECROFALL — spherical GPU grass (folio `World/Grass.js` architecture,
- * plan §14–§18/§68–§70).
+ * plan §14–§18).
  *
  * Folio's design is kept 1:1: ONE geometry, `subdivisions²` blades of three
  * vertices, blade shape + wind + camera-facing rotation entirely in the vertex
- * shader, density straight from the terrain data. The ONLY adaptation is the
- * coordinate frame — the flat X/Z field becomes a TANGENT PATCH on the sphere:
+ * shader, colour straight from the terrain data. The adaptation is the
+ * coordinate frame — blades live ON the sphere:
  *
- *   blade patch offset (x, z) → direction = normalize(centreDir + T·x + B·z)
+ *   one blade = one DIRECTION; its base is direction · surfaceRadius(direction)
  *
- * The frame re-bases onto the player as they walk (every blade is re-projected
- * EXACTLY, so the world stays pinned — no sliding), the wrap recycles blades
- * around the moving centre, and the rim fades to zero size so every recycle
- * happens invisibly (plan §68/§39).
+ * THE WHOLE PLANET IS PLANTED AT BUILD TIME (plan §17): every blade's direction, its
+ * patch-mask acceptance, its water cull and its size factor are baked once from the
+ * planet-stable fields (the same noise sample the terrain's grass shadow reads) — and
+ * NOTHING about the field changes at runtime as the player walks. No moving frame, no
+ * wrap, no rim, no per-proximity streaming: the only per-frame inputs are the player's
+ * parting push and the shared wind.
  */
 import * as THREE from 'three/webgpu';
 import {
   attribute,
   cameraPosition,
-  color,
   cross,
   float,
   Fn,
+  If,
   Loop,
-  max,
   mix,
-  mod,
   normalize,
   positionWorld,
   select,
@@ -39,11 +39,17 @@ import {
 } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { Quality } from '../Quality';
-import type { Ticker } from '../Ticker';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
 import type { Wind } from './Wind';
 import type { Noises } from './Noises';
-import type { BasinSite, Puddles } from './Puddles';
+import type { Puddles } from './Puddles';
+import { mulberry32 } from '../../planet/PlanetSeed';
+import {
+  GRASS_ACCEPTANCE_POWER,
+  GRASS_PATCH_EDGE_LOW,
+  GRASS_PATCH_UV_SCALE,
+  grassCoverage,
+} from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
 export class Grass {
@@ -52,13 +58,8 @@ export class Grass {
   private geometry: THREE.BufferGeometry;
   private material: MeshDefaultMaterial;
 
-  private readonly uCenterDir = uniform(vec3(0, 1, 0));
-  private readonly uTangent = uniform(vec3(1, 0, 0));
-  private readonly uBitangent = uniform(vec3(0, 0, 1));
-  private readonly uCenter2 = uniform(vec2(0, 0));
-  private readonly uSize = uniform(80);
-  private readonly uBladeWidth = uniform(0.075);
-  private readonly uBladeHeight = uniform(0.5);
+  private readonly uBladeWidth = uniform(0.19);
+  private readonly uBladeHeight = uniform(0.78);
   private readonly uBladeRandomness = uniform(0.6);
   /** Wind sway amount — the lawn visibly ripples (raised per feedback). */
   private readonly uSwayStrength = uniform(2.5);
@@ -68,20 +69,11 @@ export class Grass {
   private readonly uPushCenter = uniform(new THREE.Vector3(1, 0, 0));
 
   private subdivisions: number;
-  private halfExtent: number;
+  /** Actually planted blades (acceptance can close the loop a hair early). */
+  private bladeTotal = 0;
 
-  /** Live water-suppression slots: up to 6 basins that can overlap the field. */
-  private readonly waterSlots = Array.from({ length: 6 }, () => ({
-    dir: uniform(new THREE.Vector3(0, 1, 0)),
-    cos: uniform(new THREE.Vector2(2.0, 2.0001)), // (outer, inner) — inactive
-  }));
-
-  // CPU frame state (mirrors the three frame uniforms)
-  private readonly frameDir = new THREE.Vector3(0, 1, 0);
-  private readonly frameT = new THREE.Vector3(1, 0, 0);
-  private readonly frameB = new THREE.Vector3(0, 0, 1);
+  /** Scratch for the ground-level test in update(). */
   private readonly scratchDir = new THREE.Vector3();
-  private readonly scratchOffset = new THREE.Vector3();
 
   /** Trample-trail data texture (xyz = world pos, w = drop time). */
   private readonly trailTexture: THREE.DataTexture;
@@ -96,14 +88,10 @@ export class Grass {
     private quality: Quality,
     private readonly wind: Wind,
     private readonly noises: Noises,
-    private readonly ticker: Ticker,
-    initialDirection: THREE.Vector3,
     private readonly water: Puddles | undefined,
     private readonly uTime: any,
   ) {
     this.subdivisions = quality.grassSubdivisions();
-    this.halfExtent = quality.grassHalfExtent();
-    this.uSize.value = this.halfExtent * 2;
 
     // ---- trample-trail buffer (blades stay parted where the player walked)
     this.trailData = new Float32Array(TRAIL_SLOTS * 4);
@@ -116,128 +104,131 @@ export class Grass {
     this.trailTexture.generateMipmaps = false;
     this.trailTexture.needsUpdate = true;
 
-    // Anchor the patch frame at the SPAWN before any data exists — the first
-    // update must be a near-identity re-base, never a far-side projection.
-    this.frameDir.copy(initialDirection).normalize();
-    this.stableTangent(this.frameDir, this.frameT);
-    this.frameB.crossVectors(this.frameDir, this.frameT);
-    this.uCenterDir.value.copy(this.frameDir);
-    this.uTangent.value.copy(this.frameT);
-    this.uBitangent.value.copy(this.frameB);
-
-    this.geometry = this.createGeometry(this.subdivisions, this.halfExtent);
+    this.geometry = this.createGeometry(this.subdivisions);
     this.material = this.createMaterial();
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
     // NO received dynamic shadows on blades: razor-thin triangles are the worst
     // case for shadow-map bias — the acne flips lit/dark patches ON the blades
     // as the shadow-follow camera moves with the player (the 'lighting angle
-    // suddenly changes' flicker at distance). The root-shade gradient + the
-    // terrain's own shadows underneath keep the grounded look.
+    // suddenly changes' flicker at distance). The baked root shade + the
+    // terrain's own grass shadow underneath keep the grounded look.
     this.mesh.receiveShadow = false;
     this.mesh.name = 'grass';
 
     // NOTE: no ticker subscription — the world orchestrator calls `update(focus)` once per
-    // frame at its own stage (PlanetRenderer.update). Subscribing here too ran the re-base
-    // pass twice per frame.
+    // frame at its own stage (PlanetRenderer.update).
 
     quality.events.on('change', () => {
       const subs = this.quality.grassSubdivisions();
-      const half = this.quality.grassHalfExtent();
-      if (subs !== this.subdivisions || half !== this.halfExtent) {
+      if (subs !== this.subdivisions) {
         this.subdivisions = subs;
-        this.halfExtent = half;
-        this.uSize.value = half * 2;
         this.geometry.dispose();
-        this.geometry = this.createGeometry(subs, half);
+        this.geometry = this.createGeometry(subs);
         this.mesh.geometry = this.geometry;
       }
-      this.updateScale();
     });
-    this.updateScale();
-  }
-
-  private updateScale(): void {
-    // folio's surfaceOverflow ratio — bigger fields hold slightly larger blades
-    // (clamped). Proportions matched to folio's actual uniform values:
-    // blades are CHUNKY — ~0.19 m wide, ~0.78 m tall — so they overlap into
-    // a continuous lawn instead of reading as separate slivers.
-    const surface = Math.pow(this.halfExtent * 2, 2);
-    const overflow = Math.min(1.1, Math.max(0, surface - 2000) / 2000);
-    this.uBladeWidth.value = 0.085 * (1 + overflow * 0.28);
-    this.uBladeHeight.value = 0.58 * (1 + overflow * 0.28);
   }
 
   /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14). */
-  private createGeometry(subdivisions: number, halfExtent: number): THREE.BufferGeometry {
-    const count = subdivisions * subdivisions;
-    const half = halfExtent;
+  private createGeometry(subdivisions: number): THREE.BufferGeometry {
+    const target = subdivisions * subdivisions;
+    const sites = this.water?.sites ?? [];
+    const radius = this.surface.radius;
 
-    // ---- distribution: dense core + power-law falloff. The core fraction
-    // is shared with the shader's rim fade so size and density taper TOGETHER:
-    // a blade appearing at the field boundary (world-anchored recycling) is a
-    // couple of pixels tall — there is no visible pop while walking.
-    const denseRadius = half * DENSE_FRACTION;
-    // Gentle falloff (2.5): grass stays plentiful well past the horizon instead
-    // of collapsing into stubble a few metres out from the player.
-    const falloff = 2.5;
+    // ---- placement: the WHOLE planet's surface, planted ONCE at build. A candidate direction
+    // is ACCEPTED by the planet-stable patch field (GrassField.ts — the very same noise sample
+    // the terrain's grass shadow reads), then culled by the water basins and given its baked
+    // size. Nothing here is ever re-run while the player walks.
+    const posX = new Float32Array(target);
+    const posY = new Float32Array(target);
+    const posZ = new Float32Array(target);
+    const randoms = new Float32Array(target);
+    const fields = new Float32Array(target);
 
-    const offsets = new Float32Array(count * 3 * 2);
-    const positions = new Float32Array(count * 3 * 3);
-    const randomness = new Float32Array(count * 3);
+    const random = mulberry32(0x9e3779b9);
+    let accepted = 0;
+    const maxTries = target * 8;
+    for (let tries = 0; tries < maxTries && accepted < target; tries++) {
+      // uniform direction on the sphere (area-correct)
+      const z = random() * 2 - 1;
+      const angle = random() * Math.PI * 2;
+      const ring = Math.sqrt(Math.max(0, 1 - z * z));
+      const dx = ring * Math.cos(angle);
+      const dy = z;
+      const dz = ring * Math.sin(angle);
 
-    // deterministic scatter (same field every run)
-    let seed = 0x9e3779b9;
-    const random = () => {
-      seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
+      // patch acceptance — PATCHES ONLY: outside the patch band there is no blade at all
+      // (bare ground stays bare), and inside it the coverage^power curve packs blades
+      // shoulder to shoulder while the rim fades in under a metre. The mask is the SMOOTH
+      // low-frequency field, so patches are BIG fields, not a scatter of small clumps.
+      const patch = this.noises.samplePatch(dx * GRASS_PATCH_UV_SCALE, dz * GRASS_PATCH_UV_SCALE);
+      if (patch < GRASS_PATCH_EDGE_LOW) continue; // bare ground — ZERO blades
+      const coverage = grassCoverage(patch);
+      if (random() > Math.pow(coverage, GRASS_ACCEPTANCE_POWER)) continue;
 
-    let v = 0;
-    for (let i = 0; i < count; i++) {
-      // uniform-area disc sample, rejection-shaped into the core profile
-      let x = 0;
-      let z = 0;
-      for (let guard = 0; guard < 128; guard++) {
-        const ux = random() * 2 - 1;
-        const uz = random() * 2 - 1;
-        const u = ux * ux + uz * uz;
-        if (u > 1 || u < 1e-8) continue;
-        const r = Math.sqrt(u) * half;
-        if (r > denseRadius && random() > Math.pow(denseRadius / r, falloff)) continue;
-        const stretch = r / Math.sqrt(u);
-        x = ux * stretch;
-        z = uz * stretch;
-        break;
+      // water — baked here, so the runtime field owns no slots and nothing pops near basins
+      let suppression = 0;
+      for (let s = 0; s < sites.length; s++) {
+        const site = sites[s];
+        const dot = dx * site.direction.x + dy * site.direction.y + dz * site.direction.z;
+        if (dot <= site.shoreCos) continue;
+        const t = Math.min(1, (dot - site.shoreCos) / (site.waterCos - site.shoreCos));
+        const inside = t * t * (3 - 2 * t);
+        if (inside > suppression) suppression = inside;
       }
+      const waterFactor = 1 - suppression;
+      if (waterFactor <= 0.02) continue; // fully submerged — never spent a blade
 
+      // world-stable size noise (baked at build — the shader owns no noise reads)
+      const sizeNoise = this.noises.sample(dx * radius * 0.0321, dz * radius * 0.0321);
+      // inside a clump the blades run at (near) full size — the taper lives only in the rim
+      const field = (0.6 + 0.4 * coverage) * waterFactor * (0.72 + 0.55 * sizeNoise);
+      if (field <= 0.01) continue;
+
+      // bake the blade's SURFACE POSITION (direction · terrain radius): the vertex shader
+      // then needs no terrain read at all — this is what pays for the density raise
+      this.scratchDir.set(dx, dy, dz);
+      const surfaceRadius = this.surface.radiusAt(this.scratchDir);
+      posX[accepted] = dx * surfaceRadius;
+      posY[accepted] = dy * surfaceRadius;
+      posZ[accepted] = dz * surfaceRadius;
+      randoms[accepted] = random();
+      fields[accepted] = field;
+      accepted++;
+    }
+    this.bladeTotal = accepted;
+
+    // 3 vertices per blade — tip / left base / right base, all sharing the blade's data.
+    const positions = new Float32Array(accepted * 3 * 3);
+    const randomness = new Float32Array(accepted * 3);
+    const fieldAttr = new Float32Array(accepted * 3);
+    let v = 0;
+    for (let i = 0; i < accepted; i++) {
+      const px = posX[i];
+      const py = posY[i];
+      const pz = posZ[i];
       for (let corner = 0; corner < 3; corner++) {
-        const index = v++;
-        offsets[index * 2] = x;
-        offsets[index * 2 + 1] = z;
-        // a valid vec3 position so the pipeline stays happy — replaced in the shader
-        positions[index * 3] = x;
-        positions[index * 3 + 1] = 0;
-        positions[index * 3 + 2] = z;
-        randomness[index] = random();
+        positions[v * 3] = px;
+        positions[v * 3 + 1] = py;
+        positions[v * 3 + 2] = pz;
+        randomness[v] = randoms[i];
+        fieldAttr[v] = fields[i];
+        v++;
       }
     }
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('bladeOffset', new THREE.BufferAttribute(offsets, 2));
     geometry.setAttribute('bladeRandom', new THREE.BufferAttribute(randomness, 1));
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), half * 1.6);
+    geometry.setAttribute('bladeField', new THREE.BufferAttribute(fieldAttr, 1));
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), radius + 90);
     return geometry;
   }
 
   private createMaterial(): MeshDefaultMaterial {
-    const surface = this.surface;
     const nodes = this.nodes;
     const wind = this.wind;
-    const inverseRadius = 1 / surface.radius;
 
     const vertexLoop = vertexIndex.toFloat().mod(3);
     const isTip = vertexLoop.lessThan(0.5);
@@ -268,62 +259,22 @@ export class Grass {
       hasWater: false,
       hasLightBounce: false,
       shadowNode: (() => {
-        // root shadow like folio: the base of every blade sits in shade — this
-        // is what visually "plants" the lawn and reads as contact shadow
-        const terrainData = nodes.terrainNode(positionWorld);
-        return tipness.oneMinus().mul(terrainData.y.mul(0.75)) as any;
+        // THE FIXED SHADOW UNDER EVERY BLADE: the base of each blade sits in its own constant
+        // shade — planet-stable and NOT keyed to the biome mask (which left blades on desert
+        // planets ungrounded) — so the lawn grounds itself wherever it grows.
+        return tipness.oneMinus().pow(1.35).mul(0.8) as any;
       })(),
     });
 
     material.positionNode = Fn(() => {
-      const offset = attribute('bladeOffset') as any; // vec2 patch coords
       const randomVertex = attribute('bladeRandom') as any;
+      const field = attribute('bladeField') as any;
 
-      // ---- wrap around the moving centre (folio's infinite scroll, sphere edition)
-      const halfSize = this.uSize.mul(0.5);
-      const loopX = mod(offset.x.sub(this.uCenter2.x).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.x);
-      const loopZ = mod(offset.y.sub(this.uCenter2.y).add(halfSize), this.uSize).sub(halfSize).add(this.uCenter2.y);
-      const patch = vec2(loopX, loopZ);
-
-      // ---- sphere mapping: patch coords (metres) → direction on the planet.
-      // Gnomonic scale: a patch offset of x metres is x/R in centre-dir units.
-      const patchScaled = patch.mul(inverseRadius);
-      const direction: any = normalize(
-        this.uCenterDir.add(this.uTangent.mul(patchScaled.x)).add(this.uBitangent.mul(patchScaled.y)) as any,
-      );
-
-      // ---- terrain data at the blade's own location (the ONE source, plan §17)
-      const terrainData = nodes.terrainNode(direction);
-      // PATCHES EVERYWHERE: the lawn is grouped purely by the planet-stable
-      // patch noise (sampled on the blade's world direction — never frame-local
-      // coords, which shift on re-base). The biome grass mask no longer
-      // suppresses blades — ANY patch on the planet grows a full, tightly
-      // packed clump exactly like the spawn area; only bare gaps stay empty.
-      const patchNoise = texture(this.noises.perlin, direction.xz.mul(9.0)).r;
-      const patchFactor = smoothstep(0.32, 0.52, patchNoise);
-
-      // ---- rim: every blade SHRINKS smoothly to zero before the wrap boundary. The shrink
-      // window is staggered by a WORLD-STABLE hash (derived from the blade's direction — never
-      // the frame coords, which are rewritten on every re-base) so neighbours fade one by one,
-      // no blade ever pops mid-size, and every recycle at ±half-extent happens at zero size
-      // (plan §17/§39).
-      const rimDistance = patch.sub(this.uCenter2).length().div(halfSize);
-      const bladeHash = (direction.x.mul(12.9898).add(direction.y.mul(78.233)).add(direction.z.mul(37.719)) as any)
-        .sin()
-        .mul(43758.5453)
-        .fract();
-      const rimScale = smoothstep(bladeHash.mul(0.22).add(0.72), 0.97, rimDistance).oneMinus();
-      const visibility = rimScale.mul(this.waterSuppression(direction).oneMinus());
-      // Outside the patches a sparse baseline remains (small random tufts), so
-      // bare zones still have some grass — but the dark soil shading in the
-      // terrain keys on the patch CORE only (full-blade zone), so it can never
-      // show through partial-size blades. Strong mid-band floor keeps the
-      // clump edges packed too.
-      const sizeScale = patchFactor.pow(0.6).mul(0.78).add(0.22).mul(visibility);
-
-      // ---- surface position
-      const surfaceRadius = nodes.heightMeters(terrainData.x).add(float(surface.radius));
-      const basePosition = direction.mul(surfaceRadius);
+      // ---- the blade's SURFACE POSITION is baked into the position attribute at build
+      // (direction · terrain radius) — the vertex stage performs zero terrain reads, which
+      // is what lets the field run at full patch density. `direction` is its unit radial.
+      const basePosition: any = attribute('position') as any;
+      const direction: any = normalize(basePosition);
 
       // ---- tangent frame at the blade
       const up = vec3(0, 1, 0);
@@ -331,15 +282,13 @@ export class Grass {
       const tangent: any = normalize(reference.cross(direction));
       const bitangent: any = direction.cross(tangent);
 
-      // ---- blade shape (folio: tip / left / right)
-      const bladeWidth = this.uBladeWidth.mul(sizeScale);
+      // ---- blade shape (folio: tip / left / right). `field` is the BAKED size factor
+      // (patch coverage × water × world-stable noise) — no term here can change while the
+      // world runs, so blades never resize as the player moves.
+      const bladeWidth = this.uBladeWidth.mul(field);
       const bladeHeight = this.uBladeHeight
         .mul(this.uBladeRandomness.mul(randomVertex).add(this.uBladeRandomness.oneMinus()))
-        // WORLD-STABLE size noise: sampled from the blade's own surface position, never from the
-        // frame coords — a re-base used to re-roll every blade's size at once (the "grass pops
-        // in as I move" bug).
-        .mul(texture(this.noises.perlin, vec2(basePosition.x, basePosition.z).mul(0.0321)).r.add(0.5))
-        .mul(sizeScale);
+        .mul(field);
 
       const sideX = select(isRightBase, bladeWidth, bladeWidth.negate()) as any;
       const shapeX = isTip.select(float(0), sideX);
@@ -358,10 +307,8 @@ export class Grass {
       const toCamera = cameraPosition.sub(basePosition);
       const facing = normalize(cross(direction, toCamera as any) as any);
 
-      // ---- wind (ONE field for the whole world — plan §18). The phase is sampled from the
-      // blade's WORLD position: frame coords are rewritten by the re-base, and feeding them to
-      // the wind made every blade's sway phase jump each time the frame re-centred (~17 m of
-      // walking) — the whole field churned. World coordinates keep the ripple continuous.
+      // ---- wind (ONE field for the whole world — plan §18), sampled from the blade's
+      // WORLD position so the ripple is continuous and identical every run.
       const windOffset = wind.offsetNode(vec2(basePosition.x, basePosition.z)) as any;
       const tipness = isTip.select(float(1), float(0));
       const sway = windOffset.mul(tipness).mul(shapeUp).mul(this.uSwayStrength);
@@ -379,7 +326,10 @@ export class Grass {
       // ---- TRAMPLE TRAIL: recent player positions linger, so blades stay
       // pushed along the walked path and spring back over ~1.7 s — the visible
       // trail behind a moving player. Standing still, only the clearing holds.
-      const trailBend = (() => {
+      // The 18-slot loop only ever matters within ~1.4 m of the player, so it is
+      // BRANCHED: every other blade on the planet skips all 18 texture reads.
+      const trailBend = vec3(0, 0, 0).toVar();
+      If(playerDistance.lessThan(1.7), () => {
         const accumulated = vec3(0, 0, 0).toVar();
         Loop(TRAIL_SLOTS, ({ i }) => {
           const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
@@ -397,8 +347,8 @@ export class Grass {
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
         });
-        return accumulated.mul(0.38);
-      })();
+        trailBend.assign(accumulated.mul(0.38));
+      });
 
       const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
 
@@ -420,83 +370,11 @@ export class Grass {
     return material;
   }
 
-  /**
-   * Blades collapse to zero size inside nearby water basins (1 = suppressed).
-   * Six angular slots — the update() finds the closest basins whose footprint
-   * can touch the field, so no texture bake or per-basin loop is needed.
-   */
-  private waterSuppression(directionNode: any): any {
-    let suppression: any = null;
-    for (const slot of this.waterSlots) {
-      const dot = directionNode.dot(slot.dir);
-      const inside = smoothstep(slot.cos.x, slot.cos.y, dot);
-      suppression = suppression ? max(suppression, inside) : inside;
-    }
-    return suppression ?? float(0);
-  }
-
-  /** Reusable scratch for the water-slot pass — zero allocations per frame (plan §34). */
-  private readonly waterCandidates: { dot: number; site: BasinSite }[] = [];
-
-  /** Feed the up-to-6 basins that can overlap the grass field into the shader. */
-  private updateWaterSlots(): void {
-    const water = this.water;
-    if (!water || water.sites.length === 0) return;
-    const radius = this.surface.radius;
-    const focus = this.scratchDir; // unit focus direction (set in update())
-
-    const candidates = this.waterCandidates;
-    let count = 0;
-    for (const site of water.sites) {
-      const dot = focus.dot(site.direction);
-      const reach = Math.min(Math.PI, (site.radius + this.halfExtent + 2) / radius);
-      if (dot < Math.cos(reach)) continue;
-      const entry = candidates[count] ?? (candidates[count] = { dot: 0, site });
-      entry.dot = dot;
-      entry.site = site;
-      count++;
-    }
-    // insertion sort the used slice, closest first (n is tiny: a handful of basins per planet)
-    for (let i = 1; i < count; i++) {
-      const entry = candidates[i];
-      let j = i - 1;
-      while (j >= 0 && candidates[j].dot < entry.dot) {
-        candidates[j + 1] = candidates[j];
-        j--;
-      }
-      candidates[j + 1] = entry;
-    }
-
-    for (let i = 0; i < this.waterSlots.length; i++) {
-      const slot = this.waterSlots[i];
-      const candidate = i < count ? candidates[i] : null;
-      if (candidate) {
-        const dir = candidate.site.direction;
-        slot.dir.value.set(dir.x, dir.y, dir.z);
-        slot.cos.value.set(candidate.site.shoreCos, candidate.site.waterCos);
-      } else {
-        slot.cos.value.set(2.0, 2.0001); // inactive
-      }
-    }
-  }
-
-  /** Called every frame from the environment tick — the field follows the player (plan §39/§68). */
+  /** Called every frame from the environment tick — only the player's parting moves now. */
   update(focusPlanetPosition?: THREE.Vector3): void {
     const focus = focusPlanetPosition ?? this.lastFocus;
     if (!focus) return;
     this.lastFocus = focus;
-    this.scratchDir.copy(focus).normalize();
-
-    // Re-base the frame when the player walks away from its centre — every
-    // blade is re-projected EXACTLY so the world stays pinned (no sliding).
-    const alignment = this.scratchDir.dot(this.frameDir);
-    if (alignment < 0.99) {
-      this.rebase(this.scratchDir);
-    }
-
-    // The player's own patch coordinates drive the wrap.
-    const patchCoords = this.patchCoordsOf(this.scratchDir, this.scratchOffset);
-    this.uCenter2.value.set(patchCoords.x, patchCoords.y);
 
     // Parting centre = the player's exact world position.
     this.uPushCenter.value.copy(focus);
@@ -514,62 +392,13 @@ export class Grass {
       this.trailStarted = true;
     }
 
-    // Keep the water-suppression slots pointed at the basins near the field.
-    this.updateWaterSlots();
-
     // Parting only happens at ground level — the lawn is untouched mid-air.
+    this.scratchDir.copy(focus).normalize();
     const height = Math.max(0, focus.length() - this.surface.radiusAt(this.scratchDir));
     this.uGrassPush.value = 1 - smoothstepCpu01(0.35, 1.1, height);
   }
 
   private lastFocus: THREE.Vector3 | null = null;
-
-  /** Exact gnomonic projection of a direction into the CURRENT frame (metres). */
-  private patchCoordsOf(direction: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-    const denom = Math.max(0.2, direction.dot(this.frameDir));
-    out.copy(direction).divideScalar(denom).sub(this.frameDir).multiplyScalar(this.surface.radius);
-    return out;
-  }
-
-  private rebase(newDir: THREE.Vector3): void {
-    const newT = new THREE.Vector3();
-    const newB = new THREE.Vector3();
-    this.stableTangent(newDir, newT);
-    newB.crossVectors(newDir, newT);
-
-    // Re-project every blade: world direction stays identical, coordinates change.
-    const offsets = this.geometry.getAttribute('bladeOffset') as THREE.BufferAttribute;
-    const array = offsets.array as Float32Array;
-    const world = new THREE.Vector3();
-    const local = new THREE.Vector3();
-
-    for (let i = 0; i < array.length; i += 2) {
-      world
-        .copy(this.frameDir)
-        .addScaledVector(this.frameT, array[i] * (1 / this.surface.radius))
-        .addScaledVector(this.frameB, array[i + 1] * (1 / this.surface.radius))
-        .normalize();
-      const denom = world.dot(newDir);
-      if (denom < 0.25) continue; // unreachable in normal operation — never explode an offset
-      local.copy(world).divideScalar(denom).sub(newDir);
-      array[i] = local.dot(newT) * this.surface.radius;
-      array[i + 1] = local.dot(newB) * this.surface.radius;
-    }
-    offsets.needsUpdate = true;
-
-    this.frameDir.copy(newDir);
-    this.frameT.copy(newT);
-    this.frameB.copy(newB);
-    this.uCenterDir.value.set(newDir.x, newDir.y, newDir.z);
-    this.uTangent.value.set(newT.x, newT.y, newT.z);
-    this.uBitangent.value.set(newB.x, newB.y, newB.z);
-  }
-
-  /** Pole-safe tangent (plan §70). */
-  private stableTangent(normal: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-    const reference = Math.abs(normal.y) < 0.95 ? UP : SIDE;
-    return out.crossVectors(reference, normal).normalize();
-  }
 
   setVisible(visible: boolean): void {
     this.mesh.visible = visible;
@@ -582,15 +411,9 @@ export class Grass {
   }
 
   get bladeCount(): number {
-    return this.subdivisions * this.subdivisions;
+    return this.bladeTotal || this.subdivisions * this.subdivisions;
   }
 }
-
-const UP = new THREE.Vector3(0, 1, 0);
-const SIDE = new THREE.Vector3(1, 0, 0);
-
-/** Field fraction that keeps full density; the rest tapers (CPU + shader share it). */
-const DENSE_FRACTION = 0.5;
 
 /** Trample-trail ring buffer: recent player positions (xyz + drop time). */
 const TRAIL_SLOTS = 18;

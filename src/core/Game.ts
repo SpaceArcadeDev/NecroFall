@@ -1435,8 +1435,8 @@ export class Game {
       for (const [label, value] of Object.entries(world.stats)) overlay.set(`fol.${label}`, value);
     }
     overlay.set('fol.quality', `level ${this.quality.level}`);
-    overlay.set('fol.cull', `${this.quality.grassHalfExtent()} m`);
-    overlay.set('fol.fade', `${(this.quality.grassHalfExtent() * 0.78).toFixed(1)}–${(this.quality.grassHalfExtent() * 0.97).toFixed(1)} m`);
+    const blades = this.quality.grassSubdivisions();
+    overlay.set('fol.field', `planet-wide ${(blades * blades).toLocaleString()} blades`);
     overlay.set('terrainSamples', `${PlanetSurface.debugSamples}`);
     overlay.set('surfaceQueries', `${PlanetSurface.debugQueries}`);
     PlanetSurface.debugSamples = 0;

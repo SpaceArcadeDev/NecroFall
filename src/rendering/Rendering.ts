@@ -89,12 +89,12 @@ export class Rendering {
 
     this.bloomPass = bloom(this.scenePassColor);
     this.bloomPass._nMips = this.quality.bloomMips();
-    // HOT-CORE bloom (second playtest pass): a HIGHER threshold with a HIGHER strength — the glow
-    // hugs the saturated HDR cores (shields/rays/FX push past 1) instead of lifting the whole
-    // frame, which is what made the light effects read washed out with the previous soft setup.
+    // VIBRANT hot-core bloom: the emissive materials push their brilliant areas to 2-3, so the
+    // halo keys hard on them (real glare) while ordinary lit geometry (≤1) stays out of it —
+    // a strong, saturated glow instead of a broad soft wash over the whole frame.
     this.bloomPass.threshold.value = 0.9;
-    this.bloomPass.strength.value = 0.7;
-    this.bloomPass.smoothWidth.value = 0.65;
+    this.bloomPass.strength.value = 0.85;
+    this.bloomPass.smoothWidth.value = 0.5;
 
     this.cheapDOFPass = cheapDOF(renderOutput(this.scenePass));
 

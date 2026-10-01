@@ -30,13 +30,13 @@ const fresnelNode = (power: number) =>
   (normalWorld as any).dot(viewDirNode()).abs().oneMinus().pow(power);
 
 /**
- * Saturation-preserving HDR gain — the fix for the "washed out" glow (user report). The colour
- * is saturated FIRST (its luma share pulled back) and only then gained past 1 for the bloom:
- * additive shells/rays keep their banner COLOUR while they glow, instead of stacking to white.
+ * Saturation-only step (its luma share pulled back through the mix() identity). Pair it with a
+ * BRILLIANCE field multiplied well past 1 — "vibrant light" is saturated colour that blazes,
+ * not a flat bright fill and not a white stack.
  */
-const satHDR = (node: any, sat: number, gain: number): any => {
+const saturate = (node: any, sat: number): any => {
   const luma: any = dot(node, vec3(0.2126, 0.7152, 0.0722));
-  return mix(vec3(luma, luma, luma) as any, node as any, sat).mul(gain);
+  return mix(vec3(luma, luma, luma) as any, node as any, sat);
 };
 
 /** The uniform handles callers use to animate a shield (attached to the material object). */
@@ -66,10 +66,10 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     blending: THREE.AdditiveBlending,
   });
   material.colorNode = Fn(() => {
-    const fres = fresnelNode(2.6);
+    const fres = fresnelNode(2.2);
     // LIT shell: the sun-facing side carries more of the energy colour and the far side falls
-    // into real shade (0.25..1.0) — the dome reads as a lit glass bubble, not a flat wash.
-    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.75).add(0.25);
+    // into real shade (0.3..1.0).
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.7).add(0.3);
 
     // spherical lat/long energy lattice, scrolling over time
     const l = (positionLocal as any).normalize();
@@ -81,16 +81,12 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     // rising containment bands
     const bands = l.y.mul(5).sub(NECRO_UNIFORMS.uTime.mul(0.12)).fract().sub(0.5).abs().smoothstep(0.0, 0.18).oneMinus();
 
-    // Edge-weighted bubble: the rim carries the glow, the face stays sheer so the world is
-    // never tinted flat through the dome.
-    const alpha = uOpacity.mul(fres.add(grid.mul(0.5)).add(bands.mul(0.3)).mul(sunLit)).clamp(0, 0.85);
-    // SATURATED HDR shell: the rim runs hot but keeps the banner colour (no flat white lift) —
-    // the bloom pass reads colour, not wash.
-    const col = satHDR(
-      uColor.mul(fres.mul(1.7).add(grid.mul(0.6)).add(bands.mul(0.35)).add(0.06).mul(sunLit)),
-      1.4,
-      1.45,
-    );
+    // VIBRANT LIGHT (user ask): a BRILLIANCE field — rim + energy cells + bands — multiplies the
+    // saturated banner colour well past 1, so the hot structures carry a real glare (col × alpha
+    // ≈ 1.2+ on the rim) while the face stays sheer enough to read the world through.
+    const brilliance = fres.mul(2.4).add(grid.mul(1.1)).add(bands.mul(0.7)).add(0.05);
+    const col = saturate(uColor, 1.45).mul(brilliance.mul(sunLit));
+    const alpha = uOpacity.mul(fres.mul(1.0).add(grid.mul(0.55)).add(bands.mul(0.35)).add(0.04).mul(sunLit)).clamp(0, 0.9);
     return vec4(col, alpha);
   })();
   // The material owns its look — never the scene's legacy fog mirror (plan §24).
@@ -116,12 +112,13 @@ export function createBaseConeMaterial(color: number, opacity: number): THREE.Me
     const fade = h.smoothstep(0.12, 0.82).oneMinus();
     const fres = fresnelNode(2.4);
     // Lit cone: sun-facing facets carry the colour, the back falls into real shade.
-    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.75).add(0.25);
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.7).add(0.3);
     // containment bands climbing the cone
     const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.0, 0.22).oneMinus();
-    const a = uOpacity.mul(fade).mul(fres.mul(0.9).add(bands.mul(0.5)).add(0.12).mul(sunLit)).clamp(0, 0.85);
-    // SATURATED HDR rim (bloom keys on colour, not white light).
-    const col = satHDR(uColor.mul(fres.mul(1.4).add(bands.mul(0.5)).add(0.1).mul(sunLit)), 1.4, 1.4);
+    // Same brilliance recipe as the dome: the rim facets and bands carry the glare.
+    const brilliance = fres.mul(2.6).add(bands.mul(1.0)).add(0.06);
+    const col = saturate(uColor, 1.45).mul(brilliance.mul(sunLit));
+    const a = uOpacity.mul(fade).mul(fres.mul(0.95).add(bands.mul(0.55)).add(0.05).mul(sunLit)).clamp(0, 0.9);
     return vec4(col, a);
   })();
   material.fog = false;
@@ -156,17 +153,20 @@ export function createBeamMaterial(color: number, opacity: number, core = 1): TH
     const fog = smoothstep(NECRO_UNIFORMS.uFogNear, NECRO_UNIFORMS.uFogFar, d).clamp(0, 1);
 
     // Richer edge contrast: the silhouette is bright, the middle sheer (a light ray, not a
-    // flat additive sheet).
-    const across = facing.pow(2.1);
-    const profile = mix(0.1, 1.35, across);
+    // flat additive sheet). `facing` ≈ 1 on the centre column of the ray, 0 at the silhouette.
+    const core = facing.pow(1.5);
+    const rim = core.oneMinus().pow(0.7);
 
-    const alpha = uOpacity.mul(rise).mul(flick).mul(profile).mul(fog.mul(0.9).oneMinus());
-    // The ray keeps its banner colour — only the core tip whitens at all.
-    const tint = mix(uColor, vec3(1, 1, 1), uCore.mul(0.1).add(0.06));
     const hot = (uv() as any).y.mul(-7).exp();
-    // SATURATED HDR ray: bright coloured silhouette + hot core tip, sheer colour in between —
-    // the old flat +0.62 lift made the whole beam an even white column (the wash).
-    const col = satHDR(tint.mul(across.mul(1.5).add(hot.mul(1.2)).add(0.28)).mul(uCore.mul(0.3).add(0.8)), 1.35, 1.5);
+
+    // VIBRANT LIGHT: a white-HOT core down the centre inside a saturated banner-coloured body —
+    // the classic ray look (blown column, coloured mid/edges, brightest at the emitter tip).
+    const energy = core.mul(2.6).add(rim.mul(1.5)).add(hot.mul(1.8));
+    const glow = saturate(uColor, 1.5).mul(energy.mul(uCore.mul(0.3).add(0.85)));
+    const whiteHot = vec3(1, 1, 1).mul(core.pow(3).mul(1.3).add(hot.mul(0.5)));
+    const col = glow.add(whiteHot);
+
+    const alpha = uOpacity.mul(rise).mul(flick).mul(core.mul(0.75).add(rim.mul(0.5)).add(0.05)).mul(fog.mul(0.9).oneMinus());
     return vec4(col, alpha);
   })();
   material.fog = false;

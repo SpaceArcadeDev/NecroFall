@@ -24,8 +24,12 @@ import { formatRunTime } from '../../utils/Utils';
 import { createCenterIcon, createFullscreenExitIcon, createFullscreenIcon } from '../../rankmap/RankMapIcons';
 import type { SoloMode } from '../../core/Game';
 
+/** The modes THIS picker serves — the map-based runs. FREEROAM (user ask) has no picker: the PLAY
+ *  menu starts it directly (the world is procedural and the class defaults to RIFT). */
+type PickedSoloMode = Exclude<SoloMode, 'freeroam'>;
+
 /** Mode facts the page paints (title, tagline, record labels). */
-const MODES: Record<SoloMode, { title: string; tag: string; line: string; recordLabel: string; accent: string }> = {
+const MODES: Record<PickedSoloMode, { title: string; tag: string; line: string; recordLabel: string; accent: string }> = {
   speedrun: {
     title: 'SPEEDRUN',
     tag: 'SOLO · RACE',
@@ -54,7 +58,7 @@ export class SoloPage {
   private panelSig = '';
   private unsubscribe: () => void = () => undefined;
 
-  constructor(private ctx: ShellContext, readonly mode: SoloMode) {
+  constructor(private ctx: ShellContext, readonly mode: PickedSoloMode) {
     const meta = MODES[mode];
     this.element = el('div', 'nf-page rank-page solo-page');
     this.element.classList.add(mode === 'speedrun' ? 'solo-speedrun' : 'solo-survival');
@@ -73,7 +77,7 @@ export class SoloPage {
     // ---- strip: the mode switch + the one-line promise
     const strip = el('div', 'rk-strip solo-strip');
     const toggle = el('div', 'solo-toggle');
-    for (const m of ['speedrun', 'survival'] as SoloMode[]) {
+    for (const m of ['speedrun', 'survival'] as PickedSoloMode[]) {
       const b = el('button', `solo-toggle-btn${m === mode ? ' on' : ''}`, MODES[m].title) as HTMLButtonElement;
       b.type = 'button';
       b.addEventListener('click', () => {

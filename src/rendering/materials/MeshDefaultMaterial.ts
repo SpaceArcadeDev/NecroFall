@@ -33,6 +33,11 @@ export interface MeshDefaultMaterialParameters {
   normalNode?: any;
   alphaNode?: any;
   shadowNode?: any;
+  /**
+   * Emission added AFTER lighting and shadows (like a lamp): it survives the dark side and is
+   * scaled up where the surface sits in shade — grass uses it for glowing night-side tips.
+   */
+  glowNode?: any;
   alphaTest?: number;
   depthWrite?: boolean;
   depthTest?: boolean;
@@ -184,8 +189,9 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
       }
 
       let shadowMixValue: any = null;
+      let combinedShadowMix: any = null;
       if (this.hasCoreShadows || this.hasDropShadows) {
-        const combinedShadowMix = max(coreShadowMix, dropShadowMix, shadowNode).clamp(0, 1);
+        combinedShadowMix = max(coreShadowMix, dropShadowMix, shadowNode).clamp(0, 1);
         if (this.debugMode === 'shadow') {
           // Component breakdown: R = core shadow, G = drop shadow, B = material root shade.
           shadowMixValue = vec3(coreShadowMix as any, dropShadowMix as any, shadowNode as any);
@@ -193,6 +199,19 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
           const shadedColor = baseColor.rgb.mul(shadowColorNode);
           outputColor.assign(mix(outputColor, shadedColor, combinedShadowMix));
         }
+      }
+
+      // ---- glow (tonal freedom after the shadow stack): the term rides on TOP of lighting, and
+      // shade multiplies it UP — a dark-side surface glows at full strength while lit lawn keeps
+      // its own colours (the 0.10 floor).
+      if (parameters.glowNode) {
+        // Keyed to REAL shadow only (sun-facing shade + cast shadow — NOT the decorative root
+        // shade), squared for contrast: lit/twilight lawn stays exactly as before and the glow
+        // fades in only through genuine darkness. The first pass added light across dim lawn and
+        // washed it out (user report 2026-10-01).
+        const shade = max(coreShadowMix, dropShadowMix).clamp(0, 1);
+        const darkness = mix(float(0.1), float(1.0), (shade as any).mul(shade));
+        outputColor.addAssign((parameters.glowNode as any).mul(darkness));
       }
 
       // ---- fog (skipped in every isolated debug mode; the `fog` mode renders the factor itself)

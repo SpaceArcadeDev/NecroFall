@@ -270,6 +270,33 @@ export class Grass {
         // planets ungrounded) — so the lawn grounds itself wherever it grows.
         return tipness.oneMinus().pow(1.35).mul(0.8) as any;
       })(),
+      // GLOWING TIPS (user ask: "at dark parts of the map the grass is fully dark — make it a
+      // gradient to bright lighter glowing tips", later "reduce the grass glow in dark areas"):
+      // emission added AFTER lighting and scaled UP in shade, so the dark-side lawn keeps a soft
+      // colour-led glow on every blade. Tuned twice by user feedback: the loud pass blew the lawn
+      // out, the faint pass vanished entirely — strength 0.75 / clamp 0.65 is the visible middle.
+      //
+      // Two field fixes (2026-10-01, reported as tip "sparkles" + a black planet menu):
+      //  • the falloff was `tipness.pow(2.2)` — `pow(0, 2.2)` evaluates to NaN on some
+      //    WebGPU/D3D drivers; blade bases interpolate to exactly 0, so chunks of the lawn went
+      //    NaN and the bloom blur smeared the NaN across the whole frame (black menu planet).
+      //    A pow-free LINEAR rise has no such corner.
+      //  • the old falloff also piled the whole glow into the last few centimetres of the tip,
+      //    which read as sparkling dots once bloom kicked in. The glow rises smoothly from the
+      //    root and stays well under the bloom threshold, so it reads as a gentle gradient of
+      //    light (root dark → tip faintly lit) instead of glitter.
+      glowNode: (() => {
+        const base = nodes.colorNode(nodes.terrainNode(positionWorld));
+        const ramp: any = mix(base.mul(0.42), base.mul(1.55), tipness);
+        const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
+        const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
+        const gradient: any = (tipness as any).mul(0.5).add((tipness as any).mul(tipness).mul(0.5));
+        const vary: any = (bladeTint as any).mul(0.4).add(0.8);
+        // COLOUR-LED glow: keeps the blade's own hue (the white-lifted pass bleached whole lawns —
+        // user report 2026-10-01) and is tip-weighted (0 at the root → 1 at the tip), so the glow
+        // reads as a lighter coloured tip, never as a washed-out carpet.
+        return vivid.mul(0.75).mul(gradient).mul(vary).clamp(0, 0.65);
+      })(),
     });
 
     material.positionNode = Fn(() => {
@@ -321,21 +348,24 @@ export class Grass {
 
       // ---- the player PARTS the grass: blades within the walk radius bend
       // away from the player (tip vertices only), centred on their exact world
-      // position. They spring straight back the moment the player has passed —
-      // the INSTANT recovery reads as a natural walking trail, no lane.
+      // position. The clearing is deliberately WIDE (user ask: "increase the
+      // radius to move more grass away from the player") and the trample trail
+      // below holds the wake visible for seconds after the player has passed.
       const toPlayerWorld = basePosition.sub(this.uPushCenter);
       const horizontal = toPlayerWorld.sub(direction.mul((toPlayerWorld as any).dot(direction)));
       const playerDistance = (horizontal as any).length();
-      const pushInfluence = smoothstep(0.15, 1.25, playerDistance).oneMinus();
+      const pushInfluence = smoothstep(0.2, 1.8, playerDistance).oneMinus();
       const pushDir = normalize(horizontal as any);
-      const clearingBend = pushDir.mul(pushInfluence.mul(0.55));
+      const clearingBend = pushDir.mul(pushInfluence.mul(0.65));
       // ---- TRAMPLE TRAIL: recent player positions linger, so blades stay
-      // pushed along the walked path and spring back over ~1.7 s — the visible
-      // trail behind a moving player. Standing still, only the clearing holds.
-      // The 18-slot loop only ever matters within ~1.4 m of the player, so it is
-      // BRANCHED: every other blade on the planet skips all 18 texture reads.
+      // pushed along the walked path — the visible wake behind a moving player
+      // (user ask: a MORE visible trail). Samples hold their full push for ~4 s
+      // and spring back over the next 3 s, so the grass under a stopped player
+      // recovers slowly instead of snapping upright. The ring buffer carries
+      // 96 m of history (96 slots × 1 m). It is BRANCHED: only blades within
+      // ~2.4 m of the player run the loop — every other blade skips all reads.
       const trailBend = vec3(0, 0, 0).toVar();
-      If(playerDistance.lessThan(1.7), () => {
+      If(playerDistance.lessThan(2.4), () => {
         const accumulated = vec3(0, 0, 0).toVar();
         Loop(TRAIL_SLOTS, ({ i }) => {
           const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
@@ -346,14 +376,14 @@ export class Grass {
           const trailDistance = (horizontalTrail as any).length();
           // Ramp IN over 0.3 s as well as out: a sample landing must never
           // snap blades to a new angle — that was the moving flicker/pop.
-          const influence = smoothstep(0.3, 1.35, trailDistance).oneMinus()
-            .mul(smoothstep(0.7, 1.6, age).oneMinus())
+          const influence = smoothstep(0.4, 2.0, trailDistance).oneMinus()
+            .mul(smoothstep(4.0, 7.0, age).oneMinus())
             .mul(smoothstep(0.0, 0.3, age));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
         });
-        trailBend.assign(accumulated.mul(0.38));
+        trailBend.assign(accumulated.mul(0.45));
       });
 
       const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
@@ -421,10 +451,11 @@ export class Grass {
   }
 }
 
-/** Trample-trail ring buffer: recent player positions (xyz + drop time). */
-const TRAIL_SLOTS = 18;
+/** Trample-trail ring buffer: recent player positions (xyz + drop time). 96 slots × 1 m ≈ 96 m
+ *  of history — the ~7 s full fade at a sprint (13.5 m/s) fits inside the ring. */
+const TRAIL_SLOTS = 96;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
-const TRAIL_DROP_STEP = 0.85; // metres between overlapping samples — one channel
+const TRAIL_DROP_STEP = 1.0; // metres between overlapping samples — one channel
 
 /** CPU smoothstep (matches the shader semantics). */
 function smoothstepCpu01(edge0: number, edge1: number, x: number): number {

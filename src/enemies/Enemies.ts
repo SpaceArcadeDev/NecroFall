@@ -2689,7 +2689,10 @@ export class EnemyManager {
     this.spatial.clear();
     for (const e of this.enemies) if (e.alive) this.spatial.insert(e);
 
-    if (g.isHost && g.phase === 'playing') this.runSpawner(dt);
+    // FREEROAM (user ask): the sandbox world never spawns anything — the swarm, the packs, the
+    // apexes, the hunters and the survival bosses all live inside `runSpawner`, so one gate here
+    // keeps the whole field empty.
+    if (g.isHost && g.phase === 'playing' && !g.freeroamMode) this.runSpawner(dt);
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];

@@ -81,17 +81,26 @@ import { PerformanceMonitor } from '../performance/PerformanceMonitor';
 
 export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'playing' | 'ended';
 
-/** The SOLO modes (user ask 2026-09-30): single-player runs on a chosen planet. */
-export type SoloMode = 'speedrun' | 'survival';
+/** The SOLO modes (user ask 2026-09-30): single-player runs on a chosen planet. FREEROAM (user
+ *  ask) is the sandbox: CLASSIC's PROCEDURAL world, alone, with no enemies and no clock — the
+ *  player drops on the GROUND on a default kit just to roam the environment. */
+export type SoloMode = 'speedrun' | 'survival' | 'freeroam';
+
+/** FREEROAM's default starter kit: RIFT (index into `NECROTECHS`) — blink + black hole. */
+const FREEROAM_NECROTECH = (() => {
+  const i = NECROTECHS.findIndex(n => n.name === 'RIFT');
+  return i >= 0 ? i : 0;
+})();
 
 /**
  * Everything a SOLO run needs. The run is CLIENT-LOCAL (no match row — the solo match
  * simulates on this machine) but the RECORDS live on the server: `onStart` logs the first
- * play, `onFinish` submits the time. The world is the planet's deterministic world seed.
+ * play, `onFinish` submits the time. The world is the planet's deterministic world seed —
+ * except FREEROAM, whose `seed` IS a plain procedural world seed (no map planet involved).
  */
 export interface SoloRunOptions {
   mode: SoloMode;
-  /** Canonical `ring:g:s:p` planet key. */
+  /** Canonical `ring:g:s:p` planet key ('' in FREEROAM — the world is procedural). */
   planetKey: string;
   /** Rank ring of the planet — shapes the terrain archetype and the ecology. */
   ring: number;
@@ -371,12 +380,18 @@ export class Game {
   private officialMatch: GameOptions['official'] | null = null;
   /** Server usage summary of the last OFFICIAL match (plan §28) — printed on the results screen. */
   private officialUsage: NonNullable<OfficialMatchResult['usage']> | null = null;
-  /** The active SOLO run (speedrun / survival), or null for every other match type. */
+  /** The active SOLO run (speedrun / survival / freeroam), or null for every other match type. */
   private soloRun: SoloRunOptions | null = null;
   /** The settled solo result (record compare + submission outcome), kept for the end screen. */
   private soloResult: { timeMs: number; bestMs: number; bestName: string; isNew: boolean; victory: boolean; submitted: boolean } | null = null;
   /** True once the running world is a SURVIVAL match (no towers, count-up clock, death ends it). */
   survivalMode = false;
+  /**
+   * True once the running world is a FREEROAM sandbox (user ask): a procedural CLASSIC-style
+   * world the player drops into ALONE and ON THE GROUND — no towers, no enemy spawns, no clock.
+   * The environment is the whole point, so nothing on the field can end or interrupt the visit.
+   */
+  freeroamMode = false;
   /** Enemy difficulty ramp multiplier for the ACTIVE match (survival ramps ~50% faster). */
   enemyRampMul = 1;
   /**
@@ -619,6 +634,8 @@ export class Game {
    * A size compare every 30 frames is free and self-heals any missed event.
    */
   private viewportWatchCounter = 0;
+  /** Pending height-only resize settle (mobile URL-bar animation — see `onResize`). */
+  private resizeSettle = 0;
   private static readonly RAF_MIN_WINDOW = 3000;
   /**
    * How long after the picker closes a new level-up still counts as the same burst (continuation).
@@ -1073,6 +1090,32 @@ export class Game {
   }
 
   onResize(): void {
+    const doc = document.documentElement;
+    const widthMoved = Math.abs((doc.clientWidth || 0) - this.viewport.width) > 1;
+    // Rotation and lateral window resizes are single decisive events — apply at once (this is what
+    // cured the Android half-screen bug). A HEIGHT-only change on a touch device is almost always
+    // the mobile URL bar animating: it fires a burst of resize events, one per animation frame,
+    // and every canvas reconfigure in that burst can flash the screen black (Android + WebGPU
+    // swap-chain reallocation). Touch devices therefore settle first — the burst collapses into
+    // ONE resize 250 ms after it goes quiet, and if it ends where it began the renderer never
+    // reconfigures at all (see `Rendering.applySize`).
+    if (widthMoved || !IS_TOUCH) {
+      if (this.resizeSettle) {
+        window.clearTimeout(this.resizeSettle);
+        this.resizeSettle = 0;
+      }
+      this.applyViewportSize();
+      return;
+    }
+    if (this.resizeSettle) window.clearTimeout(this.resizeSettle);
+    this.resizeSettle = window.setTimeout(() => {
+      this.resizeSettle = 0;
+      this.applyViewportSize();
+    }, 250);
+  }
+
+  /** Measure → render scale → camera: the ONE apply path for viewport changes. */
+  private applyViewportSize(): void {
     this.viewport.measure();
     this.applyRenderScale();
     this.cam.resize(this.viewport.ratio);
@@ -1522,7 +1565,11 @@ export class Game {
       if (++this.viewportWatchCounter >= 30) {
         this.viewportWatchCounter = 0;
         const doc = document.documentElement;
-        if (doc.clientWidth !== this.viewport.width || doc.clientHeight !== this.viewport.height) {
+        // > 1 px of slack: sub-pixel rounding churn must never start a measure/resize loop.
+        if (
+          Math.abs(doc.clientWidth - this.viewport.width) > 1 ||
+          Math.abs(doc.clientHeight - this.viewport.height) > 1
+        ) {
           this.onResize();
         }
       }
@@ -1833,9 +1880,12 @@ export class Game {
   /**
    * START A SOLO RUN (user ask 2026-09-30): speedrun and survival are single-player matches that
    * play the EXACT planet the picker showed — same seed, same terrain archetype, same ecology as
-   * a ranked match there — but with no server match row and no network. The starter-class picker
-   * opens first (the account colony is already fixed), then the world boots and either the Nexus
-   * capture (speedrun) or the player's death (survival) concludes the run and reports the time.
+   * a ranked match there — but with no server match row and no network. FREEROAM (user ask) rides
+   * the same machinery: CLASSIC-style PROCEDURAL world, no towers, no enemies, no clock, the body
+   * dropped on the ground — and NO class picker: it boots straight onto its default RIFT kit, so
+   * roaming starts immediately. For the other modes the starter-class picker opens first (the
+   * colony is already fixed), then the world boots and either the Nexus capture (speedrun) or the
+   * player's death (survival) concludes the run and reports the time — FREEROAM never concludes.
    */
   startSoloRun(opts: SoloRunOptions, necrotech = -1): void {
     if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech') {
@@ -1852,16 +1902,25 @@ export class Game {
     this.players.clear();
     const id = this.net.myId;
     const name = (this.ui.playerName || '').trim() || 'Survivor';
+    // FREEROAM (user ask): no class choice — the sandbox always boots on the RIFT kit (unless a
+    // specific class was passed in explicitly).
+    const nt = necrotech >= 0 ? necrotech : opts.mode === 'freeroam' ? FREEROAM_NECROTECH : -1;
     this.roster.set(id, {
       id,
       name,
       ready: true,
       colony: opts.colony >= 0 && opts.colony < COLONIES.length ? opts.colony : 0,
-      nt: necrotech,
+      nt,
       isHost: true,
       me: true,
     });
     this.hostOrder = [id];
+    if (opts.mode === 'freeroam') {
+      // SKIP THE PICKER (user ask): the sandbox builds the world at once with the default kit —
+      // `finalizeNecrotechPhase` boots `beginPlaying` from the run's own procedural seed.
+      this.finalizeNecrotechPhase();
+      return;
+    }
     // The starter-class pick (same screen as every other flow); its clock finalizes locally and
     // `finalizeNecrotechPhase` then boots the world with the PLANET's seed.
     this.phase = 'necrotech';
@@ -2531,6 +2590,9 @@ export class Game {
     // SURVIVAL (user ask 2026-09-30): endless horde, no towers, the clock counts UP and the
     // enemies ramp harder than a classic match's curve.
     this.survivalMode = this.soloRun?.mode === 'survival';
+    // FREEROAM (user ask): the sandbox world — CLASSIC's procedural planet with no towers, no
+    // enemy spawns and no clock, entered on the GROUND (see `entrySpawnPoint`).
+    this.freeroamMode = this.soloRun?.mode === 'freeroam';
     this.enemyRampMul = this.survivalMode ? 1.5 : 1;
     // fresh performance budget for the match
     this.enemyBudget = this.settings.maxEnemies;
@@ -2556,9 +2618,12 @@ export class Game {
     // you land on. Classic matches keep the decorrelating hash. The rank ring tunes the terrain
     // archetype and the ecology's complexity (plan §6/§29).
     // SOLO runs (user ask 2026-09-30) play a PICKED planet exactly like a ranked match does.
+    // FREEROAM (user ask) is the exception: it keeps CLASSIC's PROCEDURAL world — the run's own
+    // random seed IS the planet seed, and the bestiary generates from it like any classic match.
     const official = this.officialMatch?.match;
     const solo = this.soloRun;
-    const rankedPlanet = Boolean((official?.ranked && official.planetKey) || solo);
+    const freeroamWorld = solo?.mode === 'freeroam';
+    const rankedPlanet = !freeroamWorld && Boolean((official?.ranked && official.planetKey) || solo);
     const planetKey = solo ? solo.planetKey : official?.planetKey ?? '';
     const universeSeed = solo ? solo.universeSeed : official?.universeSeed ?? DEFAULT_UNIVERSE_SEED;
     const rankRing = solo
@@ -2582,7 +2647,9 @@ export class Game {
     // orbital angle the match clock says it should already be at.
     this.bases.build(this.planet, seed, this.scene, this.towers.centerDir, this.matchElapsed);
     for (const p of this.players.values()) {
-      p.position.copy(this.spawnPointFor(p.colony, p.id));
+      // FREEROAM drops the body ON THE GROUND (the colony landing pad); every other mode starts
+      // on the orbiting fortress deck.
+      p.position.copy(this.entrySpawnPoint(p.colony, p.id));
       p.up.copy(p.position).normalize();
       p.velocity.set(0, 0, 0);
       p.recompute();
@@ -2611,7 +2678,7 @@ export class Game {
     );
     // Four wardens, four different creatures — the names go to the console log above; the banner
     // states the fact (one name would play favourites with Beacons 2-4).
-    if (!this.survivalMode) this.ui.banner('FOUR GUARDIANS AWAKEN — ONE GUARDS EACH BEACON', 3200);
+    if (!this.survivalMode && !this.freeroamMode) this.ui.banner('FOUR GUARDIANS AWAKEN — ONE GUARDS EACH BEACON', 3200);
     this.combat.clear();
     this.abilities.clear();
     this.entityResetPickups();
@@ -2619,7 +2686,12 @@ export class Game {
     this.towers.reset();
     // SURVIVAL plays NO towers at all (user ask: "no beacons or nexus") — surviving the swarm
     // IS the goal, so the tower tracker, the wards and the Nexus all stay off the field.
-    if (!this.survivalMode) this.towers.init(seed);
+    // FREEROAM keeps them off too (user ask: "no enemies") — every tower would summon its
+    // guardian, and the sandbox is about the ENVIRONMENT, not the objectives. Both modes must
+    // TEAR DOWN whatever the previous match left standing (see Towers.clear) — skipping `init`
+    // alone kept old towers up and re-summoning their guardians forever.
+    if (!this.survivalMode && !this.freeroamMode) this.towers.init(seed);
+    else this.towers.clear();
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
     this.planet.aimSunAt(this.towers.centerDir);
@@ -2635,6 +2707,7 @@ export class Game {
     }
     if (this.soloRun) {
       if (this.soloRun.mode === 'speedrun') this.ui.banner('SPEEDRUN — CLAIM THE NEXUS AS FAST AS YOU CAN', 3600);
+      if (this.soloRun.mode === 'freeroam') this.ui.banner('FREEROAM — ROAM THE WORLD · NO ENEMIES · NO CLOCK', 3600);
       this.soloRun.onStart?.({ mode: this.soloRun.mode, planetKey: this.soloRun.planetKey });
     }
   }
@@ -2891,6 +2964,19 @@ export class Game {
   }
 
   /**
+   * Where a seat's body (re)enters the world. Every match type starts and respawns on the colony
+   * fortress deck — except FREEROAM (user ask): the sandbox drops the player ON THE GROUND, at
+   * the colony landing pad, so the visit begins on the terrain instead of on the orbiting ship.
+   */
+  private entrySpawnPoint(colony: number, id = ''): THREE.Vector3 {
+    if (this.freeroamMode) {
+      const base = this.bases.forColony(Math.max(0, colony));
+      if (base) return base.ground.clone();
+    }
+    return this.spawnPointFor(colony, id);
+  }
+
+  /**
    * True when a point lies inside a friendly no-go volume: a colony base dome (which also covers
    * the healing pad on the ground below it) or a live Beacon shield. Enemies use this to refuse
    * entry, to give up on a player who has taken shelter, to refuse to spawn there, and to block
@@ -2930,7 +3016,7 @@ export class Game {
   /** Revives a player at its colony's landing zone and tells every peer where it came back. */
   respawnPlayer(p: Player): void {
     if (!this.isHost || !p) return;
-    this.placeRespawned(p, this.spawnPointFor(p.colony, p.id));
+    this.placeRespawned(p, this.entrySpawnPoint(p.colony, p.id));
     this.net.broadcast({
       t: 'respawn', pid: p.id,
       x: p.position.x, y: p.position.y, z: p.position.z,
@@ -3041,9 +3127,10 @@ export class Game {
     // channel and fades out on its own the moment the calls stop (cancel, death, completion).
     this.effects.recallColumn(p.position, p.up, 0x8fd7ff, dt);
     if (r.t > 0) return;
-    // COMPLETE — land on the colony's fortress deck, the same spot a respawn uses. Deliberately
-    // NOT `spawnAt`: no free heal, no cooldown wipe (see Player.recallTo).
-    const dest = this.spawnPointFor(p.colony, p.id);
+    // COMPLETE — land on the colony's fortress deck, the same spot a respawn uses (FREEROAM
+    // lands on the landing pad on the ground, like its spawn). Deliberately NOT `spawnAt`: no
+    // free heal, no cooldown wipe (see Player.recallTo).
+    const dest = this.entrySpawnPoint(p.colony, p.id);
     _v3.copy(p.position);
     this.recall = null;
     p.recallHold = false;
@@ -3150,7 +3237,9 @@ export class Game {
     if (!run) return;
     const victory = winner !== null && this.localPlayer !== null && winner === this.localPlayer.colony;
     const timeMs = Math.max(0, Math.round(this.matchElapsed * 1000));
-    const countable = run.mode === 'speedrun' ? victory : timeMs > 0;
+    // FREEROAM is not a run: nothing is timed, compared or submitted — even if some future end
+    // path fired inside the sandbox, it must never land on the records board.
+    const countable = run.mode === 'freeroam' ? false : run.mode === 'speedrun' ? victory : timeMs > 0;
     const bestMs = Math.max(0, Math.round(run.bestMs ?? 0));
     const isNew =
       countable &&
@@ -3280,6 +3369,7 @@ export class Game {
     this.surrenderedColonies.clear();
     this.surrenderLost = false;
     this.survivalMode = false;
+    this.freeroamMode = false;
     this.enemyRampMul = 1;
     this.phase = 'menu';
     this.lastEnd = null;
@@ -5302,12 +5392,18 @@ export class Game {
     // The environment trims FIRST: particles → decorations → resolution. Gameplay systems are
     // never sacrificed before every environment knob is spent.
     this.planet.setAmbienceBudget([1, 0.6, 0.35, 0.35][level]);
+    // An EXPLICITLY chosen preset is the player's own instruction (mobile bug report: "graphics
+    // is always low even though I set it to ultra"): the watchdog still trims particles, ambience,
+    // the crowd and the resolution (the DPR ladder owns that), but it never strips the scenery
+    // (level-2) or drops the renderer level (level-3) for a preset the player picked by hand —
+    // `auto` keeps the full thermal ladder.
+    const explicit = this.qualityPref !== 'auto';
     // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
     // the one players actually see, which is why every path back up must restore it.
-    this.planet.setDecorationsVisible(this.rescueLevel < 2);
+    this.planet.setDecorationsVisible(explicit || this.rescueLevel < 2);
     // The LAST rescue step turns cheapDOF off (a full-screen pass). Bloom stays, so the
     // radioactive accents never lose their glow under load.
-    this.quality.changeLevel(this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));
+    this.quality.changeLevel(!explicit && this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));
   }
 
   /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */
@@ -5409,8 +5505,9 @@ export class Game {
       if (this.isHost) {
         this.matchElapsed += dt;
         // The 10-minute Necrorad ends a classic match — SURVIVAL has no clock to race
-        // (user ask 2026-09-30): the timer counts UP and only death ends the run.
-        if (!this.survivalMode && this.matchElapsed >= CONFIG.matchTime) {
+        // (user ask 2026-09-30): the timer counts UP and only death ends the run. FREEROAM
+        // (user ask) is clock-free too: nothing on its empty field can ever end the visit.
+        if (!this.survivalMode && !this.freeroamMode && this.matchElapsed >= CONFIG.matchTime) {
           this.endMatch(null);
         }
         this.updateRespawns(dt);
@@ -5849,6 +5946,8 @@ export class Game {
         : CONFIG.matchTime;
     d.matchTime = CONFIG.matchTime;
     d.countUp = this.survivalMode;
+    // FREEROAM (user ask): there is no clock — the HUD timer panel hides instead of counting.
+    d.clockHidden = this.freeroamMode;
     d.hp = p?.hp ?? 0;
     d.maxHp = p?.maxHp ?? CONFIG.player.maxHp;
     d.level = p?.level ?? 1;
@@ -6013,8 +6112,9 @@ export class Game {
   /** The three colony objectives shown under the tower tracker, with live progress. */
   private fillObjectives(): void {
     // SURVIVAL has no objectives at all (user ask: "no beacons or nexus") — the HUD's task
-    // list disappears rather than showing a wall of impossible 0/4 progress.
-    if (this.survivalMode) {
+    // list disappears rather than showing a wall of impossible 0/4 progress. FREEROAM has no
+    // towers either (the sandbox is about the environment), so its task list stays empty too.
+    if (this.survivalMode || this.freeroamMode) {
       this.hudTasks.length = 0;
       return;
     }

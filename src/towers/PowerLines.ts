@@ -134,6 +134,14 @@ export class PowerLines {
     this.lines.length = 0;
   }
 
+  /**
+   * Detaches and disposes every conduit (no-tower modes: survival, freeroam). Same teardown as
+   * `build`'s first step — the group leaves the scene, nothing is left pointing at old towers.
+   */
+  detach(scene: THREE.Scene): void {
+    this.clear(scene);
+  }
+
   private makeLine(planet: Planet, beacon: THREE.Vector3, nexus: THREE.Vector3): Line {
     // TSL port of the cable shader: casing fade at the rails, bright energy seam on the spine.
     const uColor = uniform(new THREE.Color(SEAL_COLOR));

@@ -57,6 +57,13 @@ const ICON_CUSTOM =
   '<path d="M16.4 5.6a3 3 0 0 1 0 5.9"/>' +
   '<path d="M17.4 14.6c1.7.5 2.8 2.1 3.2 4.5"/></svg>';
 
+/** FREEROAM — a compass: the roam-the-world sandbox, kept for wandering the environment. */
+const ICON_COMPASS =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
+  '<circle cx="12" cy="12" r="8.6"/>' +
+  '<path d="M15.4 8.6l-2.1 4.7-4.7 2.1 2.1-4.7z"/>' +
+  '<path d="M12 3.4v1.4M12 19.2v1.4M3.4 12h1.4M19.2 12h1.4"/></svg>';
+
 export class PlayPage {
   readonly element: HTMLElement;
   private classicCard: HTMLElement;
@@ -161,6 +168,17 @@ export class PlayPage {
       'INVITE',
       'Custom — a lobby on the hybrid server',
       () => this.ctx.goCustom()
+    );
+    // FREEROAM (user ask): the sandbox world — CLASSIC's procedural planet, alone, on the ground,
+    // no class picker (RIFT by default), no enemies and no clock. Pure roaming.
+    mkCard(
+      'freeroam-mode-card',
+      ICON_COMPASS,
+      'FREEROAM',
+      'Roam a procedural world alone — no enemies, no clock, no setup. Just wander the planet.',
+      'EXPLORE',
+      'Freeroam — roam a procedural planet alone, no enemies and no clock',
+      () => this.ctx.startFreeroam()
     );
     col.appendChild(modes);
 

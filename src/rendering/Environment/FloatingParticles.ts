@@ -60,7 +60,7 @@ export class FloatingParticles {
       const a = random() * Math.PI * 2;
       const r = Math.sqrt(Math.max(0, 1 - z * z));
       direction.set(r * Math.cos(a), z, r * Math.sin(a));
-      const height = 0.35 + random() * 9.5;
+      const height = 0.35 + random() * 26; // 0.35–26.35 m: motes drift in a TALL column (user ask: "spread more vertically" — raised twice)
       const radius = generator.radiusAt(direction.x, direction.y, direction.z) + height;
       const px = direction.x * radius;
       const py = direction.y * radius;
@@ -108,7 +108,8 @@ export class FloatingParticles {
       const sway = wind.offsetNode(centerAttribute.xz) as any;
       const drift = vec3(
         sin(this.uTime.mul(0.31).add(seedAttribute.mul(17.3))).mul(1.5).add(sway.x.mul(2.4)),
-        sin(this.uTime.mul(0.43).add(seedAttribute.mul(29.1))).mul(0.75),
+        // a livelier vertical bob so the column reads as drifting altitudinally, not a flat sheet
+        sin(this.uTime.mul(0.43).add(seedAttribute.mul(29.1))).mul(1.7),
         sin(this.uTime.mul(0.27).add(seedAttribute.mul(11.7))).mul(1.5).add(sway.y.mul(2.4)),
       );
       // size rides the low bits of the seed channel (0.07..0.19 m)

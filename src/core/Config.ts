@@ -264,11 +264,11 @@ export const CONFIG = {
   necrotechMutSlots: 2,
   /** Fixed, high-angle camera rig (isometric-ish) with wheel zoom. */
   camera: {
-    // 45° elevation rig (user ask: "camera angle 45 degrees relative to the player"):
-    // height == distance ⇒ the focus→camera line sits at exactly 45° above the horizon.
-    // The radial pull-back keeps the old rig's length (√(12.5² + 18.5²) ≈ 22.3 m).
-    distance: 15.8,
-    height: 15.8,
+    // 40° elevation rig (user ask: "change camera angle to 40 degrees"):
+    // height == distance × tan(40°) ⇒ the focus→camera line sits at exactly 40° above the horizon.
+    // The radial pull-back keeps the old rig's length (√(17.08² + 14.33²) ≈ 22.3 m) — only the pitch.
+    distance: 17.08,
+    height: 14.33,
     zoomMin: 0.6,
     zoomMax: 1.75,
     zoomStep: 0.1,

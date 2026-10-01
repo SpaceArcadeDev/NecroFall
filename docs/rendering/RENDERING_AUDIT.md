@@ -123,8 +123,9 @@ page load. All modes work identically in the Dev World and in a production match
   35 blades/m² so the ribbons overlap and the gaps close; quality ladder 840²/560² = 706 k/314 k)
   rendered as ONE draw; the 18-slot trample loop is BRANCHED to blades within 1.7 m of the
   player. Trees/bushes/rocks are instanced; terrain is 1 draw.
-* Camera rig: fixed 45° elevation (`CONFIG.camera.distance == height` ⇒ the focus→camera line
-  sits at exactly 45°); the heading is parallel-transported, the pitch never changes in play.
+* Camera rig: fixed 40° elevation (`atan(CONFIG.camera.height / CONFIG.camera.distance)` ⇒ the
+  focus→camera line sits at exactly 40°); the heading is parallel-transported, the pitch never
+  changes in play.
 * Shadow budget (§36): terrain receives; trees/rocks cast+receive; grass neither casts nor
   receives; particles never shadow.
 

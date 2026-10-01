@@ -78,6 +78,9 @@ export interface ShellContext {
   goCustomRoom(): void;
   /** Start a solo run on one planet: records load here, the game takes the screen. */
   startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor): void;
+  /** FREEROAM (user ask): a single-player sandbox on a PROCEDURAL planet — no enemies, no clock,
+   *  no class picker (defaults to RIFT), spawned on the ground. The world takes the screen. */
+  startFreeroam(): void;
   /** Create (host) a custom lobby; its room opens when the server rows land. */
   createCustomLobby(): void;
   /** Join a custom lobby by code; its room opens when the server rows land. */

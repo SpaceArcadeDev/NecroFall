@@ -10,7 +10,7 @@
 //   • P2P      → the existing game boots untouched (its lobbies, its rules).
 //   • OFFICIAL → the game boots with the official bridge attached; poses flow
 //               through SpacetimeDB and the server computes the result.
-import { Game } from '../core/Game';
+import { Game, type SoloMode } from '../core/Game';
 import { APP_CONFIG, AppConfig } from './config';
 import { AuthProvider } from './auth/AuthProvider';
 import { NullAuthProvider, SpacetimeAuthProvider } from './auth/SpacetimeAuthProvider';
@@ -135,7 +135,7 @@ export class AppShell implements ShellContext {
   private customLobbySig = '';
   /** A SOLO run (speedrun / survival) owns the screen until its results are dismissed. */
   private soloRunActive = false;
-  private lastSoloMode: 'speedrun' | 'survival' = 'speedrun';
+  private lastSoloMode: SoloMode = 'speedrun';
   /** The arg the current screen was rendered with (mode screens re-render on a mode switch). */
   private screenArg = '';
   /** The last matchmaking queue we saw was RANKED — return there, not the lobby (plan §48). */
@@ -435,6 +435,38 @@ export class AppShell implements ShellContext {
       this.soloRunActive = false;
       this.showShell('solo', mode);
       this.toast(err instanceof Error ? err.message : 'Could not start the run.');
+    }
+  }
+
+  /**
+   * FREEROAM (user ask): the single-player sandbox — a PROCEDURAL planet like a classic match,
+   * no enemies, no clock, no objectives, the body dropped ON THE GROUND rather than on the
+   * orbiting deck, and NO class picker (it roams on the default RIFT kit). The world takes the
+   * screen the moment this is called. Nothing counts and nothing can end it, so there are no
+   * records to load or submit; the Esc menu's LEAVE MATCH is the way out, and the shell returns
+   * to the PLAY menu.
+   */
+  startFreeroam(): void {
+    const game = this.ensureGame();
+    const hex = this.myHex();
+    const me = hex ? ClientCache.shared.me(hex) : null;
+    this.soloRunActive = true;
+    this.lastSoloMode = 'freeroam';
+    this.hideShell(true);
+    try {
+      game.startSoloRun({
+        mode: 'freeroam',
+        planetKey: '',
+        ring: 0,
+        universeSeed: DEFAULT_UNIVERSE_SEED,
+        // A FRESH procedural world per visit — the run's own rolled seed IS the planet seed.
+        seed: (Math.random() * 0xffffffff) >>> 0,
+        colony: me && me.colony !== COLONY_NONE ? me.colony : 0,
+      });
+    } catch (err) {
+      this.soloRunActive = false;
+      this.showShell('play');
+      this.toast(err instanceof Error ? err.message : 'Could not start freeroam.');
     }
   }
 
@@ -1904,11 +1936,13 @@ export class AppShell implements ShellContext {
     if (this.customLobbyActive) this.updateCustomRoom();
 
     if (this.soloRunActive) {
-      // A SOLO run owns the screen until its results are dismissed (Game.returnToMenu) —
-      // then back to the picker for another attempt (user ask 2026-09-30).
+      // A SOLO run owns the screen until it is left (Game.returnToMenu) — then back to the picker
+      // for another attempt (user ask 2026-09-30). FREEROAM never had a picker: its home is the
+      // PLAY format menu it was started from (user ask).
       if (game.phase === 'menu') {
         this.soloRunActive = false;
-        this.showShell('solo', this.lastSoloMode);
+        if (this.lastSoloMode === 'freeroam') this.showShell('play');
+        else this.showShell('solo', this.lastSoloMode);
       }
       this.pill.classList.add('hidden');
       return;

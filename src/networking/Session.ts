@@ -121,6 +121,18 @@ export function normaliseCode(raw: string | null | undefined): string {
   return CODE_RE.test(code) ? code : '';
 }
 
+/**
+ * The room code a HASH carries (`#CODE` / `#lobby=CODE`) — '' for everything else. A hash that
+ * starts with `/` is an ACCOUNT SHELL route (`#/play`, `#/home`, …): it must never be read as a
+ * room code, or the room helpers would clear the route's own hash (`#/play` normalises to 'PLAY',
+ * which is a perfectly valid 4-char code).
+ */
+function roomFromHash(hash: string): string {
+  const raw = decodeURIComponent(hash.replace(/^#/, ''));
+  if (raw.startsWith('/')) return '';
+  return normaliseCode(raw.replace(/^(lobby|room)=/i, ''));
+}
+
 export class SessionStore {
   private channel: BroadcastChannel | null = null;
   /** The room this tab is currently sitting in, so other tabs can be told it is taken. */
@@ -133,10 +145,8 @@ export class SessionStore {
     try {
       const url = new URL(window.location.href);
       const query = url.searchParams.get(ROOM_QUERY) ?? url.searchParams.get('room');
-      const rawHash = decodeURIComponent(url.hash.replace(/^#/, ''));
       // `#/play`, `#/home`, ... are the ACCOUNT SHELL's routes — never room codes.
-      const hash = rawHash.startsWith('/') ? '' : rawHash.replace(/^(lobby|room)=/i, '');
-      return normaliseCode(query || hash);
+      return normaliseCode(query || roomFromHash(url.hash));
     } catch {
       return '';
     }
@@ -150,7 +160,8 @@ export class SessionStore {
       const url = new URL(window.location.href);
       if ((url.searchParams.get(ROOM_QUERY) ?? '') === room && !url.hash) return;
       url.searchParams.set(ROOM_QUERY, room);
-      if (normaliseCode(url.hash.replace(/^#/, ''))) url.hash = '';
+      // Only a hash that IS a room code is dropped — a shell route (`#/play`) stays put.
+      if (roomFromHash(url.hash)) url.hash = '';
       window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
     } catch {
       /* history is unavailable (file://, sandboxed frame) — the session still works in-memory */
@@ -161,9 +172,10 @@ export class SessionStore {
   clearRoomFromUrl(): void {
     try {
       const url = new URL(window.location.href);
-      if (!url.searchParams.has(ROOM_QUERY) && !normaliseCode(url.hash.replace(/^#/, ''))) return;
+      // Only the ROOM's parts of the URL are touched — a shell route (`#/play`) is not a room.
+      if (!url.searchParams.has(ROOM_QUERY) && !roomFromHash(url.hash)) return;
       url.searchParams.delete(ROOM_QUERY);
-      if (normaliseCode(url.hash.replace(/^#/, ''))) url.hash = '';
+      if (roomFromHash(url.hash)) url.hash = '';
       const tail = `${url.search}${url.hash}`;
       window.history.replaceState(window.history.state, '', `${url.pathname}${tail}`);
     } catch {

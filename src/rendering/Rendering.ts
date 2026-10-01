@@ -33,6 +33,8 @@ export class Rendering {
   private cheapDOFPass: any = null;
   private scene: THREE.Scene | null = null;
   private camera: THREE.Camera | null = null;
+  /** The (width, height, pixel ratio) triple last written to the renderer. */
+  private readonly lastSize = { w: -1, h: -1, pr: -1 };
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -49,8 +51,7 @@ export class Rendering {
       forceWebGL: this.options.forceWebGL ?? !webgpu,
       antialias: this.viewport.pixelRatio < 2,
     });
-    this.renderer.setSize(this.viewport.width, this.viewport.height);
-    this.renderer.setPixelRatio(this.viewport.pixelRatio);
+    this.applySize(this.viewport.pixelRatio);
     this.renderer.sortObjects = false;
     this.renderer.shadowMap.enabled = true;
     this.renderer.setOpaqueSort((a, b) => (a?.renderOrder ?? 0) - (b?.renderOrder ?? 0));
@@ -64,8 +65,31 @@ export class Rendering {
 
   /** The ONE place the render resolution is written (game DPR ladder + viewport changes). */
   setRenderScale(scale: number): void {
-    this.renderer.setPixelRatio(scale);
-    this.renderer.setSize(this.viewport.width, this.viewport.height);
+    this.applySize(scale);
+  }
+
+  /**
+   * Every reconfigure reallocates the WebGPU swap chain, and on Android each reallocation can
+   * flash the frame black. The mobile URL bar animates its collapse/expand with a burst of resize
+   * events — one per animation frame — so an identical (size, ratio) pair is a hard no-op: a burst
+   * that ends where it started reconfigures nothing at all.
+   */
+  private applySize(pixelRatio: number): void {
+    const { width: w, height: h } = this.viewport;
+    // Sub-pixel deadband: Android reports 1-2 px clientHeight jitter (gesture bar, rounded
+    // corners, URL-bar settling) and a devicePixelRatio that can wobble in its last decimals —
+    // every one of those used to reconfigure the swap chain and flash the frame black. Changes
+    // this small are invisible, so they never reach the renderer.
+    const sameSize = Math.abs(w - this.lastSize.w) <= 2 && Math.abs(h - this.lastSize.h) <= 2;
+    const sameRatio = Math.abs(pixelRatio - this.lastSize.pr) < 0.02;
+    if (sameSize && sameRatio) {
+      return;
+    }
+    this.lastSize.w = w;
+    this.lastSize.h = h;
+    this.lastSize.pr = pixelRatio;
+    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.setSize(w, h);
   }
 
   get drawCalls(): number {
@@ -131,8 +155,7 @@ export class Rendering {
 
   resize(): void {
     if (!this.renderer) return;
-    this.renderer.setSize(this.viewport.width, this.viewport.height);
-    this.renderer.setPixelRatio(this.viewport.pixelRatio);
+    this.applySize(this.viewport.pixelRatio);
   }
 
   setWireframeAll(scene: THREE.Scene, enabled: boolean): void {

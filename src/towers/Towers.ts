@@ -467,6 +467,22 @@ export class TowerManager {
     this.dominating.clear();
   }
 
+  /**
+   * Removes every tower AND its conduits from the field entirely. Called by the modes that play
+   * NO towers at all (survival, freeroam): `init` is skipped there, so without this teardown a
+   * match started after a tower match kept the previous towers standing — and, worse, `update`
+   * kept re-summoning their guardians every `GUARDIAN_RESUMMON` seconds, dropping enemies on a
+   * field that is meant to be empty (found live: freeroam after a speedrun held 4 Vine bosses).
+   */
+  clear(): void {
+    for (const t of this.towers) this.game.scene.remove(t.group);
+    this.towers.length = 0;
+    this.nexus = null;
+    this.bounceFx.clear();
+    this.dominating.clear();
+    this.powerLines.detach(this.game.scene);
+  }
+
   counts(): number[] {
     const c = [0, 0, 0];
     for (const t of this.towers) if (t.owner >= 0) c[t.owner]++;

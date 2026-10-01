@@ -142,6 +142,8 @@ export interface HudData {
   matchTime: number;
   /** SURVIVAL (user ask 2026-09-30): the clock counts UP — `remaining` holds the ELAPSED time. */
   countUp?: boolean;
+  /** FREEROAM (user ask): there is no clock at all — the top-centre timer panel hides. */
+  clockHidden?: boolean;
   hp: number;
   maxHp: number;
   level: number;
@@ -641,6 +643,8 @@ export class UI {
 
   // HUD refs
   private timerVal!: HTMLElement;
+  /** The whole top-centre timer panel — hidden in FREEROAM (no clock, see `HudData.clockHidden`). */
+  private timerPanel!: HTMLElement;
   private taskList!: HTMLElement;
   private timerRail!: HTMLElement;
   private towerWidget: { el: HTMLElement; glyph: HTMLElement; ring: HTMLElement; status: HTMLElement; fill: HTMLElement }[] = [];
@@ -2445,6 +2449,7 @@ export class UI {
     top.appendChild(leftCol);
 
     const timerPanel = el('div', 'timer');
+    this.timerPanel = timerPanel;
     this.timerVal = el('div', 'val', '10:00');
     timerPanel.appendChild(this.timerVal);
     const rail = el('div', 'rail');
@@ -2621,6 +2626,9 @@ export class UI {
 
   updateHud(d: HudData): void {
     // ---- timer
+    // FREEROAM (user ask): the sandbox has no clock — the whole panel hides (its slot in the
+    // HUD top row simply carries nothing) instead of counting anything.
+    setClass(this.timerPanel, 'hidden', Boolean(d.clockHidden));
     // SURVIVAL counts UP (user ask 2026-09-30): floor the elapsed seconds (`formatTime`
     // rounds the classic countdown UP, which would inflate a survival clock by a second).
     setText(this.timerVal, d.countUp ? formatTime(Math.floor(d.remaining)) : formatTime(d.remaining));

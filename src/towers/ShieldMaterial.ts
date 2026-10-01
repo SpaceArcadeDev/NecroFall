@@ -67,9 +67,9 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
   });
   material.colorNode = Fn(() => {
     const fres = fresnelNode(2.2);
-    // LIT shell: the sun-facing side carries more of the energy colour and the far side falls
-    // into real shade (0.3..1.0).
-    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.7).add(0.3);
+    // LIT shell: the sun-facing side carries more of the energy colour and the far side keeps its
+    // glow (0.45..1.0) — a light source never really goes dark.
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.55).add(0.45);
 
     // spherical lat/long energy lattice, scrolling over time
     const l = (positionLocal as any).normalize();
@@ -81,12 +81,14 @@ export function createShieldMaterial(color: number, opacity: number): THREE.Mesh
     // rising containment bands
     const bands = l.y.mul(5).sub(NECRO_UNIFORMS.uTime.mul(0.12)).fract().sub(0.5).abs().smoothstep(0.0, 0.18).oneMinus();
 
-    // VIBRANT LIGHT (user ask): a BRILLIANCE field — rim + energy cells + bands — multiplies the
-    // saturated banner colour well past 1, so the hot structures carry a real glare (col × alpha
-    // ≈ 1.2+ on the rim) while the face stays sheer enough to read the world through.
-    const brilliance = fres.mul(2.4).add(grid.mul(1.1)).add(bands.mul(0.7)).add(0.05);
-    const col = saturate(uColor, 1.45).mul(brilliance.mul(sunLit));
-    const alpha = uOpacity.mul(fres.mul(1.0).add(grid.mul(0.55)).add(bands.mul(0.35)).add(0.04).mul(sunLit)).clamp(0, 0.9);
+    // VIBRANT LIGHT (user ask: "colors seem washed out — make them glowing light shields"): the
+    // BRILLIANCE field (rim + energy cells + bands) multiplies the saturated banner colour well
+    // past 1, so the hot structures bloom while a low SELF-LIT floor keeps the whole shell tinted
+    // instead of a flat grey veil. The bands are trimmed (they were the milky wash up close) —
+    // the rim and the scrolling cells carry the glare.
+    const brilliance = fres.mul(3.0).add(grid.mul(1.5)).add(bands.mul(0.6)).add(0.16);
+    const col = saturate(uColor, 1.6).mul(brilliance.mul(sunLit));
+    const alpha = uOpacity.mul(fres.mul(1.15).add(grid.mul(0.5)).add(bands.mul(0.22)).add(0.05).mul(sunLit)).clamp(0, 0.86);
     return vec4(col, alpha);
   })();
   // The material owns its look — never the scene's legacy fog mirror (plan §24).
@@ -111,14 +113,15 @@ export function createBaseConeMaterial(color: number, opacity: number): THREE.Me
     const h = (uv() as any).y.clamp(0, 1);
     const fade = h.smoothstep(0.12, 0.82).oneMinus();
     const fres = fresnelNode(2.4);
-    // Lit cone: sun-facing facets carry the colour, the back falls into real shade.
-    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.7).add(0.3);
+    // Lit cone: sun-facing facets carry the colour, the far side keeps its glow (0.45..1.0).
+    const sunLit = (normalWorld as any).dot(NECRO_UNIFORMS.uSunDir).clamp(0, 1).mul(0.55).add(0.45);
     // containment bands climbing the cone
     const bands = h.mul(3.5).sub(NECRO_UNIFORMS.uTime.mul(0.22)).fract().sub(0.5).abs().smoothstep(0.0, 0.22).oneMinus();
-    // Same brilliance recipe as the dome: the rim facets and bands carry the glare.
-    const brilliance = fres.mul(2.6).add(bands.mul(1.0)).add(0.06);
-    const col = saturate(uColor, 1.45).mul(brilliance.mul(sunLit));
-    const a = uOpacity.mul(fade).mul(fres.mul(0.95).add(bands.mul(0.55)).add(0.05).mul(sunLit)).clamp(0, 0.9);
+    // Same brilliance recipe as the dome: the rim facets carry the glare, a low self-lit floor
+    // keeps the whole skirt tinted (washed-out fix — see `createShieldMaterial`).
+    const brilliance = fres.mul(2.9).add(bands.mul(0.9)).add(0.18);
+    const col = saturate(uColor, 1.6).mul(brilliance.mul(sunLit));
+    const a = uOpacity.mul(fade).mul(fres.mul(1.05).add(bands.mul(0.45)).add(0.07).mul(sunLit)).clamp(0, 0.86);
     return vec4(col, a);
   })();
   material.fog = false;
@@ -160,10 +163,12 @@ export function createBeamMaterial(color: number, opacity: number, core = 1): TH
     const hot = (uv() as any).y.mul(-7).exp();
 
     // VIBRANT LIGHT: a white-HOT core down the centre inside a saturated banner-coloured body —
-    // the classic ray look (blown column, coloured mid/edges, brightest at the emitter tip).
+    // the classic ray look (blown column, coloured mid/edges, brightest at the emitter tip). The
+    // banner colour is retained harder than before (washed-out fix): the white pushes only at the
+    // very centre, so the ray reads as COLOURED light, never a plain white beam.
     const energy = core.mul(2.6).add(rim.mul(1.5)).add(hot.mul(1.8));
-    const glow = saturate(uColor, 1.5).mul(energy.mul(uCore.mul(0.3).add(0.85)));
-    const whiteHot = vec3(1, 1, 1).mul(core.pow(3).mul(1.3).add(hot.mul(0.5)));
+    const glow = saturate(uColor, 1.6).mul(energy.mul(uCore.mul(0.3).add(0.85)));
+    const whiteHot = vec3(1, 1, 1).mul(core.pow(3).mul(0.9).add(hot.mul(0.45)));
     const col = glow.add(whiteHot);
 
     const alpha = uOpacity.mul(rise).mul(flick).mul(core.mul(0.75).add(rim.mul(0.5)).add(0.05)).mul(fog.mul(0.9).oneMinus());

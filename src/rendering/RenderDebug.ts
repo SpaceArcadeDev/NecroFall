@@ -122,6 +122,7 @@ export interface RenderBaselineInput {
     backend: string;
     pixelRatio: number;
     toneMapping: number;
+    exposure: number;
     size: { x: number; y: number };
   };
   quality: string;
@@ -139,6 +140,7 @@ export function printRenderBaseline(input: RenderBaselineInput, overlay?: { set(
     'backend': input.renderer.backend,
     'pixelRatio': input.renderer.pixelRatio.toFixed(2),
     'toneMapping': String(input.renderer.toneMapping),
+    'exposure': input.renderer.exposure.toFixed(2),
     'resolution': `${input.renderer.size.x}×${input.renderer.size.y}`,
     'quality': input.quality,
     'camera': `fov ${input.camera.fov} near ${input.camera.near} far ${input.camera.far}`,

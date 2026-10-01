@@ -471,6 +471,7 @@ export async function startDevWorld(): Promise<void> {
         backend: rendering.backend,
         pixelRatio: viewport.pixelRatio,
         toneMapping: (rendering.renderer as any)?.toneMapping ?? -1,
+        exposure: (rendering.renderer as any)?.toneMappingExposure ?? 1,
         size: { x: viewport.width, y: viewport.height },
       },
       quality: `level ${quality.level}`,

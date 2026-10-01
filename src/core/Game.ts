@@ -1411,6 +1411,7 @@ export class Game {
         backend: this.rendering.backend,
         pixelRatio: this.viewport.pixelRatio,
         toneMapping: renderer?.toneMapping ?? -1,
+        exposure: renderer?.toneMappingExposure ?? 1,
         size: { x: this.viewport.width, y: this.viewport.height },
       },
       quality: `level ${this.quality.level}`,

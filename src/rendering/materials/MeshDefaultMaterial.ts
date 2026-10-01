@@ -30,8 +30,9 @@ import { RenderDebug, type MaterialDebugMode } from '../RenderDebug';
 
 /** Lawn glow (see `lawnGlow`): fraction of the local vegetation colour spilled on to the
  *  surfaces around the glowing blades. Faint by design — the blades' OWN glow (Grass) stays
- *  the brightest thing in the dark lawn. */
-const LAWN_GLOW_STRENGTH = 0.75;
+ *  the brightest thing in the dark lawn, and the dark zones must stay dark (user feedback
+ *  2026-10-02: the 0.75 pass lit the shadows too much). */
+const LAWN_GLOW_STRENGTH = 0.35;
 /** Metres above the ground where the lawn glow has faded out completely (nothing in orbit
  *  should catch light from the lawn). */
 const LAWN_GLOW_REACH = 7;

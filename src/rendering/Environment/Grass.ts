@@ -21,6 +21,7 @@ import {
   attribute,
   cameraPosition,
   cross,
+  dot,
   float,
   Fn,
   If,
@@ -58,8 +59,9 @@ export class Grass {
   private geometry: THREE.BufferGeometry;
   private material: MeshDefaultMaterial;
 
-  private readonly uBladeWidth = uniform(0.19);
-  private readonly uBladeHeight = uniform(0.78);
+  private readonly uBladeWidth = uniform(0.22);
+  /** Tall meadow blades (user ask: "grass needs to be taller"). */
+  private readonly uBladeHeight = uniform(1.05);
   private readonly uBladeRandomness = uniform(0.6);
   /** Wind sway amount — the lawn visibly ripples (raised per feedback). */
   private readonly uSwayStrength = uniform(2.5);
@@ -243,12 +245,16 @@ export class Grass {
     const bladeTint = varying(attribute('bladeRandom') as any);
 
     const material = new MeshDefaultMaterial({
-      // folio's visible vertical gradient: dark root → bright tip, all in the
-      // terrain's own colour under this blade
+      // THE VISIBLE GRADIENT (user ask: "more vibrant and more visible gradient"): the root
+      // sits in a deep grounded shade and the tip is a bright SATURATED pop, so the ramp
+      // reads blade by blade instead of blending into the terrain colour under it.
+      // Saturation > 1 is applied as colour × 1.32 − luma × 0.32 (the mix() identity).
       colorNode: (() => {
         const base = nodes.colorNode(nodes.terrainNode(positionWorld));
-        const ramp = mix(base.mul(0.62), base.mul(1.2), tipness);
-        return ramp.mul((bladeTint as any).mul(0.28).add(0.88));
+        const ramp: any = mix(base.mul(0.42), base.mul(1.55), tipness);
+        const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
+        const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
+        return vivid.mul((bladeTint as any).mul(0.3).add(0.87));
       })(),
       normalNode: normalize(positionWorld) as any,
       // safety net for degenerate winding at grazing angles

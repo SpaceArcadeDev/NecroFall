@@ -75,11 +75,12 @@ export class Quality {
 
   /**
    * Grass blade cells per side (plan §14). The field is PLANET-WIDE and fully static, and it
-   * is PATCH-ONLY: the whole budget lands inside the clumps, so the cores run at folio-level
-   * density (~15 blades/m² at level 0) on every part of the planet.
+   * is PATCH-ONLY: the whole budget lands inside the clumps. Raised per user ask ("increase
+   * the number of grass in a patch by a lot, reduce the gap between blades") — the cores now
+   * run at ~35 blades/m² (overlapping ribbons, gaps closed) at level 0.
    */
   grassSubdivisions(): number {
-    return this.level === 0 ? 960 : this.level === 1 ? 680 : 480;
+    return this.level === 0 ? 1200 : this.level === 1 ? 840 : 560;
   }
 
   /** Foliage (leaf cards) fade distance. */

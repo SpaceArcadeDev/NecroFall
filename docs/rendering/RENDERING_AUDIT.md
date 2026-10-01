@@ -119,9 +119,12 @@ page load. All modes work identically in the Dev World and in a production match
   booleans; `PlanetRenderer.update` only moves uniforms.
 * Per-frame update paths are allocation-free (Lighting/`Wind`/`Puddles`/`FloatingParticles`
   scratch vectors; Grass runs no per-frame pass at all beyond the parting uniforms + trail ring).
-* Grass instance budget: 922 k blades (level 0 — patch-only placement, ~15 % of the planet in
-  packed cores at folio-level density) rendered as ONE draw; the 18-slot trample loop is BRANCHED
-  to blades within 1.7 m of the player. Trees/bushes/rocks are instanced; terrain is 1 draw.
+* Grass instance budget: 1.44 M blades (level 0 — patch-only placement; cores run above
+  35 blades/m² so the ribbons overlap and the gaps close; quality ladder 840²/560² = 706 k/314 k)
+  rendered as ONE draw; the 18-slot trample loop is BRANCHED to blades within 1.7 m of the
+  player. Trees/bushes/rocks are instanced; terrain is 1 draw.
+* Camera rig: fixed 45° elevation (`CONFIG.camera.distance == height` ⇒ the focus→camera line
+  sits at exactly 45°); the heading is parallel-transported, the pitch never changes in play.
 * Shadow budget (§36): terrain receives; trees/rocks cast+receive; grass neither casts nor
   receives; particles never shadow.
 

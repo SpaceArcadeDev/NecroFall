@@ -35,7 +35,7 @@ import { Time } from '../rendering/Time';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { Fog } from '../rendering/Environment/Fog';
 import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
-import { createPlanetWorld } from '../rendering/Environment/PlanetWorld';
+import { createPlanetWorld, type PlanetWorldResult } from '../rendering/Environment/PlanetWorld';
 import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
 import { DebugSwitches, StatsOverlay } from '../rendering/DebugSwitches';
 import { RenderDebug, printRenderBaseline } from '../rendering/RenderDebug';
@@ -79,7 +79,16 @@ import { PERKS, Perk, rollPerks } from '../necromutation/Perks';
 import { Rand, clamp, dirFromAngles, formatRunTime, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { PerformanceMonitor } from '../performance/PerformanceMonitor';
 
-export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'playing' | 'ended';
+export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'starting' | 'playing' | 'ended';
+
+/** The final selections a match start is waiting on (see `Game.startMatchWhenReady`). */
+interface PendingPlay {
+  chosen: Record<string, number>;
+  seed: number;
+  elapsed: number;
+  /** Runs right after `beginPlaying` — the 'play' message's save-restore and banner hooks. */
+  after?: () => void;
+}
 
 /** The SOLO modes (user ask 2026-09-30): single-player runs on a chosen planet. FREEROAM (user
  *  ask) is the sandbox: CLASSIC's PROCEDURAL world, alone, with no enemies and no clock — the
@@ -437,6 +446,30 @@ export class Game {
    */
   private officialElapsedBase = 0;
   private officialBootAt = 0;
+
+  /**
+   * The upcoming match's seed, LOCKED the moment the NECROTECH phase opens (host) or arrives
+   * (clients) — that is what lets every peer pre-build the planet in the background while the
+   * players pick a class (user ask: "start loading planet in the background as player chooses
+   * necrotech"). -1 = not locked yet (a fallback seed is rolled at finalize).
+   */
+  private pendingMatchSeed = -1;
+  /**
+   * Background planet pre-build for the impending match: hidden in the scene until `beginPlaying`
+   * adopts it through `wireWorld`. Disposed when it turns out stale (left lobby, other planet).
+   */
+  private preload: {
+    key: string;
+    promise: Promise<void>;
+    result: PlanetWorldResult | null;
+    progress: { ratio: number; label: string };
+  } | null = null;
+  /**
+   * Set when selection ends and the drop waits for the planet (the loading screen is up).
+   * `beginPlaying` consumes it; cleared when the flow is left so a late preload cannot boot a
+   * match onto a menu.
+   */
+  private pendingPlay: PendingPlay | null = null;
 
   players = new Map<string, Player>();
   localPlayer: Player | null = null;
@@ -1355,8 +1388,12 @@ export class Game {
    * heavy bake + GLB loads run asynchronously behind a handle guard: if the planet changed again
    * while loading, the stale world is thrown away instead of attaching itself to the new planet.
    * Gameplay queries answer from the analytic generator until the world reports its rendered mesh.
+   *
+   * `prebuilt` hands over a world that was ALREADY grown in the background (see
+   * `preloadMatchWorld`) — the match boot then only swaps it in, which is what keeps the drop
+   * behind the loading screen instead of a multi-second freeze.
    */
-  private wireWorld(focusDir: THREE.Vector3 | null): void {
+  private wireWorld(focusDir: THREE.Vector3 | null, prebuilt?: PlanetWorldResult | null): void {
     const loader = this.envLoader;
     if (!loader) return;
     const token = ++this.worldToken;
@@ -1371,9 +1408,11 @@ export class Game {
       const spawnDirection = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
       const focus = focusDir ?? planet.focusDir ?? this.localPlayer?.position ?? null;
       if (focus) spawnDirection.copy(focus).normalize();
+      // A background pre-build for this planet is adopted AS-IS: it only needs revealing.
+      if (prebuilt) prebuilt.world.group.visible = true;
       // THE shared factory (plan §30): a production match builds the same world the Dev World
       // does — same generator, same bake, same environment systems, same visibility rules.
-      const result = await createPlanetWorld({
+      const result = prebuilt ?? (await createPlanetWorld({
         scene: this.scene,
         ticker: this.ticker,
         quality: this.quality,
@@ -1392,7 +1431,7 @@ export class Game {
         focusDir: planet.focusDir,
         spawnDirection,
         time: this.envTime.uTime,
-      });
+      }));
       const world = result.world;
       if (token !== this.worldToken || this.planet !== planet) {
         world.dispose();
@@ -1807,14 +1846,22 @@ export class Game {
   private beginOfficialNecrotechPhase(): void {
     this.phase = 'necrotech';
     this.phaseTimer = CONFIG.necrotechSelectTime;
+    // The server's match seed IS the planet seed here: lock it and pre-build the planet in the
+    // background while every seat picks its starter (user ask: "start loading planet as player
+    // chooses necrotech"). The actual drop waits for it behind the loading screen.
+    const official = this.officialMatch;
+    if (official) {
+      this.pendingMatchSeed = official.match.seed >>> 0;
+      this.preloadMatchWorld(this.pendingMatchSeed);
+    }
     this.onPhaseChanged('necrotech');
     this.ui.banner('NECROTECH SELECTION', 2200);
   }
 
   /**
-   * The starter pick is in (or its clock ran out): build the world and drop into the running
-   * match. An UNPICKED local seat rolls a random class (the lobby flow's own timeout rule —
-   * nobody is ever left class-less); remote seats keep what the server knows.
+   * The starter pick is in (or its clock ran out): the loading screen holds the drop until the
+   * pre-built world is ready, then `beginPlaying` boots the match (an UNPICKED local seat rolls a
+   * random class — the lobby flow's own timeout rule; remote seats keep what the server knows).
    */
   private finalizeOfficialNecrotechPhase(): void {
     const official = this.officialMatch;
@@ -1827,11 +1874,12 @@ export class Game {
       chosen[`nt:${r.id}`] = nt;
       chosen[`colony:${r.id}`] = r.colony;
     }
-    // The match is already running server-side: pick the clock up where it is NOW — the payload's
-    // elapsed was read before the loading screen and the selection wait, both real match time.
-    const elapsed = this.officialElapsedBase + (nowSec() - this.officialBootAt);
-    this.beginPlaying(chosen, official.match.seed, elapsed);
-    this.ui.banner(COLONIES[this.localPlayer?.colony ?? 0]?.name + ' DEPLOYED', 2200);
+    // The match is already running server-side: `awaitWorldAndPlay` picks the clock up where it
+    // is when the planet lands — the payload's elapsed was read before the loading screen and
+    // the selection wait, both real match time.
+    this.startMatchWhenReady(chosen, official.match.seed, 0, () => {
+      this.ui.banner(COLONIES[this.localPlayer?.colony ?? 0]?.name + ' DEPLOYED', 2200);
+    });
   }
 
   /** True while this instance is an official (server-hosted) match. */
@@ -1846,7 +1894,7 @@ export class Game {
    * (the match is server-side, so the reload walks straight back in).
    */
   startOfficialMatch(bridge: OfficialGameBridge, match: OfficialMatchPayload): void {
-    if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech') {
+    if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech' || this.phase === 'starting') {
       throw new Error('This instance is already in a session.');
     }
     this.officialMatch = { bridge, match };
@@ -1888,7 +1936,7 @@ export class Game {
    * player's death (survival) concludes the run and reports the time — FREEROAM never concludes.
    */
   startSoloRun(opts: SoloRunOptions, necrotech = -1): void {
-    if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech') {
+    if (this.phase === 'playing' || this.phase === 'lobby' || this.phase === 'colony' || this.phase === 'necrotech' || this.phase === 'starting') {
       throw new Error('This instance is already in a session.');
     }
     if (this.phase === 'ended') this.returnToMenu();
@@ -1915,6 +1963,11 @@ export class Game {
       me: true,
     });
     this.hostOrder = [id];
+    // The run's planet is known right now: lock the seed and START GROWING THE WORLD IN THE
+    // BACKGROUND (user ask) — the class picker below doubles as the pre-load, so the freeze
+    // that used to happen when the planet booted is gone by construction.
+    this.pendingMatchSeed = opts.seed >>> 0;
+    this.preloadMatchWorld(this.pendingMatchSeed);
     if (opts.mode === 'freeroam') {
       // SKIP THE PICKER (user ask): the sandbox builds the world at once with the default kit —
       // `finalizeNecrotechPhase` boots `beginPlaying` from the run's own procedural seed.
@@ -2508,6 +2561,7 @@ export class Game {
   private leaveRoom(): void {
     this.net.leave();
     this.untrackRoom();
+    this.abortMatchStart();
     this.isHost = true;
     this.phase = 'menu';
     this.roster.clear();
@@ -2519,6 +2573,7 @@ export class Game {
     this.ui.toast(reason, 6000);
     this.net.leave();
     this.untrackRoom();
+    this.abortMatchStart();
     this.phase = 'menu';
   }
 
@@ -2544,6 +2599,9 @@ export class Game {
   }
 
   private beginColonyPhase(): void {
+    // A new selection cycle supersedes any in-flight world start (a promoted host restarts
+    // the phases; a stale preload must never drop a match onto the fresh lobby).
+    this.abortMatchStart();
     this.phase = 'colony';
     this.phaseTimer = CONFIG.colonySelectTime;
     // a recall channel from the previous round dies with it
@@ -2561,6 +2619,11 @@ export class Game {
   private beginNecrotechPhase(assignments: Record<string, number>): void {
     this.phase = 'necrotech';
     this.phaseTimer = CONFIG.necrotechSelectTime;
+    // Lock the match seed NOW and broadcast it with the phase: every peer starts pre-building
+    // the planet in the background while the players pick (user ask). The planet no longer
+    // freezes the frame that finalizes the pick — it is already built by then.
+    this.pendingMatchSeed = (Math.random() * 0xffffffff) >>> 0;
+    this.preloadMatchWorld(this.pendingMatchSeed);
     for (const [id, colony] of Object.entries(assignments)) {
       const r = this.roster.get(id);
       if (r) {
@@ -2568,7 +2631,7 @@ export class Game {
         r.nt = -1;
       }
     }
-    this.broadcastPhase({ p: 'necrotech', timer: CONFIG.necrotechSelectTime, assign: assignments });
+    this.broadcastPhase({ p: 'necrotech', timer: CONFIG.necrotechSelectTime, assign: assignments, seed: this.pendingMatchSeed });
     this.onPhaseChanged('necrotech');
     this.ui.banner('NECROTECH SELECTION', 2200);
   }
@@ -2584,7 +2647,9 @@ export class Game {
     this.surrenderLost = false;
     // The battlefield centre is a pure function of the seed: pinning it here means the spawn
     // points below (and every peer's copy of them) are already computed from this match's world.
-    battlefieldCenterDir(seed, this.towers.centerDir);
+    // The SAME plan (seed → planet seed/ring/centre) drove the background pre-build.
+    const plan = this.matchWorldPlan(seed);
+    this.towers.centerDir.copy(plan.centerDir);
     // Late arrivals pick the match clock up from the host instead of restarting it at zero.
     this.matchElapsed = elapsed;
     // SURVIVAL (user ask 2026-09-30): endless horde, no towers, the clock counts UP and the
@@ -2620,17 +2685,8 @@ export class Game {
     // SOLO runs (user ask 2026-09-30) play a PICKED planet exactly like a ranked match does.
     // FREEROAM (user ask) is the exception: it keeps CLASSIC's PROCEDURAL world — the run's own
     // random seed IS the planet seed, and the bestiary generates from it like any classic match.
-    const official = this.officialMatch?.match;
-    const solo = this.soloRun;
-    const freeroamWorld = solo?.mode === 'freeroam';
-    const rankedPlanet = !freeroamWorld && Boolean((official?.ranked && official.planetKey) || solo);
-    const planetKey = solo ? solo.planetKey : official?.planetKey ?? '';
-    const universeSeed = solo ? solo.universeSeed : official?.universeSeed ?? DEFAULT_UNIVERSE_SEED;
-    const rankRing = solo
-      ? (solo.ring >= 0 && solo.ring < 8 ? solo.ring : 0)
-      : rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
-    const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0;
-    const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
+    const { planetSeed, rankRing, rankedPlanet, planetKey, universeSeed } = plan;
+    const centerDir = plan.centerDir;
     const oldPlanet = this.planet;
     this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing);
     // Every telegraph is projected on to the CURRENT planet — a system still holding last match's
@@ -2695,9 +2751,14 @@ export class Game {
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
     this.planet.aimSunAt(this.towers.centerDir);
-    // The folio world is rebuilt per planet; terrain/grass/foliage/water stream in behind the
-    // analytic queries (attached to the planet facade the moment the build completes).
-    this.wireWorld(this.towers.centerDir);
+    // The folio world: a background pre-build for THIS planet (started while the players picked
+    // a Necrotech) is adopted at once; anything else (late arrivals, preload failure) builds on
+    // demand. Either way the loading screen has been covering the swap.
+    const preload = this.preload;
+    const prebuilt = preload && preload.key === plan.key ? preload.result : null;
+    if (prebuilt) this.preload = null; // ownership moves to the match
+    else if (preload) this.disposePreload(); // stale or still mid-build — this match builds its own
+    this.wireWorld(centerDir, prebuilt);
     this.ui.show('game');
     this.input.setEnabled(true);
     this.cam.snap();
@@ -2726,6 +2787,12 @@ export class Game {
       this.input.setEnabled(false);
       this.ui.show('necrotech');
       this.refreshNecrotechUI();
+    } else if (phase === 'starting') {
+      // The pick is in and the planet is (pre-)building: the loading screen owns the wait.
+      this.input.setEnabled(false);
+      this.ui.show('loading');
+      const pre = this.preload;
+      this.ui.updateLoading(pre?.progress.ratio ?? 0, pre?.progress.label ?? 'preparing planet');
     }
   }
 
@@ -2798,6 +2865,9 @@ export class Game {
     } else {
       this.net.sendToHost({ t: 'sel', nt: idx });
     }
+    // SOLO: the pick IS the end of the phase (user ask): the loading screen takes over at once
+    // and waits out the tail of the background build — no reason to stare at a countdown alone.
+    if (this.soloRun && !this.officialMatch) this.finalizeNecrotechPhase();
     this.audio.sfx('ui');
   }
 
@@ -2903,11 +2973,156 @@ export class Game {
       chosen[`colony:${r.id}`] = r.colony;
     }
     // SOLO runs play the PICKED PLANET: its deterministic seed IS the match seed (no random roll).
-    const seed = this.soloRun ? this.soloRun.seed >>> 0 : (Math.random() * 0xffffffff) >>> 0;
-    if (this.isHost && !this.soloRun) {
-      this.net.broadcast({ t: 'phase', p: 'play', timer: 0, assign: chosen, seed });
+    // Everywhere else the seed was locked when the Necrotech phase opened (fallback: roll now).
+    const seed = this.soloRun
+      ? this.soloRun.seed >>> 0
+      : this.pendingMatchSeed >= 0
+        ? this.pendingMatchSeed >>> 0
+        : (Math.random() * 0xffffffff) >>> 0;
+    // The world is already pre-building — the match now WAITS for it behind the loading screen
+    // (user ask). The 'play' broadcast follows the moment the world is in `startMatchWhenReady`,
+    // so no client ever freezes on the frame that finalizes the pick.
+    if (this.isHost && !this.soloRun) this.broadcastPhase({ p: 'starting', timer: 0 });
+    this.startMatchWhenReady(chosen, seed, 0);
+  }
+
+  /**
+   * The final selections are in: hold the match at the loading screen until its planet is ready
+   * (the background pre-build started while the players picked), then boot it (user ask).
+   * Every entry point funnels through here — host finalize, the 'play' message, official boot.
+   */
+  private startMatchWhenReady(chosen: Record<string, number>, seed: number, elapsed: number, after?: () => void): void {
+    if (this.pendingPlay && this.pendingPlay.seed === seed) {
+      // A 'starting' or 'play' update for the match already loading: swap the payload in place.
+      this.pendingPlay.chosen = chosen;
+      this.pendingPlay.elapsed = elapsed;
+      if (after) this.pendingPlay.after = after;
+      return;
     }
-    this.beginPlaying(chosen, seed);
+    this.pendingPlay = { chosen, seed, elapsed, after };
+    this.phase = 'starting';
+    this.onPhaseChanged('starting');
+    void this.awaitWorldAndPlay(this.pendingPlay);
+  }
+
+  /** Waits out the background planet build, then drops into the match behind the loading screen. */
+  private async awaitWorldAndPlay(pending: PendingPlay): Promise<void> {
+    try {
+      // Fallback paths (a late arrival, a fresh official boot, a failed preload) kick the
+      // build HERE — still behind the loading screen, never as a frozen frame mid-picker.
+      this.preloadMatchWorld(pending.seed);
+      await this.preload?.promise;
+    } catch {
+      // the build failed — `beginPlaying` falls back to an on-demand world
+    }
+    if (this.pendingPlay !== pending) return; // the flow was left while loading
+    // OFFICIAL matches are live server-side: pick the clock up where it is NOW — the preload
+    // wait was real match time too (the payload's elapsed + everything since boot).
+    const elapsed = this.officialMatch
+      ? this.officialElapsedBase + (nowSec() - this.officialBootAt)
+      : pending.elapsed;
+    this.pendingPlay = null;
+    if (this.isHost && !this.soloRun && !this.officialMatch) {
+      this.broadcastPhase({ p: 'play', timer: 0, assign: pending.chosen, seed: pending.seed });
+    }
+    this.beginPlaying(pending.chosen, pending.seed, elapsed);
+    pending.after?.();
+  }
+
+  /**
+   * Everything a match resolves its PLANET from, given its seed — shared by `beginPlaying` and
+   * the background pre-build, so both always plan the exact same world (a mismatch would waste
+   * a full build). Mirrors the seed/ring rules of a ranked, solo, classic and freeroam match.
+   */
+  private matchWorldPlan(seed: number): {
+    planetSeed: number;
+    rankRing: number;
+    centerDir: THREE.Vector3;
+    rankedPlanet: boolean;
+    planetKey: string;
+    universeSeed: number;
+    key: string;
+  } {
+    const official = this.officialMatch?.match;
+    const solo = this.soloRun;
+    const freeroamWorld = solo?.mode === 'freeroam';
+    const rankedPlanet = !freeroamWorld && Boolean((official?.ranked && official.planetKey) || solo);
+    const planetKey = solo ? solo.planetKey : official?.planetKey ?? '';
+    const universeSeed = solo ? solo.universeSeed : official?.universeSeed ?? DEFAULT_UNIVERSE_SEED;
+    const rankRing = solo
+      ? (solo.ring >= 0 && solo.ring < 8 ? solo.ring : 0)
+      : rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
+    const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0;
+    const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
+    const key = `${planetSeed}:${rankRing}:${centerDir.x.toFixed(5)},${centerDir.y.toFixed(5)},${centerDir.z.toFixed(5)}`;
+    return { planetSeed, rankRing, centerDir, rankedPlanet, planetKey, universeSeed, key };
+  }
+
+  /**
+   * Start (or reuse) the background planet build for the upcoming match. The world is built
+   * HIDDEN in the scene and every heavy stage of the build yields to the event loop, so the
+   * class picker and the loading screen stay alive while a whole planet is grown behind them.
+   */
+  private preloadMatchWorld(seed: number): void {
+    const plan = this.matchWorldPlan(seed);
+    if (this.preload?.key === plan.key) return; // already building/ready for this planet
+    this.disposePreload();
+    const preload = {
+      key: plan.key,
+      result: null as PlanetWorldResult | null,
+      progress: { ratio: 0.02, label: 'preparing planet' },
+      promise: Promise.resolve(),
+    };
+    preload.promise = (async () => {
+      await this.rendererInitPromise;
+      const result = await createPlanetWorld({
+        scene: this.scene,
+        ticker: this.ticker,
+        quality: this.quality,
+        loader: this.envLoader!,
+        fog: this.fog,
+        lighting: this.lighting,
+        seed: plan.planetSeed,
+        ring: plan.rankRing,
+        radius: CONFIG.planetRadius,
+        label: `match planet · seed ${plan.planetSeed}`,
+        focusDir: plan.centerDir.clone().normalize(),
+        spawnDirection: plan.centerDir.clone().normalize(),
+        time: this.envTime.uTime,
+        hidden: true, // the menu world keeps the screen until the match adopts this one
+        onProgress: (ratio, label) => {
+          preload.progress.ratio = ratio;
+          preload.progress.label = label;
+        },
+      });
+      if (this.preload !== preload) {
+        result.world.dispose(); // superseded while building — never leak a planet
+        return;
+      }
+      result.world.group.visible = false; // hidden until the match adopts it
+      preload.result = result;
+      preload.progress.ratio = 1;
+      preload.progress.label = 'ready';
+    })();
+    preload.promise.catch((error) => {
+      console.warn('[NECROFALL] planet preload failed', error);
+      if (this.preload === preload) this.preload = null; // awaiters fall back to an on-demand build
+    });
+    this.preload = preload;
+  }
+
+  /** Throw an unused pre-built world away (its build keeps running and self-disposes). */
+  private disposePreload(): void {
+    const preload = this.preload;
+    this.preload = null;
+    preload?.result?.world.dispose();
+    if (preload) preload.result = null;
+  }
+
+  /** Abort any in-flight match start (background world + pending drop) — the flow was left. */
+  private abortMatchStart(): void {
+    this.disposePreload();
+    this.pendingPlay = null;
   }
 
   private buildPlayers(assignments: Record<string, number>): void {
@@ -3364,6 +3579,11 @@ export class Game {
     this.isHost = true;
     this.soloRun = null;
     this.soloResult = null;
+    // Any in-flight / unused background world dies with the session — a late preload must
+    // never boot a match onto the menu (its promise self-disposes once `this.preload` differs).
+    this.disposePreload();
+    this.pendingPlay = null;
+    this.pendingMatchSeed = -1;
     this.surrenderVote = null;
     this.surrenderEarlyCasts = [];
     this.surrenderedColonies.clear();
@@ -3427,6 +3647,7 @@ export class Game {
       case 'reject': {
         this.ui.setPlayStatus(String(msg.reason ?? 'Unable to join.'), true);
         this.net.leave();
+        this.abortMatchStart();
         this.phase = 'menu';
         this.ui.show('play');
         return;
@@ -3436,6 +3657,7 @@ export class Game {
         const reason = String(msg.reason ?? 'You were removed from the lobby.');
         this.net.leave();
         this.untrackRoom();
+        this.abortMatchStart();
         this.roster.clear();
         this.phase = 'menu';
         this.ui.show('play');
@@ -3485,19 +3707,39 @@ export class Game {
             const r = this.roster.get(id);
             if (r) r.colony = colony;
           }
+          // The host locked the match seed into the phase message: pre-build the planet in the
+          // background while we pick (user ask) — our own drop then waits for THIS world.
+          if (msg.seed !== undefined && Number.isFinite(Number(msg.seed))) {
+            this.pendingMatchSeed = Number(msg.seed) >>> 0;
+            this.preloadMatchWorld(this.pendingMatchSeed);
+          }
           this.onPhaseChanged('necrotech');
+        } else if (p === 'starting') {
+          // The host stopped the pickers and is finishing the planet: show the loading screen
+          // NOW — the 'play' message follows the moment the world is ready.
+          this.lateSelect = null;
+          this.phase = 'starting';
+          this.onPhaseChanged('starting');
         } else if (p === 'play') {
           // `el` is only sent to a late arrival: it is the match clock it joins in progress.
           this.lateSelect = null;
-          this.beginPlaying((msg.assign ?? {}) as Record<string, number>, Number(msg.seed ?? 1), Number(msg.el) || 0);
-          // `res` says the host rebuilt us from our own save: perks and mutations live on this
-          // client only, so the restored run is applied here, on top of the fresh world.
-          if (msg.res === 1 && this.localPlayer && this.resumeRun && this.resumeRun.seed === this.seed) {
-            this.applySavedRun(this.localPlayer, this.resumeRun);
-            // A level that was owed when the page went away is still owed now.
-            this.maybeOpenQueued();
-            this.ui.toast('Survivor restored — level, perks and loadout are back.', 4200);
-          }
+          this.startMatchWhenReady(
+            (msg.assign ?? {}) as Record<string, number>,
+            Number(msg.seed ?? 1),
+            Number(msg.el) || 0,
+            msg.res === 1
+              ? () => {
+                  // `res` says the host rebuilt us from our own save: perks and mutations live on
+                  // this client only, so the restored run is applied here, on top of the fresh world.
+                  if (this.localPlayer && this.resumeRun && this.resumeRun.seed === this.seed) {
+                    this.applySavedRun(this.localPlayer, this.resumeRun);
+                    // A level that was owed when the page went away is still owed now.
+                    this.maybeOpenQueued();
+                    this.ui.toast('Survivor restored — level, perks and loadout are back.', 4200);
+                  }
+                }
+              : undefined,
+          );
         }
         return;
       }
@@ -5242,7 +5484,7 @@ export class Game {
     } else if (this.phase === 'lobby') {
       this.ui.show('lobby');
       this.pushLobby();
-    } else if (this.phase === 'colony' || this.phase === 'necrotech') {
+    } else if (this.phase === 'colony' || this.phase === 'necrotech' || this.phase === 'starting') {
       // Selections are cheap to redo and the old timers died with the previous host.
       this.beginColonyPhase();
     }
@@ -5454,7 +5696,7 @@ export class Game {
       this.camTarget.velocity.set(0, 0, 0);
     }
 
-    if (this.phase !== 'menu' && this.phase !== 'lobby' && this.phase !== 'ended') {
+    if (this.phase !== 'menu' && this.phase !== 'lobby' && this.phase !== 'ended' && this.phase !== 'starting') {
       if (this.ui.orientation.blocked) {
         // portrait phone: hold the player still until the device is turned
         this.input.clearQueued();
@@ -5499,6 +5741,11 @@ export class Game {
 
     if (this.phase === 'colony') this.refreshColonyUI();
     if (this.phase === 'necrotech') this.refreshNecrotechUI();
+    // The loading screen mirrors the planet build live (progress bar + stage caption).
+    if (this.phase === 'starting') {
+      const pre = this.preload;
+      this.ui.updateLoading(pre?.progress.ratio ?? 0, pre?.progress.label ?? 'preparing planet');
+    }
 
     // match simulation -------------------------------------------------
     // Timed as a block: this is the CPU cost of the match (players, enemies, combat, abilities,

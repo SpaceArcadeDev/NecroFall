@@ -1201,3 +1201,57 @@
 .screen.acc-screen {
   padding-top: calc(10px + env(safe-area-inset-top));
 }
+
+/* ============ WORLD LOADING (match start — the planet finishes building behind it) ============ */
+.loading-screen {
+  gap: 12px;
+  text-align: center;
+  background: radial-gradient(ellipse at 50% 38%, rgba(64, 24, 104, 0.72), rgba(6, 4, 12, 0.97) 74%);
+}
+.loading-screen .wl-logo {
+  font-size: clamp(34px, 7vw, 68px);
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, #f3e9ff, #a45cff 65%, #5a2b8f);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 42px rgba(160, 80, 255, 0.35);
+}
+.loading-screen .wl-sub {
+  font-size: clamp(11px, 1.6vw, 14px);
+  font-weight: 700;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: var(--accent, #c9a6ff);
+}
+.loading-screen .wl-bar {
+  width: min(430px, 72vw);
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+.loading-screen .wl-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #6d4bff, #c56cff);
+  box-shadow: 0 0 14px rgba(160, 90, 255, 0.8);
+  transition: width 0.18s linear;
+}
+.loading-screen .wl-status {
+  min-height: 16px;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted, #9a8fb0);
+}
+.loading-screen .wl-note {
+  margin-top: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  color: rgba(154, 143, 176, 0.75);
+}

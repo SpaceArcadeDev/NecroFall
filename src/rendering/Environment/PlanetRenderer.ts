@@ -31,6 +31,9 @@ import { Puddles } from './Puddles';
 import { FloatingParticles } from './FloatingParticles';
 import { ASSETS } from '../Assets/AssetManifest';
 
+/** Yield to the event loop between build stages so a loading screen / picker keeps animating. */
+const nextLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
 export interface PlanetWorldDependencies {
   scene: THREE.Scene;
   ticker: Ticker;
@@ -49,6 +52,8 @@ export interface PlanetWorldDependencies {
   time: any;
   /** Spawn direction — orients the particle bubble. */
   spawnDirection: THREE.Vector3;
+  /** Build hidden (background pre-build) — see PlanetWorldParams.hidden. */
+  hidden?: boolean;
 }
 
 /** Plan §21: the three folio tree species with NecroFall colour mutations. */
@@ -102,9 +107,11 @@ export class PlanetRenderer {
 
   /** Environmental colliders (trees / bushes / rocks / spikes / crystals). */
   readonly obstacles: PlanetObstacles;
-
   private constructor(private readonly deps: PlanetWorldDependencies) {
     this.obstacles = new PlanetObstacles(deps.surface.radius);
+    // A background pre-build stays invisible from the very first stage (it would otherwise
+    // overlap the menu world on screen while it grows) — the adopting match reveals it.
+    if (deps.hidden) this.group.visible = false;
   }
 
   static async create(
@@ -127,20 +134,27 @@ export class PlanetRenderer {
       onProgress?.(0.05 + ratio * 0.25, 'building terrain mesh');
     });
     this.group.add(this.terrain.mesh);
+    await nextLoop();
 
     // 2 — water films FIRST: the basin list feeds the grass suppression slots
     onProgress?.(0.32, 'flooding puddles');
     this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
     this.group.add(this.puddles.mesh);
+    await nextLoop();
 
     // 3 — grass field (planet-wide and static: every blade is baked at build; the only runtime
-    // inputs are the player's parting push and the shared wind — nothing streams while walking)
+    // inputs are the player's parting push and the shared wind — nothing streams while walking).
+    // The planting itself is chunked (see Grass.plant) — `ready` resolves when it is in.
+    onProgress?.(0.33, 'planting grass');
     this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time);
     this.group.add(this.grass.mesh);
+    await this.grass.ready;
+    await nextLoop();
 
     // 4 — bushes (leaf-card canopies)
     this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 520, spawnClear, this.obstacles);
     this.group.add(this.bushes.foliage.mesh);
+    await nextLoop();
 
     // 4 — trees (trunk instancing + leaf-card canopies)
     for (let i = 0; i < TREE_SPECIES.length; i++) {
@@ -165,14 +179,17 @@ export class PlanetRenderer {
     onProgress?.(0.72, 'scattering rocks');
     this.rocks = new Rocks(deps.surface, deps.generator, spawnClear, this.obstacles);
     this.group.add(this.rocks.group);
+    await nextLoop();
 
     onProgress?.(0.78, 'planting spikes');
     this.spikes = new Spikes(deps.surface, deps.generator, 74, spawnClear, this.obstacles);
     if (this.spikes.mesh) this.group.add(this.spikes.mesh);
+    await nextLoop();
 
     onProgress?.(0.82, 'growing crystals');
     this.crystals = new RadioactiveCrystals(deps.surface, deps.generator, deps.time, 48, spawnClear, this.obstacles);
     if (this.crystals.mesh) this.group.add(this.crystals.mesh);
+    await nextLoop();
 
     // 6 — atmosphere
     onProgress?.(0.9, 'releasing contamination');
@@ -185,6 +202,7 @@ export class PlanetRenderer {
       deps.spawnDirection,
     );
     this.group.add(this.particles.group);
+    await nextLoop();
 
     onProgress?.(0.96, 'ready');
   }

@@ -71,6 +71,12 @@ export interface PlanetWorldParams {
   /** Shader time uniform (radioactive pulses). */
   time: any;
   onProgress?: (ratio: number, label: string) => void;
+  /**
+   * Build the world HIDDEN (a background pre-build): the group is invisible from the very first
+   * build stage until the adopting match reveals it (`wireWorld`). Without this, the planet would
+   * overlap the menu world on screen for the whole preload.
+   */
+  hidden?: boolean;
 }
 
 export interface PlanetWorldResult {
@@ -145,6 +151,7 @@ export async function createPlanetWorld(params: PlanetWorldParams): Promise<Plan
       nodes,
       time: params.time,
       spawnDirection,
+      hidden: params.hidden,
     },
     (ratio, label) => onProgress?.(0.42 + ratio * 0.58, label),
   );

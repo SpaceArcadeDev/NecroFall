@@ -48,7 +48,7 @@ import {
   type QualityPref,
 } from '../core/Config';
 
-export type ScreenName = 'menu' | 'howto' | 'controls' | 'play' | 'lobby' | 'colony' | 'necrotech' | 'customize' | 'game' | 'results';
+export type ScreenName = 'menu' | 'howto' | 'controls' | 'play' | 'lobby' | 'colony' | 'necrotech' | 'loading' | 'customize' | 'game' | 'results';
 
 /**
  * ONE SEAT of the OFFICIAL lobby (user ask 2026-09-29: "reuse the exact same lobby as
@@ -885,6 +885,12 @@ export class UI {
   private resultsScreen: HTMLElement | null = null;
   private debugVisible = false;
 
+  // world-loading screen refs (match start: the planet finishes building behind it)
+  private loadingFill!: HTMLElement;
+  private loadingStatus!: HTMLElement;
+  private loadingPct = -1;
+  private loadingLabel = '';
+
   constructor(cbs: UICallbacks) {
     this.cbs = cbs;
     // Kill iOS double-tap / pinch zoom before any of the HUD exists (see ui/TouchGuard.ts).
@@ -903,6 +909,7 @@ export class UI {
     this.buildLobby();
     this.buildColonySelect();
     this.buildNecrotechSelect();
+    this.buildLoading();
     this.buildCustomize();
     this.buildHud();
     this.buildModals();
@@ -2133,6 +2140,42 @@ export class UI {
       if (!t || (!t.closest('.nt-card') && !t.closest('.nt-expand'))) this.closeNtExpand();
     });
     this.reg('necrotech', s);
+  }
+
+  // ------------------------------------------------------------ world loading
+
+  /**
+   * The MATCH LOADING screen (user ask): opens the moment the Necrotech pick is in and holds
+   * the drop until the match planet is ready — the world is already being pre-built in the
+   * background while the picker is up (Game.preloadMatchWorld), so this screen is mostly a
+   * thin final wait, never a frozen frame with no explanation.
+   */
+  private buildLoading(): void {
+    const s = el('div', 'screen loading-screen');
+    s.appendChild(el('div', 'wl-logo', 'NECROFALL'));
+    s.appendChild(el('div', 'wl-sub', 'LOADING PLANET'));
+    const bar = el('div', 'wl-bar');
+    this.loadingFill = el('div', 'wl-fill');
+    bar.appendChild(this.loadingFill);
+    s.appendChild(bar);
+    this.loadingStatus = el('div', 'wl-status', 'PREPARING PLANET…');
+    s.appendChild(this.loadingStatus);
+    s.appendChild(el('div', 'wl-note', 'A whole world is being grown and dressed — hang on.'));
+    this.reg('loading', s);
+  }
+
+  /** Live planet-build progress: the bar + caption the loading screen reads every frame. */
+  updateLoading(ratio: number, label: string): void {
+    const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100);
+    if (pct !== this.loadingPct) {
+      this.loadingPct = pct;
+      this.loadingFill.style.width = `${pct}%`;
+    }
+    const text = (label || 'preparing planet').toUpperCase();
+    if (text !== this.loadingLabel) {
+      this.loadingLabel = text;
+      this.loadingStatus.textContent = text;
+    }
   }
 
   /**

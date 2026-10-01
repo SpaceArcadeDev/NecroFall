@@ -2070,7 +2070,7 @@ export class AppShell implements ShellContext {
     const chromeH = this.chrome.getBoundingClientRect().height;
     if (chromeH > 8) this.railTopPx = Math.round(chromeH) + 6;
     this.rail.element.style.setProperty('--nf-rail-top', `${this.railTopPx}px`);
-    const inSession = !!g && (g.phase === 'playing' || g.phase === 'colony' || g.phase === 'necrotech');
+    const inSession = !!g && (g.phase === 'playing' || g.phase === 'colony' || g.phase === 'necrotech' || g.phase === 'starting');
     const excluded =
       this.screen === 'login' ||
       this.screen === 'onboarding' ||

@@ -53,11 +53,39 @@ import {
 } from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
+/** `setTimeout`-based yield between planting chunks — rAF can be throttled in a background
+ *  tab, a timeout still runs, so the field always finishes planting. */
+const nextLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/**
+ * ONE degenerate blade (zero size — buried at the planet's centre) carrying the EXACT attributes
+ * the real field uses. The grass material compiles against this from the first frame, so the
+ * chunked planting pass can swap the real geometry in without ever compiling an invalid shader.
+ */
+function createPlaceholderBlade(): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  // A tiny valid point (never the origin — the shader normalizes it; a zero vector is NaN).
+  // `bladeField` 0 collapses the blade to zero size, so nothing is ever rasterized.
+  const point = [0.01, 0.01, 0.01];
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array([...point, ...point, ...point]), 3));
+  geometry.setAttribute('bladeRandom', new THREE.BufferAttribute(new Float32Array(3), 1));
+  geometry.setAttribute('bladeField', new THREE.BufferAttribute(new Float32Array(3), 1));
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1);
+  return geometry;
+}
+
 export class Grass {
   readonly mesh: THREE.Mesh;
 
+  /** Completes when the planet-wide planting pass has swapped its geometry in (see `plant`). */
+  readonly ready: Promise<void>;
+
   private geometry: THREE.BufferGeometry;
   private material: MeshDefaultMaterial;
+  /** Serialises planting passes: a quality change waits for the pass before it. */
+  private plantChain: Promise<void> = Promise.resolve();
+  /** Only the NEWEST planting pass may swap its geometry in (a stale one is disposed). */
+  private plantToken = 0;
 
   private readonly uBladeWidth = uniform(0.24);
   /** Tall meadow blades (user ask: "grass needs to be taller" — raised again to chest-high). */
@@ -106,7 +134,13 @@ export class Grass {
     this.trailTexture.generateMipmaps = false;
     this.trailTexture.needsUpdate = true;
 
-    this.geometry = this.createGeometry(this.subdivisions);
+    // Plant ASYNCHRONOUSLY, in chunks (see `plant`): the field is ~700k blades and one
+    // synchronous pass froze the whole page for seconds — exactly when a match starts
+    // (or while the class picker pre-loads the planet in the background). Until the pass
+    // swaps the real field in, the mesh shows ONE degenerate blade carrying the SAME geometry
+    // attributes — the material's shader pipeline needs all of them from the first render
+    // (a bare BufferGeometry made it compile `normalize(0.0)` and go invalid on WebGPU).
+    this.geometry = createPlaceholderBlade();
     this.material = this.createMaterial();
     this.mesh = new THREE.Mesh(this.geometry, this.material);
     this.mesh.frustumCulled = false;
@@ -120,20 +154,38 @@ export class Grass {
 
     // NOTE: no ticker subscription — the world orchestrator calls `update(focus)` once per
     // frame at its own stage (PlanetRenderer.update).
+    this.ready = this.requestPlant(this.subdivisions);
 
     quality.events.on('change', () => {
       const subs = this.quality.grassSubdivisions();
-      if (subs !== this.subdivisions) {
-        this.subdivisions = subs;
-        this.geometry.dispose();
-        this.geometry = this.createGeometry(subs);
-        this.mesh.geometry = this.geometry;
-      }
+      if (subs !== this.subdivisions) void this.requestPlant(subs);
     });
   }
 
-  /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14). */
-  private createGeometry(subdivisions: number): THREE.BufferGeometry {
+  /** Queue a planting pass; passes are chained so two can never interleave blade tables. */
+  private requestPlant(subdivisions: number): Promise<void> {
+    this.subdivisions = subdivisions;
+    this.plantChain = this.plantChain.then(() => this.plant(subdivisions));
+    return this.plantChain;
+  }
+
+  private async plant(subdivisions: number): Promise<void> {
+    const token = ++this.plantToken;
+    const geometry = await this.createGeometry(subdivisions);
+    if (token !== this.plantToken) {
+      geometry.dispose(); // a newer pass (or disposal) won — never swap a stale field in
+      return;
+    }
+    const previous = this.mesh.geometry;
+    this.mesh.geometry = geometry;
+    this.geometry = geometry;
+    if (previous !== geometry) previous.dispose();
+  }
+
+  /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14).
+   *  The scatter loop YIELDS to the event loop every ~128k attempts, so the caller's
+   *  loading screen (or the class picker, for the background pre-build) stays alive. */
+  private async createGeometry(subdivisions: number): Promise<THREE.BufferGeometry> {
     const target = subdivisions * subdivisions;
     const sites = this.water?.sites ?? [];
     const radius = this.surface.radius;
@@ -152,6 +204,8 @@ export class Grass {
     let accepted = 0;
     const maxTries = target * 8;
     for (let tries = 0; tries < maxTries && accepted < target; tries++) {
+      // Let the page breathe between chunks — a single 700k-blade pass froze it for seconds.
+      if ((tries & 0x1ffff) === 0x1ffff) await nextLoop();
       // uniform direction on the sphere (area-correct)
       const z = random() * 2 - 1;
       const angle = random() * Math.PI * 2;
@@ -445,6 +499,7 @@ export class Grass {
   }
 
   dispose(): void {
+    this.plantToken++; // any in-flight planting pass must not swap into a disposed mesh
     this.geometry.dispose();
     this.material.dispose();
     this.trailTexture.dispose();

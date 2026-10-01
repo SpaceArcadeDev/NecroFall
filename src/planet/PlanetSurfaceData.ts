@@ -66,7 +66,7 @@ export class PlanetSurfaceData {
   static async bake(generator: PlanetGenerator, onProgress?: BakeProgress): Promise<PlanetSurfaceData> {
     const data = new PlanetSurfaceData(generator, PlanetSurfaceData.WIDTH, PlanetSurfaceData.HEIGHT);
     await data.bakeHeights(onProgress);
-    data.bakeChannels(onProgress);
+    await data.bakeChannels(onProgress);
     onProgress?.(1, 'planet ready');
     return data;
   }
@@ -108,7 +108,7 @@ export class PlanetSurfaceData {
     this.waterLevel = reliefMin + (reliefMax - reliefMin) * 0.24;
   }
 
-  private bakeChannels(onProgress?: BakeProgress): void {
+  private async bakeChannels(onProgress?: BakeProgress): Promise<void> {
     const { width, directions, heights, channels1, channels2 } = this;
     const rows = this.height;
     const generator = this.generator;
@@ -161,6 +161,9 @@ export class PlanetSurfaceData {
       }
 
       if (iy % 48 === 47) onProgress?.(0.55 + (iy / rows) * 0.45, 'classifying biomes');
+      // Yield between row groups — every estimate here is analytic terrain maths and a full
+      // synchronous sweep blocked the frame for a noticeable beat on slower machines.
+      if (iy % 24 === 23) await yieldToLoop();
     }
 
     this.tex1.needsUpdate = true;

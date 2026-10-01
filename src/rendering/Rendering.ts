@@ -89,12 +89,12 @@ export class Rendering {
 
     this.bloomPass = bloom(this.scenePassColor);
     this.bloomPass._nMips = this.quality.bloomMips();
-    // Raised per playtest (more bloom on the beacon rays and shield energy). The sky and lit
-    // terrain stay under 0.85, so the glow keys on emissives — the shield/beam materials push
-    // their colours past 1 — instead of washing the whole frame.
-    this.bloomPass.threshold.value = 0.85;
-    this.bloomPass.strength.value = 0.55;
-    this.bloomPass.smoothWidth.value = 1.0;
+    // HOT-CORE bloom (second playtest pass): a HIGHER threshold with a HIGHER strength — the glow
+    // hugs the saturated HDR cores (shields/rays/FX push past 1) instead of lifting the whole
+    // frame, which is what made the light effects read washed out with the previous soft setup.
+    this.bloomPass.threshold.value = 0.9;
+    this.bloomPass.strength.value = 0.7;
+    this.bloomPass.smoothWidth.value = 0.65;
 
     this.cheapDOFPass = cheapDOF(renderOutput(this.scenePass));
 

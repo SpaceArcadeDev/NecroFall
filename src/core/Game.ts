@@ -3011,7 +3011,17 @@ export class Game {
       // Fallback paths (a late arrival, a fresh official boot, a failed preload) kick the
       // build HERE — still behind the loading screen, never as a frozen frame mid-picker.
       this.preloadMatchWorld(pending.seed);
-      await this.preload?.promise;
+      const preload = this.preload;
+      if (preload) {
+        // Last-resort net: a genuinely wedged build (a hung asset fetch, say) must never pin the
+        // loading screen forever. The chunked build itself is throttle-proof now (utils/Yield.ts),
+        // so this race only wins when something is truly stuck: `beginPlaying` then falls back to
+        // an on-demand build and the orphaned preload disposes itself on arrival.
+        await Promise.race([
+          preload.promise,
+          new Promise<void>((resolve) => setTimeout(resolve, 120_000)),
+        ]);
+      }
     } catch {
       // the build failed — `beginPlaying` falls back to an on-demand world
     }

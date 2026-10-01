@@ -30,9 +30,12 @@ import { RadioactiveCrystals } from './RadioactiveCrystals';
 import { Puddles } from './Puddles';
 import { FloatingParticles } from './FloatingParticles';
 import { ASSETS } from '../Assets/AssetManifest';
+// Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
+// in an occluded tab and stretched this build from seconds to minutes behind the loading screen).
+import { yieldToMain } from '../../utils/Yield';
 
-/** Yield to the event loop between build stages so a loading screen / picker keeps animating. */
-const nextLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+/** Yield between build stages so a loading screen / picker keeps animating. */
+const nextLoop = yieldToMain;
 
 export interface PlanetWorldDependencies {
   scene: THREE.Scene;

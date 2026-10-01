@@ -20,6 +20,7 @@ import {
   GRASS_SHADOW_EDGE_LOW,
 } from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+import { yieldToMain } from '../../utils/Yield';
 
 const RES_X = 320;
 const RES_Y = 160;
@@ -69,7 +70,7 @@ export class PlanetTerrain {
         positions[index * 3 + 2] = dz * radius;
       }
       if (iy % 16 === 15) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await yieldToMain();
         onProgress?.((iy / height) * 0.7);
       }
     }
@@ -113,7 +114,7 @@ export class PlanetTerrain {
         }
       }
       if (iy % 16 === 15) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await yieldToMain();
         onProgress?.(0.7 + (iy / height) * 0.15);
       }
     }

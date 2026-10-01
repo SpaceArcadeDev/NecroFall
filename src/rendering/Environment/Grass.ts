@@ -52,10 +52,10 @@ import {
   grassCoverage,
 } from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
-
-/** `setTimeout`-based yield between planting chunks — rAF can be throttled in a background
- *  tab, a timeout still runs, so the field always finishes planting. */
-const nextLoop = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+// Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
+// in an occluded tab and stretched this build from seconds to minutes behind the loading screen;
+// rAF is paused outright there).
+import { yieldToMain as nextLoop } from '../../utils/Yield';
 
 /**
  * ONE degenerate blade (zero size — buried at the planet's centre) carrying the EXACT attributes

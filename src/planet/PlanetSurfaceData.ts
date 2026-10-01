@@ -13,12 +13,15 @@
  */
 import * as THREE from 'three/webgpu';
 import type { PlanetGenerator } from './PlanetGenerator';
+import { yieldToMain } from '../utils/Yield';
 
 export interface BakeProgress {
   (ratio: number, label: string): void;
 }
 
-const yieldToLoop = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Throttle-proof build yield (see utils/Yield.ts): a `setTimeout(0)` yield is clamped to 1 s+ in
+ *  an occluded tab and stretched this bake from seconds to minutes behind the loading screen. */
+const yieldToLoop = yieldToMain;
 
 export class PlanetSurfaceData {
   static readonly WIDTH = 384;

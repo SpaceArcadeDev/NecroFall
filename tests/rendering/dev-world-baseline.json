@@ -1,0 +1,45 @@
+{
+  "//": "Golden test (plan §31): Dev World and Production World with these settings MUST produce the same terrain / grass / tree / rock / biome / lighting results. Only gameplay entities may differ.",
+  "//how": "Boot `#/world?seed=<seed>&ring=<ring>&renderBaseline=1` (Dev World) and a solo match on the SAME planet, compare the `[NECROFALL] RENDER BASELINE` console blocks and the overlay values.",
+  "seed": 3409486584,
+  "planetKey": "0:0:0:2",
+  "ring": 0,
+  "radius": 118,
+  "quality": 0,
+  "camera": { "fov": 60, "near": 0.1, "far": 2000 },
+  "renderer": {
+    "backend": "webgpu",
+    "toneMapping": 0,
+    "bloom": { "threshold": 1.0, "strength": 0.25, "smoothWidth": 1.0 },
+    "dofLevel0": true
+  },
+  "lighting": {
+    "sunDirection": [0.47, 0.806, 0.358],
+    "sunIntensity": 2.35,
+    "sunColor": "#fff8ec",
+    "shadowColor": "#3d2f63",
+    "shadowMapSize": 2048,
+    "shadowAmplitude": 46
+  },
+  "fog": { "near": 34, "far": 270, "color": "#1d3a30" },
+  "terrain": {
+    "meshSegments": [320, 160],
+    "material": "MeshDefaultMaterial",
+    "textureSize": [384, 192]
+  },
+  "grass": {
+    "subdivisions": 700,
+    "halfExtent": 70,
+    "patchThreshold": [0.32, 0.52],
+    "rimCull": [0.78, 0.97]
+  },
+  "foliage": {
+    "trees": { "birch": 74, "oak": 62, "cherry": 44 },
+    "bushes": 520,
+    "rocks": 550,
+    "spikes": 74,
+    "crystals": 48
+  },
+  "sunAzimuthRadians": 0.9198,
+  "sunElevationRadians": 0.9375
+}

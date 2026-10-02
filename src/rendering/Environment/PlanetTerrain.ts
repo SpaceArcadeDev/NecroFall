@@ -138,11 +138,14 @@ export class PlanetTerrain {
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
 
-    // ---- material: folio's terrain read — palette colour via the shared node
+    // ---- material: folio's terrain read — palette colour via the shared node. The terrain
+    // data + palette colour nodes are built ONCE: the colour node shades the ground, and the
+    // lawn-glow term reuses the very same samples instead of re-reading terrain + palette per
+    // pixel (plan §32 — repeated shader work moved out of the fragment path).
+    const terrainData = nodes.terrainNode(positionLocal);
+    const base = nodes.colorNode(terrainData);
     const material = new MeshDefaultMaterial({
       colorNode: (() => {
-        const terrainData = nodes.terrainNode(positionLocal);
-        const base = nodes.colorNode(terrainData);
         // THE GRASS SHADOW (fixed): a soft, planet-stable shade that exists EXACTLY where the
         // blade field grows — the SAME patch sample, scale and thresholds the grass build uses
         // (GrassField.ts). The band sits INSIDE the clumps (blades are already dense where it
@@ -153,6 +156,8 @@ export class PlanetTerrain {
         const shade = smoothstep(GRASS_SHADOW_EDGE_LOW, GRASS_SHADOW_EDGE_HIGH, patchNoise);
         return base.mul(mix(1.0, GRASS_SHADOW_DEPTH, shade)) as any;
       })(),
+      lawnGlowData: terrainData,
+      lawnGlowColor: base,
       // A convex planet constantly presents far-slope BACKFACES to a low camera;
       // single-sided terrain left see-through voids wherever grass didn't cover.
       side: THREE.DoubleSide,

@@ -599,13 +599,21 @@ export const IS_MOBILE =
 /**
  * Adaptive render scale (the "DPR ladder"). The watchdog walks DOWN when the frame rate stays
  * below `badFps` and back UP once it stays above `goodFps`; each step is a fraction of the capped
- * DPR, so the mobile ladder is [1.25, 1.00, 0.85, 0.75] and the desktop one [2, 1.6, 1.36, 1.2].
- * Hysteresis is the point: 1.5 s of sustained bad frames before stepping down (a phone that is
- * already thermally throttling must be caught early), 8 s of good frames before stepping back up
- * (quality must never oscillate), plus a cooldown that applies to both directions.
+ * DPR, so the mobile ladder is [1.25, 1.15, 1.05, 0.95, 0.83] and the desktop one
+ * [2, 1.84, 1.68, 1.52, 1.32]. Small steps (mobile thermal plan §3): a rung-down must read as
+ * "slightly softer", never as a quality switch. Hysteresis is the point: 3 s of sustained bad
+ * frames before stepping down, 10 s of good frames before stepping back up, plus a 5 s cooldown
+ * that applies to both directions.
  */
 export const PERF = {
-  dprLadder: [1, 0.8, 0.68, 0.6],
+  /**
+   * Adaptive render-scale steps, relative to the capped DPR (mobile 1.25 / desktop 2). SMALL
+   * steps on purpose (mobile thermal plan §3/§56): a 20 % jump read as "the game switched to
+   * Low"; 8-10 % steps are barely perceptible while still saving the same GPU work after a
+   * couple of seconds. Five rungs are kept so the ladder can still reach a deep thermal floor
+   * (mobile 1.25 → 0.83) without any single step being visible.
+   */
+  dprLadder: [1, 0.92, 0.84, 0.76, 0.66],
   badFps: 55,
   goodFps: 58,
   /**
@@ -631,12 +639,17 @@ export const PERF = {
    * provably needs: the decay floor is pinned at it, so the scenery cannot flicker on and off.
    */
   rescueRegret: 12,
-  /** Seconds of sustained bad frames before the scale steps DOWN. */
-  downAfter: 1.5,
-  /** Seconds of sustained good frames before the scale steps back UP. */
-  upAfter: 8,
-  /** Seconds after any change before the next one may happen. */
-  cooldown: 2,
+  /**
+   * Seconds of sustained bad frames before the scale steps DOWN. 3 s (not 1.5) so a burst of
+   * shader-compile / match-start hitches cannot move it, while a phone that is already
+   * throttling is still caught inside the first seconds of trouble (plan §3: require
+   * sustained pressure, never one bad frame).
+   */
+  downAfter: 3,
+  /** Seconds of sustained good frames before the scale steps back UP (recover slowly — §3). */
+  upAfter: 10,
+  /** Seconds after any change before the next one may happen (plan §3: ~1.5 s or slower). */
+  cooldown: 5,
   /**
    * Render pacing (2026-09 thermal pass): the main loop renders at most this many frames per
    * second, per phase. Matches keep the gameplay budget; menus/lobbies/shells get the cheap one;

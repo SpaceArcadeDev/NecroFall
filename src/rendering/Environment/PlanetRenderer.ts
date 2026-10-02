@@ -147,10 +147,12 @@ export class PlanetRenderer {
 
     // 3 — grass field (planet-wide and static: every blade is baked at build; the only runtime
     // inputs are the player's parting push and the shared wind — nothing streams while walking).
-    // The planting itself is chunked (see Grass.plant) — `ready` resolves when it is in.
+    // The field is ONE shared material over 32 spatial sector meshes (plan §8) so the frustum
+    // culls the planet behind the player. The planting itself is chunked (see Grass.plant) —
+    // `ready` resolves when the sector meshes are in.
     onProgress?.(0.33, 'planting grass');
     this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time);
-    this.group.add(this.grass.mesh);
+    this.group.add(this.grass.root);
     await this.grass.ready;
     await nextLoop();
 
@@ -207,13 +209,23 @@ export class PlanetRenderer {
     this.group.add(this.particles.group);
     await nextLoop();
 
+    // ---- FREEZE THE STATIC WORLD (plan §15/§37): every environment transform is final —
+    // nothing in this subtree ever moves (all animation lives in shader uniforms), so the
+    // renderer must not rebuild world matrices for the static scene on every frame. Pads,
+    // bases, towers, enemies and players are separate systems and stay dynamic.
+    this.group.updateMatrixWorld(true);
+    this.group.matrixAutoUpdate = false;
+    this.group.traverse((object) => {
+      object.matrixAutoUpdate = false;
+    });
+
     onProgress?.(0.96, 'ready');
   }
 
   /** Per-frame world pass, called from the environment tick. */
   update(focusPoint: THREE.Vector3, camera?: THREE.Camera): void {
     void this.focusScratch;
-    this.grass.update(focusPoint);
+    this.grass.update(focusPoint, camera);
     this.puddles.trackTrail(focusPoint);
     this.particles.update(focusPoint, camera);
   }

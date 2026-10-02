@@ -75,17 +75,29 @@ function createPlaceholderBlade(): THREE.BufferGeometry {
 }
 
 export class Grass {
-  readonly mesh: THREE.Mesh;
+  /**
+   * The field is ONE shared material over a SMALL NUMBER of spatial sector meshes (plan §8/§39).
+   * Planet-space placement is untouched — every blade keeps its exact baked position (nothing
+   * moves with the player); the sector split only lets the camera's frustum cull the parts of
+   * the planet behind it. A single planet-wide mesh can never be culled (its bounds always
+   * intersect the view), so its vertex stage ran for EVERY blade every frame; with sectors only
+   * the visible fraction is submitted.
+   */
+  readonly root = new THREE.Group();
 
-  /** Completes when the planet-wide planting pass has swapped its geometry in (see `plant`). */
+  /** Completes when the planet-wide planting pass has swapped its real sector meshes in. */
   readonly ready: Promise<void>;
 
-  private geometry: THREE.BufferGeometry;
   private material: MeshDefaultMaterial;
+  /** One degenerate blade carrying the real attributes until the first planting pass lands. */
+  private placeholder!: THREE.Mesh;
   /** Serialises planting passes: a quality change waits for the pass before it. */
   private plantChain: Promise<void> = Promise.resolve();
   /** Only the NEWEST planting pass may swap its geometry in (a stale one is disposed). */
   private plantToken = 0;
+  /** Per-sector draw records for the horizon cull in `update`. */
+  private readonly sectorMeshes: { mesh: THREE.Mesh; center: THREE.Vector3; radius: number }[] = [];
+  private readonly camScratch = new THREE.Vector3();
 
   private readonly uBladeWidth = uniform(0.24);
   /** Tall meadow blades (user ask: "grass needs to be taller" — raised again to chest-high). */
@@ -137,20 +149,23 @@ export class Grass {
     // Plant ASYNCHRONOUSLY, in chunks (see `plant`): the field is ~700k blades and one
     // synchronous pass froze the whole page for seconds — exactly when a match starts
     // (or while the class picker pre-loads the planet in the background). Until the pass
-    // swaps the real field in, the mesh shows ONE degenerate blade carrying the SAME geometry
+    // swaps the real field in, the root shows ONE degenerate blade carrying the SAME geometry
     // attributes — the material's shader pipeline needs all of them from the first render
     // (a bare BufferGeometry made it compile `normalize(0.0)` and go invalid on WebGPU).
-    this.geometry = createPlaceholderBlade();
     this.material = this.createMaterial();
-    this.mesh = new THREE.Mesh(this.geometry, this.material);
-    this.mesh.frustumCulled = false;
+    this.placeholder = new THREE.Mesh(createPlaceholderBlade(), this.material);
+    this.placeholder.frustumCulled = false;
     // NO received dynamic shadows on blades: razor-thin triangles are the worst
     // case for shadow-map bias — the acne flips lit/dark patches ON the blades
     // as the shadow-follow camera moves with the player (the 'lighting angle
     // suddenly changes' flicker at distance). The baked root shade + the
     // terrain's own grass shadow underneath keep the grounded look.
-    this.mesh.receiveShadow = false;
-    this.mesh.name = 'grass';
+    this.placeholder.receiveShadow = false;
+    this.placeholder.matrixAutoUpdate = false;
+    this.placeholder.updateMatrix();
+    this.placeholder.name = 'grass_placeholder';
+    this.root.name = 'grass';
+    this.root.add(this.placeholder);
 
     // NOTE: no ticker subscription — the world orchestrator calls `update(focus)` once per
     // frame at its own stage (PlanetRenderer.update).
@@ -171,21 +186,50 @@ export class Grass {
 
   private async plant(subdivisions: number): Promise<void> {
     const token = ++this.plantToken;
-    const geometry = await this.createGeometry(subdivisions);
+    const sectors = await this.createSectorGeometries(subdivisions);
     if (token !== this.plantToken) {
-      geometry.dispose(); // a newer pass (or disposal) won — never swap a stale field in
+      for (const sector of sectors) sector.geometry.dispose(); // a newer pass (or disposal) won
       return;
     }
-    const previous = this.mesh.geometry;
-    this.mesh.geometry = geometry;
-    this.geometry = geometry;
-    if (previous !== geometry) previous.dispose();
+    for (const child of [...this.root.children]) {
+      if (child === this.placeholder) continue;
+      this.root.remove(child);
+      (child as THREE.Mesh).geometry.dispose();
+    }
+    this.sectorMeshes.length = 0;
+    for (const sector of sectors) {
+      const mesh = new THREE.Mesh(sector.geometry, this.material);
+      // Real bounds — computed from the sector's own blades and expanded for wind/push — plus
+      // frustum culling: the whole point of the split (plan §8). Casting/receiving stay off:
+      // blades are the one thing the shadow map must never re-render.
+      mesh.frustumCulled = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      mesh.name = `grass_sector_${sector.id}`;
+      this.root.add(mesh);
+      const bounds = sector.geometry.boundingSphere;
+      if (bounds) this.sectorMeshes.push({ mesh, center: bounds.center.clone(), radius: bounds.radius });
+    }
+    if (this.placeholder.parent) this.root.remove(this.placeholder);
+    if (grassStats()) {
+      console.info('[grass]', {
+        blades: this.bladeTotal,
+        sectors: sectors.length,
+        subdivisions,
+        vertexCount: this.bladeTotal * 3,
+        drawCallsMax: sectors.length,
+      });
+    }
   }
 
   /** CPU side: `subdivisions²` blades, 3 vertices each — the ONLY data (plan §14).
    *  The scatter loop YIELDS to the event loop every ~128k attempts, so the caller's
    *  loading screen (or the class picker, for the background pre-build) stays alive. */
-  private async createGeometry(subdivisions: number): Promise<THREE.BufferGeometry> {
+  private async createSectorGeometries(
+    subdivisions: number,
+  ): Promise<{ id: number; geometry: THREE.BufferGeometry }[]> {
     const target = subdivisions * subdivisions;
     const sites = this.water?.sites ?? [];
     const radius = this.surface.radius;
@@ -199,6 +243,8 @@ export class Grass {
     const posZ = new Float32Array(target);
     const randoms = new Float32Array(target);
     const fields = new Float32Array(target);
+    /** Spatial sector (lat band × lon band) per accepted blade — draw partitioning only. */
+    const sectorOf = new Uint8Array(target);
 
     const random = mulberry32(0x9e3779b9);
     let accepted = 0;
@@ -251,35 +297,80 @@ export class Grass {
       posZ[accepted] = dz * surfaceRadius;
       randoms[accepted] = random();
       fields[accepted] = field;
+      // Spatial sector (plan §8) — recorded here, where the direction is still in registers.
+      // PURE INDEXING: the blade's planet-space position is untouched; only the DRAW is split.
+      const latBand = Math.min(GRASS_SECTORS_LAT - 1, Math.floor(((dy + 1) * 0.5) * GRASS_SECTORS_LAT));
+      const lonBand = Math.min(
+        GRASS_SECTORS_LON - 1,
+        Math.floor(((Math.atan2(dz, dx) + Math.PI) / (Math.PI * 2)) * GRASS_SECTORS_LON),
+      );
+      sectorOf[accepted] = latBand * GRASS_SECTORS_LON + lonBand;
       accepted++;
     }
     this.bladeTotal = accepted;
 
-    // 3 vertices per blade — tip / left base / right base, all sharing the blade's data.
-    const positions = new Float32Array(accepted * 3 * 3);
-    const randomness = new Float32Array(accepted * 3);
-    const fieldAttr = new Float32Array(accepted * 3);
-    let v = 0;
-    for (let i = 0; i < accepted; i++) {
-      const px = posX[i];
-      const py = posY[i];
-      const pz = posZ[i];
-      for (let corner = 0; corner < 3; corner++) {
-        positions[v * 3] = px;
-        positions[v * 3 + 1] = py;
-        positions[v * 3 + 2] = pz;
-        randomness[v] = randoms[i];
-        fieldAttr[v] = fields[i];
-        v++;
-      }
-    }
+    // ---- bucket the accepted blades by sector in ONE pass (no O(sectors × blades) scan).
+    const counts = new Uint32Array(GRASS_SECTORS);
+    for (let i = 0; i < accepted; i++) counts[sectorOf[i]]++;
+    const offsets = new Uint32Array(GRASS_SECTORS + 1);
+    for (let s = 0; s < GRASS_SECTORS; s++) offsets[s + 1] = offsets[s] + counts[s];
+    const cursors = offsets.slice();
+    const order = new Int32Array(accepted); // blade indices, grouped by sector
+    for (let i = 0; i < accepted; i++) order[cursors[sectorOf[i]]++] = i;
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('bladeRandom', new THREE.BufferAttribute(randomness, 1));
-    geometry.setAttribute('bladeField', new THREE.BufferAttribute(fieldAttr, 1));
-    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), radius + 90);
-    return geometry;
+    // ---- one geometry per non-empty sector: 3 vertices per blade (tip / left base / right
+    // base), all sharing the blade's data, plus REAL bounds (the old whole-planet sphere made
+    // every frame submit every blade — the one thing this split exists to stop).
+    const sectors: { id: number; geometry: THREE.BufferGeometry }[] = [];
+    for (let s = 0; s < GRASS_SECTORS; s++) {
+      const count = offsets[s + 1] - offsets[s];
+      if (count === 0) continue;
+      const positions = new Float32Array(count * 9);
+      const randomness = new Float32Array(count * 3);
+      const fieldAttr = new Float32Array(count * 3);
+      let minX = Infinity;
+      let minY = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxZ = -Infinity;
+      let v = 0;
+      for (let k = offsets[s]; k < offsets[s + 1]; k++) {
+        const i = order[k];
+        const px = posX[i];
+        const py = posY[i];
+        const pz = posZ[i];
+        if (px < minX) minX = px;
+        if (py < minY) minY = py;
+        if (pz < minZ) minZ = pz;
+        if (px > maxX) maxX = px;
+        if (py > maxY) maxY = py;
+        if (pz > maxZ) maxZ = pz;
+        for (let corner = 0; corner < 3; corner++) {
+          positions[v * 3] = px;
+          positions[v * 3 + 1] = py;
+          positions[v * 3 + 2] = pz;
+          randomness[v] = randoms[i];
+          fieldAttr[v] = fields[i];
+          v++;
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('bladeRandom', new THREE.BufferAttribute(randomness, 1));
+      geometry.setAttribute('bladeField', new THREE.BufferAttribute(fieldAttr, 1));
+      // AABB centre + half diagonal + the wind/push margin: cheap, conservative, and small
+      // enough that the frustum actually rejects the sectors behind the camera.
+      const cx = (minX + maxX) * 0.5;
+      const cy = (minY + maxY) * 0.5;
+      const cz = (minZ + maxZ) * 0.5;
+      const half = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5;
+      geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(cx, cy, cz), half + GRASS_BOUNDS_MARGIN);
+      sectors.push({ id: s, geometry });
+      // Yield between sector fills so a background pre-build keeps the loading screen alive.
+      if ((s & 3) === 3) await nextLoop();
+    }
+    return sectors;
   }
 
   private createMaterial(): MeshDefaultMaterial {
@@ -297,6 +388,13 @@ export class Grass {
     const tipness = varying(vertexLoop.oneMinus().clamp(0, 1));
     // per-blade brightness variation (the reference world's tufts are not uniform)
     const bladeTint = varying(attribute('bladeRandom') as any);
+    // THE PER-BLADE TERRAIN COLOUR — evaluated ONCE PER VERTEX and interpolated (plan §32:
+    // "move repeated calculations out of fragment"). The blades used to re-read the terrain
+    // (terrain tex + gradient palette + patch mask) TWICE PER FRAGMENT — once for the colour
+    // ramp, once again for the glow — across one of the largest screen areas in the game. All
+    // three vertices of a blade share its position, so the interpolated value is identical to
+    // the old per-fragment sample, at a fraction of the cost.
+    const bladeBase: any = varying(nodes.colorNode(nodes.terrainNode(attribute('position') as any)) as any);
 
     const material = new MeshDefaultMaterial({
       // THE VISIBLE GRADIENT (user ask: "more vibrant and more visible gradient"): the root
@@ -304,8 +402,7 @@ export class Grass {
       // reads blade by blade instead of blending into the terrain colour under it.
       // Saturation > 1 is applied as colour × 1.32 − luma × 0.32 (the mix() identity).
       colorNode: (() => {
-        const base = nodes.colorNode(nodes.terrainNode(positionWorld));
-        const ramp: any = mix(base.mul(0.42), base.mul(1.55), tipness);
+        const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
         const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
         return vivid.mul((bladeTint as any).mul(0.3).add(0.87));
@@ -340,8 +437,7 @@ export class Grass {
       //    root and stays well under the bloom threshold, so it reads as a gentle gradient of
       //    light (root dark → tip faintly lit) instead of glitter.
       glowNode: (() => {
-        const base = nodes.colorNode(nodes.terrainNode(positionWorld));
-        const ramp: any = mix(base.mul(0.42), base.mul(1.55), tipness);
+        const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
         const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
         const gradient: any = (tipness as any).mul(0.5).add((tipness as any).mul(tipness).mul(0.5));
@@ -464,11 +560,31 @@ export class Grass {
     return material;
   }
 
-  /** Called every frame from the environment tick — only the player's parting moves now. */
-  update(focusPlanetPosition?: THREE.Vector3): void {
+  /**
+   * Called every frame from the environment tick — the player's parting moves, plus per-sector
+   * HORIZON CULLING (the same `dot(C, P) + r|P| > R²` test the terrain chunk split proved out):
+   * the camera frustum alone still admits every far-side sector (it has no occlusion concept),
+   * so the visible-cap test is what actually drops the planet behind the player. The engine's
+   * own frustum culling runs on top of this for the sectors off to the sides.
+   */
+  update(focusPlanetPosition?: THREE.Vector3, camera?: THREE.Camera): void {
     const focus = focusPlanetPosition ?? this.lastFocus;
     if (!focus) return;
     this.lastFocus = focus;
+
+    // ---- sector horizon culling
+    if (this.sectorMeshes.length > 0) {
+      if (camera) {
+        camera.getWorldPosition(this.camScratch);
+        const camLen = this.camScratch.length();
+        const horizon = this.surface.radius * this.surface.radius * 0.97;
+        for (const sector of this.sectorMeshes) {
+          sector.mesh.visible = sector.center.dot(this.camScratch) + sector.radius * camLen > horizon;
+        }
+      } else {
+        for (const sector of this.sectorMeshes) sector.mesh.visible = true;
+      }
+    }
 
     // Parting centre = the player's exact world position.
     this.uPushCenter.value.copy(focus);
@@ -495,12 +611,17 @@ export class Grass {
   private lastFocus: THREE.Vector3 | null = null;
 
   setVisible(visible: boolean): void {
-    this.mesh.visible = visible;
+    this.root.visible = visible;
   }
 
   dispose(): void {
-    this.plantToken++; // any in-flight planting pass must not swap into a disposed mesh
-    this.geometry.dispose();
+    this.plantToken++; // any in-flight planting pass must not swap into a disposed field
+    for (const child of [...this.root.children]) {
+      if (child !== this.placeholder) (child as THREE.Mesh).geometry.dispose();
+    }
+    this.root.clear();
+    this.sectorMeshes.length = 0;
+    this.placeholder.geometry.dispose();
     this.material.dispose();
     this.trailTexture.dispose();
   }
@@ -514,6 +635,26 @@ export class Grass {
  *  of history — the ~7 s full fade at a sprint (13.5 m/s) fits inside the ring. */
 const TRAIL_SLOTS = 96;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
+
+/**
+ * Spatial sectors (plan §8/§39): lat bands × lon bands. 32 draws worst-case, but the frustum
+ * only ever keeps the ~6-12 sectors the camera can actually see, so the vertex stage drops from
+ * EVERY blade to the visible fraction. The split is indexing-only — no blade moves.
+ */
+const GRASS_SECTORS_LAT = 4;
+const GRASS_SECTORS_LON = 8;
+const GRASS_SECTORS = GRASS_SECTORS_LAT * GRASS_SECTORS_LON;
+/** Bounding-sphere margin (m) covering the maximum wind sway + player push a blade can receive. */
+const GRASS_BOUNDS_MARGIN = 6;
+
+/** `?grassstats=1` — one line per planting pass (blades / sectors / verts / draw ceiling). */
+function grassStats(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('grassstats') === '1';
+  } catch {
+    return false;
+  }
+}
 const TRAIL_DROP_STEP = 1.0; // metres between overlapping samples — one channel
 
 /** CPU smoothstep (matches the shader semantics). */

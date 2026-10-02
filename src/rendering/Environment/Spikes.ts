@@ -80,7 +80,9 @@ export class Spikes {
 
     this.mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
     this.mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    this.mesh.castShadow = true;
+    // Tiny debris NEVER casts (mobile plan §11): 74 spike clusters are sub-metre needles whose
+    // shadow-map work buys almost nothing visually. They keep RECEIVING light/shadow.
+    this.mesh.castShadow = false;
     this.mesh.receiveShadow = true;
     this.mesh.frustumCulled = false;
     for (let i = 0; i < matrices.length; i++) this.mesh.setMatrixAt(i, matrices[i]);

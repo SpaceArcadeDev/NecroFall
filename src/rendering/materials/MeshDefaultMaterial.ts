@@ -56,6 +56,15 @@ export interface MeshDefaultMaterialParameters {
    * opt OUT with `lawnGlow: false` (their own glow is already the tuned look).
    */
   lawnGlow?: boolean;
+  /**
+   * Optional PRE-SAMPLED nodes for the lawn-glow term (plan §32). The terrain material already
+   * reads `terrainNode()` + `colorNode()` for its own colour; handing the same two nodes in stops
+   * the lawn glow from re-reading the terrain texture and the palette gradient for identical
+   * data — two texture fetches per ground pixel saved. Leave unset and the material samples the
+   * terrain itself, exactly as before.
+   */
+  lawnGlowData?: any;
+  lawnGlowColor?: any;
   alphaTest?: number;
   depthWrite?: boolean;
   depthTest?: boolean;
@@ -90,6 +99,8 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
   private readonly sourceSide: THREE.Side;
   private readonly flipBackfaceNormal: boolean;
   private readonly lawnGlow: boolean;
+  private readonly lawnGlowData: any;
+  private readonly lawnGlowColor: any;
   /** Baked material debug mode (`?render=unlit`…, plan §10/§45) — read once, zero cost per frame. */
   private readonly debugMode: MaterialDebugMode;
 
@@ -116,6 +127,8 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
     this.hasFog = parameters.hasFog ?? true;
     this.hasWater = parameters.hasWater ?? false;
     this.lawnGlow = parameters.lawnGlow ?? true;
+    this.lawnGlowData = parameters.lawnGlowData;
+    this.lawnGlowColor = parameters.lawnGlowColor;
     this.debugMode = RenderDebug.materialMode;
     // The material owns its fog through WorldGlobals.fog (plan §24). Disable the automatic
     // scene-fog hookup: a legacy THREE.FogExp2 on the scene would otherwise DOUBLE-fog every
@@ -242,9 +255,13 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
       // colour. Gated to REAL darkness exactly like the blade glow (a lit lawn stays untouched),
       // squared for the same contrast, and faded out with height above ground.
       if (this.lawnGlow && terrain) {
+        // The terrain material hands its OWN samples in (`lawnGlowData`/`lawnGlowColor`, plan
+        // §32) — the ground under the blades is the same point the ground colours itself from,
+        // so re-reading terrain + palette here was two extra texture fetches per ground pixel
+        // for identical data. Props (rocks/trunks/props) keep the self-sampling path.
         const upDirection = positionWorld.normalize();
-        const lawnData = terrain.terrainNode(upDirection) as any;
-        const lawnRadius = terrain.heightMeters((lawnData as any).x).add(globals.radius);
+        const lawnData = (this.lawnGlowData ?? terrain.terrainNode(upDirection)) as any;
+        const lawnRadius = terrain.heightMeters(lawnData.x).add(globals.radius);
         const aboveGround = positionWorld.length().sub(lawnRadius);
         const reach = float(1)
           .sub(aboveGround.max(0).div(LAWN_GLOW_REACH))
@@ -253,8 +270,8 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         const shade = max(coreShadowMix, dropShadowMix).clamp(0, 1);
         const darkness = mix(float(0.1), float(1.0), (shade as any).mul(shade));
         outputColor.addAssign(
-          (terrain.colorNode(lawnData) as any)
-            .mul((lawnData as any).y)
+          ((this.lawnGlowColor ?? terrain.colorNode(lawnData)) as any)
+            .mul(lawnData.y)
             .mul(LAWN_GLOW_STRENGTH)
             .mul((reach as any).mul(darkness)),
         );

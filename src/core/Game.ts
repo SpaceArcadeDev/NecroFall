@@ -5545,13 +5545,16 @@ export class Game {
   /**
    * Frame-time watchdog. A match can end up with far more creatures on screen than a given GPU can
    * draw, so instead of degrading into a frozen frame the game measures its own framerate and steps
-   * the world down when it can't keep up: the crowd is culled, particles and decorations are
-   * trimmed, and (if it is still struggling) the render resolution drops.
+   * the workload down when it can't keep up: the enemy crowd is culled and effect/ambience density
+   * is trimmed. The WORLD is never touched (mobile plan §2/§55/§67 — "never fix performance by
+   * removing the world"): scenery, grass and props stay visible at every rescue level, and the
+   * render resolution moves only through the DPR ladder's own small steps.
    *
    * It is deliberately conservative and fully reversible — two bad half-second windows in a row
    * before it acts (a phone that is already thermally throttling must be caught early, not after
-   * several seconds of jank), and it climbs back up (restoring decorations and the crowd budget)
-   * after ten good ones, so a single hitch or a tab switch can never permanently degrade the match.
+   * several seconds of jank), and it climbs back up (restoring the crowd budget and effect
+   * density) after ten good ones, so a single hitch or a tab switch can never permanently degrade
+   * the match.
    */
   private watchdog(fps: number): void {
     if (this.phase !== 'playing') return;
@@ -5637,28 +5640,18 @@ export class Game {
    * Applies every knob of the current rescue level from ONE table. The old inline version drifted
    * (the 3 → 2 step left the particle budget at level 3's value) and the mapping lived in three
    * separate branches a decay could never safely reuse.
+   *
+   * VFX DENSITY is the only thing a rescue level trims (mobile plan §2/§55/§67): effect particles
+   * and ambience. The crowd cull runs in the caller. The WORLD itself is never touched — no
+   * scenery is hidden, no grass is removed, no preset is swapped mid-match: a struggling phone
+   * gets a softer image (the DPR ladder) and lighter effects, never an emptier world. The old
+   * level-2 "hide decorations" trim violated the plan's first rule ("NEVER FIX PERFORMANCE BY
+   * REMOVING THE WORLD") and is gone.
    */
   private applyRescueLevel(): void {
     const level = Math.min(this.rescueLevel, 3);
     this.effects.setBudget([1, 0.65, 0.65, 0.4][level]);
-    // The environment trims FIRST: particles → decorations → resolution. Gameplay systems are
-    // never sacrificed before every environment knob is spent.
     this.planet.setAmbienceBudget([1, 0.6, 0.35, 0.35][level]);
-    // An EXPLICITLY chosen preset is the player's own instruction (mobile bug report: "graphics
-    // is always low even though I set it to ultra"): the watchdog still trims particles, ambience,
-    // the crowd and the resolution (the DPR ladder owns that), but it never strips the scenery
-    // (level-2) or drops the renderer level (level-3) for a preset the player picked by hand —
-    // `auto` keeps the full thermal ladder.
-    const explicit = this.qualityPref !== 'auto';
-    // Scenery (rocks, crystals, trees, grass, flowers, ambience points) is the level-2 trim — and
-    // the one players actually see, which is why every path back up must restore it. FREEROAM is
-    // exempt (user ask 2026-10-02 — "switch the environment assets back on"): the sandbox IS the
-    // environment, so its scenery never hides no matter how hard the device struggles (the
-    // resolution ladder, the particle budget and the level-3 preset drop still apply).
-    this.planet.setDecorationsVisible(explicit || this.freeroamMode || this.rescueLevel < 2);
-    // The LAST rescue step turns cheapDOF off (a full-screen pass). Bloom stays, so the
-    // radioactive accents never lose their glow under load.
-    this.quality.changeLevel(!explicit && this.rescueLevel >= 3 ? 1 : qualityLevelForPreset(this.settings.name));
   }
 
   /** Clears every rescue clock and restores the level-0 budgets (match start, preset change). */

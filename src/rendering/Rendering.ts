@@ -98,6 +98,16 @@ export class Rendering {
 
   async init(scene: THREE.Scene, camera: THREE.Camera): Promise<this> {
     await this.renderer.init();
+    // EXPLICIT backend diagnostics (mobile plan §51): a device that can run WebGPU must never
+    // silently ride the WebGL compatibility path. One line at boot makes the choice visible.
+    const webgpuAvailable = typeof navigator !== 'undefined' && 'gpu' in navigator;
+    console.info('[render]', {
+      renderer: this.renderer.constructor.name,
+      backend: this.backend,
+      webgpuAvailable,
+      forcedWebGL: this.options.forceWebGL ?? false,
+      chosen: this.backend === 'webgpu' ? 'WebGPU + TSL' : 'WebGL compatibility',
+    });
     this.scene = scene;
     this.camera = camera;
     this.createPostProcessing(scene, camera);

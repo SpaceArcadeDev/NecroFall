@@ -109,6 +109,25 @@ export function getRankFromStars(totalStars: number): RankInfo {
   return { tier: TIER_BRONZE, division: 3, stars: 0, toNext: 3, progress: 0 };
 }
 
+/**
+ * The rank strip's star-row model — ONE source for the RANK page, the MODES card and the
+ * bottom bar's RANK button (user ask 2026-10-03: "the same stars ui as the rank menu").
+ * `html` carries the exact `.rk-star` markup the rank menu renders: lit stars gold with a
+ * glow, the NEXT star blinking (`rk-star-next`), each popping in on its own delay.
+ */
+export function rankStarRow(totalStars: number): { html: string; lit: number; max: number; name: string } {
+  const info = getRankFromStars(totalStars);
+  const cap = info.tier >= TIER_LIBERATOR ? 25 : info.tier === 0 ? 3 : info.tier === 1 ? 4 : 5;
+  const lit = Math.min(cap - 1, info.stars);
+  const max = info.tier === TIER_KOG ? 8 : cap;
+  let html = '';
+  for (let i = 0; i < max; i++) {
+    html += `<span class="rk-star ${i < lit ? 'on' : ''}${i === lit ? ' next' : ''}" style="animation-delay:${i * 70}ms">★</span>`;
+  }
+  if (info.tier === TIER_KOG) html += `<span class="rk-star-count">${info.stars} ★</span>`;
+  return { html, lit, max, name: getRankDisplayName(totalStars) };
+}
+
 export function getRankDisplayName(totalStars: number): string {
   const info = getRankFromStars(totalStars);
   if (info.tier >= TIER_LIBERATOR) return RANK_TIER_NAMES[info.tier];

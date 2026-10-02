@@ -45,6 +45,8 @@ import type { ContractScreen } from '../ui/data/MenuActionRegistry';
 import { NFMoreSheet, type MoreSheetEntry } from '../ui/components/NFMoreSheet';
 import { createPageHeader } from '../ui/shell/PageHeader';
 import { PlayerSearch } from './friends/PlayerSearch';
+import { GAME_MODES, type GameModeDefinition } from '../ui/data/GameModeRegistry';
+import { rankStarRow } from '../rank/RankService';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
 import { SoloPage } from './lobby/SoloPage';
@@ -91,6 +93,9 @@ export class AppShell implements ShellContext {
   private moreSheet: NFMoreSheet;
   private toastEl: HTMLElement;
   private pill: HTMLButtonElement;
+  /** The mode the player last LAUNCHED (user ask 2026-10-03): the bottom bar's hero button
+   *  becomes that mode — its own icon, its menu, and RANK's golden star row. Persisted. */
+  private lastModeId: GameModeDefinition['id'] = 'classic';
 
   private auth: AuthProvider;
   private screen: ShellScreen = 'boot';
@@ -227,6 +232,15 @@ export class AppShell implements ShellContext {
     this.moreSheet = new NFMoreSheet(() => this.moreEntries());
     this.chrome.appendChild(this.topBar.element);
     this.chrome.appendChild(this.nav.element);
+    // LAST-PLAYED MODE (user ask 2026-10-03): restore the hero button before the first paint —
+    // RANK also needs its star row, refreshed on every data tick (`refreshNavMode`).
+    try {
+      const stored = localStorage.getItem('nf.mm.lastmode') as GameModeDefinition['id'] | null;
+      if (stored && GAME_MODES.some((m) => m.id === stored)) this.lastModeId = stored;
+    } catch {
+      /* private mode */
+    }
+    this.refreshNavMode();
     // The bar sits in the body row's own column (the page never renders under it).
     this.bodyRow.appendChild(this.rail.element);
     // The friends OVERLAY + the notifications live OUTSIDE the shell root: the shell moves
@@ -460,6 +474,7 @@ export class AppShell implements ShellContext {
    * it), the game takes the screen, and the finish reports through the record reducers.
    */
   startSoloRun(mode: 'speedrun' | 'survival', planet: PlanetDescriptor): void {
+    this.setLastMode(mode);
     const game = this.ensureGame();
     const cache = ClientCache.shared;
     const me = cache.me(this.myHex());
@@ -507,6 +522,7 @@ export class AppShell implements ShellContext {
    * to the PLAY menu.
    */
   startFreeroam(): void {
+    this.setLastMode('freeroam');
     const game = this.ensureGame();
     const hex = this.myHex();
     const me = hex ? ClientCache.shared.me(hex) : null;
@@ -873,6 +889,7 @@ export class AppShell implements ShellContext {
 
   private onData(): void {
     this.topBar.update();
+    this.refreshNavMode();
     this.rail.update();
     this.refreshRail();
     this.page?.update?.();
@@ -1159,15 +1176,16 @@ export class AppShell implements ShellContext {
         this.renderHome();
         break;
       case 'play':
-        this.nav.setActive('play');
+        // the bar lives on the MAIN MENU only; the hero key no longer exists (2026-10-03)
+        this.nav.setActive(null);
         this.renderPlay();
         break;
       case 'lobby':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderLobby();
         break;
       case 'room':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderLobbyRoom();
         break;
       case 'rank':
@@ -1175,11 +1193,11 @@ export class AppShell implements ShellContext {
         this.renderRank();
         break;
       case 'solo':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderSolo(arg === 'survival' ? 'survival' : 'speedrun');
         break;
       case 'custom':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderCustom();
         break;
       case 'events':
@@ -1191,11 +1209,11 @@ export class AppShell implements ShellContext {
         this.renderGraphics();
         break;
       case 'match':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderMatchJoin(Number(arg ?? 0));
         break;
       case 'queue':
-        this.nav.setActive('play');
+        this.nav.setActive(null);
         this.renderQueue();
         break;
       case 'profile':
@@ -1913,11 +1931,58 @@ export class AppShell implements ShellContext {
   // ------------------------------------------------------------ game control
 
   /** The bottom bar's destinations (user ask 2026-10-03): EVENTS · CUSTOMIZE · MAP · PLAY. */
+  /** The bottom bar's destinations (user ask 2026-10-03): EVENTS · CUSTOMIZE · MAP ·
+   *  MODES · the LAST-PLAYED mode's own menu. */
   private onNav(key: BottomNavKey): void {
-    if (key === 'play') this.goPlay();
+    if (key === 'mode') this.launchLastMode();
+    else if (key === 'modes') this.goPlay();
     else if (key === 'map') this.goRank();
     else if (key === 'events') this.goEvents();
     else this.openCustomize();
+  }
+
+  /** Remember the launched mode (ShellContext): persist + repaint the hero button. */
+  setLastMode(id: GameModeDefinition['id']): void {
+    this.lastModeId = id;
+    try {
+      localStorage.setItem('nf.mm.lastmode', id);
+    } catch {
+      /* private mode */
+    }
+    this.refreshNavMode();
+  }
+
+  /** The hero button's answer: open the LAST-PLAYED mode's own menu. */
+  private launchLastMode(): void {
+    switch (this.lastModeId) {
+      case 'rank':
+        this.goRank();
+        break;
+      case 'speedrun':
+        this.goSolo('speedrun');
+        break;
+      case 'survival':
+        this.goSolo('survival');
+        break;
+      case 'custom':
+        this.goCustom();
+        break;
+      case 'freeroam':
+        this.startFreeroam();
+        break;
+      default:
+        this.goLobby();
+        break;
+    }
+  }
+
+  /** Push the last-played mode into the bottom bar — RANK carries the golden star row. */
+  private refreshNavMode(): void {
+    const mode = GAME_MODES.find((m) => m.id === this.lastModeId) ?? GAME_MODES[0];
+    const hex = this.myHex();
+    const me = hex ? ClientCache.shared.me(hex) : null;
+    const stars = mode.id === 'rank' ? rankStarRow(Number(me?.rankPoints ?? 0)).html : null;
+    this.nav.setMode(mode, stars);
   }
 
   /**

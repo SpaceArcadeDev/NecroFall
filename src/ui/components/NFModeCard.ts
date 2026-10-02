@@ -14,6 +14,8 @@ export interface NFModeCardOptions {
   mode: GameModeDefinition;
   /** One handler per declared action; a missing handler renders disabled with a reason. */
   handlers: Partial<Record<string, (() => void) | undefined>>;
+  /** Optional HTML line under the blurb — the RANK card's golden star row (user ask 2026-10-03). */
+  extraLine?: string;
 }
 
 export function createNFModeCard(options: NFModeCardOptions): HTMLElement {
@@ -52,6 +54,12 @@ export function createNFModeCard(options: NFModeCardOptions): HTMLElement {
   sub.className = 'nf-mode-card__sub';
   sub.textContent = mode.blurb;
   copy.append(title, sub);
+  if (options.extraLine) {
+    const extra = document.createElement('div');
+    extra.className = 'nf-mode-card__extra rk-stars-row';
+    extra.innerHTML = options.extraLine;
+    copy.appendChild(extra);
+  }
   row.append(plate, copy);
   card.appendChild(row);
 

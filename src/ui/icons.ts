@@ -50,6 +50,7 @@ export const ICONS = {
   share: '<circle cx="6.4" cy="12" r="2.6"/><circle cx="17.6" cy="5.8" r="2.6"/><circle cx="17.6" cy="18.2" r="2.6"/><path d="m8.8 10.8 6.4-3.7"/><path d="m8.8 13.2 6.4 3.7"/>',
   star: '<path d="m12 4 2.3 4.8 5.3.7-3.9 3.7.9 5.3L12 16l-4.6 2.5.9-5.3L4.4 9.5l5.3-.7z"/>',
   more: '<circle cx="5.4" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="18.6" cy="12" r="1.5"/>',
+  grid: '<rect x="4" y="4" width="6.6" height="6.6" rx="1.6"/><rect x="13.4" y="4" width="6.6" height="6.6" rx="1.6"/><rect x="4" y="13.4" width="6.6" height="6.6" rx="1.6"/><rect x="13.4" y="13.4" width="6.6" height="6.6" rx="1.6"/>',
   door: '<path d="M9 4.4h8.6a1.4 1.4 0 0 1 1.4 1.4v12.4a1.4 1.4 0 0 1-1.4 1.4H9"/><path d="M12.6 12H4.4"/><path d="m7.4 9 -3 3 3 3"/>',
   help: '<circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.4c-.8.4-1 .9-1 1.7v.3"/><path d="M12 16.9h.02"/>',
 } as const;

@@ -84,7 +84,10 @@ export class SoloPage {
       b.type = 'button';
       b.dataset.action = 'solo';
       b.addEventListener('click', () => {
-        if (m !== this.mode) this.ctx.goSolo(m);
+        if (m !== this.mode) {
+          this.ctx.setLastMode(m);
+          this.ctx.goSolo(m);
+        }
       });
       toggle.appendChild(b);
     }

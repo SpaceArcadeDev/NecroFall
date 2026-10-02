@@ -33,7 +33,7 @@ import { systemPlanetCount as generatedPlanetCount } from '../../rankmap/procedu
 import { galaxyAt } from '../../rankmap/procedural/GalaxyGenerator';
 import { RING_CONFIGS, ringConfig } from '../../rankmap/procedural/RankRingConfig';
 import { GalaxyDescriptor, PlanetDescriptor, SystemDescriptor } from '../../rankmap/procedural/GalaxyTypes';
-import { getRankDisplayName, getRankFromStars, rankLabel, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
+import { getRankDisplayName, getRankFromStars, rankLabel, rankStarRow, TIER_KOG, TIER_LIBERATOR } from '../../rank/RankService';
 import {
   galaxyLocationKey,
   planetLocationKey,
@@ -719,7 +719,7 @@ export class RankPage {
       `<div class="rk-head-info">` +
       `<div class="rk-rank-line">` +
       `<span class="rk-rank-name">${name}</span>` +
-      `<span class="rk-stars-row">${this.starsHtml(info.stars, info.tier)}</span>` +
+      `<span class="rk-stars-row">${rankStarRow(this.myStars()).html}</span>` +
       `</div>` +
       `<div class="rk-next">${streak}</div>` +
       `</div>` +
@@ -850,18 +850,6 @@ export class RankPage {
     const next = getRankFromStars(this.myStars());
     const toNext = next.toNext > 0 ? ` · ${next.toNext} ★ TO ${getRankDisplayName(this.myStars() + next.toNext)}` : ' · LEADERBOARD TIER';
     return `<span class="rk-delta ${cls}">${icon} ${last.delta > 0 ? '+' : ''}${last.delta} LAST MATCH</span>${toNext}`;
-  }
-
-  private starsHtml(stars: number, tier: number): string {
-    const cap = tier >= TIER_LIBERATOR ? 25 : tier === 0 ? 3 : tier === 1 ? 4 : 5;
-    const lit = Math.min(cap - 1, stars);
-    let out = '';
-    const max = tier === TIER_KOG ? 8 : cap;
-    for (let i = 0; i < max; i++) {
-      out += `<span class="rk-star ${i < lit ? 'on' : ''}${i === lit ? ' next' : ''}" style="animation-delay:${i * 70}ms">★</span>`;
-    }
-    if (tier === TIER_KOG) out += `<span class="rk-star-count">${stars} ★</span>`;
-    return out;
   }
 
   // ------------------------------------------------------------ rail
@@ -1120,6 +1108,9 @@ export class RankPage {
       this.ctx.toast('That planet is shielded or contested — pick another.');
       return;
     }
+    // RANK is THIS player's mode now — the bottom bar's hero button becomes RANK
+    // (user ask 2026-10-03).
+    this.ctx.setLastMode('rank');
     findRankedMatch(p.ring, p.galaxyId, p.systemId, p.planetId);
     this.ctx.toast(`Searching for a ranked match on ${p.name.toUpperCase()}…`);
   }

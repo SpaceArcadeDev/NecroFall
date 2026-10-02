@@ -547,6 +547,24 @@
   color: rgba(10, 16, 9, 0.82);
 }
 
+/* RANK's golden star row under the hero button's label (user ask 2026-10-03) — the SAME
+   `.rk-star` markup the rank menu uses, scaled to the bar. */
+.nf-bottom-stars {
+  justify-content: center;
+  gap: 1px;
+  min-height: 10px;
+}
+
+.nf-bottom-stars .rk-star {
+  font-size: 9px;
+  transform: none;
+}
+
+.nf-bottom-stars .rk-star-count {
+  margin-left: 3px;
+  font-size: 8px;
+}
+
 /* the shine sweep stays — a slow pass, neutral (§23) */
 .nf-bottom-play::before {
   background: linear-gradient(120deg, transparent 34%, rgba(255, 255, 255, 0.5) 50%, transparent 66%);

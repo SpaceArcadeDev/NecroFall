@@ -571,6 +571,42 @@
   flex: 0 1 auto;
 }
 
+/* RANK wears the rank menu's GOLDEN language (user ask 2026-10-03: "the golden animation
+   effect same as before the revamp"): a shimmering title (`rk-shine`, the same sweep the
+   rank strip's rank name wears), a gold-lit plate and the animated golden star row —
+   `rk-star-pop` on entry, the NEXT star blinking via `rk-star-next`. */
+.nf-mode-card[data-mode="rank"] {
+  border-color: rgba(255, 209, 102, 0.34);
+}
+
+.nf-mode-card[data-mode="rank"] .nf-mode-card__title {
+  background: linear-gradient(100deg, #fff 20%, #ffd166 55%, #fff 90%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rk-shine 5s linear infinite;
+}
+
+.nf-mode-card[data-mode="rank"] .nf-mode-card__plate {
+  color: #ffd166;
+  border-color: rgba(255, 209, 102, 0.5);
+  background: rgba(255, 209, 102, 0.13);
+  box-shadow: 0 0 18px rgba(255, 209, 102, 0.2);
+}
+
+/* the star row (the RANK card's `extraLine`) — rank-menu stars, sized for the card */
+.nf-mode-card__extra {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 15px;
+}
+
+.nf-mode-card__extra .rk-star {
+  font-size: 15px;
+}
+
 /* ---------------------------------------------------------------- MORE SHEET (§31) */
 .nf-sheet-scrim {
   position: fixed;

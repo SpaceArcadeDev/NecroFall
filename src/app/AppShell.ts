@@ -101,6 +101,10 @@ export class AppShell implements ShellContext {
   private auth: AuthProvider;
   private screen: ShellScreen = 'boot';
   private page: ActivePage | null = null;
+  /** The live RANK page (the nav's MAP tab expands its map — user ask 2026-10-03). */
+  private rankPage: RankPage | null = null;
+  /** Set by MAP: the next rank render opens with the intergalactic map EXPANDED. */
+  private rankExpandOnShow = false;
   private shellHidden = false;
   private accountReady = false;
   private officialMatchActive = false;
@@ -275,9 +279,10 @@ export class AppShell implements ShellContext {
     this.lobbyReturn.type = 'button';
     this.lobbyReturn.dataset.action = 'lobby';
     this.lobbyReturn.setAttribute('aria-label', 'Return to lobby');
-    // the lobby's DOOR symbol (user ask 2026-10-03): the shell's one stroke icon map —
-    // the enter-door glyph reads "back into the room" at a glance.
-    this.lobbyReturn.innerHTML = `<span class="nf-return-ico">${getIcon('door')}</span><span>RETURN TO LOBBY</span>`;
+    // the lobby's ENTER-DOOR symbol (user ask 2026-10-03): the shell's one stroke icon map —
+    // `door-in` points INTO the room (the plain `door` glyph arrows out and is the sign-out
+    // icon), so the chip reads "back into the room" at a glance.
+    this.lobbyReturn.innerHTML = `<span class="nf-return-ico">${getIcon('door-in')}</span><span class="nf-return-lbl">RETURN TO LOBBY</span>`;
     this.root.appendChild(this.lobbyReturn);
 
     const launcher: LegacyLauncher = (options) => this.launchLegacy(options);
@@ -438,6 +443,20 @@ export class AppShell implements ShellContext {
   /** The RANK page — the intergalactic map (plan §48). */
   goRank(): void {
     this.navigateTo({ name: 'rank' });
+  }
+
+  /**
+   * Nav MAP (user ask 2026-10-03): land on RANK with the intergalactic map ALREADY
+   * EXPANDED — the dashboard's collapsed view is skipped. If rank is already up
+   * (same-screen navigation is a no-op), expand the live page in place.
+   */
+  private goRankExpanded(): void {
+    if (this.screen === 'rank' && !this.shellHidden) {
+      this.rankPage?.openFullscreenMap();
+      return;
+    }
+    this.rankExpandOnShow = true;
+    this.goRank();
   }
 
   /** The GRAPHICS settings page (settings ▸ GRAPHICS): preset + frame-rate cap. */
@@ -907,6 +926,11 @@ export class AppShell implements ShellContext {
     this.rail.update();
     this.refreshRail();
     this.page?.update?.();
+    // The RETURN TO LOBBY chip follows the lobby rows on EVERY data settle too — the
+    // leave/join deletes land AFTER the screen switch, so a showShell-only refresh left
+    // the chip stuck over a lobby that no longer existed (user report 2026-10-03:
+    // "after leaving lobby, the return to lobby overlay still showing").
+    this.refreshLobbyReturn();
     // The reused official lobby screen follows the party rows on every data settle.
     if (this.officialLobbyActive) this.updateOfficialLobby();
 
@@ -1117,6 +1141,7 @@ export class AppShell implements ShellContext {
     this.avatarStageArgs = null;
     this.page?.onHide?.();
     this.page = null;
+    this.rankPage = null;
     clear(this.screenHost);
     // The pane is REUSED between screens: a fresh page inherits the previous one's scroll
     // position and reads as "cut off at the top" (user report on GRAPHICS, 2026-09-29).
@@ -1826,7 +1851,14 @@ export class AppShell implements ShellContext {
   private renderRank(): void {
     const page = new RankPage(this);
     this.page = page;
+    this.rankPage = page;
     this.screenHost.appendChild(page.element);
+    // The nav bar's MAP tab lands with the intergalactic map ALREADY EXPANDED
+    // (user ask 2026-10-03) — consumed once, the dashboard keeps its normal state.
+    if (this.rankExpandOnShow) {
+      this.rankExpandOnShow = false;
+      page.openFullscreenMap();
+    }
   }
 
   /** Settings ▸ GRAPHICS: the preset list and the frame-rate chips (applies live, persists). */
@@ -1983,7 +2015,7 @@ export class AppShell implements ShellContext {
   private onNav(key: BottomNavKey): void {
     if (key === 'mode') this.launchLastMode();
     else if (key === 'modes') this.goPlay();
-    else if (key === 'map') this.goRank();
+    else if (key === 'map') this.goRankExpanded();
     else if (key === 'events') this.goEvents();
     else this.openCustomize();
   }

@@ -816,6 +816,8 @@ export class UI {
   private officialLobbyOn = false;
   /** True while the reused lobby screen wears the CUSTOM flavour (P2P rules, hybrid server). */
   private lobbyCustomOn = false;
+  /** The lobby screen's back chevron (tooltip synced by `updateLobby` — step-out vs leave). */
+  private lobbyBackBtn: HTMLButtonElement | null = null;
   /** The shell's callbacks while an official lobby owns the screen. */
   officialLobby: OfficialLobbyHooks | null = null;
   /** The roster last pushed to the rail (kept so re-opening the screen rebuilds it at once). */
@@ -1084,7 +1086,7 @@ export class UI {
    * thumb size — the corner the eye reads as "leave". `side` still exists for the rare screen that
    * needs it on the other edge, but every current caller uses the default.
    */
-  private addBack(screen: HTMLElement, label: string, onBack: () => void, side: 'right' | 'left' = 'left'): void {
+  private addBack(screen: HTMLElement, label: string, onBack: () => void, side: 'right' | 'left' = 'left'): HTMLButtonElement {
     const b = el('button', side === 'left' ? 'screen-back at-left' : 'screen-back') as HTMLButtonElement;
     b.type = 'button';
     b.setAttribute('aria-label', label);
@@ -1095,6 +1097,7 @@ export class UI {
     // Screens that carry the chevron reserve a band for it (see `.screen.has-back` in the CSS), so
     // the panel never starts underneath the button on a short viewport.
     screen.classList.add('has-back');
+    return b;
   }
 
   /**
@@ -1687,8 +1690,13 @@ export class UI {
     actions.appendChild(this.lobbyStart);
     panel.appendChild(actions);
     s.appendChild(panel);
-    this.addBack(s, 'Leave the lobby', () => {
-      if (this.officialLobbyOn) this.officialLobby?.leave();
+    // BACK steps OUT of the room but KEEPS the lobby open (user ask 2026-10-03: "maintain
+    // the lobby until I leave the lobby") — the shell returns and the RETURN TO LOBBY chip
+    // brings you right back. Only the explicit LEAVE button above actually abandons the
+    // lobby (official party or custom). P2P keeps its old walk-out semantics.
+    // Tooltip truth is synced in `updateLobby` (it flips between the two modes).
+    this.lobbyBackBtn = this.addBack(s, 'Leave the lobby', () => {
+      if (this.officialLobbyOn) this.exitToMenu();
       else this.cbs.leaveRoom();
     });
     this.reg('lobby', s);
@@ -1703,6 +1711,13 @@ export class UI {
     opts?: { official?: boolean; format?: string; gathering?: boolean; custom?: boolean; myReady?: boolean }
   ): void {
     this.officialLobbyOn = Boolean(opts?.official);
+    // the lobby's BACK tooltip tells the truth (user ask 2026-10-03): in an official/custom
+    // room it STEPS OUT (the lobby stays open — the chip brings you back); P2P walks out.
+    if (this.lobbyBackBtn) {
+      const backLabel = this.officialLobbyOn ? 'Back — lobby stays open' : 'Leave the lobby';
+      this.lobbyBackBtn.setAttribute('aria-label', backLabel);
+      this.lobbyBackBtn.title = backLabel;
+    }
     const custom = Boolean(this.officialLobbyOn && opts?.custom);
     this.lobbyCustomOn = custom;
     // The format chip only. (The SEASON pill was removed from the lobby — user ask

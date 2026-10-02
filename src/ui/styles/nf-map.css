@@ -95,9 +95,36 @@
   height: 19px;
 }
 
-/* the zoom stack clears the taller expand toggle (12 + 44 + 8) */
-.rk-zoom {
-  top: 64px;
+/* the zoom stack sits at the map's BOTTOM LEFT (user ask 2026-10-03) — the expand
+   toggle keeps the top right. The legacy ≤900px media already pins it bottom-left, so
+   this rule is scoped ABOVE that tier: an unscoped `top` here used to pair with the
+   media's `bottom`, stretching the stack into a mid-map band on phones. */
+@media (min-width: 901px) {
+  .rk-zoom {
+    top: auto;
+    right: auto;
+    bottom: 14px;
+    left: 14px;
+  }
+}
+
+/* MOBILE minimap controls run SMALLER (user ask 2026-10-03): 44px squares ate half the
+   little map pane — the collapsed phone tier drops zoom + expand to 36px. The EXPANDED
+   map keeps the 44px touch minimum (`:not(.map-full)`), as does every desktop tier. */
+@media (max-width: 900px) {
+  .rank-page:not(.map-full) .rk-zoom-btn,
+  .rank-page:not(.map-full) .rk-map-expand {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+    font-size: 15px;
+  }
+
+  .rank-page:not(.map-full) .rk-zoom-btn svg,
+  .rank-page:not(.map-full) .rk-map-expand svg {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 /* VERY short frames (≤380px tall): a vertical 3×(44+gap) stack cannot fit the

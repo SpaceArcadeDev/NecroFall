@@ -179,16 +179,11 @@ export class RankPage {
     // camera, zoom, selection and discovery state are all preserved.
     const mapExpand = el('button', 'rk-map-expand') as HTMLButtonElement;
     mapExpand.type = 'button';
-    const setExpandIcon = (full: boolean): void => {
-      mapExpand.innerHTML = full ? createFullscreenExitIcon() : createFullscreenIcon();
-      mapExpand.title = full ? 'Exit fullscreen map' : 'Fullscreen map';
-      mapExpand.setAttribute('aria-label', mapExpand.title);
-    };
-    setExpandIcon(false);
     this.mapExpandBtn = mapExpand;
+    this.setMapExpandIcon(false);
     mapExpand.addEventListener('click', () => {
       const full = this.element.classList.toggle('map-full');
-      setExpandIcon(full);
+      this.setMapExpandIcon(full);
     });
     this.mapWrap.appendChild(this.breadcrumb);
     this.mapWrap.appendChild(zoomCtl);
@@ -551,6 +546,26 @@ export class RankPage {
     this.renderQuick();
     this.renderColony();
     this.renderMapInfo();
+  }
+
+  // ------------------------------------------------------------ fullscreen map (plan §53)
+
+  /** The expand/collapse glyph + label for the map's fullscreen toggle. */
+  private setMapExpandIcon(full: boolean): void {
+    const b = this.mapExpandBtn;
+    b.innerHTML = full ? createFullscreenExitIcon() : createFullscreenIcon();
+    b.title = full ? 'Exit fullscreen map' : 'Fullscreen map';
+    b.setAttribute('aria-label', b.title);
+  }
+
+  /**
+   * Open the EXPANDED intergalactic map (user ask 2026-10-03): the nav bar's MAP tab lands
+   * here — camera, zoom and selection are untouched, the side column folds away via CSS.
+   */
+  openFullscreenMap(): void {
+    if (this.element.classList.contains('map-full')) return;
+    this.element.classList.add('map-full');
+    this.setMapExpandIcon(true);
   }
 
   // ------------------------------------------------------------ fullscreen info overlay

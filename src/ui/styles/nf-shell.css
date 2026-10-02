@@ -639,12 +639,12 @@
 }
 
 /* ---------------------------------------------------------------- RETURN TO LOBBY (user ask 2026-10-03) */
-/* A lobby keeps its doors open while the player browses — this chip rides the top
-   centre of every shell page, JUST UNDER the shared header band (the titles live at
-   the top now — user ask 2026-10-03), and is the one-tap way back into the room. */
+/* A lobby keeps its doors open while the player browses — this chip is pinned to the
+   VERY TOP centre of the screen with just a slight margin (user ask 2026-10-03: it
+   used to ride under the header band), and is the one-tap way back into the room. */
 .nf-return-lobby {
   position: fixed;
-  top: calc(8px + max(var(--nf-header-h), var(--nf-touch-min)) + 12px + var(--nf-safe-top));
+  top: calc(8px + var(--nf-safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 4000;

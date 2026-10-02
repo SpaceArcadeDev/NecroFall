@@ -31,6 +31,15 @@ export const party_member = table(
     joined_at: t.timestamp(),
     /** Avatar outfit wire ("hat,backpack,pet") — renders every member's figure lobby-style. */
     acc: t.string().default(''),
+    /**
+     * Connection liveness. A member row now SURVIVES a socket drop and is only swept after
+     * the reconnect grace — sharing an invite on mobile means switching apps, and that used
+     * to delete the membership instantly and throw the sharer out of their own lobby
+     * (user report 2026-10-03). Legacy rows read as connected.
+     */
+    connected: t.bool().default(true),
+    /** When the member's connection dropped (undefined while connected / legacy rows). */
+    disconnected_at: t.option(t.timestamp()).default(undefined),
   }
 );
 

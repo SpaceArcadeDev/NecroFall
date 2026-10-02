@@ -284,6 +284,8 @@ export const PartyMember = __t.object("PartyMember", {
   identity: __t.identity(),
   joinedAt: __t.timestamp(),
   acc: __t.string(),
+  connected: __t.bool(),
+  disconnectedAt: __t.option(__t.timestamp()),
 });
 export type PartyMember = __Infer<typeof PartyMember>;
 

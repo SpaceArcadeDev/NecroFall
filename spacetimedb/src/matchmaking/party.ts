@@ -48,6 +48,8 @@ function joinTarget(ctx: any, target: any, acc: string): void {
     identity: ctx.sender,
     joined_at: ctx.timestamp,
     acc: clampAcc(acc),
+    connected: true,
+    disconnected_at: undefined,
   });
   // The joiner is in — every pending invite addressed to them is consumed.
   clearInvitesForTarget(ctx, ctx.sender);
@@ -55,6 +57,14 @@ function joinTarget(ctx: any, target: any, acc: string): void {
 
 /** How long a lobby invite stays live without an answer (swept by the 1 Hz scan). */
 export const PARTY_INVITE_TTL_US = 10n * 60n * 1_000_000n;
+
+/**
+ * How long a DISCONNECTED member keeps their lobby seat (user report 2026-10-03: sharing an
+ * invite on mobile — i.e. switching apps — killed the socket and instantly removed the player
+ * from their own lobby). Transient drops keep the seat; the 1 Hz sweep reclaims it only when
+ * the connection never comes back.
+ */
+export const PARTY_DISCONNECT_GRACE_US = 2n * 60n * 1_000_000n;
 
 /** The invitee joined (or declined): drop their invite rows. */
 export function clearInvitesForTarget(ctx: any, identity: any): void {
@@ -76,6 +86,21 @@ export function sweepPartyInvites(ctx: any, now: bigint): void {
   for (const row of [...ctx.db.party_invite.iter()]) {
     const age = now - row.created_at.microsSinceUnixEpoch;
     if (age > PARTY_INVITE_TTL_US) ctx.db.party_invite.id.delete(row.id);
+  }
+}
+
+/**
+ * 1 Hz sweep: a member whose connection dropped for the WHOLE grace loses their seat (the
+ * shared removal hands leadership over / dissolves an emptied party). Runs alongside the
+ * invite sweep in the matchmaking scan.
+ */
+export function sweepPartyMembers(ctx: any, now: bigint): void {
+  for (const member of [...ctx.db.party_member.iter()]) {
+    if (member.connected !== false) continue;
+    const since = member.disconnected_at
+      ? (member.disconnected_at.microsSinceUnixEpoch as bigint)
+      : now;
+    if (now - since > PARTY_DISCONNECT_GRACE_US) removeFromParty(ctx, member);
   }
 }
 
@@ -135,6 +160,8 @@ export const create_party = spacetimedb.reducer({ acc: t.string() }, (ctx, { acc
     identity: ctx.sender,
     joined_at: ctx.timestamp,
     acc: clampAcc(acc),
+    connected: true,
+    disconnected_at: undefined,
   });
 });
 

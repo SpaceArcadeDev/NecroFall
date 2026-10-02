@@ -43,7 +43,7 @@ import { parsePlanetKey, planetSeed } from '../ranked/seed';
 import { recordPlanetPlayInternal } from '../ranked/records';
 import { ensureActiveSeason, universeSeed32 } from '../ranked/planets';
 import { sweepRanked } from '../ranked/planets';
-import { sweepPartyInvites } from './party';
+import { sweepPartyInvites, sweepPartyMembers } from './party';
 import { sweepCustomLobbies } from './custom';
 
 /** One scan per second ages every window; the real granularity lives in constants. */
@@ -128,7 +128,11 @@ export const find_match = spacetimedb.reducer({ region: t.string() }, (ctx, { re
     if (!partyRow || partyRow.leader.toHexString() !== ctx.sender.toHexString()) {
       throw new SenderError('Only the party leader can search for a match.');
     }
-    group = [...ctx.db.party_member.party_id.filter(membership.party_id)].map(m => ctx.db.player.identity.find(m.identity));
+    // A member who is briefly away (mobile app switch — their seat now survives the drop)
+    // is NOT queued for: the queue snapshot keeps its old "connected members only" shape.
+    group = [...ctx.db.party_member.party_id.filter(membership.party_id)]
+      .filter(m => m.connected !== false)
+      .map(m => ctx.db.player.identity.find(m.identity));
   }
 
   const now = nowMicros(ctx);
@@ -227,6 +231,10 @@ export const matchmaking_scan_tick = spacetimedb.reducer(
 
     // 5) Lobby invites nobody answered expire (friends-rail INVITE, user ask 2026-09-29).
     sweepPartyInvites(ctx, now);
+
+    // 5b) Lobby seats whose connection never came back are reclaimed after the grace
+    //     (a mobile app switch — sharing an invite — must keep the seat; user report 2026-10-03).
+    sweepPartyMembers(ctx, now);
 
     // 6) Waiting CUSTOM lobbies dissolve once abandoned (user ask 2026-09-30).
     sweepCustomLobbies(ctx, now);

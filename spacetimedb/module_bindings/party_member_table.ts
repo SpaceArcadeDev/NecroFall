@@ -16,4 +16,6 @@ export default __t.row({
   identity: __t.identity(),
   joinedAt: __t.timestamp().name("joined_at"),
   acc: __t.string(),
+  connected: __t.bool(),
+  disconnectedAt: __t.option(__t.timestamp()).name("disconnected_at"),
 });

@@ -147,6 +147,13 @@ export class AppShell implements ShellContext {
   private customLobbyActive = false;
   private customLobbySince = 0;
   private customLobbySig = '';
+  /**
+   * When each room's rows first went MISSING (0 = present). Every reconnect wipes and replays
+   * the row cache — a mobile app switch (e.g. the share sheet) drops the socket, and the rooms
+   * must ride that replay out instead of concluding the lobby is gone (user report 2026-10-03:
+   * "share invite link, return to the browser, I'm automatically out of the lobby").
+   */
+  private roomLostSince: { official: number; custom: number } = { official: 0, custom: 0 };
   /** A SOLO run (speedrun / survival) owns the screen until its results are dismissed. */
   private soloRunActive = false;
   private lastSoloMode: SoloMode = 'speedrun';
@@ -164,6 +171,10 @@ export class AppShell implements ShellContext {
    */
   private bootWatchdog = 0;
   private static readonly BOOT_WATCHDOG_MS = 20_000;
+  /** Room rows land a beat after CREATE / a code join — nothing closes inside this window. */
+  private static readonly ROOM_GATHER_GRACE_MS = 4000;
+  /** Rows missing for THIS long on a healthy connection = the lobby is actually gone. */
+  private static readonly ROOM_LOST_GRACE_MS = 6000;
   /** ShellScreen → UIRouter screen (overhaul §2): one transition ledger. */
   private static readonly UI_SCREEN_MAP: Record<ShellScreen, UIScreen> = {
     boot: 'boot',
@@ -1571,6 +1582,7 @@ export class AppShell implements ShellContext {
     this.officialLobbySince = performance.now();
     this.officialLobbySig = '';
     this.pendingLobbyExit = '';
+    this.roomLostSince.official = 0;
     game.ui.officialLobby = {
       findMatch: () => this.official.findMatch(),
       leave: () => {
@@ -1588,6 +1600,27 @@ export class AppShell implements ShellContext {
     this.updateOfficialLobby();
   }
 
+  /**
+   * Liveness of a subscription-backed room against its row cache. A reconnect wipes and
+   * replays the cache — a mobile app switch (the share sheet, another app) kills the socket,
+   * and the room must ride the replay out instead of exiting (user report 2026-10-03).
+   * Returns 'gathering' (rows on their way, right after CREATE/join), 'waiting' (keep the
+   * last painted roster) or 'lost' (the rows are really gone — the caller exits the room).
+   */
+  private roomRowState(key: 'official' | 'custom', since: number): 'gathering' | 'waiting' | 'lost' {
+    if (performance.now() - since < AppShell.ROOM_GATHER_GRACE_MS) return 'gathering';
+    if (SpacetimeConnection.shared.state !== 'connected') {
+      // An unreachable server proves nothing about the lobby: an empty cache is expected.
+      this.roomLostSince[key] = 0;
+      return 'waiting';
+    }
+    if (!this.roomLostSince[key]) {
+      this.roomLostSince[key] = performance.now();
+      return 'waiting'; // first missing tick (cache replay) — hold the last painted roster
+    }
+    return performance.now() - this.roomLostSince[key] >= AppShell.ROOM_LOST_GRACE_MS ? 'lost' : 'waiting';
+  }
+
   /** Push the party rows into the reused lobby screen (sig-guarded: no needless re-renders). */
   private updateOfficialLobby(): void {
     const game = this.game;
@@ -1596,27 +1629,37 @@ export class AppShell implements ShellContext {
     const cache = ClientCache.shared;
     const party = hex ? cache.myParty(hex) : null;
     if (!party) {
-      // Gathering: rows land a beat after CREATE / a code join. Past the grace with nothing,
-      // hand the screen back instead of standing in a lobby that is not there.
-      const gathering = performance.now() - this.officialLobbySince < 4000;
-      const sig = `gathering:${gathering}`;
-      if (sig !== this.officialLobbySig) {
-        this.officialLobbySig = sig;
-        game.ui.updateOfficialLobby({
-          code: '',
-          format: this.currentLobbyFormat,
-          players: [],
-          leader: false,
-          ready: false,
-          gathering,
-        });
+      const state = this.roomRowState('official', this.officialLobbySince);
+      if (state === 'gathering') {
+        // Rows land a beat after CREATE / a code join — show the empty gathering frame.
+        const sig = 'gathering';
+        if (sig !== this.officialLobbySig) {
+          this.officialLobbySig = sig;
+          game.ui.updateOfficialLobby({
+            code: '',
+            format: this.currentLobbyFormat,
+            players: [],
+            leader: false,
+            ready: false,
+            gathering: true,
+          });
+        }
+        return;
       }
-      if (!gathering) {
-        this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
-        game.ui.exitToMenu(); // the shell takes the screen back
+      if (state === 'waiting') return; // reconnect replay / server unreachable — keep the roster
+      // A reload boots #/room as the PARTY flavour; when the lobby this identity actually
+      // holds is a CUSTOM one, walk into it instead of exiting (user report 2026-10-03).
+      if (hex && cache.myCustomLobby(hex)) {
+        this.officialLobbyActive = false;
+        this.roomFlavour = 'custom';
+        this.renderCustomRoom();
+        return;
       }
+      this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
+      game.ui.exitToMenu(); // the shell takes the screen back
       return;
     }
+    this.roomLostSince.official = 0;
     const members = cache.partyMembers(party.partyId);
     const leader = party.leader.toHexString() === hex;
     const me = cache.playerByHex(hex);
@@ -1697,6 +1740,7 @@ export class AppShell implements ShellContext {
     this.customLobbySince = performance.now();
     this.customLobbySig = '';
     this.pendingLobbyExit = '';
+    this.roomLostSince.custom = 0;
     game.ui.officialLobby = {
       findMatch: () => undefined, // custom lobbies never queue — the host starts directly
       leave: () => {
@@ -1722,13 +1766,12 @@ export class AppShell implements ShellContext {
     if (!game || !this.customLobbyActive) return;
     const state = this.official.customLobby();
     if (!state) {
-      // Gathering: rows land a beat after CREATE / a code join. Past the grace with nothing,
-      // hand the screen back instead of standing in a lobby that is not there.
-      const gathering = performance.now() - this.customLobbySince < 4000;
-      const sig = `gathering:${gathering}`;
-      if (sig !== this.customLobbySig) {
-        this.customLobbySig = sig;
-        if (gathering) {
+      const rowState = this.roomRowState('custom', this.customLobbySince);
+      if (rowState === 'gathering') {
+        // Rows land a beat after CREATE / a code join — show the empty gathering frame.
+        const sig = 'gathering';
+        if (sig !== this.customLobbySig) {
+          this.customLobbySig = sig;
           game.ui.updateOfficialLobby({
             code: '',
             format: 'CUSTOM',
@@ -1741,13 +1784,14 @@ export class AppShell implements ShellContext {
             canStart: false,
           });
         }
+        return;
       }
-      if (!gathering) {
-        this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
-        game.ui.exitToMenu(); // the shell takes the screen back
-      }
+      if (rowState === 'waiting') return; // reconnect replay / server unreachable — keep the roster
+      this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
+      game.ui.exitToMenu(); // the shell takes the screen back
       return;
     }
+    this.roomLostSince.custom = 0;
     const players = state.players.map((p) => ({
       id: p.id,
       name: p.name,

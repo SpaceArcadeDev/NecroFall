@@ -133,6 +133,12 @@ export const on_client_connected = spacetimedb.clientConnected((ctx) => {
     ctx.db.player_presence.insert({ identity: ctx.sender, status: PRESENCE_ONLINE, last_seen: now });
   }
   ctx.db.player.identity.update({ ...p, last_seen_at: now, last_online_at: now });
+  // A member whose seat survived a drop (mobile app switch — user report 2026-10-03) is
+  // back: clear the away flag before the sweep could reclaim the seat.
+  const membership = ctx.db.party_member.identity.find(ctx.sender);
+  if (membership && membership.connected === false) {
+    ctx.db.party_member.id.update({ ...membership, connected: true, disconnected_at: undefined });
+  }
 });
 
 /**
@@ -170,21 +176,21 @@ export const on_client_disconnected = spacetimedb.clientDisconnected((ctx) => {
     if (mp.connected) ctx.db.match_player.id.update({ ...mp, connected: false, updated_at: now });
   }
 
-  // ---- party leadership handover (plan §73: transfer, never orphan)
+  // ---- party seat: SURVIVE the drop (plan §73 revised, user report 2026-10-03). Sharing an
+  // invite on mobile means switching apps, which kills the socket — deleting the membership
+  // here instantly threw the sharer out of their own lobby. The member is flagged away and a
+  // 1 Hz sweep (`sweepPartyMembers`) reclaims the seat when the connection never comes back.
+  // Leadership still hands over at once to a member who IS around, so the party never stalls.
   const membership = ctx.db.party_member.identity.find(identity);
   if (membership) {
-    const partyId = membership.party_id;
-    ctx.db.party_member.identity.delete(identity);
-    const remaining = [...ctx.db.party_member.party_id.filter(partyId)];
-    if (remaining.length === 0) {
-      ctx.db.party.party_id.delete(partyId);
-    } else {
-      const partyRow = ctx.db.party.party_id.find(partyId);
-      if (partyRow && partyRow.leader.toHexString() === hex) {
-        // Oldest remaining member takes the party.
-        remaining.sort((a, b) => Number(a.joined_at.microsSinceUnixEpoch - b.joined_at.microsSinceUnixEpoch));
-        ctx.db.party.party_id.update({ ...partyRow, leader: remaining[0].identity });
-      }
+    ctx.db.party_member.id.update({ ...membership, connected: false, disconnected_at: now });
+    const partyRow = ctx.db.party.party_id.find(membership.party_id);
+    if (partyRow && partyRow.leader.toHexString() === hex) {
+      const others = [...ctx.db.party_member.party_id.filter(membership.party_id)]
+        .filter(m => m.identity.toHexString() !== hex)
+        .sort((a, b) => Number(a.joined_at.microsSinceUnixEpoch - b.joined_at.microsSinceUnixEpoch));
+      const next = others.find(m => m.connected !== false);
+      if (next) ctx.db.party.party_id.update({ ...partyRow, leader: next.identity });
     }
   }
 

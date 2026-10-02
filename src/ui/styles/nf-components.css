@@ -588,19 +588,27 @@
   animation: rk-shine 5s linear infinite;
 }
 
-/* the golden DIAGONAL light pass (user ask 2026-10-03): the SAME slow sweep the main
-   menu's play button runs (`nf-play-shine`), tinted gold — one band sliding across the
-   whole card, under its content. */
+/* the golden DIAGONAL light pass (user ask 2026-10-03; refined 2026-10-03: "more subtle
+   and seamlessly loop"): a soft gold band sliding left→right under the content. The tile
+   is 200% wide and the keyframes travel EXACTLY one tile per cycle, so the wrap maps the
+   pattern onto itself — a pixel-identical seam, no snap (the first pass travelled 1.6
+   tiles and visibly jumped at the loop point). */
 .nf-mode-card[data-mode="rank"]::before {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(120deg, transparent 32%, rgba(255, 209, 102, 0.45) 50%, transparent 68%);
-  background-size: 260% 100%;
-  animation: nf-play-shine 3.8s linear infinite;
+  background: linear-gradient(120deg, transparent 36%, rgba(255, 209, 102, 0.22) 50%, transparent 64%);
+  background-size: 200% 100%;
+  animation: nf-rank-sweep 5.2s linear infinite;
   pointer-events: none;
   z-index: 0;
+}
+
+/* one full tile of travel per cycle — the loop is seamless by construction. */
+@keyframes nf-rank-sweep {
+  from { background-position: 0% 0; }
+  to { background-position: -200% 0; }
 }
 
 .nf-mode-card[data-mode="rank"] > * {

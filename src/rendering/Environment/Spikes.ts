@@ -43,28 +43,23 @@ export class Spikes {
     const geometry = new THREE.ConeGeometry(0.34, 2.4, 5);
     geometry.translate(0, 1.2, 0);
 
-    for (const cluster of clusters) obstacles?.add(cluster, 1.05 * cluster.scale, 2.0 * cluster.scale, false);
+    // Solid hazards (user ask): the cluster's footprint blocks players. Radius covers the
+    // scaled spike spread (+ the lean), so no cone can be walked through.
+    for (const cluster of clusters) obstacles?.add(cluster, 1.3 * cluster.scale, 2.6 * cluster.scale, false);
 
     // SEE-THROUGH (user ask: hide it "like the tree canopy" when the player is in view): the
-    // same screen-space fade the canopy leaves use — an area around the player's screen point
-    // dissolves. `transparent` stays false; the fade rides the material's alpha test, with a
-    // screen-space stipple so the boundary reads as a dissolve, never a hard pop ring.
+    // same screen-space bubble the canopy leaves use — inside the bubble the spike fragments are
+    // COMPLETELY discarded, so nothing is left dotted in front of the player. `transparent` stays
+    // false; the fade rides the material's alpha test (discard, no sorting). The edge window is
+    // identical to the canopy's (0.1 → 0.26), so both systems clear the same area of screen.
     const seeThroughPosition = uniform(vec2(0.5, 0.5));
     const seeThroughEdgeMin = uniform(0.1);
-    const seeThroughEdgeMax = uniform(0.28);
+    const seeThroughEdgeMax = uniform(0.26);
     const seeThroughAlpha = Fn(() => {
       const toPlayer = screenUV.sub(seeThroughPosition) as any;
       toPlayer.mulAssign(vec2((screenSize.x as any).div(screenSize.y), 1));
       const distanceToPlayer = toPlayer.length();
-      const fade = smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
-      const stipple: any = (screenUV.x as any)
-        .mul(1247.43)
-        .add((screenUV.y as any).mul(3981.17))
-        .sin()
-        .mul(43758.5453)
-        .fract()
-        .abs();
-      return (fade as any).mul(0.9).add(stipple.mul(0.25));
+      return smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
     })();
 
     const material = new MeshDefaultMaterial({

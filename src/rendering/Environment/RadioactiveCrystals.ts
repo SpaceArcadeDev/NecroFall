@@ -32,7 +32,8 @@ export class RadioactiveCrystals {
     });
 
     const random = generator.rand(56);
-    for (const cluster of clusters) obstacles?.add(cluster, 0.75 * cluster.scale, 1.5 * cluster.scale, false);
+    // Solid hazards (user ask): the shard bed blocks players — radius covers the leaned spread.
+    for (const cluster of clusters) obstacles?.add(cluster, 0.9 * cluster.scale, 1.8 * cluster.scale, false);
     const geometry = new THREE.OctahedronGeometry(0.46, 0);
     geometry.scale(0.5, 1.9, 0.5);
     geometry.translate(0, 0.75, 0);

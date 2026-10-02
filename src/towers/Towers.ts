@@ -87,6 +87,13 @@ export class Tower {
    * this field rather than the flat config value.
    */
   shieldR = CONFIG.tower.shieldRadius;
+  /**
+   * Physical footprint of the STRUCTURE (user ask: players cannot walk through the beacon or the
+   * Nexus). Radius is the base cylinder's bottom radius, height reaches past the crown — both set
+   * from the model scale in `buildModel`.
+   */
+  bodyRadius = 3.52;
+  bodyHeight = 9.6;
   position = new THREE.Vector3();
   up = new THREE.Vector3();
   dir = new THREE.Vector3();
@@ -140,6 +147,10 @@ export class Tower {
     // The Nexus is the match's landmark: it dwarfs the Beacons, so the middle of the battlefield
     // reads as the middle from across the planet.
     const scale = isNexus ? 4.4 : 1.6;
+    // Solid footprint for the player collision (see `collidePlayer`): the base cylinder's bottom
+    // radius, and the height bracket that runs past the crown.
+    this.bodyRadius = 2.2 * scale;
+    this.bodyHeight = 6 * scale;
     const stone = new THREE.MeshLambertMaterial({ color: 0x3a3050, flatShading: true });
     const dark = new THREE.MeshLambertMaterial({ color: 0x211a33, flatShading: true });
     this.glowMat = new THREE.MeshLambertMaterial({
@@ -854,10 +865,40 @@ export class TowerManager {
    * the inward half of its momentum is mirrored, and a heavy shove (part of it straight up) is added
    * on top: running into a hostile ward punts you off your feet and well clear of the dome instead of
    * simply stopping you.
+   *
+   * The STRUCTURE is physical in every state (user ask: "players cant walk through ... beacon
+   * tower, nexus tower"): before the ward logic, the body is pushed out of the tower's solid
+   * cylinder in the tangent plane (same math as the environment obstacles), so no one phases
+   * through the column with the shield down or as its owner.
    */
   collidePlayer(p: Player): void {
     const push = CONFIG.shieldPush;
     for (const t of this.towers) {
+      // ---- solid structure first — tangent-plane push-out + inward velocity kill
+      _nb.copy(p.position).sub(t.position);
+      const vertical = _nb.dot(t.up);
+      if (vertical > -2.5 && vertical < t.bodyHeight) {
+        const tx = _nb.x - t.up.x * vertical;
+        const ty = _nb.y - t.up.y * vertical;
+        const tz = _nb.z - t.up.z * vertical;
+        const td = Math.sqrt(tx * tx + ty * ty + tz * tz);
+        const bodyLimit = t.bodyRadius + CONFIG.player.radius;
+        if (td < bodyLimit) {
+          if (td > 1e-4) {
+            _nb.set(tx / td, ty / td, tz / td);
+          } else {
+            // dead centre — pick a stable tangent to escape along
+            _nb.set(1, 0, 0);
+            if (Math.abs(t.up.x) > 0.9) _nb.set(0, 0, 1);
+            _nb.addScaledVector(t.up, -_nb.dot(t.up)).normalize();
+          }
+          p.position.addScaledVector(_nb, bodyLimit - td);
+          const bodyVn = p.velocity.dot(_nb);
+          if (bodyVn < 0) p.velocity.addScaledVector(_nb, -bodyVn);
+        }
+      }
+
+      // ---- the live ward
       if (!t.shieldUp) continue;
       const isOwner = t.owner >= 0 && p.colony === t.owner;
       if (isOwner) continue;

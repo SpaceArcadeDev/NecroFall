@@ -5786,6 +5786,14 @@ export class Game {
       this.refreshFrozenPlayers();
       if (this.localPlayer) this.towers.collidePlayer(this.localPlayer);
       if (this.localPlayer) this.bases.collidePlayer(this.localPlayer, this);
+      // Environmental solids (user ask): tree trunks, rock spikes and crystal clusters registered
+      // by the world builder push the body out in the tangent plane and kill the inward velocity,
+      // so nothing on the list can be walked through. ~1 100 colliders, one dot-product prefilter
+      // each — the brute-force query is cheaper than a spatial index at this scale (see
+      // PlanetObstacles). Steppable props (rocks, bushes) are climbed over instead of blocked.
+      if (this.localPlayer && this.envWorld) {
+        this.envWorld.obstacles.resolve(this.localPlayer.position, CONFIG.player.radius, this.localPlayer.velocity);
+      }
       // the fortress deck's outer edge is a springboard: running off the rim flings you outward
       if (this.localPlayer) this.bases.edgeLaunch(this.localPlayer, this);
       this.towers.update(dt);

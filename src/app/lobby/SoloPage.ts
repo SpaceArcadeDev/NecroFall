@@ -21,7 +21,7 @@ import { DEFAULT_UNIVERSE_SEED } from '../../rankmap/procedural/SeedHash';
 import { PlanetDescriptor } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankFromStars, RANK_TIER_NAMES } from '../../rank/RankService';
 import { formatRunTime } from '../../utils/Utils';
-import { createCenterIcon, createFullscreenExitIcon, createFullscreenIcon } from '../../rankmap/RankMapIcons';
+import { createCenterIcon, createFullscreenExitIcon, createFullscreenIcon, createMinusIcon, createPlusIcon } from '../../rankmap/RankMapIcons';
 import { createPageHeader } from '../../ui/shell/PageHeader';
 import type { SoloMode } from '../../core/Game';
 
@@ -110,8 +110,8 @@ export class SoloPage {
       b.addEventListener('click', fn);
       return b;
     };
-    zoomCtl.appendChild(mkZoom('+', 'Zoom in', () => this.map.zoomStep(1.5)));
-    zoomCtl.appendChild(mkZoom('−', 'Zoom out', () => this.map.zoomStep(1 / 1.5)));
+    zoomCtl.appendChild(mkZoom(createPlusIcon(), 'Zoom in', () => this.map.zoomStep(1.5)));
+    zoomCtl.appendChild(mkZoom(createMinusIcon(), 'Zoom out', () => this.map.zoomStep(1 / 1.5)));
     zoomCtl.appendChild(
       mkZoom(createCenterIcon(), 'Back to your band', () => this.map.flyToRing(this.myRing()))
     );

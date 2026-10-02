@@ -60,6 +60,8 @@ import {
   createCenterIcon,
   createFullscreenExitIcon,
   createFullscreenIcon,
+  createMinusIcon,
+  createPlusIcon,
 } from '../../rankmap/RankMapIcons';
 import { createPageHeader } from '../../ui/shell/PageHeader';
 
@@ -170,8 +172,8 @@ export class RankPage {
       b.addEventListener('click', fn);
       return b;
     };
-    zoomCtl.appendChild(mkZoom('+', 'Zoom in', () => this.zoomBy(1.5)));
-    zoomCtl.appendChild(mkZoom('−', 'Zoom out', () => this.zoomBy(1 / 1.5)));
+    zoomCtl.appendChild(mkZoom(createPlusIcon(), 'Zoom in', () => this.zoomBy(1.5)));
+    zoomCtl.appendChild(mkZoom(createMinusIcon(), 'Zoom out', () => this.zoomBy(1 / 1.5)));
     // BACK TO POSITION (plan §29/§52): a navigation-target crosshair — clears the
     // selection and flies home through the ONE existing camera pipeline.
     zoomCtl.appendChild(mkZoom(createCenterIcon(), 'Back to your position', () => this.map.centerOnHome()));

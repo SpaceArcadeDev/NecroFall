@@ -16,6 +16,19 @@ function svg(body: string): string {
 }
 
 /**
+ * ZOOM IN / OUT (user ask 2026-10-03): plus / minus as STROKE icons — the old TEXT
+ * glyphs sat ~1.6px high in the button (font metrics) and read off-centre next to
+ * the SVG controls, worst on the small mobile buttons. Same 24×24 system as the rest.
+ */
+export function createPlusIcon(): string {
+  return svg(`<path d="M12 5.6v12.8"/><path d="M5.6 12h12.8"/>`);
+}
+
+export function createMinusIcon(): string {
+  return svg(`<path d="M5.6 12h12.8"/>`);
+}
+
+/**
  * BACK TO POSITION (plan §29/§52): a navigation TARGET — crosshair ring with
  * four diagonal rays — "return to my position", never a generic back arrow.
  * Concept:  ╲ / around ◎ with / ╲

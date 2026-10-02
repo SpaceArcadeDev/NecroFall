@@ -137,8 +137,13 @@
   }
 }
 
-/* the setup panel — glass, compact, scrollable content (CLASSIC's own menu) */
+/* the setup panel — glass, compact, scrollable content (CLASSIC's own menu).
+   NOTE the legacy sheet gates `.nf-play-entry { display: none }` behind the old
+   picked-morph (`.play-page.mode-picked`); the CLASSIC page IS the setup now, so it
+   shows unconditionally here (user report 2026-10-03: "classic menu missing"). */
 .nf-play-entry {
+  display: flex;
+  flex-direction: column;
   width: 100%;
   border-radius: var(--nf-radius-md);
   border: 1px solid var(--nf-line);
@@ -403,7 +408,8 @@
 }
 
 @media (max-height: 560px) {
-  .play-page .nf-play-entry {
+  .play-page .nf-play-entry,
+  .classic-page .nf-play-entry {
     padding: 8px 10px;
     gap: 7px;
   }

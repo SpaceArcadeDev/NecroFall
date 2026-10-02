@@ -1805,10 +1805,12 @@ html.nf-onb-colony .count-badge { display: none; }
   .nf-rail:not(.floating) { margin-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
 }
 .nf-rail.open { border-color: color-mix(in srgb, var(--ui-accent) 65%, transparent); }
-/* BARE screens collapse the chrome to height 0 (wordmark rises to the top) — the bar
-   keeps the MAIN MENU's top offset (measured live into `--nf-rail-top`) so its position
-   and height are IDENTICAL on every shell screen (user ask 2026-09-29 PM). */
-.nf-shell.bare-mode .nf-rail:not(.floating) { margin-top: var(--nf-rail-top, 78px); }
+/* The chrome now OVERLAYS the page on every screen (home's chrome is absolute, bare
+   screens collapse it to 0), so the bar keeps the MAIN MENU's measured top offset
+   (`--nf-rail-top` ≈ chrome + 6) EVERYWHERE — its position and height are IDENTICAL
+   on the main menu and the MODES/map pages (user ask 2026-10-03: "follow the modes
+   menu page friendlist height" — home's rail used to start at 6px, 64px taller). */
+.nf-rail:not(.floating) { margin-top: var(--nf-rail-top, 78px); }
 .nf-rail { animation: nf-panel-in 0.4s cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes nf-panel-in {
   from { opacity: 0; transform: translateX(14px); }

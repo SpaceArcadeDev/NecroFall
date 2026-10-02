@@ -565,6 +565,27 @@
   font-size: 8px;
 }
 
+/* on the acid hero the rank-menu gold is invisible (user report 2026-10-03: "the rank
+   stars not visible in the bottom menu bar") — the stars keep their SIZES and blink, but
+   flip to dark ink: empty stars faint graphite, the lit ones deep amber with a white glow. */
+.nf-bottom-play .nf-bottom-stars .rk-star {
+  color: rgba(10, 16, 9, 0.38);
+  text-shadow: none;
+}
+
+.nf-bottom-play .nf-bottom-stars .rk-star.on {
+  color: #503a00;
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+}
+
+.nf-bottom-play .nf-bottom-stars .rk-star.next {
+  color: rgba(10, 16, 9, 0.55);
+}
+
+.nf-bottom-play .nf-bottom-stars .rk-star-count {
+  color: #503a00;
+}
+
 /* the shine sweep stays — a slow pass, neutral (§23) */
 .nf-bottom-play::before {
   background: linear-gradient(120deg, transparent 34%, rgba(255, 255, 255, 0.5) 50%, transparent 66%);

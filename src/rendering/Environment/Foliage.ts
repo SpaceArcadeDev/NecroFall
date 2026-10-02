@@ -16,6 +16,7 @@ import { WorldGlobals } from '../WorldGlobals';
 import type { PreRenderer } from '../PreRenderer';
 import type { Ticker } from '../Ticker';
 import type { Wind } from './Wind';
+import { dotDissolve } from './DotDissolve';
 
 export interface FoliageOptions {
   /** Leaf card size in metres. */
@@ -80,7 +81,11 @@ export class Foliage {
         toPlayer.mulAssign(vec2(screenSize.x.div(screenSize.y), 1));
         const distanceToPlayer = toPlayer.length();
         const distanceFade = smoothstep(this.seeThroughEdgeMin, this.seeThroughEdgeMax, distanceToPlayer);
-        alpha = alpha.mul(distanceFade.mul(this.threshold.oneMinus()).add(this.threshold));
+        // ROUND-DOT DISSOLVE (user ask: the canopy uses "the dotted approach same as the rock
+        // spikes"): ONE shared pattern definition (DotDissolve.ts) — near the player the canopy
+        // breaks into round dots of leaves, and the dots grow with distance until the leaves have
+        // merged back into their normal cutout by the bubble's rim.
+        alpha = alpha.mul(dotDissolve(distanceFade));
       }
 
       return alpha.sub(this.threshold);

@@ -44,6 +44,7 @@ import { auditShellScreen, assertNoHorizontalOverflow, installAuditHandle, valid
 import type { ContractScreen } from '../ui/data/MenuActionRegistry';
 import { NFMoreSheet, type MoreSheetEntry } from '../ui/components/NFMoreSheet';
 import { createPageHeader } from '../ui/shell/PageHeader';
+import { getIcon } from '../ui/icons';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { GAME_MODES, type GameModeDefinition } from '../ui/data/GameModeRegistry';
 import { rankStarRow } from '../rank/RankService';
@@ -274,7 +275,9 @@ export class AppShell implements ShellContext {
     this.lobbyReturn.type = 'button';
     this.lobbyReturn.dataset.action = 'lobby';
     this.lobbyReturn.setAttribute('aria-label', 'Return to lobby');
-    this.lobbyReturn.innerHTML = '<i class="nf-return-dot"></i><span>RETURN TO LOBBY</span>';
+    // the lobby's DOOR symbol (user ask 2026-10-03): the shell's one stroke icon map —
+    // the enter-door glyph reads "back into the room" at a glance.
+    this.lobbyReturn.innerHTML = `<span class="nf-return-ico">${getIcon('door')}</span><span>RETURN TO LOBBY</span>`;
     this.root.appendChild(this.lobbyReturn);
 
     const launcher: LegacyLauncher = (options) => this.launchLegacy(options);

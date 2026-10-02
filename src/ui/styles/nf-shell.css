@@ -676,13 +676,22 @@
   transform: translateX(-50%) scale(0.96);
 }
 
-.nf-return-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--nf-acid);
-  box-shadow: 0 0 10px var(--nf-acid);
+/* the DOOR symbol (user ask 2026-10-03): the shell's enter-door icon in acid, keeping the
+   old dot's soft pulse so the chip still reads "lobby live". */
+.nf-return-ico {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  color: var(--nf-acid);
+  filter: drop-shadow(0 0 7px rgba(200, 255, 61, 0.45));
   animation: nf-return-pulse 1.6s ease-in-out infinite;
+}
+
+.nf-return-ico svg {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 @keyframes nf-return-pulse {

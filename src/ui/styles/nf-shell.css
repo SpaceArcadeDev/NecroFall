@@ -547,47 +547,43 @@
   color: rgba(10, 16, 9, 0.82);
 }
 
-/* RANK's golden star row under the hero button's label (user ask 2026-10-03) — the SAME
-   `.rk-star` markup the rank menu uses, scaled to the bar. */
+/* RANK's star row (user ask 2026-10-03, reworked): an overlay FLOATING ABOVE the bar —
+   centred over the hero button but OUTSIDE it — in the rank menu's golden language
+   (gold lit stars with glow, the next star blinking). `pointer-events: none`: it is a
+   readout, not a control — taps fall through. */
 .nf-bottom-stars {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  transform: translateX(-50%);
   justify-content: center;
-  gap: 1px;
-  min-height: 10px;
+  gap: 2px;
+  min-height: 12px;
+  pointer-events: none;
+  z-index: 2;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.7));
 }
 
 .nf-bottom-stars .rk-star {
-  font-size: 9px;
+  font-size: 13px;
   transform: none;
 }
 
 .nf-bottom-stars .rk-star-count {
-  margin-left: 3px;
-  font-size: 8px;
+  margin-left: 4px;
+  font-size: 11px;
 }
 
-/* on the acid hero the rank-menu gold is invisible (user report 2026-10-03: "the rank
-   stars not visible in the bottom menu bar") — the stars keep their SIZES and blink, but
-   flip to dark ink: empty stars faint graphite, the lit ones deep amber with a white glow. */
-.nf-bottom-play .nf-bottom-stars .rk-star {
-  color: rgba(10, 16, 9, 0.38);
-  text-shadow: none;
-}
-
-.nf-bottom-play .nf-bottom-stars .rk-star.on {
-  color: #503a00;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
-}
-
-.nf-bottom-play .nf-bottom-stars .rk-star.next {
-  color: rgba(10, 16, 9, 0.55);
-}
-
-.nf-bottom-play .nf-bottom-stars .rk-star-count {
-  color: #503a00;
+/* the hero button lets the stars float above the bar (user ask 2026-10-03): its legacy
+   `overflow: hidden` clipped them — gone. The shine sweep keeps its rounded corners by
+   inheriting the radius instead of being clipped. */
+.nf-bottom-play {
+  overflow: visible;
 }
 
 /* the shine sweep stays — a slow pass, neutral (§23) */
 .nf-bottom-play::before {
+  border-radius: inherit;
   background: linear-gradient(120deg, transparent 34%, rgba(255, 255, 255, 0.5) 50%, transparent 66%);
   background-size: 260% 100%;
   animation: nf-play-shine 3.8s linear infinite;

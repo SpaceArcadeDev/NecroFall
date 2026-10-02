@@ -23,26 +23,16 @@ export interface GameModeDefinition {
   /** Big-number slot in the card's top-right (“3v3v3”, “1”, “∞”, …). */
   players: string;
   official: boolean;
-  /** The written-out primary call-to-action (the `play` action's label here). */
+  /** The written-out primary call-to-action — kept for copy; the card's play button
+   *  itself reads a uniform "GO" (user ask 2026-10-03). */
   cta: string;
   /** Accent used for the icon plate + CTA glow (matches the game's mode colour). */
   accent: string;
 }
 
+// Registry ORDER = the MODES grid order (user ask 2026-10-03): RANK leads the grid,
+// CLASSIC goes second — the remaining cards keep their original order after them.
 export const GAME_MODES: readonly GameModeDefinition[] = [
-  {
-    id: 'classic',
-    title: 'CLASSIC',
-    subtitle: 'Create a lobby, invite survivors or join with a code — official server matches, 3v3v3.',
-    blurb: 'Lobby up · 3v3v3',
-    tag: 'OFFICIAL',
-    icon: 'swords',
-    actions: ['play'],
-    players: '3v3v3',
-    official: true,
-    cta: 'OPEN LOBBY',
-    accent: '#62E4E8',
-  },
   {
     id: 'rank',
     title: 'RANK',
@@ -55,6 +45,19 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     official: true,
     cta: 'ENTER MAP',
     accent: '#FF9B4A',
+  },
+  {
+    id: 'classic',
+    title: 'CLASSIC',
+    subtitle: 'Create a lobby, invite survivors or join with a code — official server matches, 3v3v3.',
+    blurb: 'Lobby up · 3v3v3',
+    tag: 'OFFICIAL',
+    icon: 'swords',
+    actions: ['play'],
+    players: '3v3v3',
+    official: true,
+    cta: 'OPEN LOBBY',
+    accent: '#62E4E8',
   },
   {
     id: 'speedrun',
@@ -113,7 +116,8 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
 /**
  * The card action row (§13): ALWAYS renders every declared action, in registry
  * priority order. A missing handler renders the button disabled with a reason —
- * never removed, so mobile and desktop keep the identical action set.
+ * never removed, so mobile and desktop keep the identical action set. The primary
+ * action reads a uniform "GO" (user ask 2026-10-03).
  */
 export function renderModeActions(
   mode: GameModeDefinition,
@@ -134,7 +138,8 @@ export function renderModeActions(
     const handler = handlers[def.id];
     row.appendChild(
       makeButton({
-        label: def.id === 'play' ? mode.cta : def.label,
+        // ONE uniform label (user ask 2026-10-03): every mode's play button says GO.
+        label: def.id === 'play' ? 'GO' : def.label,
         icon: def.icon,
         tone: def.id === 'play' ? 'primary' : def.tone,
         action: def.id,

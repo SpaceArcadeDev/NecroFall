@@ -1978,7 +1978,11 @@ export class AppShell implements ShellContext {
 
   /** Push the last-played mode into the bottom bar — RANK carries the golden star row. */
   private refreshNavMode(): void {
-    const mode = GAME_MODES.find((m) => m.id === this.lastModeId) ?? GAME_MODES[0];
+    // the fallback stays CLASSIC, never registry[0] — RANK leads the grid now (user ask 2026-10-03)
+    const mode =
+      GAME_MODES.find((m) => m.id === this.lastModeId) ??
+      GAME_MODES.find((m) => m.id === 'classic') ??
+      GAME_MODES[0];
     const hex = this.myHex();
     const me = hex ? ClientCache.shared.me(hex) : null;
     const stars = mode.id === 'rank' ? rankStarRow(Number(me?.rankPoints ?? 0)).html : null;

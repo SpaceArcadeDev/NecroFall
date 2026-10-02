@@ -74,9 +74,7 @@ export class ProfilePage {
     nav.setAttribute('aria-label', 'Profile views');
 
     const overview = el('section', 'nf-p-pane nf-p-overview');
-    const ohead = el('header', 'nf-p-pane-head');
-    ohead.appendChild(el('h3', 'nf-p-pane-title', 'OVERVIEW'));
-    overview.appendChild(ohead);
+    // no per-pane titles any more (user ask 2026-10-03): the rail already names the section.
     this.hero = new ProfileHero(ctx, hex);
     this.ranks = new ProfileRanks(hex);
     const summary = el('div', 'nf-p-summary');

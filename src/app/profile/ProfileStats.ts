@@ -23,12 +23,9 @@ export class ProfileStats {
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('section', 'nf-p-pane nf-p-stats');
 
-    // ---- pane header
-    const head = el('header', 'nf-p-pane-head');
-    head.appendChild(el('h3', 'nf-p-pane-title', 'CAREER'));
+    // the pane title is gone (user ask 2026-10-03): the tab rail already says CAREER —
+    // the count span keeps updating, it just has no title bar to sit in any more.
     this.countEl = el('span', 'nf-p-pane-count', '');
-    head.appendChild(this.countEl);
-    this.element.appendChild(head);
 
     // ---- headline numbers: the four figures a profile site puts on top
     const hero = el('div', 'nf-p-hstats');

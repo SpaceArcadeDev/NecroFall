@@ -588,6 +588,26 @@
   animation: rk-shine 5s linear infinite;
 }
 
+/* the golden DIAGONAL light pass (user ask 2026-10-03): the SAME slow sweep the main
+   menu's play button runs (`nf-play-shine`), tinted gold — one band sliding across the
+   whole card, under its content. */
+.nf-mode-card[data-mode="rank"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(120deg, transparent 32%, rgba(255, 209, 102, 0.45) 50%, transparent 68%);
+  background-size: 260% 100%;
+  animation: nf-play-shine 3.8s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.nf-mode-card[data-mode="rank"] > * {
+  position: relative;
+  z-index: 1;
+}
+
 .nf-mode-card[data-mode="rank"] .nf-mode-card__plate {
   color: #ffd166;
   border-color: rgba(255, 209, 102, 0.5);

@@ -22,11 +22,9 @@ export class ProfileHistory {
   constructor(private hex: string) {
     this.element = el('section', 'nf-p-pane');
 
-    const head = el('header', 'nf-p-pane-head');
-    head.appendChild(el('h3', 'nf-p-pane-title', 'MATCH HISTORY'));
+    // pane title removed (user ask 2026-10-03) — the rail names the section; the count
+    // span keeps updating in the background.
     this.countEl = el('span', 'nf-p-pane-count', '');
-    head.appendChild(this.countEl);
-    this.element.appendChild(head);
 
     this.list = el('div', 'nf-p-rows');
     this.element.appendChild(this.list);

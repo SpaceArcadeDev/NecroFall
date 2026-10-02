@@ -487,6 +487,13 @@
   text-align: center;
 }
 
+/* no per-pane titles any more (user ask 2026-10-03): the rail/tabs already name the
+   section — the old sticky head's top padding moves onto the pane so content keeps
+   its breathing room. */
+.profile-page .nf-p-pane {
+  padding-top: 11px;
+}
+
 /* The SUMMARY is a page now — OVERVIEW, the rail's first entry (user ask
    2026-10-03). No constant band above the rail: the body fills the page's column
    and the rail owns the full height beside it. Hero + rank plates stack inside

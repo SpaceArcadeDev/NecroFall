@@ -359,6 +359,32 @@ export class Puddles {
   }
 
   /**
+   * Signed water depth along a surface direction, measured against the RENDERED terrain (the
+   * same sampler the water surface conforms to). Positive = below the water film. Returns
+   * `-Infinity` when the direction is outside every basin's reach.
+   *
+   * The grass field uses this to SHRINK blades toward the visible shoreline and stop them at
+   * the water (user ask): the old cull compared against the basin RIM radius (`shoreCos`), which
+   * painted a bare circle metres larger than the puddle itself. Measuring the actual waterline
+   * means the lawn now walks right down to the water and tapers out there.
+   */
+  waterDepthAt(direction: THREE.Vector3): number {
+    let best: BasinSite | null = null;
+    let bestDot = -2;
+    for (const site of this.sites) {
+      const dot =
+        direction.x * site.direction.x + direction.y * site.direction.y + direction.z * site.direction.z;
+      if (dot <= site.reachCos) continue;
+      if (dot > bestDot) {
+        bestDot = dot;
+        best = site;
+      }
+    }
+    if (!best) return -Infinity;
+    return best.waterLevel - this.renderedRadiusAt(direction);
+  }
+
+  /**
    * Walking wake: while the player wades through a basin (feet under the water
    * level), drop a ripple centre every TRAIL_STEP metres; the shader expands
    * each slot into a travelling ring. Generic on purpose — remote P2P players

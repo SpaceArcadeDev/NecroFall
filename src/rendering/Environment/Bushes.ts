@@ -41,8 +41,9 @@ export class Bushes {
       maxSlope: 0.55,
       minGrass: 0.3,
       aboveWater: 0.1,
-      scaleMin: 0.55,
-      scaleMax: 1.35,
+      // Bigger bushes (user ask: "increase the amount of bushes and their sizes").
+      scaleMin: 0.8,
+      scaleMax: 2.0,
       sinkFactor: 0.12,
       attemptsPerInstance: 10,
       excludeDirection: spawnClear?.direction,
@@ -59,7 +60,9 @@ export class Bushes {
       uniform(color(RADIOACTIVE_PALETTE.foliageDark)),
       uniform(color(RADIOACTIVE_PALETTE.foliage)),
       ticker,
-      { planeCount: 72, planeSize: 0.56, seed: 907, seeThrough: true, castShadow: false },
+      // NO see-through fade on bushes (user ask): unlike tall tree canopies a knee-high bush
+      // never blocks the view, so it just stays solid — no pop-out when the camera pans past.
+      { planeCount: 72, planeSize: 0.56, seed: 907, seeThrough: false, castShadow: false },
     );
     this.count = placements.length;
   }

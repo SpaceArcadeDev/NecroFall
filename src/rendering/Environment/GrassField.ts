@@ -18,16 +18,20 @@
  */
 export const GRASS_PATCH_UV_SCALE = 2.5;
 
-/** Patch band: below LOW = bare ground (ZERO blades), above HIGH = full packed clump. */
-export const GRASS_PATCH_EDGE_LOW = 0.52;
-export const GRASS_PATCH_EDGE_HIGH = 0.62;
+/** Patch band: below LOW = bare ground (ZERO blades), above HIGH = full packed clump. The band
+ *  is consciously WIDE (user ask: edges looked "sharp and programmatic"): the mask itself is
+ *  domain-warped in the bake (Noises.createPatchNoise), and this fade band lets the rim thin
+ *  out over a couple of metres of irregular contour instead of cutting off in one line. */
+export const GRASS_PATCH_EDGE_LOW = 0.5;
+export const GRASS_PATCH_EDGE_HIGH = 0.63;
 
 /**
- * How hard the patch rim is thinned: acceptance = coverage^power. A steep curve keeps the
- * clump interior at full density while the rim fades away in under a metre — the edge reads
- * as grass ending, never as sparse strays scattered around the clump.
+ * How hard the patch rim is thinned: acceptance = coverage^power. The clump interior stays at
+ * full density (coverage 1 accepts every blade); the rim fades outward. Lowered from 3.0 to 2.2
+ * so the fade occupies most of the band — a harder curve threw away the whole rim in the last
+ * half-metre, which is exactly what read as a cut-out edge.
  */
-export const GRASS_ACCEPTANCE_POWER = 3.0;
+export const GRASS_ACCEPTANCE_POWER = 2.2;
 
 /**
  * Terrain shade band — sits INSIDE the clumps (blades are already dense where it starts),

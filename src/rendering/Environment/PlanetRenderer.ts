@@ -156,8 +156,9 @@ export class PlanetRenderer {
     await this.grass.ready;
     await nextLoop();
 
-    // 4 — bushes (leaf-card canopies)
-    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 520, spawnClear, this.obstacles);
+    // 4 — bushes (leaf-card canopies) — raised count + bigger sizes per user ask. Note there is
+    // no see-through fade on bushes anymore (they are knee-high; only tree canopies need it).
+    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 780, spawnClear, this.obstacles);
     this.group.add(this.bushes.foliage.mesh);
     await nextLoop();
 

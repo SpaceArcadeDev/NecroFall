@@ -231,7 +231,6 @@ export class Grass {
     subdivisions: number,
   ): Promise<{ id: number; geometry: THREE.BufferGeometry }[]> {
     const target = subdivisions * subdivisions;
-    const sites = this.water?.sites ?? [];
     const radius = this.surface.radius;
 
     // ---- placement: the WHOLE planet's surface, planted ONCE at build. A candidate direction
@@ -262,25 +261,30 @@ export class Grass {
 
       // patch acceptance — PATCHES ONLY: outside the patch band there is no blade at all
       // (bare ground stays bare), and inside it the coverage^power curve packs blades
-      // shoulder to shoulder while the rim fades in under a metre. The mask is the SMOOTH
-      // low-frequency field, so patches are BIG fields, not a scatter of small clumps.
+      // shoulder to shoulder while the rim thins out across the wide, domain-warped band
+      // (GrassField.ts) — no cut line, the lawn just frays away at its own irregular edge.
       const patch = this.noises.samplePatch(dx * GRASS_PATCH_UV_SCALE, dz * GRASS_PATCH_UV_SCALE);
       if (patch < GRASS_PATCH_EDGE_LOW) continue; // bare ground — ZERO blades
       const coverage = grassCoverage(patch);
       if (random() > Math.pow(coverage, GRASS_ACCEPTANCE_POWER)) continue;
 
-      // water — baked here, so the runtime field owns no slots and nothing pops near basins
-      let suppression = 0;
-      for (let s = 0; s < sites.length; s++) {
-        const site = sites[s];
-        const dot = dx * site.direction.x + dy * site.direction.y + dz * site.direction.z;
-        if (dot <= site.shoreCos) continue;
-        const t = Math.min(1, (dot - site.shoreCos) / (site.waterCos - site.shoreCos));
-        const inside = t * t * (3 - 2 * t);
-        if (inside > suppression) suppression = inside;
+      // water — THE VISIBLE WATERLINE (user ask): blades shrink as they approach the puddle and
+      // stop right at the water. The depth is measured against the RENDERED terrain vs the
+      // basin's water level — the very same intersection the puddle mesh shows — instead of the
+      // old basin-RIM radius test, which killed the lawn in a bare circle metres wider than the
+      // water itself. `WATER_TAPER` metres above the waterline the blade size eases from full
+      // down to 20 %; at `WATER_EDGE_CUT` below it the blade is dropped.
+      let waterFactor = 1;
+      if (this.water && this.water.sites.length > 0) {
+        this.scratchDir.set(dx, dy, dz);
+        const depth = this.water.waterDepthAt(this.scratchDir);
+        if (depth > WATER_EDGE_CUT) continue; // under the water film — the lawn stops
+        if (depth > -WATER_TAPER) {
+          const t = (depth + WATER_TAPER) / WATER_TAPER; // 0 = taper start → 1 = waterline
+          const ease = t * t * (3 - 2 * t);
+          waterFactor = 1 - 0.8 * ease;
+        }
       }
-      const waterFactor = 1 - suppression;
-      if (waterFactor <= 0.02) continue; // fully submerged — never spent a blade
 
       // world-stable size noise (baked at build — the shader owns no noise reads)
       const sizeNoise = this.noises.sample(dx * radius * 0.0321, dz * radius * 0.0321);
@@ -646,6 +650,14 @@ const GRASS_SECTORS_LON = 8;
 const GRASS_SECTORS = GRASS_SECTORS_LAT * GRASS_SECTORS_LON;
 /** Bounding-sphere margin (m) covering the maximum wind sway + player push a blade can receive. */
 const GRASS_BOUNDS_MARGIN = 6;
+
+/**
+ * Shoreline taper (user ask): over the last `WATER_TAPER` metres above the water level blades
+ * ease from full size down to 20 %, then stop `WATER_EDGE_CUT` under it. Measured against the
+ * RENDERED terrain, so the stop line is exactly the puddle the camera shows.
+ */
+const WATER_TAPER = 2.0;
+const WATER_EDGE_CUT = 0.045;
 
 /** `?grassstats=1` — one line per planting pass (blades / sectors / verts / draw ceiling). */
 function grassStats(): boolean {

@@ -4,9 +4,13 @@
  * Contaminated terrain hazards: 2–5 chunky cones per cluster, ONE InstancedMesh
  * for the whole planet, cluster offsets in the TANGENT plane so they read as
  * planted. Dark rock base with a radioactive upper wash.
+ *
+ * User ask (2026-10-02): "a lot more bigger", groups at RANDOM angles (no more
+ * perfectly vertical cones), and a see-through dissolve near the player exactly
+ * like the tree canopies (screen-space fade + stipple, no transparency sorting).
  */
 import * as THREE from 'three/webgpu';
-import { color, mix, normalWorld } from 'three/tsl';
+import { color, Fn, mix, normalWorld, screenSize, screenUV, smoothstep, uniform, vec2 } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
@@ -25,19 +29,43 @@ export class Spikes {
       minRadiation: 0.22,
       maxSlope: 0.6,
       aboveWater: 0.3,
-      scaleMin: 1.0,
-      scaleMax: 1.9,
-      sinkFactor: 0.04,
+      // Bigger groups (user ask: "a lot more bigger").
+      scaleMin: 1.5,
+      scaleMax: 2.6,
+      sinkFactor: 0.12,
       attemptsPerInstance: 14,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
     });
 
     const random = generator.rand(78);
-    const geometry = new THREE.ConeGeometry(0.24, 1.55, 5);
-    geometry.translate(0, 0.775, 0);
+    // Chunky cones, grown to hazard scale (was 0.24 × 1.55).
+    const geometry = new THREE.ConeGeometry(0.34, 2.4, 5);
+    geometry.translate(0, 1.2, 0);
 
     for (const cluster of clusters) obstacles?.add(cluster, 1.05 * cluster.scale, 2.0 * cluster.scale, false);
+
+    // SEE-THROUGH (user ask: hide it "like the tree canopy" when the player is in view): the
+    // same screen-space fade the canopy leaves use — an area around the player's screen point
+    // dissolves. `transparent` stays false; the fade rides the material's alpha test, with a
+    // screen-space stipple so the boundary reads as a dissolve, never a hard pop ring.
+    const seeThroughPosition = uniform(vec2(0.5, 0.5));
+    const seeThroughEdgeMin = uniform(0.1);
+    const seeThroughEdgeMax = uniform(0.28);
+    const seeThroughAlpha = Fn(() => {
+      const toPlayer = screenUV.sub(seeThroughPosition) as any;
+      toPlayer.mulAssign(vec2((screenSize.x as any).div(screenSize.y), 1));
+      const distanceToPlayer = toPlayer.length();
+      const fade = smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
+      const stipple: any = (screenUV.x as any)
+        .mul(1247.43)
+        .add((screenUV.y as any).mul(3981.17))
+        .sin()
+        .mul(43758.5453)
+        .fract()
+        .abs();
+      return (fade as any).mul(0.9).add(stipple.mul(0.25));
+    })();
 
     const material = new MeshDefaultMaterial({
       colorNode: mix(
@@ -45,6 +73,7 @@ export class Spikes {
         color(RADIOACTIVE_PALETTE.radioactive),
         (normalWorld as any).y.abs().pow(1.6).mul(0.45),
       ),
+      alphaNode: seeThroughAlpha,
       hasLightBounce: false,
       hasFog: true,
     });
@@ -53,17 +82,25 @@ export class Spikes {
     const matrices: THREE.Matrix4[] = [];
     const dummy = new THREE.Object3D();
     const local = new THREE.Matrix4();
-    const tilt = new THREE.Quaternion();
+    const tiltMatrix = new THREE.Matrix4();
+    const tiltEuler = new THREE.Euler();
 
     for (const cluster of clusters) {
+      // RANDOM GROUP LEAN (user ask: "random angles, not always 90 degrees vertical"): the
+      // whole cluster tilts in its local tangent plane before its spikes spawn.
+      tiltEuler.set((random() - 0.5) * 0.8, 0, (random() - 0.5) * 0.8);
+      tiltMatrix.makeRotationFromEuler(tiltEuler);
+      cluster.matrix.multiply(tiltMatrix);
+
       const perCluster = 4 + Math.floor(random() * 6); // 4–9 chunky spikes per cluster
       for (let i = 0; i < perCluster; i++) {
         const angle = random() * Math.PI * 2;
-        const distance = 0.08 + random() * 0.7;
-        const scale = 1.0 + random() * 1.4;
+        const distance = 0.08 + random() * 0.9;
+        const scale = 1.1 + random() * 1.9;
 
         dummy.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
-        dummy.rotation.set((random() - 0.5) * 0.2, random() * Math.PI * 2, (random() - 0.5) * 0.2);
+        // each spike leans on its own — up to ±46° off the group's axis
+        dummy.rotation.set((random() - 0.5) * 1.6, random() * Math.PI * 2, (random() - 0.5) * 1.6);
         dummy.scale.set(scale * (0.8 + random() * 0.4), scale * (0.9 + random() * 0.8), scale * (0.8 + random() * 0.4));
         dummy.updateMatrix();
 
@@ -89,7 +126,6 @@ export class Spikes {
     this.mesh.instanceMatrix.needsUpdate = true;
     this.mesh.name = 'spikes';
     this.spikeCount = matrices.length;
-    void tilt;
   }
 
   setVisible(visible: boolean): void {

@@ -153,10 +153,22 @@ export class Noises {
 
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
-        // ONE broad octave (+ a 15% whisper of the next) — big smooth patches, no shredding
+        const fx = x / size;
+        const fy = y / size;
+        // ---- DOMAIN WARP (user ask: patches looked "too programmatic and sharp"): two slow
+        // value-noise fields push the sample point around before the mask is read, so the
+        // contours meander and interlock instead of reading as round smooth blobs. The warp is
+        // baked into the TEXTURE, so the CPU grass placement and the GPU terrain shade keep
+        // sampling the exact same field — the shade can never drift off the blades.
+        const warpX = smooth(fx * 2.0 + 11.3, fy * 2.0 + 4.7) - 0.5;
+        const warpY = smooth(fx * 2.0 - 7.9, fy * 2.0 + 19.2) - 0.5;
+        const warpedX = fx * 3.0 + warpX * 1.35;
+        const warpedY = fy * 3.0 + warpY * 1.35;
+        // ONE broad warped octave (+ a 20 % whisper of the next, also warped) — big flowing
+        // fields; the second octave roughens the boundary so the fade band looks grown, not cut.
         const value =
-          smooth((x / size) * 3.0, (y / size) * 3.0) * 0.85 +
-          smooth((x / size) * 6.0, (y / size) * 6.0) * 0.15;
+          smooth(warpedX, warpedY) * 0.8 +
+          smooth(warpedX * 2.0 + 5.5, warpedY * 2.0 - 3.1) * 0.2;
         const byte = Math.round(Math.min(1, Math.max(0, value)) * 255);
         const index = (y * size + x) * 4;
         image.data[index] = byte;

@@ -22,6 +22,7 @@ import { PlanetDescriptor } from '../../rankmap/procedural/GalaxyTypes';
 import { getRankFromStars, RANK_TIER_NAMES } from '../../rank/RankService';
 import { formatRunTime } from '../../utils/Utils';
 import { createCenterIcon, createFullscreenExitIcon, createFullscreenIcon } from '../../rankmap/RankMapIcons';
+import { createPageHeader } from '../../ui/shell/PageHeader';
 import type { SoloMode } from '../../core/Game';
 
 /** The modes THIS picker serves — the map-based runs. FREEROAM (user ask) has no picker: the PLAY
@@ -64,15 +65,16 @@ export class SoloPage {
     this.element.classList.add(mode === 'speedrun' ? 'solo-speedrun' : 'solo-survival');
     this.element.style.setProperty('--solo-accent', meta.accent);
 
-    // ---- head: the mode name in the rank gradient + the band chip
+    // ---- head: the shared page header (§2/§15) — same anchor as PLAY/PROFILE —
+    // with the rank-band chip in its right slot
     const me = ClientCache.shared.me(ctx.myHex());
     const stars = Number(me?.rankPoints ?? 0);
     const ring = getRankFromStars(stars).tier;
     const bandName = RANK_TIER_NAMES[ring] ?? 'BRONZE';
-    const head = el('div', 'lobby-head rk-head');
-    head.appendChild(el('div', 'menu-title lobby-title rk-title', meta.title));
-    head.appendChild(el('div', 'lobby-mode rk-season-chip', `RING ${ring + 1} · ${bandName.toUpperCase()}`));
-    this.element.appendChild(head);
+    const bandChip = el('div', 'lobby-mode rk-season-chip', `RING ${ring + 1} · ${bandName.toUpperCase()}`);
+    this.element.appendChild(
+      createPageHeader({ title: meta.title, right: bandChip, onBack: () => ctx.goBack() })
+    );
 
     // ---- strip: the mode switch + the one-line promise
     const strip = el('div', 'rk-strip solo-strip');

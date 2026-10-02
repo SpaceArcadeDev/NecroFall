@@ -1,11 +1,12 @@
-// NECROFALL — the FLOATING navigation bar (overhaul §17/§30): the primary
-// MOBA loop — PLAY · GALAXY · FRIENDS · PROFILE · MORE. PLAY is the hero tab;
-// MORE opens the secondary drawer (§31) so nothing has to be deleted to fit.
-// Shown at every width — it is the only navigation the shell has.
+// NECROFALL — the FLOATING navigation bar (overhaul §4/§17/§25/§37): the primary
+// MOBA loop — PLAY · GALAXY · FRIENDS · MORE. PROFILE is deliberately NOT here:
+// the player identity card (top-left) is its permanent entry point, and
+// SETTINGS lives on the top-right gear + the MORE drawer — one entry point per
+// destination, and nothing is removed (overhaul §36/§37: consolidate, never cut).
 import { button, el } from './dom';
 import { getIcon } from '../../ui/icons';
 
-export type BottomNavKey = 'play' | 'galaxy' | 'friends' | 'profile' | 'more';
+export type BottomNavKey = 'play' | 'galaxy' | 'friends' | 'more';
 
 export class MobileBottomNav {
   readonly element: HTMLElement;
@@ -19,7 +20,6 @@ export class MobileBottomNav {
       { key: 'play', label: 'PLAY', icon: 'play' },
       { key: 'galaxy', label: 'GALAXY', icon: 'orbit' },
       { key: 'friends', label: 'FRIENDS', icon: 'users' },
-      { key: 'profile', label: 'PROFILE', icon: 'user' },
       { key: 'more', label: 'MORE', icon: 'more' },
     ];
 

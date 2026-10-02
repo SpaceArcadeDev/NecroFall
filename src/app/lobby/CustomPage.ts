@@ -8,6 +8,7 @@
 // the custom match's seats onto it).
 import { ShellContext } from '../ShellContext';
 import { button, el } from '../ui/dom';
+import { createPageHeader } from '../../ui/shell/PageHeader';
 
 export class CustomPage {
   readonly element: HTMLElement;
@@ -15,10 +16,13 @@ export class CustomPage {
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page custom-page');
 
-    const head = el('div', 'play-head');
-    head.appendChild(el('div', 'menu-title', 'CUSTOM'));
-    head.appendChild(el('div', 'menu-sub', 'lobby up with a code — P2P rules on the official hybrid server'));
-    this.element.appendChild(head);
+    this.element.appendChild(
+      createPageHeader({
+        title: 'CUSTOM',
+        subtitle: 'Lobby up with a code — P2P rules on the official hybrid server',
+        onBack: () => this.ctx.goBack(),
+      })
+    );
 
     const col = el('div', 'menu-col play-col');
     const card = el('div', 'nf-custom-card');

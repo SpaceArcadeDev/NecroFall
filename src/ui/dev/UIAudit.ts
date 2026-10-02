@@ -5,7 +5,7 @@
 // audit asserts every contracted action is present in the DOM. This is the
 // direct catcher for "the game-mode screen has no button X" — it fails loud
 // in the console during development instead of shipping a missing button.
-import { SCREEN_CONTRACTS, type ContractScreen, type MenuAction } from '../data/MenuActionRegistry';
+import { ACTIONS, SCREEN_CONTRACTS, type ContractScreen, type MenuAction } from '../data/MenuActionRegistry';
 
 export interface AuditResult {
   screen: string;
@@ -45,6 +45,123 @@ export function checkScreen(root: HTMLElement, expected: readonly MenuAction[]):
  */
 export function auditShellScreen(contract: ContractScreen, root: HTMLElement): AuditResult {
   return auditScreen(root, SCREEN_CONTRACTS[contract], contract);
+}
+
+/**
+ * §38 — BUTTON REGISTRY VALIDATION: every `[data-action]` control in the MENU
+ * layer must reference a known action id. Unknown ids mean a button that can
+ * never be wired correctly — caught in dev, before it reaches a phone.
+ */
+export function validateMenuActions(root: ParentNode = document): string[] {
+  const unknown: string[] = [];
+  const nodes = root.querySelectorAll<HTMLElement>('.nf-shell [data-action], .nf-sheet [data-action], .nf-friends-sheet [data-action]');
+  for (const node of Array.from(nodes)) {
+    const action = node.dataset.action ?? '';
+    if (!(action in ACTIONS)) {
+      unknown.push(action || '(empty)');
+      // eslint-disable-next-line no-console
+      console.error(`[NF UI] unknown action id "${action}" on`, node);
+    }
+  }
+  return unknown;
+}
+
+/**
+ * §39 — VIEWPORT VALIDATION: the document must never scroll sideways. Run
+ * after every route change in dev; a hard error in the console is the signal.
+ */
+export function assertNoHorizontalOverflow(): void {
+  if (typeof document === 'undefined') return;
+  const doc = document.documentElement;
+  if (doc.scrollWidth > doc.clientWidth + 1) {
+    // eslint-disable-next-line no-console
+    console.error(`[NF UI] horizontal overflow detected: ${doc.scrollWidth} > ${doc.clientWidth}`);
+  }
+}
+
+/** The contract that matches a `documentElement.dataset.uiScreen` value. */
+export function contractForUiScreen(screen: string | undefined): ContractScreen | null {
+  switch (screen) {
+    case 'main':
+      return 'main';
+    case 'play':
+      return 'play';
+    case 'solo':
+      return 'solo';
+    case 'custom':
+      return 'custom';
+    case 'rank':
+      return 'rank';
+    case 'profile':
+      return 'profile';
+    default:
+      return null;
+  }
+}
+
+/**
+ * §39 — the DEV HUD snapshot: viewport, safe areas, document overflow, clipped
+ * elements and any contracted action missing on the current screen.
+ */
+export interface HudSnapshot {
+  w: number;
+  h: number;
+  orientation: 'landscape' | 'portrait';
+  safeTop: number;
+  safeBottom: number;
+  overflowX: number;
+  overflowY: number;
+  clipped: number;
+  missing: number;
+  unknown: number;
+}
+
+export function hudSnapshot(): HudSnapshot {
+  const doc = document.documentElement;
+  const cs = getComputedStyle(doc);
+  const safeTop = Number.parseFloat(cs.getPropertyValue('--nf-safe-top')) || 0;
+  const safeBottom = Number.parseFloat(cs.getPropertyValue('--nf-safe-bottom')) || 0;
+
+  // clipped: shell elements whose own box hides taller content (a card cut
+  // off inside a fixed frame — the class of bug the overhaul exists to stop).
+  // CANVAS panes are excluded: a map surface larger than its viewport is a
+  // viewport, not clipped UI (§34 — the map renderer sizes itself).
+  let clipped = 0;
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>('.nf-page *'))) {
+    if (clipped >= 20) break;
+    if (node.tagName === 'CANVAS' || node.querySelector('canvas')) continue;
+    const rects = node.getClientRects();
+    if (rects.length === 0) continue;
+    const style = getComputedStyle(node);
+    if (style.overflowY === 'hidden' && node.clientHeight > 8 && node.scrollHeight > node.clientHeight + 2) clipped += 1;
+  }
+
+  const contract = contractForUiScreen(doc.dataset.uiScreen);
+  const missing = contract && document.querySelector('.nf-shell') ? checkScreen(document.body, SCREEN_CONTRACTS[contract]).length : 0;
+  const unknown = validateMenuActionsQuiet();
+
+  return {
+    w: window.innerWidth,
+    h: window.innerHeight,
+    orientation: window.innerWidth >= window.innerHeight ? 'landscape' : 'portrait',
+    safeTop,
+    safeBottom,
+    overflowX: Math.max(0, doc.scrollWidth - doc.clientWidth),
+    overflowY: Math.max(0, doc.scrollHeight - doc.clientHeight),
+    clipped,
+    missing,
+    unknown,
+  };
+}
+
+function validateMenuActionsQuiet(): number {
+  let unknown = 0;
+  const nodes = document.querySelectorAll<HTMLElement>('.nf-shell [data-action], .nf-sheet [data-action]');
+  for (const node of Array.from(nodes)) {
+    const action = node.dataset.action ?? '';
+    if (!(action in ACTIONS)) unknown += 1;
+  }
+  return unknown;
 }
 
 declare global {
@@ -91,8 +208,9 @@ export function installAuditHandle(getShellRoot: () => HTMLElement | null): void
   if (typeof window === 'undefined') return;
   window.__nfAudit = (contract: ContractScreen) => {
     const root = getShellRoot();
-    if (!root) return undefined;
-    return auditShellScreen(contract, root);
+    const expected = SCREEN_CONTRACTS[contract];
+    if (!root || !expected) return undefined;
+    return auditScreen(root, expected, contract);
   };
   assertNoForbiddenColors();
 }

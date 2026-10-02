@@ -5,6 +5,12 @@
    new UI language: neutral glass + cyan information + orange high-value action.
    ========================================================================== */
 
+/* the rank head rides the shared title anchor (§2) — chrome only, the map
+   itself is untouched (§34) */
+.rank-page .rk-head {
+  margin-top: 14px;
+}
+
 /* the map frame: neutral hairlines, near-black stage (contrast for the stars) */
 .rk-map-wrap {
   border-left: 1px solid var(--nf-line);
@@ -49,21 +55,73 @@
   color: var(--nf-text);
 }
 
-/* map controls: same sizes, new ink — 38px stays (map chrome is desktop/aimed) */
-.rk-zoom-btn {
+/* map controls: ONE system (§35) — same 44px square (the touch minimum, §30),
+   same glass, same ink, everywhere: expand, zoom, recenter, strip icons */
+.rk-zoom-btn,
+.rk-map-expand,
+.rk-btn-ico,
+.rk-expand {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
   border: 1px solid var(--nf-line);
-  background: rgba(10, 14, 15, 0.78);
+  background: rgba(7, 14, 13, 0.72);
   color: var(--nf-text);
+  display: grid;
+  place-items: center;
 }
 
-.rk-zoom-btn:hover {
+.rk-expand svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* the side panel's VIEW ALL row is pressable on touch too (§30) */
+.rk-colonies-all {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rk-zoom-btn:hover,
+.rk-map-expand:hover {
   background: rgba(255, 255, 255, 0.09);
+}
+
+.rk-zoom-btn svg,
+.rk-map-expand svg,
+.rk-btn-ico svg {
+  width: 19px;
+  height: 19px;
+}
+
+/* the zoom stack clears the taller expand toggle (12 + 44 + 8) */
+.rk-zoom {
+  top: 64px;
+}
+
+/* VERY short frames (≤380px tall): a vertical 3×(44+gap) stack cannot fit the
+   map pane — lay it out HORIZONTALLY along the bottom instead (still 44px,
+   §30) and give the header back the space it can spare */
+@media (max-height: 380px) {
+  .rank-page .rk-head {
+    margin-top: 0;
+    margin-bottom: 6px;
+  }
+
+  .rk-zoom {
+    top: auto;
+    bottom: 8px;
+    right: 8px;
+    flex-direction: row;
+    gap: 6px;
+  }
 }
 
 .rk-map-expand,
 .rk-expand {
   border-color: var(--nf-line);
-  background: rgba(10, 14, 15, 0.78);
+  background: rgba(7, 14, 13, 0.72);
   color: var(--nf-text);
 }
 
@@ -104,8 +162,16 @@
   border: 1px solid var(--nf-line);
   background: rgba(10, 14, 15, 0.78);
   color: var(--nf-text);
-  border-radius: 10px;
+  border-radius: 10px;  min-height: 44px;
 }
+
+/* quick actions are touch-first too (§30): the old 34px row was a miss */
+.rk-quick .rk-btn {
+  min-height: 44px;
+}
+
+.rk-quick .rk-join-input {
+  min-height: 44px;}
 
 .rk-join-input::placeholder {
   color: var(--nf-text-dim);

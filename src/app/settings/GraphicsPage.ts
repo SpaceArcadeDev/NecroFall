@@ -18,6 +18,7 @@ import {
 } from '../../core/Config';
 import { ShellContext } from '../ShellContext';
 import { el } from '../ui/dom';
+import { createPageHeader } from '../../ui/shell/PageHeader';
 
 /** Bar count per preset — the at-a-glance "how much this device draws" ramp. */
 const PRESET_BARS: Record<QualityPref, number> = { auto: 0, low: 1, medium: 2, high: 4, ultra: 5 };
@@ -33,11 +34,14 @@ export class GraphicsPage {
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page nf-gfx-page');
 
-    // ---- header (single row — the back chevron floats to the LEFT of it)
-    const head = el('header', 'nf-gfx-head');
-    head.appendChild(el('h1', 'nf-gfx-title', 'GRAPHICS'));
-    head.appendChild(el('p', 'nf-gfx-sub', 'How much of the planet this device draws — and how often.'));
-    this.element.appendChild(head);
+    // ---- the shared page header (§2): same anchor + gradient as PLAY/PROFILE
+    this.element.appendChild(
+      createPageHeader({
+        title: 'GRAPHICS',
+        subtitle: 'How much of the planet this device draws — and how often.',
+        onBack: () => this.ctx.goBack(),
+      })
+    );
 
     // ---- quality presets: five cards, one row (they wrap only on narrow portraits)
     const presetSec = el('section', 'nf-gfx-sec');

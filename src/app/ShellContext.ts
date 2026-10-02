@@ -41,6 +41,8 @@ export interface ShellContext {
   openProfile(hex: string): void;
   goHome(): void;
   goPlay(): void;
+  /** The contextual back — pages that render the shared PageHeader call this (§2). */
+  goBack(): void;
   /** The RANK page — the intergalactic map (plan §48). */
   goRank(): void;
   /** The GRAPHICS settings page (preset + frame-rate cap). */

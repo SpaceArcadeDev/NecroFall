@@ -19,50 +19,126 @@
 }
 
 /* ==========================================================================
-   PLAY (§12/§13/§47) — the decision screen
+   PLAY (§7–§10/§29/§33) — the decision screen
    ========================================================================== */
 
-.play-page .play-head {
-  gap: 4px;
+/* the page is the container (§29): narrow compositions compact the cards */
+.play-page {
+  container-type: inline-size;
 }
 
-/* Wide layouts: a calm 3-column grid of mode cards. */
+/* ONE responsive grid (§8): 3 columns on landscape mobile AND desktop, the
+   SAME six cards everywhere — no strip, no separate mobile markup. More than
+   six modes would scroll (hidden scrollbar), six never has to. */
 .play-page .play-modes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* the OLD sheet left a `grid-template-rows: minmax(0,1fr)` on this element —
+     it stretched row 1 to fill the frame and made the two rows uneven. Rows
+     are CONTENT-sized now; the frame fills naturally and >6 modes scroll. */
+  grid-template-rows: none;
   grid-auto-rows: auto;
   align-content: start;
-  gap: 10px;
+  gap: clamp(6px, 1.2vw, 14px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 10px;
+  scrollbar-width: none;
 }
 
-/* Landscape phones + short frames: the SAME cards become a horizontal,
-   snap-scrolling strip (§47) — explicit buttons intact, nothing removed. */
-@media (max-width: 1023px), (max-height: 560px) {
+.play-page .play-modes::-webkit-scrollbar {
+  display: none;
+}
+
+.play-page:not(.mode-picked) .nf-mode-card {
+  min-height: clamp(150px, 24vh, 230px);
+  animation: nf-card-enter 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--index, 0) * 35ms);
+}
+
+@keyframes nf-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Portrait: two columns (§8) */
+@media (orientation: portrait) {
   .play-page:not(.mode-picked) .play-modes {
-    display: flex;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x proximity;
-    gap: 10px;
-    padding: 4px 2px 10px;
-    scrollbar-width: none;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Short landscape frames: the SAME cards compress — description steps aside,
+   the icon joins the title row, the CTA stays a full 44px target. Nothing a
+   player NEEDS is removed; >6 modes would still scroll (§8/§30). */
+@media (max-height: 520px) {
+  .play-page:not(.mode-picked) .play-modes {
+    gap: 5px;
+    padding-bottom: 2px;
   }
 
-  .play-page:not(.mode-picked) .play-modes::-webkit-scrollbar {
+  .play-page:not(.mode-picked) .nf-mode-card {
+    min-height: 78px;
+    padding: 5px 8px;
+    gap: 4px;
+    border-radius: 14px;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__top {
     display: none;
   }
 
-  .play-page:not(.mode-picked) .play-modes > * {
-    flex: 0 0 min(74vw, 300px);
-    scroll-snap-align: center;
+  .play-page:not(.mode-picked) .nf-mode-card__plate {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__plate svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__title {
+    font-size: 13.5px;
+    letter-spacing: 0.1em;
   }
 
   .play-page:not(.mode-picked) .nf-mode-card__desc {
-    -webkit-line-clamp: 2;
+    display: none;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__actions {
+    margin-top: 0;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__actions .nf-btn {
+    min-height: 44px;
+    font-size: 11px;
+    padding: 0 10px;
+    gap: 6px;
+  }
+
+  .play-page:not(.mode-picked) .nf-mode-card__actions .nf-btn__icon {
+    width: 15px;
+    height: 15px;
   }
 }
 
-/* The picked morph: cards collapse to chips, the setup drops in below (§12). */
+/* Narrow portrait cards: same compression as short frames (§29) */
+@container (max-width: 700px) {
+  .play-page:not(.mode-picked) .nf-mode-card__desc {
+    display: none;
+  }
+}
+
+/* the picked morph: cards collapse to chips, the setup drops in below (§12). */
 .play-page.mode-picked .play-modes {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -126,9 +202,53 @@
   border: 1px solid var(--nf-line);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.012)),
-    rgba(10, 14, 15, 0.72);
+    rgba(7, 14, 13, 0.72);
   padding: 12px;
   gap: 10px;
+}
+
+/* ---- SERVER SELECTOR (§10): OFFICIAL / P2P — in the page flow, never off-
+   viewport, two-line labels, 52px touch targets --------------------------- */
+.nf-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 16px;
+  border: 1px solid var(--nf-line);
+  background: rgba(5, 12, 11, 0.78);
+  backdrop-filter: none;
+}
+
+.nf-toggle-opt {
+  min-height: 52px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--nf-text-muted);
+}
+
+.nf-toggle-opt.on {
+  border-color: var(--nf-line-active);
+  background: rgba(200, 255, 61, 0.08);
+  color: var(--nf-text);
+}
+
+.nf-toggle-opt.disabled {
+  opacity: 0.4;
+}
+
+.nf-toggle-name {
+  font-family: var(--font-display);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.nf-toggle-sub {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--nf-text-dim);
 }
 
 @media (max-height: 560px) {
@@ -152,23 +272,73 @@
   background: rgba(255, 255, 255, 0.07);
 }
 
+/* the friends rail's expand handle is a touch target (§30) */
+.nf-rail-drawer {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* the friends sheet's header controls are touch targets too (§30) */
+.nf-sheet-btn {
+  min-height: 44px;
+}
+
 .nf-friends-card {
-  background: rgba(10, 14, 15, 0.95);
+  background: rgba(7, 14, 13, 0.95);
   border-color: var(--nf-line);
 }
 
 /* ==========================================================================
-   PROFILE — app-screen headings (§11)
+   NECROTECH + COLONY selection screens (§15): the title wears the shared
+   gradient — the screens themselves are untouched (logic, camera, cards all
+   stay authoritative, per §14).
    ========================================================================== */
 
-.nf-p-top .nf-p-eyebrow {
-  font-family: var(--font-display);
-  letter-spacing: 0.3em;
+.sel-title {
+  background: linear-gradient(110deg, #ffffff 0%, #eaffc2 42%, var(--nf-acid) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ==========================================================================
+   PROFILE — app-screen headings (§11/§12)
+   ========================================================================== */
+
+/* The band wears the SHARED page title: centered on the same anchor as every
+   other page. The old 50px `--nf-band` reserve is gone — the band itself is
+   the chevron corridor now (title centered, chevron left, never a collision). */
+.profile-page {
+  padding-top: 0;
+}
+
+.nf-p-top {
+  justify-content: center;
+  min-height: var(--nf-header-h);
+  padding: 0;
+  margin-top: 5px;
+}
+
+.nf-p-top::after {
+  display: none;
+}
+
+.nf-p-title {
+  text-align: center;
+}
+
+/* CUSTOM starts at the top like every other page — its old layout centred the
+   whole column, which pushed the shared header off the anchor */
+.custom-page {
+  justify-content: flex-start;
 }
 
 .nf-hero-name {
   font-family: var(--font-display);
   letter-spacing: 0.08em;
+  /* the display face's line box is taller than the clipped single line — give
+     it room so descenders are never cut (and the dev HUD stays clean) */
+  line-height: 1.25;
 }
 
 /* ==========================================================================

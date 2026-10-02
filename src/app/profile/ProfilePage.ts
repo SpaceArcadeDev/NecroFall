@@ -52,10 +52,10 @@ export class ProfilePage {
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('div', 'nf-page profile-page');
 
-    // ---- the page band: the floating back chevron lives on CLEAN background above an
-    // eyebrow + hairline (user ask 2026-09-29: "the back button shouldn't have UI behind it").
+    // ---- the page band: the floating back chevron lives on CLEAN background above
+    // the shared page title (overhaul §2/§44 — same anchor as PLAY/GRAPHICS).
     const top = el('header', 'nf-p-top');
-    top.appendChild(el('span', 'nf-p-eyebrow', 'PROFILE'));
+    top.appendChild(el('h1', 'nf-page-title nf-p-title', 'PROFILE'));
     this.element.appendChild(top);
 
     // ---- head: the player card — identity left, the rank plates right (one visual card)

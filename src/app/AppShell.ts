@@ -40,7 +40,7 @@ import { FriendRail } from './ui/FriendRail';
 import { MobileBottomNav, type BottomNavKey } from './ui/MobileBottomNav';
 import { button, clear, el } from './ui/dom';
 import { uiRouter, type UIScreen } from '../ui/shell/UIRouter';
-import { auditShellScreen, installAuditHandle } from '../ui/dev/UIAudit';
+import { auditShellScreen, assertNoHorizontalOverflow, installAuditHandle, validateMenuActions } from '../ui/dev/UIAudit';
 import type { ContractScreen } from '../ui/data/MenuActionRegistry';
 import { createNFButton } from '../ui/components/NFButton';
 import { NFMoreSheet, type MoreSheetEntry } from '../ui/components/NFMoreSheet';
@@ -325,6 +325,11 @@ export class AppShell implements ShellContext {
 
   goHome(): void {
     this.navigateTo({ name: 'home' });
+  }
+
+  /** The contextual back (ShellContext): pages with their own PageHeader call this. */
+  goBack(): void {
+    this.onBack();
   }
 
   goPlay(): void {
@@ -1201,7 +1206,14 @@ export class AppShell implements ShellContext {
     if (import.meta.env.DEV) {
       const contract = AppShell.AUDIT_CONTRACT[screen];
       if (contract) auditShellScreen(contract, this.root);
+      // §38/§39: unknown action ids + document overflow are dev errors too.
+      validateMenuActions(this.root);
+      assertNoHorizontalOverflow();
     }
+    // A page that rendered the shared PageHeader owns a REAL back chevron —
+    // the floating one steps aside so there are never two controls (§2).
+    const ownBack = Boolean(this.screenHost.querySelector('.nf-page-header [data-action="back"]'));
+    if (ownBack) this.backBtn.classList.add('hidden');
   }
 
   private renderLogin(message?: string): void {
@@ -1960,11 +1972,7 @@ export class AppShell implements ShellContext {
     if (key === 'play') this.goPlay();
     else if (key === 'galaxy') this.goRank();
     else if (key === 'friends') this.rail.toggleSheet();
-    else if (key === 'profile') {
-      const hex = this.myHex();
-      if (hex) this.openProfile(hex);
-      else this.toast('Sign in to view your profile.');
-    } else this.moreSheet.toggle();
+    else this.moreSheet.toggle();
   }
 
   /**

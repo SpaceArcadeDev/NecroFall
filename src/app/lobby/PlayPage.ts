@@ -13,6 +13,7 @@ import { OfficialLobby } from './OfficialLobby';
 import { P2PLobby } from './P2PLobby';
 import { GAME_MODES } from '../../ui/data/GameModeRegistry';
 import { createNFModeCard } from '../../ui/components/NFModeCard';
+import { createPageHeader } from '../../ui/shell/PageHeader';
 
 export class PlayPage {
   readonly element: HTMLElement;
@@ -30,9 +31,11 @@ export class PlayPage {
     // mid-morph — the card shrink IS the entrance.
     if (picked) this.element.style.animation = 'none';
 
-    const head = el('div', 'play-head');
-    head.appendChild(el('div', 'menu-title', 'PLAY'));
-    if (!picked) head.appendChild(el('div', 'menu-sub', 'choose your match format'));
+    const head = createPageHeader({
+      title: 'PLAY',
+      subtitle: picked ? undefined : 'Choose your match format',
+      onBack: () => this.ctx.goBack(),
+    });
     this.element.appendChild(head);
 
     const col = el('div', 'menu-col play-col');
@@ -56,6 +59,8 @@ export class PlayPage {
         handlers: { play: handlers[mode.id] },
         picked: mode.id === 'classic' && this.picked,
       });
+      // §33: short staggered entrance, one card after another.
+      card.style.setProperty('--index', String(modes.childElementCount));
       if (mode.id === 'classic') this.classicCard = card;
       modes.appendChild(card);
     }

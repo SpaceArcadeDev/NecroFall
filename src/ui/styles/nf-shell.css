@@ -6,22 +6,37 @@
 
 /* ---------------------------------------------------------------- SHELL FRAME */
 .nf-shell {
-  /* neutral military dark — the old violet gradient is gone (§34/§50) */
+  /* green-graphite darkening of the live world — the old violet gradient is gone.
+     Full-viewport by definition (fixed inset 0), so no finite rectangle exists. */
   background: linear-gradient(
     180deg,
-    rgba(5, 8, 9, 0) 0%,
-    rgba(5, 8, 9, 0.05) 12%,
-    rgba(5, 8, 9, 0.16) 26%,
-    rgba(6, 9, 10, 0.36) 38%,
-    rgba(6, 9, 10, 0.6) 50%,
-    rgba(7, 10, 11, 0.8) 62%,
-    rgba(7, 10, 11, 0.92) 74%,
-    rgba(8, 11, 12, 0.98) 86%,
+    rgba(4, 10, 9, 0) 0%,
+    rgba(4, 10, 9, 0.05) 12%,
+    rgba(4, 10, 9, 0.16) 26%,
+    rgba(5, 12, 11, 0.36) 38%,
+    rgba(5, 12, 11, 0.6) 50%,
+    rgba(6, 13, 12, 0.8) 62%,
+    rgba(6, 13, 12, 0.92) 74%,
+    rgba(7, 14, 13, 0.98) 86%,
     var(--nf-bg) 100%
   );
 }
 
-/* world-first vignette (§35): the 3D scene stays the hero */
+/* atmosphere (§5): one fixed full-viewport radial glow — fades to nothing on
+   every edge, so it can never read as a panel or a rectangle. Negative z puts
+   it above the shell's own gradient but BELOW every UI child. */
+.nf-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(70% 70% at 50% 30%, rgba(35, 90, 65, 0.16), transparent 68%);
+}
+
+/* world-first vignette (§35): the 3D scene stays the hero. Kept INSIDE the
+   page box (an overscan would extend .nf-main's scroll area and raise
+   scrollbars — the page never needed one). */
 .nf-world-vignette {
   position: absolute;
   inset: 0;
@@ -122,8 +137,8 @@
 }
 
 .nf-top-settings {
-  width: clamp(40px, 8vh, 46px);
-  height: clamp(40px, 8vh, 46px);
+  width: clamp(44px, 8vh, 46px);
+  height: clamp(44px, 8vh, 46px);
   display: grid;
   place-items: center;
   border-radius: 13px;
@@ -186,6 +201,91 @@
   letter-spacing: 0.4em;
   text-indent: 0.4em;
   text-shadow: 0 0 20px color-mix(in srgb, var(--nf-colony, var(--nf-cyan)) 42%, transparent);
+}
+
+/* ---------------------------------------------------------------- PAGE HEADER (§2/§15/§44) */
+/* ONE title anchor for every non-gameplay page — same height, same centring,
+   same gradient type. The floating shell chevron (or the header's own back)
+   occupies the left slot, so nothing shifts between screens. */
+.nf-page-header {
+  position: relative;
+  z-index: 20;
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: var(--nf-header-h);
+  display: grid;
+  grid-template-columns: var(--nf-touch-min) minmax(0, 1fr) var(--nf-touch-min);
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  box-sizing: border-box;
+}
+
+.nf-page-header__left {
+  justify-self: start;
+  display: flex;
+  align-items: center;
+}
+
+.nf-page-header__mid {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.nf-page-header__right {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+}
+
+.nf-page-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(22px, 3.4vh, 34px);
+  line-height: 1;
+  letter-spacing: 0.26em;
+  text-indent: 0.26em; /* optical centring: letter-spacing adds trailing space */
+  white-space: nowrap;
+  background: linear-gradient(110deg, #ffffff 0%, #eaffc2 42%, var(--nf-acid) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* OUT of the flow: a subtitle must never push the title off the shared anchor
+   — the title centres identically on every page, subtitle or not */
+.nf-page-subtitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% + 14px);
+  max-width: 100%;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--nf-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* every legacy page title wears the SAME gradient (§44) — the rank map keeps
+   its own layout per §34 but never its own typography */
+.menu-title,
+.lobby-title,
+.rk-title,
+.nf-gfx-title {
+  letter-spacing: 0.22em;
+  background: linear-gradient(110deg, #ffffff 0%, #eaffc2 42%, var(--nf-acid) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* ---------------------------------------------------------------- PLAY MODULE (§8/§53) */
@@ -366,9 +466,9 @@
 }
 
 .nf-bottom-btn.on {
-  color: var(--nf-text);
-  background: rgba(255, 255, 255, 0.07);
-  border-color: var(--nf-line);
+  color: var(--nf-acid);
+  background: rgba(200, 255, 61, 0.1);
+  border-color: var(--nf-line-active);
 }
 
 .nf-bottom-icon {
@@ -386,8 +486,8 @@
 }
 
 .nf-bottom-btn.on .nf-bottom-icon {
-  color: var(--nf-cyan);
-  filter: drop-shadow(0 0 7px rgba(98, 228, 232, 0.45));
+  color: var(--nf-acid);
+  filter: drop-shadow(0 0 7px rgba(200, 255, 61, 0.4));
 }
 
 .nf-bottom-label {
@@ -450,10 +550,32 @@
   opacity: 1;
 }
 
+/* ---------------------------------------------------------------- DEV HUD (§39) */
+.nf-debug-hud {
+  position: fixed;
+  left: 10px;
+  bottom: calc(var(--nf-nav-h) + 24px + var(--nf-safe-bottom));
+  z-index: 6000;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(7, 12, 11, 0.82);
+  border: 1px solid var(--nf-line);
+  color: var(--nf-text-dim);
+  font: 9px/1.4 Consolas, "Courier New", monospace;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.nf-debug-hud.is-bad {
+  color: #ffd6dc;
+  border-color: rgba(255, 102, 125, 0.6);
+}
+
 /* ---------------------------------------------------------------- BACK CHEVRON (§16) */
 .nf-back {
-  width: clamp(42px, 8vh, 48px);
-  height: clamp(42px, 8vh, 48px);
+  width: clamp(44px, 8vh, 48px);
+  height: clamp(44px, 8vh, 48px);
   border-radius: 13px;
   border: 1px solid var(--nf-line);
   background: rgba(12, 16, 17, 0.72);
@@ -544,7 +666,7 @@
   }
 
   .nf-btn.nf-mode-switch__item {
-    min-height: 40px;
+    min-height: 44px;
   }
 
   .nf-stage {
@@ -552,7 +674,7 @@
   }
 
   .nf-bottom {
-    height: clamp(48px, 14vh, 58px);
+    height: clamp(56px, 16vh, 58px);
     bottom: calc(6px + var(--nf-safe-bottom));
   }
 
@@ -603,7 +725,7 @@
     gap: 5px;
     font-size: 11.5px;
     letter-spacing: 0.05em;
-    min-height: 38px;
+    min-height: 44px;
   }
 
   .nf-btn.nf-mode-switch__item .nf-btn__icon {

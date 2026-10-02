@@ -5,27 +5,31 @@
    ========================================================================== */
 
 :root {
-  /* ---- base surfaces: near-black military dark, NOT purple ---------------- */
-  --nf-bg: #080b0c;
-  --nf-bg-soft: #0d1213;
-  --nf-surface: rgba(15, 19, 20, 0.82);
-  --nf-surface-solid: #111718;
-  --nf-surface-raised: rgba(28, 34, 35, 0.92);
-  --nf-glass: rgba(10, 14, 15, 0.62);
+  /* ---- base surfaces: green-graphite, near-black (overhaul §0) -------------- */
+  --nf-bg: #07100e;
+  --nf-bg-soft: #0a1714;
+  --nf-surface: rgba(10, 18, 17, 0.78);
+  --nf-surface-solid: #0c1513;
+  --nf-surface-raised: rgba(16, 26, 24, 0.92);
+  --nf-glass: rgba(8, 15, 14, 0.62);
+  --nf-glass-strong: rgba(7, 12, 11, 0.86);
 
-  --nf-line: rgba(255, 255, 255, 0.1);
-  --nf-line-strong: rgba(255, 255, 255, 0.2);
+  --nf-line: rgba(210, 255, 235, 0.13);
+  --nf-line-strong: rgba(210, 255, 235, 0.24);
+  --nf-line-active: rgba(190, 255, 72, 0.48);
 
-  --nf-text: #f3f6f3;
-  --nf-text-muted: #a6afab;
-  --nf-text-dim: #68726e;
+  --nf-text: #f4f7f2;
+  --nf-text-muted: #8e9b96;
+  --nf-text-dim: #5f6b66;
 
-  /* ---- brand accents: ONE accent = action, ONE accent = state ------------- */
-  --nf-acid: #c8ff43; /* primary CTA / PLAY        */
-  --nf-cyan: #62e4e8; /* navigation / information  */
-  --nf-orange: #ff9b4a; /* rank / high-value         */
-  --nf-red: #ff5a5f; /* danger                    */
-  --nf-green: #67e6a5; /* ready / success           */
+  /* ---- accents: ONE primary action colour, rest are states ------------------ */
+  --nf-acid: #c8ff3d; /* primary CTA / PLAY        */
+  --nf-acid-soft: #a9e62f;
+  --nf-cyan: #53d9d5; /* official / information    */
+  --nf-amber: #ffb15a; /* rank / high-value         */
+  --nf-orange: var(--nf-amber); /* legacy alias */
+  --nf-red: #ff667d; /* danger                    */
+  --nf-green: #6fe7a8; /* ready / success           */
 
   /* ---- geometry ----------------------------------------------------------- */
   --nf-radius-sm: 10px;
@@ -38,8 +42,9 @@
   --nf-safe-bottom: env(safe-area-inset-bottom, 0px);
   --nf-safe-left: env(safe-area-inset-left, 0px);
 
-  --nf-header-h: clamp(52px, 9vh, 68px);
+  --nf-header-h: clamp(44px, 8vh, 60px);
   --nf-nav-h: clamp(56px, 9.5vh, 72px);
+  --nf-page-x: clamp(12px, 3vw, 48px);
 
   /* ---- type: one condensed display face + one readable body face --------- */
   --font-display: "Rajdhani", "Arial Narrow", "Segoe UI", sans-serif;
@@ -49,13 +54,13 @@
      the new palette so every untouched rule re-colours in one move. */
   --ui-bg: var(--nf-bg);
   --ui-panel: var(--nf-surface);
-  --ui-panel-strong: rgba(21, 26, 27, 0.94);
+  --ui-panel-strong: var(--nf-glass-strong);
   --ui-border: var(--nf-line);
   --ui-text: var(--nf-text);
   --ui-text-muted: var(--nf-text-muted);
   --ui-accent: var(--nf-cyan);
   --ui-accent-2: var(--nf-green);
-  --ui-gold: var(--nf-orange);
+  --ui-gold: var(--nf-amber);
 }
 
 /* ==========================================================================

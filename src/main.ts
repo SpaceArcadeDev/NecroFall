@@ -17,10 +17,14 @@ import { AppShell } from './app/AppShell';
 import { SpacetimeConnection } from './app/spacetimedb/connection';
 import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
 import { installUIFeedback } from './ui/audio/UIAudio';
+import { installDebugHud } from './ui/dev/UIDebugHud';
 
 // Global UI feedback (overhaul §24–§26): every pressable element in the shell
 // gets a short synthesiser tick + a sparing haptic — no per-button wiring.
+// Scoped to the MENU shell: gameplay controls keep their own SFX (§19/§20).
 installUIFeedback();
+// The dev HUD (§39): shows only in dev builds with `?debug` / `?uidebug`.
+installDebugHud();
 
 const app = document.getElementById('app');
 if (!app) throw new Error('#app container missing');

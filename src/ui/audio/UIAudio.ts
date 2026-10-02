@@ -127,13 +127,37 @@ class UIAudioBus {
 
 export const UIAudio = new UIAudioBus();
 
+/**
+ * §20 — UI AUDIO vs GAMEPLAY AUDIO, explicit. UI ticks belong to the MENU
+ * (shell pages, sheets, overlays). Gameplay controls — joystick, dash, jump,
+ * skill, ult — deliberately get NO generic UI sound; their own game SFX is
+ * untouched and authoritative.
+ */
+export const UI_AUDIO_POLICY = {
+  menu: true,
+  modal: true,
+  navigation: true,
+
+  gameplay: false,
+  joystick: false,
+  movement: false,
+  combat: false,
+} as const;
+
+/**
+ * The menu containers that opt into UI audio. Gameplay controls live under
+ * `#ui` with NO shell ancestor, so this single scope check is what keeps the
+ * joystick / dash / jump / skill / ult / surrender buttons silent (§19/§20).
+ */
+const AUDIO_SCOPE_SELECTOR = '.nf-shell, .nf-sheet, .nf-friends-sheet, .nf-modal, .nf-settings-menu, .nf-pill, .nf-toasts, .nf-notify-stack';
+
 let installed = false;
 
 /**
- * Install the global feedback pass: EVERY pressable element in the shell gets
- * the tick + haptic without touching each call site. `data-sfx` overrides the
- * tone (`data-sfx="none"` opts out; `data-sfx="confirm|back|error|select|map"`
- * picks the sound directly, "sweep"-style gestures excluded).
+ * Install the global feedback pass: every pressable element IN THE MENU SHELL
+ * gets the tick + haptic without touching each call site. `data-sfx` overrides
+ * the tone (`data-sfx="none"` opts out) — but the SHELL SCOPE always wins:
+ * a gameplay button can never receive a UI sound from here.
  */
 export function installUIFeedback(): void {
   if (installed) return;
@@ -149,6 +173,10 @@ export function installUIFeedback(): void {
       const target = ev.target as Element | null;
       const node = target?.closest?.(pressable) as HTMLElement | null;
       if (!node) return;
+      // §19/§20: MENU ONLY. The joystick and the combat buttons sit in the
+      // game layer with no shell ancestor — they keep their own SFX and get
+      // no generic UI tick.
+      if (!node.closest(AUDIO_SCOPE_SELECTOR) && !node.hasAttribute('data-sfx')) return;
       if (node.hasAttribute('disabled') || node.getAttribute('aria-disabled') === 'true') {
         UIAudio.play('error');
         return;

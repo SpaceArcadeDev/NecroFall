@@ -767,17 +767,14 @@ export class UI {
   private respawnModal!: HTMLElement;
   private respawnKiller!: HTMLElement;
   private respawnTimer!: HTMLElement;
-  // RANKED surrender vote (user ask 2026-09-30): the left-centre panel — built once, patched
-  // from HudData every frame, never rebuilt (the flicker rule the other modals learned).
+  // RANKED surrender vote (user ask 2026-09-30; compacted per overhaul §16): the left-centre
+  // panel — built once, patched from HudData every frame, never rebuilt.
   private votePanel!: HTMLElement;
   private voteSub!: HTMLElement;
-  private voteDashes!: HTMLElement;
-  private voteCount!: HTMLElement;
   private voteTimer!: HTMLElement;
   private voteBtnYes!: HTMLButtonElement;
   private voteBtnNo!: HTMLButtonElement;
   private voteSig = '';
-  private voteDashSig = '';
   /** Last docked state of the vote panel (see HudData.paused). */
   private voteDocked = false;
   /** The Esc panel's exit button and its RANKED twin (label/icon swap, see renderPausePanel). */
@@ -3810,25 +3807,22 @@ export class UI {
     this.respawnModal.appendChild(rcard);
     this.root.appendChild(this.respawnModal);
 
-    // ---- RANKED surrender vote (user ask 2026-09-30): the colony-wide forfeit vote pinned at
-    // the LEFT CENTRE, over the fight — one green/red dash per live seat, with ✓ / ✕ to answer.
-    // Removed from the flow the moment the vote resolves or lapses; `updateSurrenderPanel`
-    // patches it (never rebuilds) from HudData.surrender.
+    // ---- RANKED surrender vote (overhaul §16): COMPACT — title, one line of copy,
+    // the two answers, the timer. No initiator name, no vote tally: the game state
+    // already communicates those, the panel must not (§16 "that's it").
     const sv = el('div', 'svote hidden');
-    sv.appendChild(el('div', 'svote-head', 'SURRENDER VOTE'));
-    this.voteSub = el('div', 'svote-sub', '');
+    sv.appendChild(el('div', 'svote-head', 'SURRENDER?'));
+    this.voteSub = el('div', 'svote-sub', 'Surrender the match?');
     sv.appendChild(this.voteSub);
-    const svRow = el('div', 'svote-row');
-    this.voteDashes = el('div', 'svote-dashes');
-    svRow.appendChild(this.voteDashes);
-    this.voteCount = el('div', 'svote-count', '');
-    svRow.appendChild(this.voteCount);
-    sv.appendChild(svRow);
     const svBtns = el('div', 'svote-btns');
-    this.voteBtnYes = button('', 'svote-btn yes', () => this.cbs.surrenderVote(true));
-    this.voteBtnYes.innerHTML = ICON_CHECK;
-    this.voteBtnNo = button('', 'svote-btn no', () => this.cbs.surrenderVote(false));
-    this.voteBtnNo.innerHTML = ICON_VOTE_X;
+    this.voteBtnYes = el('button', 'svote-btn yes') as HTMLButtonElement;
+    this.voteBtnYes.dataset.action = 'surrender-yes';
+    this.voteBtnYes.innerHTML = `${ICON_CHECK}<span>SURRENDER</span>`;
+    this.bindVotePress(this.voteBtnYes, () => this.cbs.surrenderVote(true));
+    this.voteBtnNo = el('button', 'svote-btn no') as HTMLButtonElement;
+    this.voteBtnNo.dataset.action = 'surrender-no';
+    this.voteBtnNo.innerHTML = `${ICON_VOTE_X}<span>CANCEL</span>`;
+    this.bindVotePress(this.voteBtnNo, () => this.cbs.surrenderVote(false));
     svBtns.appendChild(this.voteBtnYes);
     svBtns.appendChild(this.voteBtnNo);
     sv.appendChild(svBtns);
@@ -4027,10 +4021,50 @@ export class UI {
   }
 
   /**
-   * The ranked SURRENDER VOTE panel (user ask 2026-09-30): a notice pinned at the left centre
-   * while the local colony's vote is open — the caller's name, one dash per live seat (green =
-   * voted to surrender, red = voted to fight, dim = still to answer), the yes/needed count and
-   * the ✓ / ✕ answers. Diff-gated so the per-frame HUD write never rebuilds the DOM.
+   * §17/§18: bind a vote answer on POINTER events with a click fallback. The
+   * game's touch layers can swallow the synthetic click after a gesture, so the
+   * action fires from `pointerup` (when the press started on this button) AND
+   * from `click`, deduped so it can never double-fire. Pressed state paints on
+   * `pointerdown`; pointercancel/leave clear it.
+   */
+  private bindVotePress(btn: HTMLButtonElement, fn: () => void): void {
+    btn.type = 'button';
+    let lastFire = 0;
+    const fire = (): void => {
+      const now = performance.now();
+      if (now - lastFire < 450) return;
+      lastFire = now;
+      fn();
+    };
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.add('is-pressed');
+      try {
+        btn.setPointerCapture(e.pointerId);
+      } catch {
+        /* capture is best-effort — the bindings above still fire */
+      }
+    });
+    btn.addEventListener('pointerup', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      btn.classList.remove('is-pressed');
+      fire();
+    });
+    btn.addEventListener('pointercancel', () => btn.classList.remove('is-pressed'));
+    btn.addEventListener('pointerleave', () => btn.classList.remove('is-pressed'));
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fire();
+    });
+  }
+
+  /**
+   * The ranked SURRENDER panel (overhaul §16): compact — the two answers, the
+   * countdown as "40s", nothing about WHO called it. Diff-gated so the per-frame
+   * HUD write never rebuilds the DOM.
    */
   private updateSurrenderPanel(d: HudData['surrender']): void {
     const panel = this.votePanel;
@@ -4038,33 +4072,20 @@ export class UI {
     if (!d) {
       if (this.voteSig !== '') {
         this.voteSig = '';
-        this.voteDashSig = '';
         panel.classList.add('hidden');
       }
       return;
     }
     panel.classList.remove('hidden');
-    const sig = `${d.fromName}|${d.votes.join(',')}|${d.mine ?? ''}|${Math.ceil(d.seconds)}|${d.yes}|${d.need}`;
+    const sig = `${d.mine ?? ''}|${Math.ceil(d.seconds)}|${d.yes}|${d.need}|${d.votes.length}`;
     if (sig === this.voteSig) return;
     this.voteSig = sig;
-    setText(this.voteSub, `${d.fromName} calls a surrender — ${d.colonyName} votes`);
-    const dashSig = d.votes.join(',');
-    if (dashSig !== this.voteDashSig) {
-      this.voteDashSig = dashSig;
-      this.voteDashes.textContent = '';
-      for (const v of d.votes) {
-        const dash = document.createElement('i');
-        dash.className = v === 'yes' ? 'yes' : v === 'no' ? 'no' : '';
-        this.voteDashes.appendChild(dash);
-      }
-    }
-    setText(this.voteCount, `${d.yes} / ${d.need} TO FORFEIT`);
     const answered = d.mine !== null;
     this.voteBtnYes.disabled = answered;
     this.voteBtnNo.disabled = answered;
     this.voteBtnYes.classList.toggle('on', d.mine === 'yes');
     this.voteBtnNo.classList.toggle('on', d.mine === 'no');
-    setText(this.voteTimer, `VOTES CLOSE IN ${Math.max(0, Math.ceil(d.seconds))}s`);
+    setText(this.voteTimer, `${Math.max(0, Math.ceil(d.seconds))}s`);
   }
 
   /** Live snapshot of the player's run, rendered into the Esc panel every frame. */

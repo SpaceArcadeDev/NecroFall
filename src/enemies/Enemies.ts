@@ -8,7 +8,7 @@ import type { QualitySettings } from '../core/Config';
 import type { StatusKind } from '../necrotech/NecrotechData';
 import { CONFIG } from '../core/Config';
 import { SpatialHash } from '../utils/SpatialHash';
-import { Rand, clamp, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
+import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { buildCreature, CreatureRig } from './EnemyModels';
 import {
   ABILITY_META,
@@ -281,6 +281,10 @@ export class Enemy {
   /** Match-time damage scale. Left at 1: see enemyPowerScale for why damage no longer ramps. */
   powerMul = 1;
   netTarget: THREE.Vector3 | null = null;
+  /** When the latest snapshot target arrived — the prediction clock (`netUpdate`). */
+  netSnapAt = 0;
+  /** Estimated true velocity from successive snapshot targets — the client dead-reckons with it. */
+  readonly netVel = new THREE.Vector3();
   group = new THREE.Group();
   rig: CreatureRig | null = null;
   /** White hit-flash amount, decayed every frame. */
@@ -2130,13 +2134,23 @@ export class Enemy {
 
   netUpdate(dt: number): void {
     if (!this.netTarget) return;
-    const dist = this.position.distanceTo(this.netTarget);
-    if (dist > 40) {
+    // DEAD RECKONING (2026-10-03, “enemies teleporting” fix): between snapshots the body keeps
+    // moving along the velocity its successive targets imply, capped to a short horizon. The
+    // old first-order chase only approached the LAST target, so every creature trailed a
+    // quarter-second behind the authority and visibly lunged forward when a snapshot was lost
+    // or a fast charge/mitosis jump outran the smoothing. Prediction removes the lag; the
+    // 60 u jump still teleports rather than smears a genuine spawn/leap.
+    const since = clamp(nowSec() - this.netSnapAt, 0, 0.25);
+    _v.copy(this.netTarget).addScaledVector(this.netVel, since).sub(this.position);
+    const dist = _v.length();
+    if (dist > 60) {
       this.position.copy(this.netTarget);
+      this.velocity.copy(this.netVel);
     } else {
-      _v.copy(this.netTarget).sub(this.position);
-      this.velocity.copy(_v).multiplyScalar(8);
-      this.position.addScaledVector(_v, clamp(dt * 10, 0, 1));
+      this.position.addScaledVector(_v, clamp(dt * 12, 0, 1));
+      // The reported motion is the ESTIMATED true velocity plus the remaining correction — a
+      // gap-proportional velocity alone reads as standing still once prediction tracks.
+      this.velocity.copy(this.netVel).addScaledVector(_v, 4);
     }
     _v2.copy(this.position).normalize();
     this.up.copy(_v2);
@@ -3022,7 +3036,23 @@ export class EnemyManager {
         e.stun = s.stn;
       }
       if (!e.netTarget) e.netTarget = new THREE.Vector3();
+      // Each snapshot yields the creature's true velocity for the inter-snapshot prediction
+      // (`netUpdate`): consecutive targets over their real arrival span. A snapshot after a
+      // >2 s gap is a stream restart, not motion — no estimate from it.
+      const snapNow = nowSec();
+      if (e.netSnapAt > 0) {
+        const dtSnap = snapNow - e.netSnapAt;
+        if (dtSnap > 0.002 && dtSnap < 2) {
+          _v.set(s.x - e.netTarget.x, s.y - e.netTarget.y, s.z - e.netTarget.z).multiplyScalar(1 / dtSnap);
+          const sp = _v.length();
+          if (sp > 60) _v.multiplyScalar(60 / sp);
+          e.netVel.lerp(_v, 0.5);
+        } else {
+          e.netVel.set(0, 0, 0);
+        }
+      }
       e.netTarget.set(s.x, s.y, s.z);
+      e.netSnapAt = snapNow;
       if (e.isBoss && e.towerIdx < 0) {
         let bestIdx = -1;
         let bestD = Infinity;

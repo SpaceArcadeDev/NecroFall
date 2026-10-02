@@ -149,12 +149,13 @@ export const CONFIG = {
   netTickPlayers: 20, // Hz client -> host
   netTickSnapshot: 12, // Hz host -> clients
   /**
-   * OFFICIAL matches (2026-09-29): the client streams its full pose+stats to the match
-   * authority through the SpacetimeDB relay at this rate — one reducer call per tick, so it
-   * matches what peers actually SEE in P2P (poses rebroadcast in the 12 Hz snapshots) while
-   * keeping the per-player cost bounded. Idle players drop to a 1 Hz heartbeat.
+   * OFFICIAL matches (2026-09-29): each client streams its full pose+stats to every peer at
+   * this rate — the P2P client-report cadence, so remote bodies read exactly as they do in
+   * P2P. 20 Hz (raised from 15, 2026-10-03 “jittery movement” fix); the broadcast fan-out
+   * keeps this at ONE relay row per tick even in a full 9-seat match. Idle players drop to a
+   * 1 Hz heartbeat.
    */
-  netTickOfficialPose: 15,
+  netTickOfficialPose: 20,
   /**
    * Remote player motion. Poses arrive stamped with the *sender's* time (see ClockSync), so every
    * other player is drawn a little behind that timeline and the buffer is sized from what the

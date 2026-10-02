@@ -38,6 +38,14 @@ import { finishMatchInternal, noteTickUsage } from './rewards';
 const DT_SECONDS = Number(TICK_INTERVAL_US) / 1_000_000;
 /** Inputs are accepted at most this often per player (plan §39 rate discipline). */
 const INPUT_MIN_GAP_US = 40_000n;
+/**
+ * A client that has been quiet for this long and then sends a LOWER sequence is a RESTARTED
+ * client (page reload), not a stale packet: accept it and rebase the high-water mark. Without
+ * this, a reloaded client's inputs were dropped until its counter climbed past the previous
+ * session's (its first inputs restart at 1), which read as "desynced / unresponsive for a
+ * minute after reconnecting" and kept the seat looking disconnected to the empty-match grace.
+ */
+const REBOOT_SEQ_GAP_US = 5_000_000n;
 /** Pose corrections are accepted at most this often per player. */
 const POSE_MIN_GAP_US = 400_000n;
 /** An input older than this means the player stopped reporting (or dropped). */
@@ -96,7 +104,16 @@ export const submit_input = spacetimedb.reducer(
     if (!target) throw new SenderError('You are not in a running match.');
     if (target.left) return; // abandoned seat — input never revives it
 
+    // LIVENESS FIRST (bug fix 2026-10-03): ANY input — even one the sequence guards below
+    // would drop — proves the seat is back. A reload inside the 30 s empty-match grace used to
+    // send its first inputs with a RESTARTED sequence while the old row still carried the
+    // previous session's high-water mark: every packet was dropped as stale, `connected` never
+    // flipped, and the match concluded under the returning player's feet.
     const now = nowMicros(ctx);
+    if (!target.connected) {
+      ctx.db.match_player.id.update({ ...target, connected: true, updated_at: ctx.timestamp });
+    }
+
     let row = seekInput(ctx, target.match_id, ctx.sender);
     if (!row) {
       row = ctx.db.match_input.insert({
@@ -113,7 +130,14 @@ export const submit_input = spacetimedb.reducer(
         last_pose_at: now,
       });
     }
-    if (seq <= row.seq) return;                 // stale packet (plan §52 sequencing)
+    if (seq <= row.seq) {
+      // Duplicate / out-of-order inside ONE session → drop. A restarted client (reload) begins
+      // at a low counter again: after a quiet gap accept it and rebase the high-water mark.
+      if (now - row.last_input_at <= REBOOT_SEQ_GAP_US) return;
+      const rebased = seq > 0n ? seq - 1n : 0n;
+      ctx.db.match_input.id.update({ ...row, seq: rebased });
+      row = { ...row, seq: rebased };
+    }
     if (now - row.last_input_at < INPUT_MIN_GAP_US) return; // reducer spam guard
 
     const [mx, my, mz] = clampVec(move_x, move_y, move_z, MAX_MOVE_SPEED);
@@ -126,10 +150,6 @@ export const submit_input = spacetimedb.reducer(
       dash_seq: row.dash_seq + (dash ? 1n : 0n),
       last_input_at: now,
     });
-
-    if (!target.connected) {
-      ctx.db.match_player.id.update({ ...target, connected: true, updated_at: ctx.timestamp });
-    }
   }
 );
 

@@ -11,13 +11,16 @@
 //     sample when they see it,
 //   • the server CORROBORATES the sample against the target's OWN recent pose
 //     claim: if the streamed position and the claimed position disagree beyond
-//     a generous slack, the seat lied to somebody. Two corroborated sightings
-//     (spaced by the report cooldown) remove the offender mid-match.
+//     a generous, TIME-AWARE slack, the seat lied to somebody. Three corroborated
+//     sightings (spaced by the report cooldown) remove the offender mid-match.
 //
 // Corroboration is what keeps legit teleports safe: a recall/respawn jumps in
 // the stream AND is reported to the server via `sync_pose` right away, so the
 // sample matches the claim and the report is dismissed. Only a stream that
-// disagrees with the seat's own server record counts.
+// disagrees with the seat's own server record counts. The slack also grows with
+// the claim's age (a claim up to 5 s old + a fast, high-level runner's honest
+// travel = far more than the fixed 30 u the old check allowed — that fixed
+// number was why high-level players got removed as “cheaters”).
 //
 // Abuse is bounded: one report per (reporter, target) per cooldown, and a
 // reporter whose reports keep failing corroboration is ignored for that match.
@@ -29,26 +32,38 @@ import { MATCH_RUNNING } from '../constants';
 
 /** Only compare the sample against a pose claim this recent (micros). */
 const CLAIM_FRESH_US = 5_000_000n;
-/** Claim-vs-stream disagreement (world units) beyond which a report is corroborated.
- *  Generous on purpose: max-speed travel between claims is ~25 u, so 30+ cannot be
- *  explained by honest movement — only by a stream that says something else than the
- *  seat's own record. */
+/**
+ * Base measurement slack between the streamed sample and the claim (world units), and the
+ * honest movement rate allowed ON TOP of it per second of claim age (u/s).
+ *
+ * A sample is checked against a claim the seat made up to 5 s earlier. A fast high-level player
+ * can honestly cover a lot of ground in that window (dash momentum deliberately has no speed
+ * ceiling), so a FIXED slack corroborated ordinary movement — every high-level runner was
+ * eventually removed as a “cheater” (user report 2026-10-03). 30 u + 50 u/s of claim age keeps
+ * every honest run inside the allowance (the server itself clamps inputs to 24 u/s; even a
+ * chained dash stays well under 50 sustained) while a real teleport — hundreds of units in one
+ * step — still fails it.
+ */
 const CLAIM_SLACK = 30;
+const CLAIM_AGE_SPEED = 50;
 /** Same reporter may file about the same target at most this often (anti-spam). */
 const REPORT_COOLDOWN_US = 6_000_000n;
 /** After this many uncorroborated reports a reporter loses their vote for the match. */
 const MAX_FALSE_REPORTS = 4;
-/** Corroborated sightings needed to remove the offender (repeated, not a single blip). */
-const KICKS_AT_CORROBORATED = 2;
+/** Corroborated sightings needed to remove the offender (repeated, not a single blip).
+ *  Raised 2 → 3 alongside the time-aware corroboration: false positives must vanish, while a
+ *  real teleporter still stacks three sightings within the same match. */
+const KICKS_AT_CORROBORATED = 3;
 /** kind length cap. */
 const KIND_MAX_CHARS = 16;
 
 /** The target seat's latest self-reported pose claim, if fresh enough to mean anything. */
-function freshClaim(ctx: any, matchId: number, identity: any, nowUs: bigint): { x: number; y: number; z: number } | null {
+function freshClaim(ctx: any, matchId: number, identity: any, nowUs: bigint): { x: number; y: number; z: number; ageUs: bigint } | null {
   for (const row of ctx.db.match_input.match_id.filter(matchId)) {
     if (row.identity.toHexString() !== identity.toHexString()) continue;
-    if (nowUs - (row.last_pose_at as bigint) > CLAIM_FRESH_US) return null;
-    return { x: row.pose_x, y: row.pose_y, z: row.pose_z };
+    const ageUs = nowUs - (row.last_pose_at as bigint);
+    if (ageUs > CLAIM_FRESH_US) return null;
+    return { x: row.pose_x, y: row.pose_y, z: row.pose_z, ageUs };
   }
   return null;
 }
@@ -98,10 +113,12 @@ export const report_violation = spacetimedb.reducer(
     if (recentSameTarget) return;
     if (falseReports >= MAX_FALSE_REPORTS) return; // this reporter's reports are ignored
 
-    // Corroboration: the streamed sample must CONTRADICT the target's own recent claim.
+    // Corroboration: the streamed sample must CONTRADICT the target's own recent claim —
+    // including the distance a fast, honest player could have covered since that claim.
     const claim = freshClaim(ctx, match_id, target.identity, nowUs);
+    const allowed = claim ? CLAIM_SLACK + CLAIM_AGE_SPEED * (Number(claim.ageUs) / 1e6) : Number.POSITIVE_INFINITY;
     const d = claim ? Math.hypot(x - claim.x, y - claim.y, z - claim.z) : 0;
-    const corroborated = Boolean(claim) && d > CLAIM_SLACK;
+    const corroborated = Boolean(claim) && d > allowed;
 
     ctx.db.violation_report.insert({
       id: 0,

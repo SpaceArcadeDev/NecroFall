@@ -102,11 +102,22 @@ const CONFLICT_CONCEDE_MS = 6000;
  * Legit teleports (recall, respawn) DO jump — they are single events, and they match the
  * sender's own server-side pose claim, so the server dismisses reports about them (see
  * `spacetimedb/src/game/verification.ts`). This detector never gates a frame.
+ *
+ * 2026-10-03 REVISION (user report: “high-level players get kicked as cheaters frequently”):
+ *  • speeds are measured between the SENDER's own pose timestamps (`state.pt`), never on packet
+ *    arrival time — a burst of queued frames (a retransmit, a relay flush after a lull, a
+ *    background tab waking) used to read as a huge speed and file reports about honest players;
+ *  • dash / Blitz / frozen / death / respawn samples never strike: those legitimately burst or
+ *    teleport, and at high level the dash-momentum chain is the intended movement kit;
+ *  • thresholds sit clearly beyond anything the game itself can produce (~35 u/s with a chained
+ *    dash + speed perks): 80 u/s sustained or a 60 u jump between two consecutive sub-second
+ *    samples is evidence, not play.
  */
-const STREAM_SPEED_MAX = 45;
-const STREAM_JUMP_DIST = 30;
-/** Anomalous samples needed inside the window before a report is filed... */
-const STREAM_STRIKE_WINDOW_MS = 6000;
+const STREAM_SPEED_MAX = 80;
+const STREAM_JUMP_DIST = 60;
+/** Anomalous samples needed inside the window before a report is filed... (widened 6→8 s so a
+ *  single recovery hiccup can never line up three strikes). */
+const STREAM_STRIKE_WINDOW_MS = 8000;
 const STREAM_STRIKES_TO_REPORT = 3;
 /** ...and the pause between reports about the same seat (the server cooldown is 6 s). */
 const REPORT_COOLDOWN_MS = 7000;
@@ -224,6 +235,12 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private hookedConn: unknown = null;
   /** performance.now of the last snapshot received FROM the current authority. */
   private authoritySnapAt = 0;
+  /**
+   * True once ANY snapshot of this match has arrived. A healthy authority is SILENT until its
+   * world drops in (necrotech picker + planet build), so the silence watchdog must not fire
+   * before the snapshot layer has ever been alive — see `watchdogTick`.
+   */
+  private authorityHeard = false;
   /** performance.now when `beginMatch` armed this match (the watchdog's startup grace). */
   private matchStartAt = 0;
   /** Seats the silence watchdog has written off — promoted past until they speak again. */
@@ -238,7 +255,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   /** Live mesh between the match's seats. Null before the first roster push / after reset. */
   private link: OfficialP2PLink | null = null;
   /** Per-sender last observed stream pose (anti-cheat detector state). */
-  private streamPose = new Map<string, { x: number; y: number; z: number; t: number }>();
+  private streamPose = new Map<string, { x: number; y: number; z: number; pt: number; alive: boolean }>();
   /** Per-sender strike/report bookkeeping for the stream detector. */
   private streamStrikes = new Map<string, { strikes: number; windowStart: number; lastReportAt: number; reports: number }>();
   /** Our own seat was force-removed — the shell is told exactly once. */
@@ -296,6 +313,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       const fromId = this.gameIdFor(row.fromHex);
       if (fromId === this.authorityId) {
         this.authoritySnapAt = now;
+        this.authorityHeard = true;
         this.silentSeats.delete(fromId);
       }
     }
@@ -341,6 +359,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     this.seenLast.clear();
     this.seenPrev.clear();
     this.authoritySnapAt = 0;
+    this.authorityHeard = false;
     this.matchStartAt = 0;
     this.silentSeats.clear();
     this.conflictSince.clear();
@@ -734,26 +753,43 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
    * Send one P2P message to every seat except `exceptId` — routed PER PAIR: direct over the
    * WebRTC mesh where possible, relay-targeted where not. (Direct sends carry no `ex` field:
    * targeting is already exact, one message per peer.)
+   *
+   * FAN-OUT (2026-10-03): seats NOT reachable directly share ONE broadcast relay row instead of
+   * one reducer call per peer. The old per-peer relay turned a 15 Hz pose stream into (N-1)
+   * calls per tick — on a 5+ seat match that consumed the server's 90 msg/s/sender budget and
+   * silently DROPPED pose/snapshot frames (the “jittery movement / enemies teleporting”
+   * report). One row per tick keeps the budget flat no matter the match size; the `ex` list
+   * tells direct-delivered seats to skip the relayed copy.
    */
   broadcastNet(msg: OfficialNetMessage, exceptId?: string): void {
     if (!this.matchId) return;
     // Liveness anchor of the authority role: a broadcast snapshot went out just now.
     if (msg.t === 's' && !exceptId) this.lastSnapshotSentAt = performance.now();
+    const excluded: string[] = [];
+    let relayNeeded = false;
     for (const row of ClientCache.shared.matchPlayers(this.matchId)) {
       if (row.left) continue;
       const hex = hexOf(row.identity);
       if (!hex || hex === this.myHex) continue;
-      if (exceptId && this.gameIdFor(hex) === exceptId) continue;
-      if (this.link?.send(row.id, msg)) continue;
-      this.relay(msg, hex);
+      const gameId = this.gameIdFor(hex);
+      if (exceptId && gameId === exceptId) {
+        excluded.push(gameId); // addressed exclusion — never receives this broadcast
+        continue;
+      }
+      if (this.link?.send(row.id, msg)) {
+        excluded.push(gameId); // direct delivery landed — the relayed copy must skip this seat
+        continue;
+      }
+      relayNeeded = true;
     }
+    if (relayNeeded) this.relay(msg, '', excluded.length ? { ex: excluded } : undefined);
   }
 
   /** Serialize one message into a `match_msg` row (kind + JSON body, `t` stripped). */
-  private relay(msg: OfficialNetMessage, toHex: string): void {
+  private relay(msg: OfficialNetMessage, toHex: string, extra?: Record<string, unknown>): void {
     const kind = typeof msg.t === 'string' ? msg.t : '';
     if (!kind) return;
-    const body: Record<string, unknown> = {};
+    const body: Record<string, unknown> = { ...extra };
     for (const [k, v] of Object.entries(msg)) if (k !== 't') body[k] = v;
     this.relaySeq += 1n;
     try {
@@ -838,10 +874,16 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
       const fromId = this.gameIdFor(fromHex);
       if (fromId === this.authorityId) {
         this.authoritySnapAt = now;
+        this.authorityHeard = true;
         this.silentSeats.delete(fromId);
       }
     }
-    if (typeof body.ex === 'string' && body.ex === this.myGameId) return;
+    if (typeof body.ex === 'string') {
+      if (body.ex === this.myGameId) return;
+    } else if (Array.isArray(body.ex) && (body.ex as unknown[]).includes(this.myGameId)) {
+      // The fan-out broadcast names every direct-delivered seat; those already got the message.
+      return;
+    }
     if (kind === 's' && this.authorityId === this.myGameId) {
       // DOUBLE AUTHORITY: resolve before the snapshot reaches the game ('apply' = we yielded).
       const verdict = this.resolveSnapshotConflict(fromHex);
@@ -857,6 +899,12 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
    * the SERVER corroborates the sample against the sender's own pose record before removing
    * them (`spacetimedb/src/game/verification.ts`). Legit teleports (recall/respawn) are single
    * jumps that match the sender's own sync_pose claim, so they can never corroborate.
+   *
+   * MEASURED ON THE SENDER'S CLOCK (2026-10-03): `state.pt` is when the pose was true on the
+   * sender's own timeline. Arrival-time deltas turned ordinary delivery bursts into huge speed
+   * readings (and with them false reports about fast, high-level players). Samples are also
+   * skipped across states that legitimately burst: dash, Blitz, menu-freeze, and any point
+   * where the sender just died or respawned.
    */
   private inspectStream(fromHex: string, body: Record<string, unknown>): void {
     const state = body.state as Record<string, unknown> | undefined;
@@ -865,16 +913,30 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     const y = Number(state.y);
     const z = Number(state.z);
     if (![x, y, z].every(Number.isFinite)) return;
-    const now = performance.now();
+    // `pt` is the pose's own timestamp (Player.toNet); `body.time` is the send clock fallback.
+    const pt = Number(state.pt ?? body.time);
+    if (!Number.isFinite(pt)) return;
+    const alive = Number(state.alive) !== 0;
+    const dashing = Number(state.dsh) > 0;
+    const blitzing = Number(state.bl) === 1;
+    const frozen = Number(state.frz) === 1;
     const prev = this.streamPose.get(fromHex);
-    this.streamPose.set(fromHex, { x, y, z, t: now });
+    this.streamPose.set(fromHex, { x, y, z, pt, alive });
     if (!prev) return;
-    const dt = Math.max(0.05, (now - prev.t) / 1000);
+    // The gap between two samples on the SENDER's timeline. A paused stream (idle heartbeat,
+    // a stalled tab) is not one movement sample — rebase instead of judging the distance.
+    const dt = pt - prev.pt;
+    if (!(dt > 0.02 && dt < 1.5)) return;
+    // Dash momentum, Blitz rides, picker freezes and death/respawn jumps are the game's own
+    // mechanics at high level; none of them is evidence.
+    if (dashing || blitzing || frozen) return;
+    if (!alive || !prev.alive || alive !== prev.alive) return;
     const dist = Math.hypot(x - prev.x, y - prev.y, z - prev.z);
     const speed = dist / dt;
     const anomalous = (speed > STREAM_SPEED_MAX && dist > 6) || dist > STREAM_JUMP_DIST;
     if (!anomalous) return;
-    const st = this.streamStrikes.get(fromHex) ?? { strikes: 0, windowStart: now, lastReportAt: 0, reports: 0 };
+    const st = this.streamStrikes.get(fromHex) ?? { strikes: 0, windowStart: performance.now(), lastReportAt: 0, reports: 0 };
+    const now = performance.now();
     if (now - st.windowStart > STREAM_STRIKE_WINDOW_MS) {
       st.strikes = 0;
       st.windowStart = now;
@@ -1006,6 +1068,18 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     }
     if (now - this.matchStartAt < AUTHORITY_SILENCE_GRACE_MS) return;
     if (!this.authorityId || this.authorityId === this.myGameId) return; // we hold (or will hold) the role
+    // PRE-PLAY SILENCE IS NORMAL (bug fix 2026-10-03): a healthy authority broadcasts nothing
+    // until its world drops in — the NECROTECH picker plus the planet build routinely exceed
+    // 20 s. Before the first snapshot of the match has EVER arrived, only a match older than a
+    // minute counts as stuck; otherwise every official match started with a false promotion
+    // (extra authority, reset clocks and snapshot re-starts = the “jittery at match start” and
+    // “everyone teleports once the picker closes” reports). After the first snapshot, the usual
+    // silence rules apply — a mid-match stall still hands the role over.
+    if (!this.authorityHeard) {
+      const matchRow = ClientCache.shared.match(this.matchId);
+      const matchAgeS = matchRow ? Number(matchRow.serverTick) / 10 : 0;
+      if (matchAgeS < 60) return;
+    }
     const authHex = this.hexForGameId(this.authorityId);
     const last = Math.max(this.authoritySnapAt, authHex ? this.seenLast.get(authHex) ?? 0 : 0);
     if (last > 0 && now - last <= AUTHORITY_SILENCE_MS) return;
@@ -1359,6 +1433,18 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     // replays a few seconds of history) and wait for the live stream from here.
     this.clearRelayState();
     this.matchStartAt = performance.now(); // the authority watchdog's startup grace
+    // EARLY LIVENESS (bug fix 2026-10-03): re-mark the reviving seat connected NOW, before the
+    // world boots. A reload that lands inside the 30 s empty-match grace used to finish the
+    // match while the client was still growing its planet — the first input only goes out once
+    // PLAYING begins and the build can take longer than the grace. One no-op input (the server
+    // marks `connected` before its sequence guards, so a restarted counter still lands) keeps
+    // the match alive for the returning survivor.
+    try {
+      this.seq += 1n;
+      submitInput({ moveX: 0, moveY: 0, moveZ: 0, aimX: 0, aimY: 0, aimZ: 1, seq: this.seq, dash: false });
+    } catch {
+      /* liveness only — a ping must never block the boot */
+    }
     for (const row of cache.matchMessages(matchId)) {
       if (row.id > this.lastRelayId) this.lastRelayId = row.id;
     }

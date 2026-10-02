@@ -10,7 +10,7 @@
  * like the tree canopies (screen-space fade + stipple, no transparency sorting).
  */
 import * as THREE from 'three/webgpu';
-import { color, Fn, mix, normalWorld, screenSize, screenUV, smoothstep, uniform, vec2 } from 'three/tsl';
+import { color, float, Fn, mix, normalWorld, screenSize, screenUV, smoothstep, uniform, vec2 } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
@@ -19,10 +19,11 @@ import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
 
 /**
- * Screen-space dot size (drawing-buffer pixels) of the spike see-through stipple. A per-pixel
- * hash is invisible at phone DPR; ~4.5 px cells read as actual dots on every screen scale.
+ * Screen-space dot SPACING (drawing-buffer pixels) of the spike see-through dissolve. The dots
+ * are round, radial-distance shapes (never square cells — that read as pixelation): at the
+ * player they are distinct round dots, growing with distance until they merge into solid rock.
  */
-const SEE_THROUGH_DOT_PX = 4.5;
+const SPIKE_DOT_SPACING = 11;
 
 export class Spikes {
   readonly mesh: THREE.InstancedMesh | null;
@@ -53,11 +54,11 @@ export class Spikes {
     // scaled spike spread (+ the lean), so no cone can be walked through.
     for (const cluster of clusters) obstacles?.add(cluster, 1.3 * cluster.scale, 2.6 * cluster.scale, false);
 
-    // DOTTED SEE-THROUGH (user ask, revised): the spike dissolves in a chunky DOT pattern near
-    // the player instead of vanishing outright — the canopy bubble's fade, but the near zone keeps
-    // a stipple so the dissolve reads as the rock breaking up, not as a clean hole. The dots are
-    // quantised to ~4.5 drawing-buffer pixels (per-pixel noise was invisible at phone DPR) and the
-    // stipple weight is raised so they are clearly visible; `transparent` stays false — the pattern
+    // ROUND-DOT SEE-THROUGH (user ask, revised again): the spike dissolves into ROUND dots near
+    // the player and the dots grow with distance until the rock merges back to solid at the
+    // bubble's rim. The dot is a radial-distance shape (smooth circular edge — no square cells,
+    // no pixelation); one dot per screen cell with a jittered centre and radius so the pattern
+    // reads as scattered dots, never a screen-door grid. `transparent` stays false: the pattern
     // rides the alpha test (discard), no sorting.
     const seeThroughPosition = uniform(vec2(0.5, 0.5));
     const seeThroughEdgeMin = uniform(0.1);
@@ -67,13 +68,23 @@ export class Spikes {
       toPlayer.mulAssign(vec2((screenSize.x as any).div(screenSize.y), 1));
       const distanceToPlayer = toPlayer.length();
       const fade = smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
-      // chunked cells → dots you can actually see (a per-pixel hash at high DPR is just noise)
-      const cellX = (screenUV.x as any).mul(screenSize.x).div(SEE_THROUGH_DOT_PX).floor();
-      const cellY = (screenUV.y as any).mul(screenSize.y).div(SEE_THROUGH_DOT_PX).floor();
-      const dot: any = cellX.mul(127.1).add(cellY.mul(311.7)).sin().mul(43758.5453).fract().abs();
-      // near the player ~70 % of the cells survive (a legible dotted break-up); far away the fade
-      // takes over and the spike is solid again
-      return (fade as any).mul(0.8).add(dot.mul(0.35));
+
+      // one dot per cell, jittered centre + radius (so it never looks like a mechanical grid)
+      const gx = (screenUV.x as any).mul(screenSize.x).div(SPIKE_DOT_SPACING);
+      const gy = (screenUV.y as any).mul(screenSize.y).div(SPIKE_DOT_SPACING);
+      const cx = gx.floor();
+      const cy = gy.floor();
+      const h1: any = cx.mul(127.1).add(cy.mul(311.7)).sin().mul(43758.5453).fract().abs();
+      const h2: any = cx.mul(269.5).add(cy.mul(183.3)).sin().mul(28001.73).fract().abs();
+      const localX = (gx.fract() as any).sub(0.5).add(h1.sub(0.5).mul(0.3));
+      const localY = (gy.fract() as any).sub(0.5).add(h2.sub(0.5).mul(0.3));
+      const d = localX.mul(localX).add(localY.mul(localY)).sqrt();
+
+      // radius: distinct dots at the player (r ≈ 0.36 of a half-cell) → past the corners at the
+      // rim (r ≥ ~1.0 fills every cell) so the material is SOLID again outside the bubble
+      const radius = mix(float(0.36), float(1.1), fade).mul(h1.mul(0.3).add(0.9));
+      // survive inside the round dot; smoothstep gives the circle an antialiased edge
+      return (radius as any).sub(d).smoothstep(0, 0.06);
     })();
 
     const material = new MeshDefaultMaterial({

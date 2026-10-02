@@ -18,6 +18,12 @@ import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
 
+/**
+ * Screen-space dot size (drawing-buffer pixels) of the spike see-through stipple. A per-pixel
+ * hash is invisible at phone DPR; ~4.5 px cells read as actual dots on every screen scale.
+ */
+const SEE_THROUGH_DOT_PX = 4.5;
+
 export class Spikes {
   readonly mesh: THREE.InstancedMesh | null;
   readonly spikeCount: number;
@@ -47,11 +53,12 @@ export class Spikes {
     // scaled spike spread (+ the lean), so no cone can be walked through.
     for (const cluster of clusters) obstacles?.add(cluster, 1.3 * cluster.scale, 2.6 * cluster.scale, false);
 
-    // SEE-THROUGH (user ask: hide it "like the tree canopy" when the player is in view): the
-    // same screen-space bubble the canopy leaves use — inside the bubble the spike fragments are
-    // COMPLETELY discarded, so nothing is left dotted in front of the player. `transparent` stays
-    // false; the fade rides the material's alpha test (discard, no sorting). The edge window is
-    // identical to the canopy's (0.1 → 0.26), so both systems clear the same area of screen.
+    // DOTTED SEE-THROUGH (user ask, revised): the spike dissolves in a chunky DOT pattern near
+    // the player instead of vanishing outright — the canopy bubble's fade, but the near zone keeps
+    // a stipple so the dissolve reads as the rock breaking up, not as a clean hole. The dots are
+    // quantised to ~4.5 drawing-buffer pixels (per-pixel noise was invisible at phone DPR) and the
+    // stipple weight is raised so they are clearly visible; `transparent` stays false — the pattern
+    // rides the alpha test (discard), no sorting.
     const seeThroughPosition = uniform(vec2(0.5, 0.5));
     const seeThroughEdgeMin = uniform(0.1);
     const seeThroughEdgeMax = uniform(0.26);
@@ -59,7 +66,14 @@ export class Spikes {
       const toPlayer = screenUV.sub(seeThroughPosition) as any;
       toPlayer.mulAssign(vec2((screenSize.x as any).div(screenSize.y), 1));
       const distanceToPlayer = toPlayer.length();
-      return smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
+      const fade = smoothstep(seeThroughEdgeMin, seeThroughEdgeMax, distanceToPlayer);
+      // chunked cells → dots you can actually see (a per-pixel hash at high DPR is just noise)
+      const cellX = (screenUV.x as any).mul(screenSize.x).div(SEE_THROUGH_DOT_PX).floor();
+      const cellY = (screenUV.y as any).mul(screenSize.y).div(SEE_THROUGH_DOT_PX).floor();
+      const dot: any = cellX.mul(127.1).add(cellY.mul(311.7)).sin().mul(43758.5453).fract().abs();
+      // near the player ~70 % of the cells survive (a legible dotted break-up); far away the fade
+      // takes over and the spike is solid again
+      return (fade as any).mul(0.8).add(dot.mul(0.35));
     })();
 
     const material = new MeshDefaultMaterial({

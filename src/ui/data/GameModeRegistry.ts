@@ -23,8 +23,8 @@ export interface GameModeDefinition {
   /** Big-number slot in the card's top-right (“3v3v3”, “1”, “∞”, …). */
   players: string;
   official: boolean;
-  /** The written-out primary call-to-action — kept for copy; the card's play button
-   *  itself reads a uniform "GO" (user ask 2026-10-03). */
+  /** The written-out primary call-to-action — the play button reads it for CUSTOM and
+   *  FREEROAM; every other mode shows the uniform "GO" (user ask 2026-10-03). */
   cta: string;
   /** Accent used for the icon plate + CTA glow (matches the game's mode colour). */
   accent: string;
@@ -114,10 +114,17 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
 ];
 
 /**
+ * Modes whose play button keeps its written-out call-to-action instead of the
+ * uniform "GO" (user ask 2026-10-03): CUSTOM → CREATE LOBBY, FREEROAM → START ROAM.
+ */
+const PLAY_CTA_MODES = new Set<GameModeDefinition['id']>(['custom', 'freeroam']);
+
+/**
  * The card action row (§13): ALWAYS renders every declared action, in registry
  * priority order. A missing handler renders the button disabled with a reason —
  * never removed, so mobile and desktop keep the identical action set. The primary
- * action reads a uniform "GO" (user ask 2026-10-03).
+ * action reads a uniform "GO" (user ask 2026-10-03) — except CUSTOM and FREEROAM,
+ * which keep their written-out CTA (user ask 2026-10-03).
  */
 export function renderModeActions(
   mode: GameModeDefinition,
@@ -138,8 +145,9 @@ export function renderModeActions(
     const handler = handlers[def.id];
     row.appendChild(
       makeButton({
-        // ONE uniform label (user ask 2026-10-03): every mode's play button says GO.
-        label: def.id === 'play' ? 'GO' : def.label,
+        // ONE uniform label (user ask 2026-10-03): every mode's play button says GO —
+        // except CUSTOM and FREEROAM, which keep their written-out call-to-action.
+        label: def.id === 'play' ? (PLAY_CTA_MODES.has(mode.id) ? mode.cta : 'GO') : def.label,
         icon: def.icon,
         tone: def.id === 'play' ? 'primary' : def.tone,
         action: def.id,

@@ -26,6 +26,7 @@ import {
   Fn,
   If,
   Loop,
+  max,
   mix,
   normalize,
   positionWorld,
@@ -105,10 +106,24 @@ export class Grass {
   private readonly uBladeRandomness = uniform(0.6);
   /** Wind sway amount — the lawn visibly ripples (raised twice per feedback: "add more sway"). */
   private readonly uSwayStrength = uniform(3.6);
-  /** 0 in the air, 1 on the ground — the player only parts grass at ground level. */
+  /** 0 in the air, 1 on the ground — the LOCAL player only parts grass at ground level. */
   private readonly uGrassPush = uniform(1);
   /** Player world position (planet space) — the parting is centred EXACTLY here. */
   private readonly uPushCenter = uniform(new THREE.Vector3(1, 0, 0));
+
+  /**
+   * REMOTE WALKERS (user ask 2026-10-03): every other player's proxy position, one uniform pair
+   * per slot. The shader runs the trail loop for blades near ANY walker, so other survivors'
+   * wakes bent the lawn where THEY walked — without the grass shader becoming a planet-wide
+   * N-loop (the walker tests live behind a "any remote walker active?" branch).
+   */
+  private static readonly MAX_REMOTE_WALKERS = 7;
+  private readonly uWalkerPos: any[] = [];
+  private readonly uWalkerOn: any[] = [];
+  /** 1 while at least one remote walker is tracked — gates the per-blade walker tests. */
+  private readonly uWalkersActive = uniform(0);
+  /** Per-walker trail bookkeeping (player id → last dropped sample). */
+  private readonly walkerTrail = new Map<string, { last: THREE.Vector3; started: boolean }>();
 
   private subdivisions: number;
   /** Actually planted blades (acceptance can close the loop a hair early). */
@@ -134,6 +149,13 @@ export class Grass {
     private readonly uTime: any,
   ) {
     this.subdivisions = quality.grassSubdivisions();
+
+    // ---- remote-walker slots (positions + activity flags), driven by `update(focus, camera,
+    // walkers)` once per frame; all inactive until the first roster of proxies arrives.
+    for (let i = 0; i < Grass.MAX_REMOTE_WALKERS; i++) {
+      this.uWalkerPos.push(uniform(new THREE.Vector3(0, 1, 0)));
+      this.uWalkerOn.push(uniform(0));
+    }
 
     // ---- trample-trail buffer (blades stay parted where the player walked)
     this.trailData = new Float32Array(TRAIL_SLOTS * 4);
@@ -520,10 +542,26 @@ export class Grass {
       // (user ask: a MORE visible trail). Samples hold their full push for ~4 s
       // and spring back over the next 3 s, so the grass under a stopped player
       // recovers slowly instead of snapping upright. The ring buffer carries
-      // 96 m of history (96 slots × 1 m). It is BRANCHED: only blades within
-      // ~2.4 m of the player run the loop — every other blade skips all reads.
+      // 96 m of history (96 slots × 1 m). It is BRANCHED: only blades near a
+      // walker run the loop — every other blade skips all reads.
+      //
+      // REMOTE WALKERS (user ask 2026-10-03): "near a walker" now means near the LOCAL player
+      // OR any tracked remote player, so every survivor's wake bends the lawn where THEY
+      // walked. The per-blade cost of the remote test is one radial distance per walker slot,
+      // and the whole block sits behind `uWalkersActive` — in solo play the branch is inert.
+      const nearAny = playerDistance.lessThan(2.4).select(float(1), float(0)).toVar();
+      If((this.uWalkersActive as any).greaterThan(0.5), () => {
+        for (let w = 0; w < Grass.MAX_REMOTE_WALKERS; w++) {
+          const toWalker = basePosition.sub(this.uWalkerPos[w]);
+          const horizontalWalker = (toWalker as any).sub(direction.mul((toWalker as any).dot(direction)));
+          const walkerDistance = (horizontalWalker as any).length();
+          const active = (this.uWalkerOn[w] as any).greaterThan(0.5);
+          const nearWalker = active.select(walkerDistance.lessThan(2.4).select(float(1), float(0)), float(0));
+          nearAny.assign(max(nearAny, nearWalker));
+        }
+      });
       const trailBend = vec3(0, 0, 0).toVar();
-      If(playerDistance.lessThan(2.4), () => {
+      If(nearAny.greaterThan(0.5), () => {
         const accumulated = vec3(0, 0, 0).toVar();
         Loop(TRAIL_SLOTS, ({ i }) => {
           const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
@@ -544,7 +582,10 @@ export class Grass {
         trailBend.assign(accumulated.mul(0.45));
       });
 
-      const pushBend = clearingBend.add(trailBend).mul(tipness).mul(this.uGrassPush);
+      // NOTE: the local player's clearing still fades out mid-air (`uGrassPush`); the TRAIL is
+      // not gated by it (user ask 2026-10-03): a remote walker's wake must show regardless of
+      // where the LOCAL player happens to be, and pressed grass under a jump keeps its wake.
+      const pushBend = clearingBend.mul(this.uGrassPush).add(trailBend).mul(tipness);
 
       const vertexPosition = basePosition
         .add(facing.mul(shapeX))
@@ -571,7 +612,11 @@ export class Grass {
    * so the visible-cap test is what actually drops the planet behind the player. The engine's
    * own frustum culling runs on top of this for the sectors off to the sides.
    */
-  update(focusPlanetPosition?: THREE.Vector3, camera?: THREE.Camera): void {
+  update(
+    focusPlanetPosition?: THREE.Vector3,
+    camera?: THREE.Camera,
+    walkers?: readonly { id: string; pos: THREE.Vector3 }[],
+  ): void {
     const focus = focusPlanetPosition ?? this.lastFocus;
     if (!focus) return;
     this.lastFocus = focus;
@@ -595,13 +640,7 @@ export class Grass {
 
     // Drop a trample-trail sample every TRAIL_DROP_STEP metres of travel.
     if (!this.trailStarted || this.lastTrailPoint.distanceTo(focus) > TRAIL_DROP_STEP) {
-      const offset = (this.trailCursor % TRAIL_SLOTS) * 4;
-      this.trailCursor++;
-      this.trailData[offset] = focus.x;
-      this.trailData[offset + 1] = focus.y;
-      this.trailData[offset + 2] = focus.z;
-      this.trailData[offset + 3] = this.uTime.value as number;
-      this.trailTexture.needsUpdate = true;
+      this.pushTrailSample(focus);
       this.lastTrailPoint.copy(focus);
       this.trailStarted = true;
     }
@@ -610,6 +649,57 @@ export class Grass {
     this.scratchDir.copy(focus).normalize();
     const height = Math.max(0, focus.length() - this.surface.radiusAt(this.scratchDir));
     this.uGrassPush.value = 1 - smoothstepCpu01(0.35, 1.1, height);
+
+    // ---- REMOTE WALKERS (user ask 2026-10-03): the other players' proxy positions join the
+    // same trail ring and are published to the shader (blades near them run the trail loop too).
+    // Samples are only dropped while GROUNDED — trampling is a ground effect.
+    let slot = 0;
+    if (walkers) {
+      for (const w of walkers) {
+        if (slot >= Grass.MAX_REMOTE_WALKERS) break;
+        this.uWalkerPos[slot].value.copy(w.pos);
+        this.uWalkerOn[slot].value = 1;
+        slot++;
+        this.dropWalkerSample(w.id, w.pos);
+      }
+    }
+    for (; slot < Grass.MAX_REMOTE_WALKERS; slot++) this.uWalkerOn[slot].value = 0;
+    this.uWalkersActive.value = slot > 0 ? 1 : 0;
+  }
+
+  /** Append one trail sample (xyz + now) to the ring and re-upload the texture. */
+  private pushTrailSample(pos: THREE.Vector3): void {
+    const offset = (this.trailCursor % TRAIL_SLOTS) * 4;
+    this.trailCursor++;
+    this.trailData[offset] = pos.x;
+    this.trailData[offset + 1] = pos.y;
+    this.trailData[offset + 2] = pos.z;
+    this.trailData[offset + 3] = this.uTime.value as number;
+    this.trailTexture.needsUpdate = true;
+  }
+
+  /**
+   * A remote walker's path sample. Same ~1 m step as the local player (a hair wider — the wake
+   * only has to read as a trail), but GROUNDED ONLY: the parting is a ground effect, so a player
+   * mid-jump or on a fortress deck leaves no print until they come back down.
+   */
+  private dropWalkerSample(id: string, pos: THREE.Vector3): void {
+    let entry = this.walkerTrail.get(id);
+    if (!entry) {
+      if (this.walkerTrail.size > 24) this.walkerTrail.clear(); // pruned with the departing players
+      entry = { last: new THREE.Vector3(), started: false };
+      this.walkerTrail.set(id, entry);
+    }
+    this.scratchDir.copy(pos).normalize();
+    const height = Math.max(0, pos.length() - this.surface.radiusAt(this.scratchDir));
+    if (height > 1.1) {
+      entry.started = false;
+      return;
+    }
+    if (entry.started && entry.last.distanceTo(pos) < REMOTE_DROP_STEP) return;
+    this.pushTrailSample(pos);
+    entry.last.copy(pos);
+    entry.started = true;
   }
 
   private lastFocus: THREE.Vector3 | null = null;
@@ -668,6 +758,8 @@ function grassStats(): boolean {
   }
 }
 const TRAIL_DROP_STEP = 1.0; // metres between overlapping samples — one channel
+/** Remote walkers drop a sample every 1.2 m (same ring; a hair wider than the local player's). */
+const REMOTE_DROP_STEP = 1.2;
 
 /** CPU smoothstep (matches the shader semantics). */
 function smoothstepCpu01(edge0: number, edge1: number, x: number): number {

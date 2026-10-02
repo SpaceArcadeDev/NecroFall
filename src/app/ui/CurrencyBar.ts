@@ -53,20 +53,10 @@ export class CurrencyBar {
     this.settings.dataset.action = 'settings';
     this.settings.innerHTML = getIcon('settings');
     this.element.appendChild(this.settings);
-
-    // "?" — the how-to-play entry, to the LEFT of the settings gear.
-    this.howto = el('button', 'nf-top-settings nf-top-howto', '') as HTMLButtonElement;
-    this.howto.type = 'button';
-    this.howto.title = 'How to play';
-    this.howto.setAttribute('aria-label', 'How to play');
-    this.howto.dataset.action = 'howto';
-    this.howto.innerHTML = getIcon('help');
-    this.element.insertBefore(this.howto, this.settings);
     this.update();
   }
 
   readonly settings: HTMLButtonElement;
-  readonly howto: HTMLButtonElement;
   private avatarEl: HTMLElement;
 
   update(): void {

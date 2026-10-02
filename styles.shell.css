@@ -2333,10 +2333,11 @@ html.nf-onb-colony .count-badge { display: none; }
 
 /* PROFILE and GRAPHICS are fixed APP screens (the pane scrolls INSIDE the page): on a
    landscape phone the floating-nav clearance and the side gutters are reclaimed — every
-   pixel goes to the content. NOTE the higher specificity: it must beat `.no-nav` above. */
+   pixel goes to the content. NOTE the higher specificity: it must beat `.no-nav` above.
+   The TOP padding stays 8px like every other page (user ask 2026-10-03: one title anchor). */
 @media (orientation: landscape) and (max-height: 640px) {
   .nf-shell.no-nav:has(.profile-page) .nf-main,
-  .nf-shell.no-nav:has(.nf-gfx-page) .nf-main { padding: 6px 10px 8px; }
+  .nf-shell.no-nav:has(.nf-gfx-page) .nf-main { padding: 8px 10px 8px; }
 }
 
 /* The PROFILE and GRAPHICS pages are full-bleed app screens: the friends rail (a floating

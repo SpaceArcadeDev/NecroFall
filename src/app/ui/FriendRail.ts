@@ -77,6 +77,9 @@ export class FriendRail {
     // ---- the collapsed bar
     this.element = el('div', 'nf-rail');
     const drawer = button('', 'nf-rail-drawer', () => this.openSheet());
+    // (user ask 2026-10-03: the friends rail IS the FRIENDS entry point now that the nav bar
+    // carries EVENTS/CUSTOMIZE/MAP/PLAY — the action id keeps the dev audit true.)
+    drawer.dataset.action = 'friends';
     // (user ask 2026-09-29: the two drawer glyphs were swapped — the EXPAND control on the
     // collapsed bar wears the left-facing drawer mark; the sheet's control wears the right one.)
     drawer.innerHTML = ICON_COLLAPSE;

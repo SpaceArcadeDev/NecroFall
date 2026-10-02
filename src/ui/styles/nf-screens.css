@@ -27,22 +27,31 @@
   container-type: inline-size;
 }
 
-/* ONE responsive grid (§8): 3 columns on landscape mobile AND desktop, the
-   SAME six cards everywhere — no strip, no separate mobile markup. More than
-   six modes would scroll (hidden scrollbar), six never has to. */
+/* ONE responsive grid (§8; user ask 2026-10-03: the grid FILLS the page — the
+   rows own the leftover height instead of hugging their content, so the cards
+   are as big as the frame allows). 3 columns on landscape AND desktop, the SAME
+   six cards everywhere; >6 modes scroll (hidden scrollbar), six never has to. */
+.play-page .play-col {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 .play-page .play-modes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  /* the OLD sheet left a `grid-template-rows: minmax(0,1fr)` on this element —
-     it stretched row 1 to fill the frame and made the two rows uneven. Rows
-     are CONTENT-sized now; the frame fills naturally and >6 modes scroll. */
+  /* rows were CONTENT-sized before, which left a dead band under two rows of six */
   grid-template-rows: none;
-  grid-auto-rows: auto;
-  align-content: start;
+  grid-auto-rows: minmax(min(120px, 24vh), 1fr);
+  align-content: stretch;
   gap: clamp(6px, 1.2vw, 14px);
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: 10px;
+  padding-bottom: 0;
   scrollbar-width: none;
 }
 
@@ -50,8 +59,8 @@
   display: none;
 }
 
-.play-page:not(.mode-picked) .nf-mode-card {
-  min-height: clamp(150px, 24vh, 230px);
+.play-page .nf-mode-card {
+  height: 100%;
   animation: nf-card-enter 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
   animation-delay: calc(var(--index, 0) * 35ms);
 }
@@ -69,135 +78,68 @@
 
 /* Portrait: two columns (§8) */
 @media (orientation: portrait) {
-  .play-page:not(.mode-picked) .play-modes {
+  .play-page .play-modes {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-/* Short landscape frames: the SAME cards compress — description steps aside,
-   the icon joins the title row, the CTA stays a full 44px target. Nothing a
-   player NEEDS is removed; >6 modes would still scroll (§8/§30). */
+/* Short landscape frames: the SAME cards compress — the tag/players row steps
+   aside and the plate tightens; the name, its subtext and the CTA never leave. */
 @media (max-height: 520px) {
-  .play-page:not(.mode-picked) .play-modes {
+  .play-page .play-modes {
     gap: 5px;
-    padding-bottom: 2px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card {
-    min-height: 78px;
-    padding: 5px 8px;
-    gap: 4px;
+  .play-page .nf-mode-card {
+    padding: 6px 9px;
+    gap: 5px;
     border-radius: 14px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__top {
+  .play-page .nf-mode-card__top {
     display: none;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__plate {
-    width: 24px;
-    height: 24px;
-    border-radius: 8px;
+  .play-page .nf-mode-card__row {
+    gap: 8px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__plate svg {
-    width: 14px;
-    height: 14px;
+  .play-page .nf-mode-card__plate {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__title {
-    font-size: 13.5px;
+  .play-page .nf-mode-card__plate svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .play-page .nf-mode-card__title {
+    font-size: 14px;
     letter-spacing: 0.1em;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__desc {
-    display: none;
+  .play-page .nf-mode-card__sub {
+    font-size: 10px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__actions {
-    margin-top: 0;
-  }
-
-  .play-page:not(.mode-picked) .nf-mode-card__actions .nf-btn {
+  .play-page .nf-mode-card__actions .nf-btn {
     min-height: 44px;
     font-size: 11px;
     padding: 0 10px;
     gap: 6px;
   }
 
-  .play-page:not(.mode-picked) .nf-mode-card__actions .nf-btn__icon {
+  .play-page .nf-mode-card__actions .nf-btn__icon {
     width: 15px;
     height: 15px;
   }
 }
 
-/* Narrow portrait cards: same compression as short frames (§29) */
-@container (max-width: 700px) {
-  .play-page:not(.mode-picked) .nf-mode-card__desc {
-    display: none;
-  }
-}
-
-/* the picked morph: cards collapse to chips, the setup drops in below (§12). */
-.play-page.mode-picked .play-modes {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 6px;
-  overflow: visible;
-  padding: 0;
-}
-
-.play-page.mode-picked .nf-mode-card {
-  padding: 7px 9px;
-  gap: 4px;
-  transform: none;
-}
-
-.play-page.mode-picked .nf-mode-card__plate {
-  width: 26px;
-  height: 26px;
-  border-radius: 9px;
-}
-
-.play-page.mode-picked .nf-mode-card__plate svg {
-  width: 14px;
-  height: 14px;
-}
-
-.play-page.mode-picked .nf-mode-card__title {
-  font-size: clamp(11px, 2.4vmin, 14px);
-}
-
-.play-page.mode-picked .nf-mode-card__desc,
-.play-page.mode-picked .nf-mode-card__players {
-  display: none;
-}
-
-.play-page.mode-picked .nf-mode-card__actions {
-  margin-top: 1px;
-}
-
-.play-page.mode-picked .nf-mode-card__actions .nf-btn {
-  min-height: 30px;
-  padding: 0 9px;
-  font-size: 10px;
-  border-radius: 9px;
-  gap: 5px;
-}
-
-.play-page.mode-picked .nf-mode-card__actions .nf-btn__icon {
-  width: 13px;
-  height: 13px;
-}
-
-@media (max-width: 860px) {
-  .play-page.mode-picked .play-modes {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-/* the setup panel under the picked strip — glass, compact, scrollable content */
-.play-page .nf-play-entry {
+/* the setup panel — glass, compact, scrollable content (CLASSIC's own menu) */
+.nf-play-entry {
+  width: 100%;
   border-radius: var(--nf-radius-md);
   border: 1px solid var(--nf-line);
   background:
@@ -205,6 +147,215 @@
     rgba(7, 14, 13, 0.72);
   padding: 12px;
   gap: 10px;
+}
+
+/* ---------------------------------------------------------------- CLASSIC (user ask 2026-10-03) */
+/* CLASSIC has its OWN menu now — header + the setup card, exactly like the solo
+   pickers have theirs; never the mode grid with a setup added underneath. */
+.classic-page {
+  justify-content: flex-start;
+}
+
+.classic-page .play-col {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: min(720px, 100%);
+  margin: 0 auto;
+}
+
+/* ---------------------------------------------------------------- EVENTS (user ask 2026-10-03) */
+/* The live-ops board: the season card + the worlds actually in play. Real data
+   only — season countdown from the server clock, held worlds and locked planets. */
+.events-page {
+  justify-content: flex-start;
+}
+
+.events-col {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: min(760px, 100%);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ev-season {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  border-radius: var(--nf-radius-md);
+  border: 1px solid var(--nf-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(12, 16, 17, 0.78);
+}
+
+.ev-season-num {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ev-season-kicker {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: var(--nf-text-dim);
+}
+
+.ev-season-id {
+  font-family: var(--font-display);
+  font-size: clamp(26px, 4.2vh, 40px);
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: var(--nf-text);
+}
+
+.ev-season-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.ev-band {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--nf-line);
+  color: var(--nf-text-muted);
+  white-space: nowrap;
+}
+
+.ev-season-clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.ev-clock-kicker {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  color: var(--nf-text-dim);
+}
+
+.ev-clock-value {
+  font-family: var(--font-display);
+  font-size: clamp(18px, 3vh, 26px);
+  letter-spacing: 0.08em;
+  color: var(--nf-acid);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-front {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--nf-radius-md);
+  border: 1px solid var(--nf-line);
+  background: rgba(12, 16, 17, 0.72);
+  scrollbar-width: none;
+}
+
+.ev-front::-webkit-scrollbar {
+  display: none;
+}
+
+.ev-front-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: var(--nf-text-dim);
+}
+
+.ev-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--nf-red);
+  box-shadow: 0 0 10px var(--nf-red);
+}
+
+.ev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ev-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 11px;
+  border: 1px solid var(--nf-line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ev-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--ev-ink, var(--nf-amber));
+  box-shadow: 0 0 9px var(--ev-ink, var(--nf-amber));
+}
+
+.ev-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+}
+
+.ev-state {
+  flex: none;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--nf-text-dim);
+  white-space: nowrap;
+}
+
+.ev-clock {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--nf-cyan);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-clock.is-live {
+  color: var(--nf-red);
+}
+
+.ev-empty {
+  margin: 4px 0 2px;
+  font-size: 11.5px;
+}
+
+.ev-foot {
+  font-size: 9.5px;
+  letter-spacing: 0.2em;
 }
 
 /* ---- SERVER SELECTOR (§10): OFFICIAL / P2P — in the page flow, never off-
@@ -314,9 +465,12 @@
 
 .nf-p-top {
   justify-content: center;
-  min-height: var(--nf-header-h);
+  /* the SAME title anchor as every other page (user ask 2026-10-03): the band is
+     the back-button height, margins zero — the wordmark centres exactly where
+     GRAPHICS' does. */
+  min-height: max(var(--nf-header-h), var(--nf-touch-min));
   padding: 0;
-  margin-top: 5px;
+  margin-top: 0;
 }
 
 .nf-p-top::after {
@@ -325,6 +479,44 @@
 
 .nf-p-title {
   text-align: center;
+}
+
+/* The SUMMARY is a page now — OVERVIEW, the rail's first entry (user ask
+   2026-10-03). No constant band above the rail: the body fills the page's column
+   and the rail owns the full height beside it. Hero + rank plates stack inside
+   the pane, each a full-rounded surface (they used to share one fused card). */
+.nf-p-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nf-p-summary .nf-hero {
+  border-radius: 18px;
+  border-right: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.nf-p-summary .nf-ranks {
+  flex: 0 0 auto;
+  width: 100%;
+  border-radius: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  padding: 12px;
+}
+
+/* The edit sheet needs the page — the legacy rule hid the WHOLE body, but the
+   hero lives inside it now: keep the overview pane, drop the rail and the rest. */
+.profile-page:has(.nf-hero.editing) .nf-p-body {
+  display: flex;
+}
+
+.profile-page:has(.nf-hero.editing) .nf-p-tabs {
+  display: none;
+}
+
+.profile-page:has(.nf-hero.editing) .nf-p-panes > .nf-p-pane:not(.nf-p-overview) {
+  display: none;
 }
 
 /* CUSTOM starts at the top like every other page — its old layout centred the

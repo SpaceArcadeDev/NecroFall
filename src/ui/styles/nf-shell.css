@@ -34,35 +34,48 @@
   background: radial-gradient(70% 70% at 50% 30%, rgba(35, 90, 65, 0.16), transparent 68%);
 }
 
-/* world-first vignette (§35): the 3D scene stays the hero. Kept INSIDE the
-   page box (an overscan would extend .nf-main's scroll area and raise
-   scrollbars — the page never needed one). */
-.nf-world-vignette {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: linear-gradient(
-    180deg,
-    rgba(0, 0, 0, 0.5),
-    transparent 30%,
-    transparent 62%,
-    rgba(0, 0, 0, 0.55)
-  );
-}
-
-/* keep the stage + its text above the vignette */
-.home-page .nf-stage,
-.home-page .nf-home-caption {
-  position: relative;
-  z-index: 1;
-}
+/* (the world vignette is GONE — user ask 2026-10-03: the full-viewport shell
+   gradient already grades the world; a second in-page gradient read as a
+   duplicate band. One gradient, owned by `.nf-shell`.) */
 
 /* the stage box respects the page column (the canvas may still spill past it
    by design — SelectionPreview's soloBox — but the BOX never runs under the
    friends rail) */
 .nf-stage {
-  width: min(640px, 100%);
+  width: 100%;
+  max-width: 960px;
+}
+
+/* the avatar OWNS the main menu now (user ask 2026-10-03): with the play module
+   gone, the stage flexes into every spare pixel and the canvas framing follows. */
+.home-page .nf-stage {
+  flex: 1 1 auto;
+  min-height: clamp(120px, 30vh, 520px);
+}
+
+.home-page .nf-home-caption {
+  position: relative;
+  z-index: 1;
+}
+
+/* THE HOME CHROME OVERLAYS THE PAGE (user ask 2026-10-03): while it sat in the
+   flow, the NECROFALL title landed ~60px lower than every other page's title.
+   Absolutely positioned, `.nf-main` starts at the viewport top and the shared
+   header lands on the EXACT SAME anchor as GRAPHICS — identity chip left,
+   resources right, title between them. */
+.nf-shell.on-home .nf-chrome {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 40;
+}
+
+/* The overlaid chrome's top gradient passes RIGHT over the title band — lift the
+   shared page header ABOVE it so the wordmark paints on top, untouched (user ask
+   2026-10-03). `pointer-events: none` keeps every top-bar click falling through:
+   the header only draws over the bar's empty middle. */
+.nf-shell.on-home .nf-main .nf-page-header {
+  z-index: 50;
+  pointer-events: none;
 }
 
 /* ---------------------------------------------------------------- CHROME / TOP BAR (§48) */
@@ -74,6 +87,9 @@
 
 .nf-top {
   gap: 10px;
+  /* the resource chips hug the TOP edge of the bar (user ask 2026-10-03) —
+     the identity chip is the tallest item and defines the row. */
+  align-items: flex-start;
 }
 
 /* the player identity chip — restrained glass (§5), colony-tinted avatar ring */
@@ -178,22 +194,8 @@
   min-height: 0;
 }
 
-/* the wordmark — condensed display face, restrained glow (no violet) */
-.nf-home-word {
-  font-weight: 600;
-  letter-spacing: 0.3em;
-  text-indent: 0.3em; /* optical centring: the tracking adds trailing space */
-  text-shadow:
-    0 0 26px rgba(200, 255, 67, 0.14),
-    0 2px 18px rgba(0, 0, 0, 0.65);
-  animation: none;
-}
-
-.nf-home-header-sub {
-  color: var(--nf-text-dim);
-  letter-spacing: 0.34em;
-  text-indent: 0.34em;
-}
+/* the wordmark now wears the SHARED page-header type (user ask 2026-10-03) — no
+   home-specific title styles exist any more; `.nf-page-title` does the job. */
 
 .nf-home-colony {
   font-family: var(--font-display);
@@ -212,7 +214,10 @@
   z-index: 20;
   flex: 0 0 auto;
   width: 100%;
-  min-height: var(--nf-header-h);
+  /* the header's height is the BACK BUTTON's band (--nf-touch-min) even on pages
+     that draw no back — otherwise a page WITH a back sat 3px lower than one
+     without, and no two titles shared one anchor (user ask 2026-10-03). */
+  min-height: max(var(--nf-header-h), var(--nf-touch-min));
   display: grid;
   grid-template-columns: var(--nf-touch-min) minmax(0, 1fr) var(--nf-touch-min);
   align-items: center;
@@ -550,6 +555,12 @@
   opacity: 1;
 }
 
+/* the bar rides EVERY main page now (user ask 2026-10-03): pages reserve its band
+   so nothing ever slides under it; `no-nav` screens keep the old compact frame. */
+.nf-shell:not(.no-nav) .nf-main {
+  padding-bottom: calc(var(--nf-nav-h) + 22px + var(--nf-safe-bottom));
+}
+
 /* ---------------------------------------------------------------- DEV HUD (§39) */
 .nf-debug-hud {
   position: fixed;
@@ -590,6 +601,68 @@
 .nf-back svg {
   width: 20px;
   height: 20px;
+}
+
+/* ---------------------------------------------------------------- RETURN TO LOBBY (user ask 2026-10-03) */
+/* A lobby keeps its doors open while the player browses — this chip rides the top
+   centre of every shell page, JUST UNDER the shared header band (the titles live at
+   the top now — user ask 2026-10-03), and is the one-tap way back into the room. */
+.nf-return-lobby {
+  position: fixed;
+  top: calc(8px + max(var(--nf-header-h), var(--nf-touch-min)) + 12px + var(--nf-safe-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(200, 255, 67, 0.42);
+  background: rgba(8, 15, 13, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--nf-text);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  transition: border-color 0.16s ease, transform 0.12s ease;
+}
+
+.nf-return-lobby:hover {
+  border-color: rgba(200, 255, 67, 0.72);
+}
+
+.nf-return-lobby:active {
+  transform: translateX(-50%) scale(0.96);
+}
+
+.nf-return-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--nf-acid);
+  box-shadow: 0 0 10px var(--nf-acid);
+  animation: nf-return-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes nf-return-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* a short frame: the chip tightens so it never fights the chrome */
+@media (max-height: 430px) {
+  .nf-return-lobby {
+    min-height: 34px;
+    font-size: 10px;
+    padding: 0 12px;
+  }
 }
 
 /* ---------------------------------------------------------------- BOOT SPINNER */
@@ -761,51 +834,10 @@
 
 /* ---------------------------------------------------------------- DESKTOP (§60) — a REcomposition, same components */
 @media (min-width: 1100px) and (min-height: 560px) {
-  .home-page {
-    display: grid;
-    grid-template-columns: minmax(0, 1.45fr) minmax(330px, 0.85fr);
-    grid-template-rows: 1fr auto;
-    align-items: stretch;
-    justify-items: center;
-    column-gap: clamp(16px, 3vw, 56px);
-  }
-
-  .nf-stage {
-    grid-column: 1;
-    grid-row: 1;
+  /* the avatar is the page now that the play module is gone (user ask 2026-10-03):
+     full width, all of the leftover height via the shared flex column. */
+  .home-page .nf-stage {
     width: 100%;
-    max-width: 760px;
-  }
-
-  .nf-home-caption {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  /* the play module stands as a vertical tower beside the world */
-  .nf-play-module {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-    align-self: center;
-    width: 100%;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-    padding: 18px;
-  }
-
-  .nf-play-module__copy {
-    align-items: center;
-    text-align: center;
-    gap: 3px;
-  }
-
-  .nf-mode-switch {
-    grid-column: 1;
-  }
-
-  .nf-play-module__play {
-    grid-column: 1;
-    width: 100%;
-    justify-self: stretch;
+    max-width: none;
   }
 }

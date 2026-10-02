@@ -17,6 +17,7 @@ export type UIScreen =
   | 'rank'
   | 'solo'
   | 'custom'
+  | 'events'
   | 'queue'
   | 'match'
   | 'graphics'

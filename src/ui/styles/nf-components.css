@@ -438,14 +438,15 @@
   -webkit-backdrop-filter: blur(14px);
 }
 
-/* ---------------------------------------------------------------- NF MODE CARD (§13) */
+/* ---------------------------------------------------------------- NF MODE CARD (§13; user ask 2026-10-03) */
 .nf-mode-card {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  padding: 13px 13px 11px;
+  min-height: 0;
+  padding: 12px 13px 11px;
   border-radius: var(--nf-radius-md);
   border: 1px solid var(--nf-line);
   background:
@@ -468,15 +469,6 @@
 
 .nf-mode-card.is-enabled:active {
   transform: scale(0.988);
-}
-
-.nf-mode-card.is-picked,
-.nf-mode-card.sel {
-  transform: translateY(-2px);
-  border-color: color-mix(in srgb, var(--mode-accent, var(--nf-acid)) 46%, transparent);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--mode-accent, var(--nf-acid)) 9%, transparent), transparent 60%),
-    rgba(12, 16, 17, 0.82);
 }
 
 .nf-mode-card__top {
@@ -503,40 +495,58 @@
   white-space: nowrap;
 }
 
+/* the icon ROW (user ask 2026-10-03): plate LEFT, name + short subtext BESIDE it */
+.nf-mode-card__row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .nf-mode-card__plate {
-  width: 42px;
-  height: 42px;
+  flex: none;
+  width: 46px;
+  height: 46px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 13px;
   color: var(--mode-accent, var(--nf-cyan));
   border: 1px solid color-mix(in srgb, var(--mode-accent, var(--nf-cyan)) 28%, transparent);
   background: color-mix(in srgb, var(--mode-accent, var(--nf-cyan)) 11%, transparent);
 }
 
 .nf-mode-card__plate svg {
-  width: 22px;
-  height: 22px;
+  width: 23px;
+  height: 23px;
   display: block;
+}
+
+.nf-mode-card__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .nf-mode-card__title {
   margin: 0;
-  font-size: clamp(16px, 2.5vh, 21px);
-  letter-spacing: 0.15em;
+  font-size: clamp(16px, 2.4vh, 21px);
+  letter-spacing: 0.14em;
   color: var(--nf-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.nf-mode-card__desc {
+.nf-mode-card__sub {
   margin: 0;
-  flex: 1 1 auto;
-  font-size: 11.5px;
-  line-height: 1.42;
+  font-size: 11px;
+  line-height: 1.3;
   color: var(--nf-text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .nf-mode-card__actions {
@@ -544,7 +554,7 @@
   align-items: stretch;
   gap: 7px;
   flex-wrap: wrap;
-  margin-top: 2px;
+  margin-top: auto;
 }
 
 .nf-mode-card__actions .nf-btn {

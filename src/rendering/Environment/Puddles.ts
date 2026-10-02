@@ -94,10 +94,10 @@ export class Puddles {
   /** Walking wake: ripple centres (xyz + birth time) fed to the shader. */
   private readonly trailTexture: THREE.DataTexture;
   private readonly trailData: Float32Array;
-  private readonly lastTrailPoint = new THREE.Vector3();
+  /** Per-walker wake bookkeeping (player id → last dropped ripple centre). */
+  private readonly trailState = new Map<string, { last: THREE.Vector3; started: boolean }>();
   private readonly trailScratch = new THREE.Vector3();
   private trailCursor = 0;
-  private wasWading = false;
 
   constructor(
     private readonly surface: PlanetSurface,
@@ -385,12 +385,28 @@ export class Puddles {
   }
 
   /**
-   * Walking wake: while the player wades through a basin (feet under the water
+   * Walking wake: while a walker wades through a basin (feet under the water
    * level), drop a ripple centre every TRAIL_STEP metres; the shader expands
-   * each slot into a travelling ring. Generic on purpose — remote P2P players
-   * can feed the same buffer.
+   * each slot into a travelling ring. The LOCAL player and every REMOTE player
+   * share the ring (user ask 2026-10-03 — other survivors' water ripples were
+   * invisible because only the local player ever fed it).
    */
   trackTrail(focusPoint: THREE.Vector3): void {
+    this.trackTrailFor('local', focusPoint);
+  }
+
+  /** A remote player's proxy position — same wake rules as the local player. */
+  trackWalkerTrail(id: string, point: THREE.Vector3): void {
+    this.trackTrailFor(id, point);
+  }
+
+  private trackTrailFor(id: string, focusPoint: THREE.Vector3): void {
+    let state = this.trailState.get(id);
+    if (!state) {
+      if (this.trailState.size > 24) this.trailState.clear(); // stale seats fall away with the roster
+      state = { last: new THREE.Vector3(), started: false };
+      this.trailState.set(id, state);
+    }
     const direction = this.trailScratch.copy(focusPoint).normalize();
 
     let wadingDepth = 0;
@@ -409,12 +425,12 @@ export class Puddles {
     }
 
     if (!wadingSite) {
-      this.wasWading = false;
+      state.started = false;
       return;
     }
 
     const point = direction.multiplyScalar(wadingSite.waterLevel);
-    if (this.wasWading && this.lastTrailPoint.distanceTo(point) < TRAIL_STEP) return;
+    if (state.started && state.last.distanceTo(point) < TRAIL_STEP) return;
 
     const offset = (this.trailCursor % TRAIL_SLOTS) * 4;
     this.trailCursor++;
@@ -424,8 +440,8 @@ export class Puddles {
     this.trailData[offset + 3] = this.timeUniform.value as number;
     this.trailTexture.needsUpdate = true;
 
-    this.lastTrailPoint.copy(point);
-    this.wasWading = true;
+    state.last.copy(point);
+    state.started = true;
   }
 
   setVisible(visible: boolean): void {

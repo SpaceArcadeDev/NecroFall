@@ -1,10 +1,11 @@
-// NECROFALL — the mode card (overhaul §13/§37/§56).
+// NECROFALL — the mode card (overhaul §13/§37/§56; user ask 2026-10-03).
 //
-// Rendered FROM the game-mode registry: eyebrow + player count, icon plate,
-// title, description and ONE action row that always renders every action the
-// mode declares. The whole card stays tappable as a shortcut for the primary
-// action, while the explicit labelled button remains the audited control
-// (`data-action`), so "the mode screen lost its button" cannot happen again.
+// Rendered FROM the game-mode registry: eyebrow + player count, an icon ROW that
+// carries the name and its one-line subtext BESIDE the plate (never stacked below
+// it), and ONE action row that always renders every action the mode declares.
+// The whole card stays tappable as a shortcut for the primary action, while the
+// explicit labelled button remains the audited control (`data-action`), so "the
+// mode screen lost its button" cannot happen again.
 import type { GameModeDefinition } from '../data/GameModeRegistry';
 import { modeIcon, renderModeActions } from '../data/GameModeRegistry';
 import { createNFButton } from './NFButton';
@@ -13,15 +14,15 @@ export interface NFModeCardOptions {
   mode: GameModeDefinition;
   /** One handler per declared action; a missing handler renders disabled with a reason. */
   handlers: Partial<Record<string, (() => void) | undefined>>;
-  picked?: boolean;
 }
 
 export function createNFModeCard(options: NFModeCardOptions): HTMLElement {
   const { mode, handlers } = options;
   const card = document.createElement('article');
-  card.className = ['nf-mode-card', options.picked ? 'is-picked' : ''].filter(Boolean).join(' ');
+  card.className = 'nf-mode-card';
   card.dataset.mode = mode.id;
   card.style.setProperty('--mode-accent', mode.accent);
+  card.setAttribute('aria-label', `${mode.title} — ${mode.subtitle}`);
 
   const top = document.createElement('div');
   top.className = 'nf-mode-card__top';
@@ -37,17 +38,22 @@ export function createNFModeCard(options: NFModeCardOptions): HTMLElement {
   const plate = document.createElement('div');
   plate.className = 'nf-mode-card__plate';
   plate.innerHTML = modeIcon(mode);
-  card.appendChild(plate);
 
+  // THE MAIN ROW (user ask 2026-10-03): the icon plate sits LEFT, the name and
+  // its very short subtext take the width BESIDE it — no stacked column.
+  const row = document.createElement('div');
+  row.className = 'nf-mode-card__row';
+  const copy = document.createElement('div');
+  copy.className = 'nf-mode-card__copy';
   const title = document.createElement('h2');
   title.className = 'nf-mode-card__title';
   title.textContent = mode.title;
-  card.appendChild(title);
-
-  const desc = document.createElement('p');
-  desc.className = 'nf-mode-card__desc';
-  desc.textContent = mode.subtitle;
-  card.appendChild(desc);
+  const sub = document.createElement('p');
+  sub.className = 'nf-mode-card__sub';
+  sub.textContent = mode.blurb;
+  copy.append(title, sub);
+  row.append(plate, copy);
+  card.appendChild(row);
 
   const actions = renderModeActions(mode, handlers, (opts) =>
     createNFButton({

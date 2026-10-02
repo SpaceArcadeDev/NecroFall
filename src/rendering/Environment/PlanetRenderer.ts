@@ -223,11 +223,21 @@ export class PlanetRenderer {
     onProgress?.(0.96, 'ready');
   }
 
-  /** Per-frame world pass, called from the environment tick. */
-  update(focusPoint: THREE.Vector3, camera?: THREE.Camera): void {
+  /**
+   * Per-frame world pass, called from the environment tick. `walkers` are the OTHER players'
+   * proxy positions (user ask 2026-10-03): they feed the grass trample ring and the puddle wake
+   * so every survivor visibly disturbs the world — the local screen draws the effect for every
+   * body it renders, so no network message is involved.
+   */
+  update(
+    focusPoint: THREE.Vector3,
+    camera?: THREE.Camera,
+    walkers?: readonly { id: string; pos: THREE.Vector3 }[],
+  ): void {
     void this.focusScratch;
-    this.grass.update(focusPoint, camera);
+    this.grass.update(focusPoint, camera, walkers);
     this.puddles.trackTrail(focusPoint);
+    if (walkers) for (const w of walkers) this.puddles.trackWalkerTrail(w.id, w.pos);
     this.particles.update(focusPoint, camera);
   }
 

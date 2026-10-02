@@ -308,6 +308,13 @@ export class Game {
   readonly fog: Fog;
   /** The folio match world (terrain/grass/foliage/water/particles) for the CURRENT planet. */
   envWorld: PlanetRenderer | null = null;
+  /**
+   * REMOTE WALKERS (user ask 2026-10-03): every other player's proxy position, rebuilt each
+   * frame and handed to the environment pass so their feet part the grass and ripple the
+   * puddles too. The environment is simulated per client, so every machine shows every
+   * player's trail with zero extra network traffic.
+   */
+  private readonly envWalkers: { id: string; pos: THREE.Vector3 }[] = [];
   /** One loader + wind field, shared by every planet rebuild (materials are per-build: their
    *  MeshDefaultMaterial binds the match's OWN terrain nodes at construction). */
   private envLoader: ResourcesLoader | null = null;
@@ -826,7 +833,9 @@ export class Game {
     this.buildIndicators();
     this.bindMetaEvents();
 
-    this.ui.show('menu');
+    // The base screen behind everything: PLAY. The legacy MENU screen is gone
+    // (user ask 2026-10-03) — in the account era the shell owns every menu.
+    this.ui.show('play');
 
     // The room code in the URL *is* the session: opening — or refreshing — that link walks back
     // into the room with no menus in the way. The room restores a returning player's run, and a
@@ -1561,7 +1570,15 @@ export class Game {
     // the systems inside this stage.
     this.ticker.on(20, () => {
       const focus = this.localPlayer?.position ?? this.camTarget.position;
-      this.envWorld?.update(focus, this.cam.camera);
+      // Remote walkers ride the SAME pass (user ask 2026-10-03): each other player's proxy
+      // position is where their body is drawn on THIS machine, which is exactly what has to
+      // press the grass. Dead bodies are skipped — a corpse does not trample the lawn.
+      this.envWalkers.length = 0;
+      for (const [id, p] of this.players) {
+        if (p.isLocal || !p.alive) continue;
+        this.envWalkers.push({ id, pos: p.position });
+      }
+      this.envWorld?.update(focus, this.cam.camera, this.envWalkers);
       this.updateDebugOverlay();
     });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
@@ -1734,12 +1751,19 @@ export class Game {
       // its absorbed stack) is refolded on top the moment the world exists.
       const me = this.roster.get(match.meId);
       if (me && Number.isFinite(Number(restore.ntBase))) me.nt = Math.round(Number(restore.ntBase));
-      this.finalizeOfficialNecrotechPhase();
-      if (this.localPlayer) {
+      // THE RESTORE MUST WAIT FOR THE WORLD (bug fix 2026-10-03): `finalizeOfficialNecrotechPhase`
+      // now funnels through the loading-screen world build, so `localPlayer` does not exist yet
+      // when this line runs — the old synchronous apply silently did NOTHING and every reloaded
+      // survivor came back at level 1 (`saveRun` then overwrote the good save seconds later).
+      // Handing the apply to the boot callback runs it the moment the body exists, before any
+      // save tick can touch the file.
+      this.finalizeOfficialNecrotechPhase(() => {
+        if (!this.localPlayer) return;
         this.applySavedRun(this.localPlayer, restore);
         this.maybeOpenQueued();
         this.ui.toast('Survivor restored — Necrotech, level and mutations are back.', 4200);
-      }
+        this.saveRun(); // persist the restored run at once — a reload inside the first save window stays safe
+      });
       return;
     }
 
@@ -1863,7 +1887,7 @@ export class Game {
    * pre-built world is ready, then `beginPlaying` boots the match (an UNPICKED local seat rolls a
    * random class — the lobby flow's own timeout rule; remote seats keep what the server knows).
    */
-  private finalizeOfficialNecrotechPhase(): void {
+  private finalizeOfficialNecrotechPhase(after?: () => void): void {
     const official = this.officialMatch;
     if (!official) return;
     const chosen: Record<string, number> = {};
@@ -1876,9 +1900,11 @@ export class Game {
     }
     // The match is already running server-side: `awaitWorldAndPlay` picks the clock up where it
     // is when the planet lands — the payload's elapsed was read before the loading screen and
-    // the selection wait, both real match time.
+    // the selection wait, both real match time. `after` runs the instant the body exists (the
+    // rejoin restore uses it — see `beginOfficialMatch`).
     this.startMatchWhenReady(chosen, official.match.seed, 0, () => {
       this.ui.banner(COLONIES[this.localPlayer?.colony ?? 0]?.name + ' DEPLOYED', 2200);
+      after?.();
     });
   }
 
@@ -2565,11 +2591,13 @@ export class Game {
     this.isHost = true;
     this.phase = 'menu';
     this.roster.clear();
-    this.ui.show('menu');
+    // Leaving the lobby hands the screen back through the ONE menu edge: the shell
+    // in the account era, the game's own PLAY board offline — never a legacy menu.
+    this.ui.exitToMenu('lobby');
   }
 
   private onFatal(reason: string): void {
-    this.ui.show('menu');
+    this.ui.exitToMenu('home');
     this.ui.toast(reason, 6000);
     this.net.leave();
     this.untrackRoom();
@@ -3614,7 +3642,9 @@ export class Game {
     this.cosmeticFx.clear();
     this.entityResetPickups();
     this.input.setEnabled(false);
-    this.ui.show('menu');
+    // Back to the menus through the ONE edge: the shell takes the screen (home),
+    // or the game's PLAY board offline (user ask 2026-10-03).
+    this.ui.exitToMenu('home');
   }
 
   // ------------------------------------------------------------ network messaging

@@ -35,20 +35,13 @@ import type { PerkTier } from '../necromutation/Perks';
 import { loadSelection } from '../customization/CustomizationStore';
 import {
   QUALITY_BLURBS,
-  QUALITY_LABELS,
-  QUALITY_PREFS,
-  FPS_LABELS,
-  FPS_PREFS,
   fpsBlurb,
-  loadFpsPref,
-  loadQualityPref,
-  resolveQuality,
   type FpsPref,
   type QualityName,
   type QualityPref,
 } from '../core/Config';
 
-export type ScreenName = 'menu' | 'howto' | 'controls' | 'play' | 'lobby' | 'colony' | 'necrotech' | 'loading' | 'customize' | 'game' | 'results';
+export type ScreenName = 'howto' | 'controls' | 'play' | 'lobby' | 'colony' | 'necrotech' | 'loading' | 'customize' | 'game' | 'results';
 
 /**
  * ONE SEAT of the OFFICIAL lobby (user ask 2026-09-29: "reuse the exact same lobby as
@@ -634,7 +627,7 @@ export class UI {
   private screens = new Map<ScreenName, HTMLElement>();
   private hud = el('div', 'hud hidden');
   private mobile = el('div', 'mobile hidden');
-  private current: ScreenName = 'menu';
+  private current: ScreenName = 'play';
   private cbs: UICallbacks;
   private name = 'Survivor';
   private input: InputManager | null = null;
@@ -899,7 +892,6 @@ export class UI {
     // One shared gate (see OrientationGate.shared): it lives on <body> so the account shell's
     // `#ui { display: none }` cannot take the rotate/fullscreen prompt away from phones.
     this.orientation = OrientationGate.shared();
-    this.buildMenu();
     this.buildHowTo();
     this.buildControls();
     this.buildPlay();
@@ -911,7 +903,7 @@ export class UI {
     this.buildHud();
     this.buildModals();
     this.buildMobile();
-    this.show('menu');
+    this.show('play');
   }
 
   /**
@@ -926,9 +918,22 @@ export class UI {
   /**
    * Optional observer (the account shell): notified synchronously AFTER every screen
    * switch, so the shell can take the screen back the instant a game screen hands it
-   * to the game menu (no flash of the old P2P menu in between).
+   * to the game. The legacy MENU screen no longer exists (user ask 2026-10-03).
    */
   onScreenChange: ((name: ScreenName) => void) | null = null;
+
+  /**
+   * "Back to the menu" from any in-game screen: in the shell era THE MENU IS THE
+   * ACCOUNT SHELL — the callback (AppShell) takes the screen and returns true.
+   * Without one (offline builds) the game falls back to its own PLAY board.
+   */
+  onExitToMenu: ((hint: 'home' | 'lobby') => boolean) | null = null;
+
+  /** See `onExitToMenu` — the menu backs, leaving a lobby and a match end all route here. */
+  exitToMenu(hint: 'home' | 'lobby' = 'home'): void {
+    if (this.onExitToMenu?.(hint)) return;
+    this.show('play');
+  }
 
   /**
    * The account shell reports its colony: the customize stage's avatar follows those colours
@@ -1256,63 +1261,6 @@ export class UI {
 
   // ------------------------------------------------------------ menus
 
-  private buildMenu(): void {
-    const s = el('div', 'screen');
-    s.appendChild(el('div', 'menu-title', 'NECROFALL'));
-    s.appendChild(el('div', 'menu-sub', 'Dive \u2022 Liberate \u2022 Dominate'));
-    // `menu-main`: on a short viewport (a landscape phone) this column becomes a 2x2 grid with the
-    // graphics row spanning both cells — the four entries fit above the fold instead of pushing the
-    // title off the top of the screen (see the `max-height` block in styles.css).
-    const col = el('div', 'menu-col menu-main');
-    col.appendChild(button('PLAY', 'btn primary', () => this.show('play')));
-    col.appendChild(button('CUSTOMIZE', 'btn', () => this.show('customize')));
-    col.appendChild(button('HOW TO PLAY', 'btn', () => this.show('howto')));
-    col.appendChild(button('CONTROLS', 'btn', () => this.show('controls')));
-
-    // ---- graphics level: the choice is remembered and applied the moment it is made
-    const row = el('div', 'graphics-row');
-    row.appendChild(el('div', 'graphics-label', 'GRAPHICS'));
-    const opts = el('div', 'graphics-opts');
-    for (const pref of QUALITY_PREFS) {
-      const b = button(QUALITY_LABELS[pref], 'opt', () => this.cbs.setGraphics(pref));
-      b.title = QUALITY_BLURBS[pref];
-      opts.appendChild(b);
-      this.graphicsOpts.set(pref, b);
-    }
-    row.appendChild(opts);
-    this.graphicsNote = el('div', 'graphics-note', '');
-    row.appendChild(this.graphicsNote);
-    col.appendChild(row);
-
-    // ---- frame-rate ceiling: auto keeps the device-aware pacing, a number pins matches AND menus
-    const fpsRow = el('div', 'graphics-row');
-    fpsRow.appendChild(el('div', 'graphics-label', 'MAX FPS'));
-    const fpsOpts = el('div', 'graphics-opts');
-    for (const pref of FPS_PREFS) {
-      const b = button(FPS_LABELS[String(pref)], 'opt', () => this.cbs.setFps(pref));
-      b.title = fpsBlurb(pref);
-      fpsOpts.appendChild(b);
-      this.fpsOpts.set(pref, b);
-    }
-    fpsRow.appendChild(fpsOpts);
-    this.fpsNote = el('div', 'graphics-note', '');
-    fpsRow.appendChild(this.fpsNote);
-    col.appendChild(fpsRow);
-
-    s.appendChild(col);
-    const foot = el('div', 'muted menu-foot', '');
-    foot.style.marginTop = '26px';
-    foot.style.fontSize = '11px';
-    foot.style.letterSpacing = '0.2em';
-    foot.textContent = 'P2P MULTIPLAYER • 3 COLONIES • 5 TOWERS';
-    s.appendChild(foot);
-    this.reg('menu', s);
-    // Reflect whatever is already saved, before the player touches anything.
-    const saved = loadQualityPref();
-    this.setGraphicsPref(saved, resolveQuality(saved));
-    this.setFpsPref(loadFpsPref());
-  }
-
   /** Highlights the active graphics level and explains what it does on this device. */
   setGraphicsPref(pref: QualityPref, resolved: QualityName): void {
     this.graphicsPref = pref;
@@ -1389,7 +1337,7 @@ export class UI {
     row.appendChild(button('CONTROLS', 'btn primary', () => this.show('controls')));
     panel.appendChild(row);
     s.appendChild(panel);
-    this.addBack(s, 'Back to the main menu', () => this.show('menu'));
+    this.addBack(s, 'Back', () => this.exitToMenu());
     this.reg('howto', s);
   }
 
@@ -1414,7 +1362,7 @@ export class UI {
       <p>Left virtual stick moves. Buttons: Jump, Dash, Skill, Ultimate. Use the aim pad (right side) to point abilities — it supports multi-touch, so you can move, dash and fire at the same time.</p>
     `;
     s.appendChild(panel);
-    this.addBack(s, 'Back to the main menu', () => this.show('menu'));
+    this.addBack(s, 'Back', () => this.exitToMenu());
     this.reg('controls', s);
   }
 
@@ -1509,7 +1457,7 @@ export class UI {
     // The fixed menu screens cannot scroll, so a soft keyboard would simply cover the join field —
     // see `bindSoftKeyboard` for the visual-viewport pan that fixes it.
     this.bindSoftKeyboard(s, [nameInput, this.joinInput]);
-    this.addBack(s, 'Back to the main menu', () => this.show('menu'));
+    this.addBack(s, 'Back', () => this.exitToMenu());
     this.reg('play', s);
   }
 
@@ -2319,7 +2267,7 @@ export class UI {
 
     layout.appendChild(right);
     s.appendChild(layout);
-    this.addBack(s, 'Back to the main menu', () => this.show('menu'), 'left');
+    this.addBack(s, 'Back', () => this.exitToMenu(), 'left');
     this.reg('customize', s);
     // no thumbnails yet: generating them is deferred until the screen is actually opened
     this.renderAccStrip(false);

@@ -61,6 +61,7 @@ import {
   createFullscreenExitIcon,
   createFullscreenIcon,
 } from '../../rankmap/RankMapIcons';
+import { createPageHeader } from '../../ui/shell/PageHeader';
 
 /** Live countdown ticks (display only — the server owns expiry). */
 const HOUR_US = 3_600_000_000;
@@ -85,7 +86,7 @@ export class RankPage {
   private breadcrumb: HTMLElement;
   private side: HTMLElement;
   private railEl: HTMLElement;
-  private headEl: HTMLElement;
+  private headRight: HTMLElement;
   private stripEl: HTMLElement;
   private discoverEl: HTMLElement;
   /** Fullscreen control + discoverers overlay (the expanded map hides the side column). */
@@ -134,9 +135,11 @@ export class RankPage {
   constructor(private ctx: ShellContext) {
     this.element = el('div', 'nf-page rank-page');
 
-    // ---- header: the RANKED wordmark on the lobby's lit rule (the party-page dress)
-    this.headEl = el('div', 'lobby-head rk-head');
-    this.element.appendChild(this.headEl);
+    // ---- header: the SHARED page header (user ask 2026-10-03) — the exact same title
+    // anchor + gradient typography as GRAPHICS/PLAY/HOME; the live season rides the
+    // right slot. The old bespoke `.rk-head` band is gone.
+    this.headRight = el('div', 'rk-head-right');
+    this.element.appendChild(createPageHeader({ title: 'RANK', right: this.headRight }));
 
     // ---- standing strip: crest · rank · stars · progress + the two actions
     this.stripEl = el('div', 'rk-strip');
@@ -699,12 +702,8 @@ export class RankPage {
     if (sig === this.headSig) return;
     this.headSig = sig;
     // The header (user ask): the gradient wordmark reads RANK — like the PLAY title —
-    // with the live season as a tag pill right beside it.
-    this.headEl.innerHTML =
-      `<div class="rk-head-title-row">` +
-      `<div class="menu-title lobby-title rk-title">RANK</div>` +
-      `<span class="rk-season-pill"><b>SEASON</b><i>${seasonId}</i></span>` +
-      `</div>`;
+    // with the live season as a tag pill in the shared header's right slot.
+    this.headRight.innerHTML = `<span class="rk-season-pill"><b>SEASON</b><i>${seasonId}</i></span>`;
     // The standing strip (user ask): [ chevron ][ crest ][ name + STARS ] … [ colony pill ]
     // [ leaderboard icon ]. No progress bar (the stars ARE the progress) and no season
     // block (it lives in the header now).
@@ -748,7 +747,7 @@ export class RankPage {
       `</div>` +
       (lastKey
         ? `<button class="rk-record-jump" data-act="lastworld">` +
-          `VIEW ${(planetNameFromKey(this.universeSeed(), lastKey) ?? 'LAST WORLD').toUpperCase()} ▸</button>`
+          `VIEW LAST PLANET: ${(planetNameFromKey(this.universeSeed(), lastKey) ?? 'LAST WORLD').toUpperCase()} ▸</button>`
         : '');
     this.stripEl.querySelector('[data-act="territory"]')?.addEventListener('click', () => this.toggleTerritory());
     this.stripEl.querySelector('[data-act="board"]')?.addEventListener('click', () => this.toggleBoard());

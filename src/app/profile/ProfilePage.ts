@@ -1,9 +1,12 @@
 // NECROFALL — the profile page (reworked 2026-09-29, user ask: the old page was
 // "too cluttered and sucks"; this is a modern, minimalist, touch-first layout).
 //
-//   hero          identity: avatar + gender glyph, name, colony/level, bio, id
-//   ranks         CURRENT RANK + HIGHEST RANK cards
-//   tabs (left)   STATS · HISTORY · DISCOVERIES switch the pane beside them
+//   band          the shared page title (same anchor as every other page)
+//   body          a slim rail on the LEFT (landscape) — OVERVIEW · STATS ·
+//                 HISTORY · DISCOVERIES — and the pane beside it. The old
+//                 CONSTANT summary band is gone (user ask 2026-10-03): hero +
+//                 rank plates ARE the OVERVIEW pane now, first in the rail, so
+//                 the rail owns the full column height.
 //
 // Subscribes ONLY to the viewed profile while it is open (plan §23/§48) and
 // records the visit through a single throttled reducer call. Own profile gains
@@ -19,7 +22,7 @@ import { ProfileStats } from './ProfileStats';
 import { ProfileHistory } from './ProfileHistory';
 import { ProfileDiscoveries } from './ProfileDiscoveries';
 
-type PaneKey = 'stats' | 'history' | 'discoveries';
+type PaneKey = 'overview' | 'stats' | 'history' | 'discoveries';
 
 interface Pane {
   element: HTMLElement;
@@ -27,6 +30,8 @@ interface Pane {
 }
 
 const TAB_ICONS: Record<PaneKey, string> = {
+  overview:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.4" r="3.4"/><path d="M5.2 19.4c.8-3.5 3.5-5.3 6.8-5.3s6 1.8 6.8 5.3"/></svg>',
   stats:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5 20v-7M12 20V5M19 20v-9"/></svg>',
   history:
@@ -36,6 +41,7 @@ const TAB_ICONS: Record<PaneKey, string> = {
 };
 
 const TABS: Array<{ key: PaneKey; label: string }> = [
+  { key: 'overview', label: 'OVERVIEW' },
   { key: 'stats', label: 'STATS' },
   { key: 'history', label: 'HISTORY' },
   { key: 'discoveries', label: 'DISCOVERIES' },
@@ -47,7 +53,7 @@ export class ProfilePage {
   private ranks: ProfileRanks;
   private panes: Record<PaneKey, Pane>;
   private tabBtns: HTMLButtonElement[] = [];
-  private active: PaneKey = 'stats';
+  private active: PaneKey = 'overview';
 
   constructor(private ctx: ShellContext, private hex: string) {
     this.element = el('div', 'nf-page profile-page');
@@ -58,23 +64,41 @@ export class ProfilePage {
     top.appendChild(el('h1', 'nf-page-title nf-p-title', 'PROFILE'));
     this.element.appendChild(top);
 
-    // ---- head: the player card — identity left, the rank plates right (one visual card)
-    const head = el('div', 'nf-p-head');
-    this.hero = new ProfileHero(ctx, hex);
-    head.appendChild(this.hero.element);
-    this.ranks = new ProfileRanks(hex);
-    head.appendChild(this.ranks.element);
-    this.element.appendChild(head);
-
-    // ---- tabbed body: the tab rail (left edge in landscape, top row in portrait)
+    // ---- tabbed body: the tab rail (left edge in landscape, top row in portrait).
+    // The old CONSTANT hero+ranks band above it is gone (user ask 2026-10-03) —
+    // that summary IS the OVERVIEW pane, the rail's first entry, so the rail
+    // spans the page's full column height beside the panes.
     const body = el('div', 'nf-p-body');
     const nav = el('nav', 'nf-p-tabs');
     nav.setAttribute('role', 'tablist');
     nav.setAttribute('aria-label', 'Profile views');
+
+    const overview = el('section', 'nf-p-pane nf-p-overview');
+    const ohead = el('header', 'nf-p-pane-head');
+    ohead.appendChild(el('h3', 'nf-p-pane-title', 'OVERVIEW'));
+    overview.appendChild(ohead);
+    this.hero = new ProfileHero(ctx, hex);
+    this.ranks = new ProfileRanks(hex);
+    const summary = el('div', 'nf-p-summary');
+    summary.appendChild(this.hero.element);
+    summary.appendChild(this.ranks.element);
+    overview.appendChild(summary);
+
     const stats = new ProfileStats(ctx, hex);
     const history = new ProfileHistory(hex);
     const discoveries = new ProfileDiscoveries(hex, hex === ctx.myHex());
-    this.panes = { stats, history, discoveries };
+    this.panes = {
+      overview: {
+        element: overview,
+        update: () => {
+          this.hero.update();
+          this.ranks.update();
+        },
+      },
+      stats,
+      history,
+      discoveries,
+    };
 
     const panesHost = el('div', 'nf-p-panes');
     TABS.forEach((tab) => {
@@ -112,8 +136,6 @@ export class ProfilePage {
   }
 
   update(): void {
-    this.hero.update();
-    this.ranks.update();
     this.panes[this.active].update();
   }
 

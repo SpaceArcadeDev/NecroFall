@@ -20,6 +20,7 @@ export type Route =
   | { name: 'rank' }
   | { name: 'solo'; mode: 'speedrun' | 'survival' }
   | { name: 'custom' }
+  | { name: 'events' }
   | { name: 'graphics' }
   | { name: 'match'; id: number }
   | { name: 'profile'; hex: string };
@@ -33,6 +34,7 @@ export function parseRoute(): Route {
   if (head === 'rank') return { name: 'rank' };
   if (head === 'solo') return { name: 'solo', mode: arg === 'survival' ? 'survival' : 'speedrun' };
   if (head === 'custom') return { name: 'custom' };
+  if (head === 'events') return { name: 'events' };
   if (head === 'graphics') return { name: 'graphics' };
   if (head === 'match' && arg) {
     const id = Number(arg);
@@ -56,6 +58,8 @@ export function routeToHash(route: Route): string {
       return `#/solo/${route.mode}`;
     case 'custom':
       return '#/custom';
+    case 'events':
+      return '#/events';
     case 'graphics':
       return '#/graphics';
     case 'match':

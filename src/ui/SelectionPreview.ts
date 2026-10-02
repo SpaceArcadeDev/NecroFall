@@ -1179,15 +1179,42 @@ export class SelectionPreview {
     const cam = this.lobbyCam;
     if (solo) {
       // ONE champion, staged alone on the shell home. The frame is solved from what the avatar
-      // actually IS — body, ground pad and hat air — plus the pet's menu ring (see the roam clamp
+      // actually IS — body, ground pad and HAT — plus the pet's menu ring (see the roam clamp
       // in `tickLobby`), never from the stage's own shallow strip. The `fill` term keeps the body
       // as large as the board allows (0.8 of the canvas height — user ask: "the avatar can be
-      // bigger to fit the center space") and the two fit terms stop it from ever growing past the
-      // pieces that must stay visible.
+      // bigger to fit the center space") and the two fit terms stop it from ever growing past
+      // the pieces that must stay visible.
       const AV = 2.0;          // the standing body the player reads
       const GROUND_PAD = 0.32; // floor left under the feet for the lit pad's front rim
-      const MIN_H = 2.62;      // ground + body + tall-hat air (relaxed for the bigger stage)
       const MIN_W = 2.52;      // the pet's menu ring, both bodies included, either side of the owner
+      const HAT_AIR = 0.3;     // clear sky above whatever is worn on the head
+      const FRAME_DOWN = 0.12; // the whole frame sits a touch lower so tall hats clear the title
+      // THE FIGURE'S REAL HEIGHT (user report 2026-10-03: "avatar hat gets cut off at the
+      // top"): solve the frame from the figure's OWN bounds — body + whatever hat is worn —
+      // never from a guessed air gap. A tall hat shrinks the frame to fit instead of
+      // slicing at the canvas top.
+      let frameH = 2.62;
+      const corner = new THREE.Vector3();
+      for (const fig of this.lobbyAvatars) {
+        const group = fig.parts.group;
+        group.updateWorldMatrix(true, true);
+        let topY = AV;
+        group.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (!mesh.geometry) return;
+          if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+          const bb = mesh.geometry.boundingBox;
+          if (!bb) return;
+          for (let ci = 0; ci < 8; ci++) {
+            corner.set(ci & 1 ? bb.max.x : bb.min.x, ci & 2 ? bb.max.y : bb.min.y, ci & 4 ? bb.max.z : bb.min.z);
+            mesh.localToWorld(corner);
+            if (corner.y > topY) topY = corner.y;
+          }
+        });
+        frameH = Math.max(frameH, topY + HAT_AIR + GROUND_PAD);
+      }
+      // a (pathologically tall) accessory must not shrink the champion into a dot
+      const MIN_H = Math.min(frameH, 3.5);
       const dens = Math.min((this.height * 0.8) / AV, this.width / MIN_W, this.height / MIN_H);
       const visW = this.width / Math.max(1, dens);
       const visH = this.height / Math.max(1, dens);
@@ -1195,7 +1222,7 @@ export class SelectionPreview {
       cam.right = visW / 2;
       cam.top = visH / 2;
       cam.bottom = -visH / 2;
-      const midY = -GROUND_PAD + visH / 2;
+      const midY = -GROUND_PAD + visH / 2 + FRAME_DOWN;
       cam.position.set(0, midY + 1.5, 7.6);
       cam.lookAt(0, midY - 0.08, 0);
       cam.updateProjectionMatrix();

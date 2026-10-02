@@ -13,6 +13,8 @@ export interface GameModeDefinition {
   id: 'classic' | 'rank' | 'speedrun' | 'survival' | 'custom' | 'freeroam';
   title: string;
   subtitle: string;
+  /** The VERY short line printed under the card title (user ask 2026-10-03) — one breath. */
+  blurb: string;
   /** Eyebrow chip: OFFICIAL / SOLO / INVITE / EXPLORE (§13). */
   tag: string;
   icon: IconName;
@@ -32,6 +34,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'classic',
     title: 'CLASSIC',
     subtitle: 'Create a lobby, invite survivors or join with a code — official server matches, 3v3v3.',
+    blurb: 'Lobby up · 3v3v3',
     tag: 'OFFICIAL',
     icon: 'swords',
     actions: ['play'],
@@ -44,6 +47,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'rank',
     title: 'RANK',
     subtitle: 'Climb the ladder — liberate planets in your rank ring.',
+    blurb: 'Climb the ladder',
     tag: 'RANKED',
     icon: 'rank',
     actions: ['play'],
@@ -56,6 +60,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'speedrun',
     title: 'SPEEDRUN',
     subtitle: 'A planet from your band, one clock — take the Nexus as fast as you can.',
+    blurb: 'Race the clock',
     tag: 'SOLO',
     icon: 'stopwatch',
     actions: ['play'],
@@ -68,6 +73,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'survival',
     title: 'SURVIVAL',
     subtitle: 'Endless swarm, no Nexus. Enemies grow without mercy — survive the longest.',
+    blurb: 'Outlast the swarm',
     tag: 'SOLO',
     icon: 'horde',
     actions: ['play'],
@@ -80,6 +86,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'custom',
     title: 'CUSTOM',
     subtitle: 'Lobby up with a code — P2P rules on the hybrid server. Everyone readies, the host starts.',
+    blurb: 'Invite-only rules',
     tag: 'INVITE',
     icon: 'code',
     actions: ['play'],
@@ -92,6 +99,7 @@ export const GAME_MODES: readonly GameModeDefinition[] = [
     id: 'freeroam',
     title: 'FREEROAM',
     subtitle: 'Roam a procedural world alone — no enemies, no clock, no setup.',
+    blurb: 'Roam alone',
     tag: 'EXPLORE',
     icon: 'compass',
     actions: ['play'],

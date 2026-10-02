@@ -162,16 +162,24 @@
   border: 1px solid var(--nf-line);
   background: rgba(10, 14, 15, 0.78);
   color: var(--nf-text);
-  border-radius: 10px;  min-height: 44px;
+  border-radius: 10px;
+  /* fixed height, EXACTLY the JOIN button's (user ask 2026-10-03) — the base
+     sheet's fluid 34px input grew with its padding and never lined up */
+  height: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
 }
 
 /* quick actions are touch-first too (§30): the old 34px row was a miss */
 .rk-quick .rk-btn {
+  height: 44px;
   min-height: 44px;
 }
 
 .rk-quick .rk-join-input {
-  min-height: 44px;}
+  height: 44px;
+  min-height: 44px;
+}
 
 .rk-join-input::placeholder {
   color: var(--nf-text-dim);
@@ -182,9 +190,27 @@
   border-color: var(--nf-line);
 }
 
+/* the record DRAWER is a container, not a panel (user ask 2026-10-03: "remove
+   the extra black background — the ui elements already have proper background").
+   The cells and the jump button carry their own surfaces. */
 .rk-record {
-  background: rgba(10, 14, 15, 0.72);
-  border-color: var(--nf-line);
+  background: none;
+}
+
+/* the drawer's last row needs breathing room under it (user ask 2026-10-03) */
+.rk-record-jump {
+  margin-bottom: 8px;
+}
+
+/* room for the jump button inside the open drawer (the base caps were 150/92px) */
+.rk-record.open {
+  max-height: 210px;
+}
+
+@media (max-height: 520px) {
+  .rk-record.open {
+    max-height: 150px;
+  }
 }
 
 .rk-record-cell b {

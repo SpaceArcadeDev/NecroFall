@@ -22,6 +22,9 @@ export type MenuAction =
   | 'profile'
   | 'friends'
   | 'galaxy'
+  | 'map'
+  | 'events'
+  | 'lobby'
   | 'settings'
   | 'graphics'
   | 'controls'
@@ -60,6 +63,9 @@ export const ACTIONS: Record<MenuAction, ActionDefinition> = {
   profile: { id: 'profile', label: 'PROFILE', icon: 'user', priority: 20, tone: 'neutral' },
   friends: { id: 'friends', label: 'FRIENDS', icon: 'users', priority: 20, tone: 'neutral' },
   galaxy: { id: 'galaxy', label: 'GALAXY', icon: 'orbit', priority: 30, tone: 'neutral' },
+  map: { id: 'map', label: 'MAP', icon: 'orbit', priority: 45, tone: 'neutral' },
+  events: { id: 'events', label: 'EVENTS', icon: 'events', priority: 42, tone: 'neutral' },
+  lobby: { id: 'lobby', label: 'RETURN TO LOBBY', icon: 'arrow-right', priority: 55, tone: 'primary' },
   settings: { id: 'settings', label: 'SETTINGS', icon: 'settings', priority: 10, tone: 'neutral' },
   graphics: { id: 'graphics', label: 'GRAPHICS', icon: 'star', priority: 9, tone: 'neutral' },
   controls: { id: 'controls', label: 'CONTROLS', icon: 'locate', priority: 8, tone: 'neutral' },
@@ -80,8 +86,12 @@ export const ACTIONS: Record<MenuAction, ActionDefinition> = {
  * bug, caught by the dev audit instead of a player.
  */
 export const SCREEN_CONTRACTS = {
-  /** #/home — the main menu. */
-  main: ['play', 'rank', 'galaxy', 'friends', 'profile', 'settings'],
+  /** #/home — the main menu. The bottom bar carries the four destinations
+   *  (EVENTS · CUSTOMIZE · MAP · PLAY — user ask 2026-10-03), the avatar chip is
+   *  PROFILE and the gear is SETTINGS. */
+  main: ['events', 'customize', 'map', 'play', 'friends', 'profile', 'settings'],
+  /** #/events — the live season + worlds-in-play board. */
+  events: ['back'],
   /** #/play — the format menu: every mode card keeps its own enter action. */
   play: ['play', 'back'],
   /** #/solo/* — the run picker. */

@@ -42,14 +42,14 @@ import { button, clear, el } from './ui/dom';
 import { uiRouter, type UIScreen } from '../ui/shell/UIRouter';
 import { auditShellScreen, assertNoHorizontalOverflow, installAuditHandle, validateMenuActions } from '../ui/dev/UIAudit';
 import type { ContractScreen } from '../ui/data/MenuActionRegistry';
-import { createNFButton } from '../ui/components/NFButton';
 import { NFMoreSheet, type MoreSheetEntry } from '../ui/components/NFMoreSheet';
-import { stagger } from '../ui/motion/UIMotion';
+import { createPageHeader } from '../ui/shell/PageHeader';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
 import { SoloPage } from './lobby/SoloPage';
 import { CustomPage } from './lobby/CustomPage';
+import { EventsPage } from './events/EventsPage';
 import { MatchmakingPage } from './matchmaking/MatchmakingPage';
 import { ProfilePage } from './profile/ProfilePage';
 import { RankPage } from './rank/RankPage';
@@ -58,7 +58,7 @@ import { DEFAULT_UNIVERSE_SEED, decodeGalaxyId, parsePlanetKey } from '../rankma
 import type { PlanetDescriptor } from '../rankmap/procedural/GalaxyTypes';
 import { LOCATION_GALAXY, LOCATION_PLANET, LOCATION_SYSTEM, galaxyLocationKey, planetLocationKey, systemLocationKey } from '../rankmap/DiscoveryTypes';
 
-type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'room' | 'rank' | 'solo' | 'custom' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
+type ShellScreen = 'boot' | 'login' | 'onboarding' | 'home' | 'play' | 'lobby' | 'room' | 'rank' | 'solo' | 'custom' | 'events' | 'graphics' | 'match' | 'queue' | 'profile' | 'loading' | 'hidden';
 
 interface ActivePage {
   onHide?: () => void;
@@ -91,8 +91,6 @@ export class AppShell implements ShellContext {
   private moreSheet: NFMoreSheet;
   private toastEl: HTMLElement;
   private pill: HTMLButtonElement;
-  /** The main menu's play-module selection — PLAY launches the chosen format (§8). */
-  private homeMode: 'casual' | 'ranked' = 'casual';
 
   private auth: AuthProvider;
   private screen: ShellScreen = 'boot';
@@ -116,10 +114,12 @@ export class AppShell implements ShellContext {
   private playerSearch: PlayerSearch | null = null;
   private controlsModal: ControlsModal | null = null;
   private backBtn: HTMLButtonElement;
-  private pendingGameScreen: 'customize' | 'howto' | 'controls' | null = null;
-  private gameScreenWatch = 0;
-  /** Last in-game screen seen — leaving the P2P LOBBY must return to the shell, not the legacy menu. */
-  private lastGameScreen: ScreenName = 'menu';
+  /** The fixed "RETURN TO LOBBY" chip (user ask 2026-10-03): visible on every shell
+   *  page while the player stands in an open lobby and no match is running. */
+  private lobbyReturn: HTMLButtonElement;
+  private pendingGameScreen: 'customize' | 'howto' | 'controls' | null = null;  private gameScreenWatch = 0;
+  /** Last in-game screen seen — the friends bar's menu-ish check reads it. */
+  private lastGameScreen: ScreenName = 'play';
   /** The main menu's live chrome height + 6 — the floating friends bar's top offset. */
   private railTopPx = 78;
   /**
@@ -171,6 +171,7 @@ export class AppShell implements ShellContext {
     rank: 'rank',
     solo: 'solo',
     custom: 'custom',
+    events: 'events',
     graphics: 'graphics',
     match: 'match',
     queue: 'queue',
@@ -184,11 +185,10 @@ export class AppShell implements ShellContext {
     play: 'play',
     solo: 'solo',
     custom: 'custom',
+    events: 'events',
     rank: 'rank',
     profile: 'profile',
   };
-  /** The main-menu wordmark — lives IN the chrome header row (plan §38). */
-  private homeTitleEl: HTMLElement | null = null;
 
   constructor(private app: HTMLElement) {
     this.auth = APP_CONFIG.authConfigured ? new SpacetimeAuthProvider() : new NullAuthProvider();
@@ -242,12 +242,21 @@ export class AppShell implements ShellContext {
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>';
     this.chrome.insertBefore(this.backBtn, this.chrome.firstChild);
 
+    // The fixed RETURN TO LOBBY chip (user ask 2026-10-03): a lobby is a place you
+    // can step out of — the chip is the one-tap way back from any page while its
+    // doors stay open. Hidden the moment a match starts or the lobby closes.
+    this.lobbyReturn = button('', 'nf-return-lobby hidden', () => this.openCurrentLobby());
+    this.lobbyReturn.type = 'button';
+    this.lobbyReturn.dataset.action = 'lobby';
+    this.lobbyReturn.setAttribute('aria-label', 'Return to lobby');
+    this.lobbyReturn.innerHTML = '<i class="nf-return-dot"></i><span>RETURN TO LOBBY</span>';
+    this.root.appendChild(this.lobbyReturn);
+
     const launcher: LegacyLauncher = (options) => this.launchLegacy(options);
     this.p2p = new P2PMultiplayerProvider(launcher);
 
-    // Settings gear + the how-to entry beside it: both open the MORE sheet (§30/§31).
+    // The settings gear opens the MORE sheet (§30/§31).
     this.topBar.settings.addEventListener('click', () => this.moreSheet.toggle());
-    this.topBar.howto.addEventListener('click', () => this.openGameScreen('howto'));
     // Dev-only UI integrity checker: `__nfAudit('main')` in the console (§42).
     if (import.meta.env.DEV) installAuditHandle(() => this.root);
 
@@ -408,6 +417,11 @@ export class AppShell implements ShellContext {
     this.navigateTo({ name: 'graphics' });
   }
 
+  /** The EVENTS page (user ask 2026-10-03): the live-ops board — season + worlds in play. */
+  goEvents(): void {
+    this.navigateTo({ name: 'events' });
+  }
+
   // ------------------------------------------------------------ solo + custom (user ask 2026-09-30)
 
   /** The SOLO picker (speedrun / survival) — the rank map as a run picker. */
@@ -528,6 +542,14 @@ export class AppShell implements ShellContext {
     this.screenHost.appendChild(page.element);
   }
 
+  /** The EVENTS board (user ask 2026-10-03): season countdown + live worlds. */
+  private renderEvents(): void {
+    const page = new EventsPage(this);
+    this.page = { onHide: () => page.onHide(), update: () => page.update() };
+    this.screenHost.appendChild(page.element);
+    page.update();
+  }
+
   /** The saved graphics choice — the live game's, or the stored one before it boots. */
   currentGraphicsPref(): QualityPref {
     return this.game?.graphicsChoice ?? loadQualityPref();
@@ -571,7 +593,8 @@ export class AppShell implements ShellContext {
   /** The chevron: the LOBBY ROOM returns to whatever opened it, the setup to the format menu. */
   private onBack(): void {
     if (this.screen === 'room') this.goBackFromLobbyRoom();
-    else if (this.screen === 'lobby' || this.screen === 'solo' || this.screen === 'custom') this.goPlay();
+    // RANK is a mode menu: its back returns to the PLAY format menu (user ask 2026-10-03).
+    else if (this.screen === 'lobby' || this.screen === 'solo' || this.screen === 'custom' || this.screen === 'rank') this.goPlay();
     else this.goHome();
   }
 
@@ -608,46 +631,28 @@ export class AppShell implements ShellContext {
       return;
     }
     const screen = game.ui.currentScreen;
-    if (screen === 'menu' || screen === 'game') {
+    if (screen === 'play' || screen === 'game') {
       this.handleGameScreenChange(screen);
     }
   }
 
   /** Synchronous screen-switch observer (UI.onScreenChange) — fires with no flash. */
   private handleGameScreenChange(name: ScreenName): void {
-    const previous = this.lastGameScreen;
     this.lastGameScreen = name;
     // The friends bar's visibility follows the GAME's screen too (customize/how-to step
-    // aside, lobby/menu wear it — user ask).
+    // aside, lobby/play wear it — user ask).
     this.refreshRail();
-    if (!this.pendingGameScreen) {
-      // Leaving the in-game P2P LOBBY hands the screen back to the account shell
-      // (where the player launched it) — never the legacy main menu.
-      if (name === 'menu' && previous === 'lobby' && this.shellHidden && this.accountReady) {
-        // The OFFICIAL lobby rides this same screen: return to whatever OPENED it —
-        // rank → rank, play → play, lobby → lobby (user ask 2026-09-29). CUSTOM lobbies
-        // return to their own setup screen.
-        if (this.officialLobbyActive || this.customLobbyActive) {
-          this.returnFromOfficialLobby();
-          return;
-        }
-        // Drop the room link (a refresh must not rejoin a lobby that was left)
-        // and put the route back on the CLASSIC setup the player came from.
-        const url = new URL(window.location.href);
-        url.searchParams.delete('lobby');
-        url.hash = '#/lobby';
-        window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
-        this.showShell('lobby');
-      }
-      return;
-    }
-    if (name !== 'menu' && name !== 'game') return;
+    if (!this.pendingGameScreen) return;
+    // The player backed out of a shell-launched screen (customizer / how-to / controls):
+    // the game's base screen is PLAY now that the legacy menu screen is gone (user ask
+    // 2026-10-03) — the shell takes the screen back with no flash.
+    if (name !== 'play' && name !== 'game') return;
     this.pendingGameScreen = null;
     if (this.gameScreenWatch) {
       window.clearInterval(this.gameScreenWatch);
       this.gameScreenWatch = 0;
     }
-    if (name === 'menu') this.showShell('home');
+    if (name === 'play') this.showShell('home');
   }
 
   /** Settings ▸ CONTROLS: the remap sheet, persisted to the account. */
@@ -912,6 +917,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'rank') this.showShell('rank');
       else if (route.name === 'solo') this.showShell('solo', route.mode);
       else if (route.name === 'custom') this.showShell('custom');
+      else if (route.name === 'events') this.showShell('events');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
@@ -933,6 +939,7 @@ export class AppShell implements ShellContext {
       else if (route.name === 'rank') this.showShell('rank');
       else if (route.name === 'solo') this.showShell('solo', route.mode);
       else if (route.name === 'custom') this.showShell('custom');
+      else if (route.name === 'events') this.showShell('events');
       else if (route.name === 'graphics') this.showShell('graphics');
       else if (route.name === 'match') this.showShell('match', String(route.id));
       else this.showShell('home');
@@ -951,6 +958,7 @@ export class AppShell implements ShellContext {
     else if (route.name === 'rank') this.showShell('rank');
     else if (route.name === 'solo') this.showShell('solo', route.mode);
     else if (route.name === 'custom') this.showShell('custom');
+    else if (route.name === 'events') this.showShell('events');
     else if (route.name === 'graphics') this.showShell('graphics');
     else if (route.name === 'match') this.showShell('match', String(route.id));
     else if (this.screen !== 'queue' && this.screen !== 'onboarding' && this.screen !== 'loading') this.showShell('home');
@@ -967,7 +975,7 @@ export class AppShell implements ShellContext {
         // whole party waits (user ask: the lobby keeps its own buttons, the search
         // switches the screen exactly like a solo FIND MATCH does).
         this.lastQueueRanked = Boolean(ClientCache.shared.myQueue()?.ranked);
-        this.game?.ui.show('menu'); // the observer returns the shell first
+        this.game?.ui.exitToMenu(); // the shell takes the screen (queue) right after
         this.showShell('queue');
       } else if (this.screen !== 'queue' && this.screen !== 'loading' && !this.shellHidden) {
         // Remember the MODE: a ranked search must return to the map, not the lobby.
@@ -1093,11 +1101,8 @@ export class AppShell implements ShellContext {
     this.refreshRail();
     // The boot spinner is for the LOADING screen only — any real screen hides it.
     this.setBootSpinner(screen === 'loading', screen === 'loading' ? 'LOADING PLANET…' : 'CONNECTING…');
-    // MAIN MENU HEADER (plan §38/§39): the wordmark shares the HEADER ROW with the
-    // profile button — mathematically centred on the viewport. Every other screen
-    // drops the title and the `on-home` layout tweaks.
-    this.homeTitleEl?.remove();
-    this.homeTitleEl = null;
+    // The `on-home` chrome tweaks (top bar order on the main menu) — the wordmark
+    // itself now lives in the page header, not the chrome row (user ask 2026-10-03).
     this.root.classList.toggle('on-home', screen === 'home');
     // The planet stays as the backdrop: hide the in-game UI layer under the shell.
     this.game?.ui.setShellMode(true);
@@ -1117,11 +1122,13 @@ export class AppShell implements ShellContext {
         if (!this.shellHidden) takeover.ui.setShellMode(true);
       }, 50);
     }
-    // The floating nav belongs to the MAIN menu only; child screens get the chevron.
-    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'solo' || screen === 'custom' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
-    this.nav.element.classList.toggle('hidden', screen !== 'home');
+    // The bottom bar belongs to the MAIN MENU page ONLY (user ask 2026-10-03): child
+    // pages navigate by their own chevrons and the bar returns on the home route.
+    const childScreen = screen === 'play' || screen === 'lobby' || screen === 'room' || screen === 'rank' || screen === 'solo' || screen === 'custom' || screen === 'events' || screen === 'graphics' || screen === 'queue' || screen === 'profile';
+    const navScreen = screen === 'home';
+    this.nav.element.classList.toggle('hidden', !navScreen);
     this.backBtn.classList.toggle('hidden', !childScreen);
-    this.root.classList.toggle('no-nav', screen !== 'home');
+    this.root.classList.toggle('no-nav', !navScreen);
     // NOTE: the friends bar's visibility belongs to `refreshRail()` ALONE. The old
     // `noChrome` hide here turned it off on play/lobby and the next data tick turned it
     // back on — the "friends list pops in after a delay" report (user ask 2026-09-29).
@@ -1164,7 +1171,7 @@ export class AppShell implements ShellContext {
         this.renderLobbyRoom();
         break;
       case 'rank':
-        this.nav.setActive('play');
+        this.nav.setActive('map');
         this.renderRank();
         break;
       case 'solo':
@@ -1174,6 +1181,10 @@ export class AppShell implements ShellContext {
       case 'custom':
         this.nav.setActive('play');
         this.renderCustom();
+        break;
+      case 'events':
+        this.nav.setActive('events');
+        this.renderEvents();
         break;
       case 'graphics':
         this.nav.setActive(null);
@@ -1214,6 +1225,8 @@ export class AppShell implements ShellContext {
     // the floating one steps aside so there are never two controls (§2).
     const ownBack = Boolean(this.screenHost.querySelector('.nf-page-header [data-action="back"]'));
     if (ownBack) this.backBtn.classList.add('hidden');
+    // The RETURN TO LOBBY chip follows the screen + the lobby rows (user ask 2026-10-03).
+    this.refreshLobbyReturn();
   }
 
   private renderLogin(message?: string): void {
@@ -1445,26 +1458,19 @@ export class AppShell implements ShellContext {
     document.documentElement.classList.remove('nf-onb-colony');
     if (this.game) {
       this.game.ui.onColonyClick = () => undefined;
-      if (this.game.ui.currentScreen === 'colony') this.game.ui.show('menu');
+      if (this.game.ui.currentScreen === 'colony') this.game.ui.show('play');
     }
   }
 
   private renderHome(): void {
     const wrap = el('div', 'nf-page home-page');
 
-    // ---- the wordmark rides the CHROME header row (plan §38) so it is truly
-    // centred on the viewport, in the SAME row as the profile button. The
-    // SUBTITLE sits directly UNDER it (user ask), so both leave together on
-    // every screen change and end up as one column in the header.
-    const title = el('div', 'nf-home-header-title');
-    title.appendChild(el('div', 'menu-title nf-home-title nf-home-word', 'NECROFALL'));
-    title.appendChild(el('div', 'menu-sub nf-home-header-sub', 'Dive • Purge • Dominate'));
-    this.homeTitleEl = title;
-    this.chrome.appendChild(title);
-
-    // ---- the world vignette (§35): the 3D scene stays the hero — a graded
-    // darkening instead of an opaque card stack.
-    wrap.appendChild(el('div', 'nf-world-vignette'));
+    // ---- the shared page header (user ask 2026-10-03): the SAME title anchor and
+    // gradient typography as GRAPHICS and every other page — one component, one look.
+    // No second wordmark lives in the chrome row any more.
+    wrap.appendChild(
+      createPageHeader({ title: 'NECROFALL', subtitle: 'Dive • Purge • Dominate' })
+    );
 
     // ---- the player's own character, staged exactly like the lobby line-up
     // (name / level / currency live in the top bar — nothing here repeats them).
@@ -1483,71 +1489,9 @@ export class AppShell implements ShellContext {
     caption.appendChild(badge);
     wrap.appendChild(caption);
 
-    // ---- THE PLAY MODULE (§8/§9): the strongest primary interaction on the
-    // screen. Eyebrow + current format + the mode switch + the acid PLAY CTA.
-    const moduleEl = el('section', 'nf-play-module nf-glass nf-glass--blur');
-    const copy = el('div', 'nf-play-module__copy');
-    copy.appendChild(el('div', 'nf-eyebrow', 'PLAY'));
-    const modeTitle = el('h1', 'nf-play-module__title', '');
-    const modeSub = el('div', 'nf-play-module__sub', '');
-    copy.append(modeTitle, modeSub);
-
-    const switchEl = el('div', 'nf-mode-switch');
-    const rankBtn = createNFButton({
-      label: 'RANKED',
-      icon: 'rank',
-      tone: 'accent',
-      action: 'rank',
-      sfx: 'select',
-      extraClass: 'nf-mode-switch__item',
-      onClick: () => select('ranked'),
-    });
-    const casualBtn = createNFButton({
-      label: 'CASUAL',
-      icon: 'swords',
-      tone: 'neutral',
-      action: 'casual',
-      sfx: 'select',
-      extraClass: 'nf-mode-switch__item',
-      onClick: () => select('casual'),
-    });
-    switchEl.append(rankBtn, casualBtn);
-
-    const playBtn = createNFButton({
-      label: 'PLAY',
-      icon: 'play',
-      tone: 'primary',
-      action: 'play',
-      sfx: 'confirm',
-      extraClass: 'nf-btn--hero nf-play-module__play',
-      onClick: () => this.launchHomeMode(),
-    });
-
-    // Selection is PER VISIT state on the shell, and only the LAYOUT differs by
-    // viewport — the action set here is identical everywhere (§18/§60).
-    const select = (mode: 'casual' | 'ranked'): void => {
-      this.homeMode = mode;
-      rankBtn.classList.toggle('is-active', mode === 'ranked');
-      casualBtn.classList.toggle('is-active', mode === 'casual');
-      modeTitle.textContent = mode === 'ranked' ? 'RANKED' : 'CASUAL';
-      modeSub.textContent =
-        mode === 'ranked' ? 'Climb the ladder on the intergalactic map' : 'Lobby up — classic 3v3v3 warfare';
-    };
-
-    moduleEl.append(copy, switchEl, playBtn);
-    wrap.appendChild(moduleEl);
-    select(this.homeMode);
-    stagger(moduleEl, 55, 3);
-
     this.screenHost.appendChild(wrap);
     // Stage after the box has laid out (the preview sizes itself from the element).
     this.restageAvatar();
-  }
-
-  /** The PLAY module's CTA: launch the selected format (§8). */
-  private launchHomeMode(): void {
-    if (this.homeMode === 'ranked') this.goRank();
-    else this.goPlay();
   }
 
   /** (Re)hands the avatar stage to the game's shared lobby preview once layout is ready. */
@@ -1613,8 +1557,8 @@ export class AppShell implements ShellContext {
       findMatch: () => this.official.findMatch(),
       leave: () => {
         this.official.leaveParty();
-        // The screen observer returns the shell to whatever opened the lobby (rank → rank).
-        game.ui.show('menu');
+        // The shell takes the screen back (rank → rank, lobby → lobby).
+        game.ui.exitToMenu();
       },
       kick: (hex: string) => {
         const target = ClientCache.shared.playerByHex(hex)?.identity;
@@ -1651,7 +1595,7 @@ export class AppShell implements ShellContext {
       }
       if (!gathering) {
         this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
-        game.ui.show('menu'); // the observer routes back into the shell
+        game.ui.exitToMenu(); // the shell takes the screen back
       }
       return;
     }
@@ -1739,8 +1683,8 @@ export class AppShell implements ShellContext {
       findMatch: () => undefined, // custom lobbies never queue — the host starts directly
       leave: () => {
         this.official.leaveCustomLobby();
-        // The screen observer returns the shell to the CUSTOM setup screen.
-        game.ui.show('menu');
+        // The shell takes the screen back (the CUSTOM setup screen).
+        game.ui.exitToMenu();
       },
       kick: (hex: string) => this.official.kickCustomSeat(hex),
       ready: (ready: boolean) => {
@@ -1782,7 +1726,7 @@ export class AppShell implements ShellContext {
       }
       if (!gathering) {
         this.pendingLobbyExit = 'NO LOBBY FOUND — it may have been closed.';
-        game.ui.show('menu'); // the observer routes back into the shell
+        game.ui.exitToMenu(); // the shell takes the screen back
       }
       return;
     }
@@ -1968,11 +1912,12 @@ export class AppShell implements ShellContext {
 
   // ------------------------------------------------------------ game control
 
+  /** The bottom bar's destinations (user ask 2026-10-03): EVENTS · CUSTOMIZE · MAP · PLAY. */
   private onNav(key: BottomNavKey): void {
     if (key === 'play') this.goPlay();
-    else if (key === 'galaxy') this.goRank();
-    else if (key === 'friends') this.rail.toggleSheet();
-    else this.moreSheet.toggle();
+    else if (key === 'map') this.goRank();
+    else if (key === 'events') this.goEvents();
+    else this.openCustomize();
   }
 
   /**
@@ -2005,7 +1950,7 @@ export class AppShell implements ShellContext {
       game.hostP2PLobby(options.name);
       return;
     }
-    game.ui.show('menu');
+    game.ui.show('play');
   }
 
   /** Boot (once) the 3D world the shell sits on and that plays both match modes. */
@@ -2018,6 +1963,9 @@ export class AppShell implements ShellContext {
     // screen hands over to the game menu, the shell takes the screen back — no
     // flash of the old P2P menu in between.
     game.ui.onScreenChange = (name) => this.handleGameScreenChange(name);
+    // ...and the reverse edge: when the game ASKS for "the menu" (match over, lobby
+    // left, customizer backed out), the SHELL is the menu now (user ask 2026-10-03).
+    game.ui.onExitToMenu = (hint) => this.onGameExitToMenu(hint);
     (window as unknown as { necrofall: Game }).necrofall = game;
     this.startGamePoll();
     return game;
@@ -2100,11 +2048,9 @@ export class AppShell implements ShellContext {
       return;
     }
 
-    // Legacy/P2P: offer the way back to the account shell from its menu —
-    // but only when there IS an account shell to return to, and ONLY on its
-    // menu/results screens. Shell-launched screens (customizer, how-to,
-    // controls) hide the pill: their own back button returns to the shell.
-    const onReturnableScreen = game.ui.currentScreen === 'menu' || game.ui.currentScreen === 'results';
+    // Legacy/P2P: offer the way back to the account shell — a P2P match ends on the
+    // results screen, and the legacy menu no longer exists (user ask 2026-10-03).
+    const onReturnableScreen = game.ui.currentScreen === 'results';
     const canReturn =
       APP_CONFIG.configured && this.accountReady && (game.phase === 'menu' || game.phase === 'ended') && onReturnableScreen;
     this.pill.classList.toggle('hidden', !(this.shellHidden && canReturn));
@@ -2209,9 +2155,9 @@ export class AppShell implements ShellContext {
       this.screen === 'profile' ||
       this.screen === 'graphics';
     // While the GAME owns the screen (shell hidden), the bar only shows on the menu-ish
-    // screens — the P2P / official lobby, the legacy menu and play setup (user ask).
-    const gameScreen = g?.ui.currentScreen ?? 'menu';
-    const menuishGame = gameScreen === 'menu' || gameScreen === 'lobby' || gameScreen === 'play';
+    // screens — the P2P / official lobby and the classic play setup (user ask).
+    const gameScreen = g?.ui.currentScreen ?? 'play';
+    const menuishGame = gameScreen === 'play' || gameScreen === 'lobby';
     const show =
       this.accountReady &&
       !excluded &&
@@ -2222,15 +2168,68 @@ export class AppShell implements ShellContext {
     if (!show) this.rail.collapse();
   }
 
-  /** The MORE sheet's entries (§30/§31): everything that does not fit the five tabs. */
+  /**
+   * The game asks for "the menu" (match over, lobby left, customizer backed out).
+   * THE MENU IS THE SHELL now — the legacy menu screen no longer exists (user ask
+   * 2026-10-03). Returns false in builds without an account screen, so the game
+   * falls back to its own PLAY board (offline play).
+   */
+  private onGameExitToMenu(hint: 'home' | 'lobby'): boolean {
+    if (!APP_CONFIG.configured || !this.accountReady) return false;
+    // A live SOLO run routes itself home from `gameTick` — never pre-empt it.
+    if (this.soloRunActive) return true;
+    if (this.officialLobbyActive || this.customLobbyActive) {
+      this.returnFromOfficialLobby();
+      return true;
+    }
+    if (hint === 'lobby') {
+      // Drop the room link (a refresh must not rejoin a lobby that was left) and
+      // put the route back on the CLASSIC setup.
+      const url = new URL(window.location.href);
+      url.searchParams.delete('lobby');
+      url.hash = '#/lobby';
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+      this.showShell('lobby');
+      return true;
+    }
+    this.showShell('home');
+    return true;
+  }
+
+  /** The RETURN TO LOBBY chip's answer: step back into whichever lobby is still open. */
+  private openCurrentLobby(): void {
+    const hex = this.myHex();
+    if (hex && ClientCache.shared.myParty(hex)) this.goLobbyRoom();
+    else if (hex && ClientCache.shared.myCustomLobby(hex)) this.goCustomRoom();
+  }
+
+  /**
+   * The fixed RETURN TO LOBBY chip (user ask 2026-10-03): a lobby keeps its doors
+   * open while the player browses — the chip rides every shell page and disappears
+   * the moment a match boots, the lobby closes, or the shell itself steps aside.
+   */
+  private refreshLobbyReturn(): void {
+    const hex = this.myHex();
+    const inLobby = Boolean(hex && (ClientCache.shared.myParty(hex) || ClientCache.shared.myCustomLobby(hex)));
+    const busy = this.shellHidden || this.officialMatchActive || this.soloRunActive;
+    const excluded =
+      this.screen === 'room' ||
+      this.screen === 'boot' ||
+      this.screen === 'login' ||
+      this.screen === 'onboarding' ||
+      this.screen === 'loading' ||
+      this.screen === 'match';
+    this.lobbyReturn.classList.toggle('hidden', !(inLobby && !busy && !excluded));
+  }
+
+  /** The MORE sheet's entries (§30/§31; user ask 2026-10-03: PROFILE and CUSTOMIZE
+   *  left the list — the avatar chip opens the profile and the nav's CUSTOMIZE tab
+   *  opens the customizer, one entry point each). */
   private moreEntries(): MoreSheetEntry[] {
     const entries: MoreSheetEntry[] = [];
-    const hex = this.myHex();
-    if (hex) entries.push({ label: 'PROFILE', icon: 'user', action: 'profile', onClick: () => this.openProfile(hex) });
     entries.push({ label: 'GRAPHICS', icon: 'star', action: 'graphics', onClick: () => this.goGraphics() });
     entries.push({ label: 'CONTROLS', icon: 'locate', action: 'controls', onClick: () => this.openControls() });
     entries.push({ label: 'HOW TO PLAY', icon: 'help', action: 'howto', onClick: () => this.openGameScreen('howto') });
-    entries.push({ label: 'CUSTOMIZE', icon: 'wand', action: 'customize', onClick: () => this.openCustomize() });
     const fs = fullscreenMode() !== 'none';
     entries.push({
       label: fs ? 'EXIT FULLSCREEN' : 'FULLSCREEN',

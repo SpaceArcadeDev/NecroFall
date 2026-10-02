@@ -823,6 +823,11 @@ export class SelectionPreview {
   }
 
   private onDragDown = (e: PointerEvent): void => {
+    // The drag surface must not STEAL presses aimed at UI controls: pointer
+    // capture retargets the following click to the capture element, so a button
+    // inside the surface (the home PLAY module lives in it) would never fire.
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.('button, a, input, select, textarea, [role="button"]')) return;
     this.dragging = true;
     this.dragX = e.clientX;
     if (this.mode === 'lobby') {

@@ -1,0 +1,226 @@
+/* ==========================================================================
+   NECROFALL — DESIGN TOKENS (overhaul §4)
+   The single source of visual truth for the menu shell. Loaded LAST so it
+   wins ties against the legacy sheets; everything namespaced `--nf-*`.
+   ========================================================================== */
+
+:root {
+  /* ---- base surfaces: near-black military dark, NOT purple ---------------- */
+  --nf-bg: #080b0c;
+  --nf-bg-soft: #0d1213;
+  --nf-surface: rgba(15, 19, 20, 0.82);
+  --nf-surface-solid: #111718;
+  --nf-surface-raised: rgba(28, 34, 35, 0.92);
+  --nf-glass: rgba(10, 14, 15, 0.62);
+
+  --nf-line: rgba(255, 255, 255, 0.1);
+  --nf-line-strong: rgba(255, 255, 255, 0.2);
+
+  --nf-text: #f3f6f3;
+  --nf-text-muted: #a6afab;
+  --nf-text-dim: #68726e;
+
+  /* ---- brand accents: ONE accent = action, ONE accent = state ------------- */
+  --nf-acid: #c8ff43; /* primary CTA / PLAY        */
+  --nf-cyan: #62e4e8; /* navigation / information  */
+  --nf-orange: #ff9b4a; /* rank / high-value         */
+  --nf-red: #ff5a5f; /* danger                    */
+  --nf-green: #67e6a5; /* ready / success           */
+
+  /* ---- geometry ----------------------------------------------------------- */
+  --nf-radius-sm: 10px;
+  --nf-radius-md: 16px;
+  --nf-radius-lg: 22px;
+  --nf-touch-min: 50px;
+
+  --nf-safe-top: env(safe-area-inset-top, 0px);
+  --nf-safe-right: env(safe-area-inset-right, 0px);
+  --nf-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --nf-safe-left: env(safe-area-inset-left, 0px);
+
+  --nf-header-h: clamp(52px, 9vh, 68px);
+  --nf-nav-h: clamp(56px, 9.5vh, 72px);
+
+  /* ---- type: one condensed display face + one readable body face --------- */
+  --font-display: "Rajdhani", "Arial Narrow", "Segoe UI", sans-serif;
+  --font-body: Inter, "Segoe UI", system-ui, sans-serif;
+
+  /* legacy token bridge — the shell's older sheets read these; keep them in
+     the new palette so every untouched rule re-colours in one move. */
+  --ui-bg: var(--nf-bg);
+  --ui-panel: var(--nf-surface);
+  --ui-panel-strong: rgba(21, 26, 27, 0.94);
+  --ui-border: var(--nf-line);
+  --ui-text: var(--nf-text);
+  --ui-text-muted: var(--nf-text-muted);
+  --ui-accent: var(--nf-cyan);
+  --ui-accent-2: var(--nf-green);
+  --ui-gold: var(--nf-orange);
+}
+
+/* ==========================================================================
+   BASE BEHAVIOUR (§19/§20/§21/§40)
+   ========================================================================== */
+
+html,
+body {
+  background: var(--nf-bg);
+}
+
+.nf-shell,
+.nf-modal,
+.nf-boot-spin,
+.nf-sheet,
+.nf-friends-sheet {
+  font-family: var(--font-body);
+}
+
+/* condensed display face for headings / mode names / big numbers (§TYPOGRAPHY) */
+.nf-shell .menu-title,
+.nf-shell .nf-gfx-title,
+.nf-shell .nf-loading-title,
+.nf-shell .nf-home-word,
+.nf-shell .play-head .menu-title,
+.nf-sheet__title,
+.nf-mode-card__title,
+.nf-play-module__title,
+.nf-big-number {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+/* every pressable element: no double-tap zoom, no tap flash, real cursor */
+.nf-shell button,
+.nf-shell a,
+.nf-shell [role="button"],
+.nf-sheet button,
+.nf-friends-sheet button {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* vertically scrollable panes opt into pan-y (§21) */
+.nf-screen-scroll,
+.nf-shell .nf-main,
+.nf-sheet__rows {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nf-shell :focus-visible,
+.nf-sheet :focus-visible {
+  outline: 2px solid var(--nf-acid);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   SCREEN TRANSITIONS + STAGING (§22/§36) — transform/opacity only (§39)
+   ========================================================================== */
+
+.nf-screen {
+  animation: nf-screen-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes nf-screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* staged entrance: children rise one after another (§36) */
+.nf-stagger > * {
+  animation: nf-rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--nf-i, 0) * 55ms);
+}
+
+@keyframes nf-rise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* the primary-CTA state beat (§23) — replayable via UIMotion.pulse() */
+.nf-pulse {
+  animation: nf-pulse 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes nf-pulse {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.035);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* one-shot attention shake for refused actions */
+.nf-flash {
+  animation: nf-flash 0.34s ease-out;
+}
+
+@keyframes nf-flash {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  30% {
+    transform: translateX(-4px);
+  }
+  60% {
+    transform: translateX(3px);
+  }
+}
+
+/* ==========================================================================
+   REDUCED MOTION (§40) — one global off-switch for the whole shell
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-screen,
+  .nf-stagger > *,
+  .nf-pulse,
+  .nf-flash,
+  .nf-bottom,
+  .nf-rail,
+  .nf-page,
+  .nf-mode-card,
+  .nf-btn,
+  .nf-play-module {
+    animation: none !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ==========================================================================
+   SHELL SCROLLBARS — thin, neutral, invisible until the pane scrolls
+   ========================================================================== */
+
+.nf-shell .nf-main::-webkit-scrollbar,
+.nf-sheet__rows::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.nf-shell .nf-main::-webkit-scrollbar-thumb,
+.nf-sheet__rows::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+}
+
+.nf-shell .nf-main::-webkit-scrollbar-track,
+.nf-sheet__rows::-webkit-scrollbar-track {
+  background: transparent;
+}

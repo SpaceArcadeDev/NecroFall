@@ -38,11 +38,13 @@ export class CustomPage {
       }
       this.ctx.joinCustomLobbyByCode(code);
     });
+    join.dataset.action = 'select';
     joinRow.append(codeInput, join);
 
     // ---- create
     const createRow = el('div', 'nf-play-actions');
     const create = button('CREATE LOBBY', 'btn primary nf-small', () => this.ctx.createCustomLobby());
+    create.dataset.action = 'play';
     createRow.appendChild(create);
 
     card.append(joinRow, createRow);

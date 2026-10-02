@@ -80,6 +80,7 @@ export class SoloPage {
     for (const m of ['speedrun', 'survival'] as PickedSoloMode[]) {
       const b = el('button', `solo-toggle-btn${m === mode ? ' on' : ''}`, MODES[m].title) as HTMLButtonElement;
       b.type = 'button';
+      b.dataset.action = 'solo';
       b.addEventListener('click', () => {
         if (m !== this.mode) this.ctx.goSolo(m);
       });
@@ -244,6 +245,15 @@ export class SoloPage {
       this.panel.appendChild(
         el('div', 'solo-hint', 'Tap a planet on the map — your rank band is highlighted. Every run plays the exact world you see here.')
       );
+      // §32: the run action is GATED by the pick, never removed — the button
+      // stays on the panel, disabled, with the reason in its hint.
+      const armed = el('button', 'solo-start', `START ${MODES[this.mode].title}`) as HTMLButtonElement;
+      armed.type = 'button';
+      armed.disabled = true;
+      armed.dataset.action = 'play';
+      armed.title = 'Pick a planet on the map first';
+      this.panel.appendChild(armed);
+      this.panel.appendChild(el('div', 'solo-note', 'Tap a highlighted planet in your band to arm the run.'));
       return;
     }
     const mine = p.ring === this.myRing();
@@ -301,6 +311,7 @@ export class SoloPage {
     const start = el('button', 'solo-start', mine ? `START ${MODES[this.mode].title}` : 'OUTSIDE YOUR BAND') as HTMLButtonElement;
     start.type = 'button';
     start.disabled = !mine;
+    start.dataset.action = 'play';
     start.addEventListener('click', () => this.ctx.startSoloRun(this.mode, p));
     this.panel.appendChild(start);
     this.panel.appendChild(

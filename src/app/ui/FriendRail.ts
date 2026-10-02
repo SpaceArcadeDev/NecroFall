@@ -183,6 +183,12 @@ export class FriendRail {
     this.closeSheet();
   }
 
+  /** Open/close the friends sheet — the FRIENDS nav tab's entry (overhaul §30). */
+  toggleSheet(): void {
+    if (this.open) this.closeSheet();
+    else this.openSheet();
+  }
+
   private setView(view: 'friends' | 'followers'): void {
     this.view = view;
     this.listSig = '';

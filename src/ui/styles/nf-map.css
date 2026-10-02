@@ -1,0 +1,171 @@
+/* ==========================================================================
+   NECROFALL — MAP CHROME (§15/§44/§45)
+   The intergalactic map keeps its logic, layout and hierarchy EXACTLY as-is —
+   this sheet only re-skins its chrome (breadcrumb, zoom, cards, panels) in the
+   new UI language: neutral glass + cyan information + orange high-value action.
+   ========================================================================== */
+
+/* the map frame: neutral hairlines, near-black stage (contrast for the stars) */
+.rk-map-wrap {
+  border-left: 1px solid var(--nf-line);
+  border-right: 1px solid var(--nf-line);
+  background: #050809;
+}
+
+/* breadcrumb + hover tip: compact glass drawers (§45) */
+.rk-breadcrumb {
+  background: rgba(10, 14, 15, 0.78);
+  border: 1px solid var(--nf-line);
+  color: var(--nf-text);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.rk-crumb {
+  color: var(--nf-text-muted);
+}
+
+.rk-crumb:hover {
+  color: var(--nf-text);
+}
+
+.rk-crumb.at {
+  color: var(--nf-cyan);
+}
+
+.rk-crumb-sep {
+  color: var(--nf-text-dim);
+}
+
+.rk-hover-tip {
+  background: rgba(8, 11, 12, 0.88);
+  border: 1px solid var(--nf-line-strong);
+  color: var(--nf-text);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.rk-tip-name {
+  color: var(--nf-text);
+}
+
+/* map controls: same sizes, new ink — 38px stays (map chrome is desktop/aimed) */
+.rk-zoom-btn {
+  border: 1px solid var(--nf-line);
+  background: rgba(10, 14, 15, 0.78);
+  color: var(--nf-text);
+}
+
+.rk-zoom-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.rk-map-expand,
+.rk-expand {
+  border-color: var(--nf-line);
+  background: rgba(10, 14, 15, 0.78);
+  color: var(--nf-text);
+}
+
+.rk-map-expand:hover,
+.rk-expand:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: var(--nf-line-strong);
+}
+
+/* actions: neutral glass; the high-value action is ORANGE (§15 "high-value") */
+.rk-btn {
+  border: 1px solid var(--nf-line);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--nf-text);
+}
+
+.rk-btn:hover {
+  transform: translateY(-1px);
+  border-color: var(--nf-line-strong);
+}
+
+.rk-btn.primary {
+  border-color: rgba(255, 255, 255, 0.38);
+  background: linear-gradient(180deg, #ffb571, var(--nf-orange));
+  color: #170e05;
+  box-shadow: 0 8px 24px -10px rgba(255, 155, 74, 0.7);
+}
+
+.rk-btn.primary:hover {
+  box-shadow: 0 12px 30px -10px rgba(255, 155, 74, 0.85);
+}
+
+.rk-btn.searching {
+  animation: rk-searching 2s ease-in-out infinite;
+}
+
+.rk-join-input {
+  border: 1px solid var(--nf-line);
+  background: rgba(10, 14, 15, 0.78);
+  color: var(--nf-text);
+  border-radius: 10px;
+}
+
+.rk-join-input::placeholder {
+  color: var(--nf-text-dim);
+}
+
+/* the rank strip + record drawer: neutral cards, cyan rails */
+.rk-strip {
+  border-color: var(--nf-line);
+}
+
+.rk-record {
+  background: rgba(10, 14, 15, 0.72);
+  border-color: var(--nf-line);
+}
+
+.rk-record-cell b {
+  font-family: var(--font-display);
+}
+
+/* side cards: dark neutral gradient, cyan accent rail (§49) */
+.rk-card {
+  background: linear-gradient(160deg, rgba(22, 27, 28, 0.9), rgba(12, 16, 17, 0.92));
+  border: 1px solid var(--nf-line);
+}
+
+.rk-card::before {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--nf-cyan) 70%, #fff 6%), transparent);
+}
+
+.rk-card-title,
+.rk-mapinfo-title {
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+}
+
+/* band rail rings: neutral by default, colony/ring accent preserved */
+.rk-ring {
+  border: 1px solid var(--nf-line);
+  background: rgba(16, 20, 21, 0.6);
+}
+
+/* the map info drawer (§45): compact glass — planet name, discovery, shield timer */
+.rk-mapinfo-card {
+  background: rgba(10, 14, 15, 0.82);
+  border: 1px solid var(--nf-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.rk-mapinfo-kicker {
+  color: var(--nf-text-dim);
+  letter-spacing: 0.24em;
+}
+
+.rk-shieldbar-clock {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the celebration keeps its teal/green identity (it is a discovery, not chrome) */
+.rk-disc-title {
+  color: var(--nf-green);
+}

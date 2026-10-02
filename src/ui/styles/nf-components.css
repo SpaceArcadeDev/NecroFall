@@ -1,0 +1,631 @@
+/* ==========================================================================
+   NECROFALL — COMPONENTS (overhaul §7/§10/§16/§31/§37/§49/§58)
+   The button system, icon buttons, avatars, badges, glass panels, mode cards
+   and the MORE sheet. Loaded after tokens.css.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- NF BUTTON */
+.nf-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: var(--nf-touch-min);
+  min-width: 52px;
+  padding: 0 clamp(14px, 2vw, 22px);
+  border: 1px solid var(--nf-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--nf-text);
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transform: translateZ(0);
+  transition:
+    transform 0.14s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease;
+}
+
+.nf-btn::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.14), transparent 38%);
+  transition: opacity 0.18s ease;
+}
+
+.nf-btn:hover::before,
+.nf-btn:focus-visible::before,
+.nf-btn:active::before {
+  opacity: 1;
+}
+
+.nf-btn:active {
+  transform: translateY(1px) scale(0.975);
+}
+
+.nf-btn:disabled {
+  opacity: 0.46;
+  cursor: default;
+}
+
+.nf-btn__icon {
+  display: grid;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  flex: none;
+}
+
+.nf-btn__icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.nf-btn__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nf-btn__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.nf-btn__hint {
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--nf-text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.nf-btn.is-active {
+  border-color: var(--nf-line-strong);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+/* ---- tones ---- */
+.nf-btn--primary {
+  min-width: clamp(140px, 16vw, 220px);
+  min-height: clamp(54px, 8vh, 68px);
+  border-color: rgba(255, 255, 255, 0.42);
+  background: linear-gradient(180deg, #d6ff73, var(--nf-acid));
+  color: #0a1009;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  box-shadow:
+    0 0 0 1px rgba(200, 255, 67, 0.1),
+    0 12px 34px rgba(200, 255, 67, 0.16);
+}
+
+.nf-btn--primary .nf-btn__hint {
+  color: rgba(10, 16, 9, 0.62);
+}
+
+.nf-btn--primary:hover,
+.nf-btn--primary:focus-visible,
+.nf-btn--primary.is-active {
+  box-shadow:
+    0 0 0 1px rgba(200, 255, 67, 0.2),
+    0 0 28px rgba(200, 255, 67, 0.22),
+    0 16px 42px rgba(200, 255, 67, 0.18);
+}
+
+.nf-btn--accent {
+  border-color: rgba(255, 155, 74, 0.34);
+  background: rgba(255, 155, 74, 0.13);
+  color: #ffc18e;
+}
+
+.nf-btn--accent.is-active {
+  background: rgba(255, 155, 74, 0.2);
+  box-shadow: 0 0 24px rgba(255, 155, 74, 0.16);
+}
+
+.nf-btn--neutral {
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.nf-btn--danger {
+  border-color: rgba(255, 90, 95, 0.28);
+  background: rgba(255, 90, 95, 0.08);
+  color: #ff8a8e;
+}
+
+/* ---- the hero CTA (main menu PLAY) ---- */
+.nf-btn--hero {
+  min-width: clamp(150px, 18vw, 230px);
+  min-height: clamp(56px, 8.5vh, 72px);
+  font-size: clamp(15px, 2.2vh, 19px);
+  letter-spacing: 0.14em;
+}
+
+/* ---- legacy-compatible variants (the shell's older call sites) ---- */
+.nf-btn.primary {
+  border-color: rgba(255, 255, 255, 0.42);
+  background: linear-gradient(180deg, #d6ff73, var(--nf-acid));
+  color: #0a1009;
+  font-weight: 800;
+  box-shadow: 0 12px 34px rgba(200, 255, 67, 0.16);
+}
+
+.nf-btn.ghost {
+  background: transparent;
+}
+
+.nf-btn.ghost:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nf-btn.small {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: 12px;
+  gap: 7px;
+}
+
+.nf-btn.on {
+  border-color: rgba(103, 230, 165, 0.5);
+  color: var(--nf-green);
+  background: rgba(103, 230, 165, 0.1);
+}
+
+/* §32: the explainer line that accompanies a disabled action */
+.nf-action-hint {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--nf-text-dim);
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------------- NF ICON BUTTON */
+.nf-icon-btn {
+  width: var(--nf-touch-min);
+  height: var(--nf-touch-min);
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--nf-line);
+  border-radius: 14px;
+  background: rgba(12, 16, 17, 0.72);
+  color: var(--nf-text);
+  cursor: pointer;
+  transition:
+    transform 0.12s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.nf-icon-btn svg {
+  width: 21px;
+  height: 21px;
+  display: block;
+}
+
+.nf-icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--nf-line-strong);
+}
+
+.nf-icon-btn:active {
+  transform: scale(0.92);
+}
+
+.nf-icon-btn.is-active {
+  color: var(--nf-acid);
+  border-color: rgba(200, 255, 67, 0.32);
+}
+
+/* ---------------------------------------------------------------- NF BADGE / DIVIDER */
+.nf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--nf-line);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--nf-text-muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.nf-badge--acid {
+  color: var(--nf-acid);
+  border-color: rgba(200, 255, 67, 0.34);
+  background: rgba(200, 255, 67, 0.08);
+}
+
+.nf-badge--cyan {
+  color: var(--nf-cyan);
+  border-color: rgba(98, 228, 232, 0.34);
+  background: rgba(98, 228, 232, 0.08);
+}
+
+.nf-badge--orange {
+  color: var(--nf-orange);
+  border-color: rgba(255, 155, 74, 0.36);
+  background: rgba(255, 155, 74, 0.09);
+}
+
+.nf-badge--green {
+  color: var(--nf-green);
+  border-color: rgba(103, 230, 165, 0.36);
+  background: rgba(103, 230, 165, 0.09);
+}
+
+.nf-badge--red {
+  color: var(--nf-red);
+  border-color: rgba(255, 90, 95, 0.34);
+  background: rgba(255, 90, 95, 0.08);
+}
+
+.nf-divider {
+  position: relative;
+  height: 1px;
+  background: var(--nf-line);
+  margin: 8px 0;
+}
+
+.nf-divider__label {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  padding: 0 8px;
+  background: var(--nf-surface-solid);
+  color: var(--nf-text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+/* ---------------------------------------------------------------- NF AVATAR (§10) */
+.nf-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--nf-avatar-accent, var(--nf-cyan)) 55%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--nf-avatar-accent, #62e4e8) 26%, #101415), #0c1011);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  color: var(--nf-text);
+}
+
+.nf-avatar--sm {
+  width: 32px;
+  height: 32px;
+}
+
+.nf-avatar--md {
+  width: 40px;
+  height: 40px;
+}
+
+.nf-avatar--lg {
+  width: 56px;
+  height: 56px;
+}
+
+.nf-avatar--xl {
+  width: 84px;
+  height: 84px;
+}
+
+.nf-avatar__img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+.nf-avatar__initial {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 45%;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nf-avatar--md .nf-avatar__initial {
+  font-size: 17px;
+}
+
+.nf-avatar--lg .nf-avatar__initial {
+  font-size: 24px;
+}
+
+.nf-avatar--xl .nf-avatar__initial {
+  font-size: 36px;
+}
+
+/* the online state ring — subtle, slow (§38) */
+.nf-avatar__status {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 30%;
+  height: 30%;
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 50%;
+  border: 2px solid #0a0e0f;
+  background: var(--nf-text-dim);
+}
+
+.nf-avatar__status.is-online {
+  background: var(--nf-green);
+  animation: nf-online-pulse 2.8s ease-in-out infinite;
+}
+
+.nf-avatar__status.is-away {
+  background: var(--nf-orange);
+}
+
+.nf-avatar__status.is-in-match {
+  background: var(--nf-cyan);
+}
+
+@keyframes nf-online-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.nf-avatar__badge {
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #0c1011;
+  border: 1px solid var(--nf-line-strong);
+  color: var(--nf-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------- NF GLASS (§49) */
+.nf-glass {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    var(--nf-glass);
+  border: 1px solid var(--nf-line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 16px 40px rgba(0, 0, 0, 0.2);
+}
+
+/* blur ONLY on small panels — never on a full-screen container (§5/§49) */
+.nf-glass--blur {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* ---------------------------------------------------------------- NF MODE CARD (§13) */
+.nf-mode-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 13px 13px 11px;
+  border-radius: var(--nf-radius-md);
+  border: 1px solid var(--nf-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(12, 16, 17, 0.78);
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+  contain: layout paint;
+}
+
+.nf-mode-card.is-enabled {
+  cursor: pointer;
+}
+
+.nf-mode-card:hover {
+  border-color: var(--nf-line-strong);
+}
+
+.nf-mode-card.is-enabled:active {
+  transform: scale(0.988);
+}
+
+.nf-mode-card.is-picked,
+.nf-mode-card.sel {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--mode-accent, var(--nf-acid)) 46%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--mode-accent, var(--nf-acid)) 9%, transparent), transparent 60%),
+    rgba(12, 16, 17, 0.82);
+}
+
+.nf-mode-card__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nf-mode-card__eyebrow {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--mode-accent, var(--nf-cyan));
+}
+
+.nf-mode-card__players {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--nf-text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.nf-mode-card__plate {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  color: var(--mode-accent, var(--nf-cyan));
+  border: 1px solid color-mix(in srgb, var(--mode-accent, var(--nf-cyan)) 28%, transparent);
+  background: color-mix(in srgb, var(--mode-accent, var(--nf-cyan)) 11%, transparent);
+}
+
+.nf-mode-card__plate svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.nf-mode-card__title {
+  margin: 0;
+  font-size: clamp(16px, 2.5vh, 21px);
+  letter-spacing: 0.15em;
+  color: var(--nf-text);
+}
+
+.nf-mode-card__desc {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: 11.5px;
+  line-height: 1.42;
+  color: var(--nf-text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.nf-mode-card__actions {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.nf-mode-card__actions .nf-btn {
+  min-height: 44px;
+}
+
+.nf-mode-card__actions .nf-btn--primary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.nf-mode-card__actions .nf-btn--neutral,
+.nf-mode-card__actions .nf-btn--accent {
+  flex: 0 1 auto;
+}
+
+/* ---------------------------------------------------------------- MORE SHEET (§31) */
+.nf-sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4990;
+  background: rgba(4, 6, 7, 0.44);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.nf-sheet-scrim.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nf-sheet {
+  position: fixed;
+  z-index: 5000;
+  top: calc(max(10px, var(--nf-safe-top)));
+  right: calc(max(10px, var(--nf-safe-right)));
+  bottom: calc(max(10px, var(--nf-safe-bottom)));
+  width: min(340px, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px;
+  border-radius: 20px;
+  border: 1px solid var(--nf-line);
+  background: rgba(10, 14, 15, 0.95);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  transform: translateX(calc(100% + 26px));
+  transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nf-sheet.on {
+  transform: none;
+}
+
+.nf-sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nf-sheet__title {
+  font-size: 17px;
+  letter-spacing: 0.22em;
+  color: var(--nf-text);
+}
+
+.nf-sheet__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.nf-sheet__rows .nf-btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.nf-sheet__rows .nf-btn__body {
+  align-items: flex-start;
+}

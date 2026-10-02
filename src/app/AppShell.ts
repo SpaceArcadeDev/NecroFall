@@ -32,13 +32,19 @@ import { ControlsModal } from './settings/ControlsModal';
 import { GraphicsPage } from './settings/GraphicsPage';
 import type { ScreenName } from '../ui/UI';
 import { OrientationGate } from '../ui/Orientation';
-import { fullscreenMode } from '../ui/Fullscreen';
+import { fullscreenMode, toggleFullscreen } from '../ui/Fullscreen';
 import { ShellContext, LegacyLaunchOptions, LobbySeatInfo, LobbyFormat } from './ShellContext';
 import { navigate, onRouteChange, parseRoute, routeToHash } from './router';
 import { CurrencyBar } from './ui/CurrencyBar';
 import { FriendRail } from './ui/FriendRail';
 import { MobileBottomNav, type BottomNavKey } from './ui/MobileBottomNav';
 import { button, clear, el } from './ui/dom';
+import { uiRouter, type UIScreen } from '../ui/shell/UIRouter';
+import { auditShellScreen, installAuditHandle } from '../ui/dev/UIAudit';
+import type { ContractScreen } from '../ui/data/MenuActionRegistry';
+import { createNFButton } from '../ui/components/NFButton';
+import { NFMoreSheet, type MoreSheetEntry } from '../ui/components/NFMoreSheet';
+import { stagger } from '../ui/motion/UIMotion';
 import { PlayerSearch } from './friends/PlayerSearch';
 import { PlayPage } from './lobby/PlayPage';
 import { LobbyPage } from './lobby/LobbyPage';
@@ -82,8 +88,11 @@ export class AppShell implements ShellContext {
   private bootSpinLabel: HTMLElement;
   private nav: MobileBottomNav;
   private rail: FriendRail;
+  private moreSheet: NFMoreSheet;
   private toastEl: HTMLElement;
   private pill: HTMLButtonElement;
+  /** The main menu's play-module selection — PLAY launches the chosen format (§8). */
+  private homeMode: 'casual' | 'ranked' = 'casual';
 
   private auth: AuthProvider;
   private screen: ShellScreen = 'boot';
@@ -150,6 +159,34 @@ export class AppShell implements ShellContext {
    */
   private bootWatchdog = 0;
   private static readonly BOOT_WATCHDOG_MS = 20_000;
+  /** ShellScreen → UIRouter screen (overhaul §2): one transition ledger. */
+  private static readonly UI_SCREEN_MAP: Record<ShellScreen, UIScreen> = {
+    boot: 'boot',
+    login: 'login',
+    onboarding: 'onboarding',
+    home: 'main',
+    play: 'play',
+    lobby: 'lobby',
+    room: 'lobby',
+    rank: 'rank',
+    solo: 'solo',
+    custom: 'custom',
+    graphics: 'graphics',
+    match: 'match',
+    queue: 'queue',
+    profile: 'profile',
+    loading: 'loading',
+    hidden: 'loading',
+  };
+  /** Screens whose action contract the dev audit enforces (§42/§43). */
+  private static readonly AUDIT_CONTRACT: Partial<Record<ShellScreen, ContractScreen>> = {
+    home: 'main',
+    play: 'play',
+    solo: 'solo',
+    custom: 'custom',
+    rank: 'rank',
+    profile: 'profile',
+  };
   /** The main-menu wordmark — lives IN the chrome header row (plan §38). */
   private homeTitleEl: HTMLElement | null = null;
 
@@ -187,6 +224,7 @@ export class AppShell implements ShellContext {
     this.topBar = new CurrencyBar(() => this.myHex(), () => this.openProfile(this.myHex()));
     this.nav = new MobileBottomNav((key) => this.onNav(key));
     this.rail = new FriendRail(this);
+    this.moreSheet = new NFMoreSheet(() => this.moreEntries());
     this.chrome.appendChild(this.topBar.element);
     this.chrome.appendChild(this.nav.element);
     // The bar sits in the body row's own column (the page never renders under it).
@@ -199,6 +237,7 @@ export class AppShell implements ShellContext {
     // The chevron that returns from child screens (play, lobby, party, queue, profile).
     this.backBtn = button('', 'nf-back hidden', () => this.onBack());
     this.backBtn.setAttribute('aria-label', 'Back');
+    this.backBtn.dataset.action = 'back';
     this.backBtn.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>';
     this.chrome.insertBefore(this.backBtn, this.chrome.firstChild);
@@ -206,9 +245,11 @@ export class AppShell implements ShellContext {
     const launcher: LegacyLauncher = (options) => this.launchLegacy(options);
     this.p2p = new P2PMultiplayerProvider(launcher);
 
-    // Settings dropdown (profile, controls, sign out) + the how-to entry beside it.
-    this.topBar.settings.addEventListener('click', () => this.toggleSettings());
+    // Settings gear + the how-to entry beside it: both open the MORE sheet (§30/§31).
+    this.topBar.settings.addEventListener('click', () => this.moreSheet.toggle());
     this.topBar.howto.addEventListener('click', () => this.openGameScreen('howto'));
+    // Dev-only UI integrity checker: `__nfAudit('main')` in the console (§42).
+    if (import.meta.env.DEV) installAuditHandle(() => this.root);
 
     // The avatar stage is sized from its box — restage it when the window reflows
     // (and re-measure the friends bar's main-menu offset while we're at it).
@@ -1152,6 +1193,15 @@ export class AppShell implements ShellContext {
       default:
         break;
     }
+
+    // THE UI ROUTER (§2) + the DEV ACTION AUDIT (§42): one ledger for every
+    // transition (motion/audio can hook `nf:ui:navigate`), and a fail-loud
+    // check that the screen actually rendered its contracted actions.
+    uiRouter.navigate(AppShell.UI_SCREEN_MAP[screen] ?? 'main');
+    if (import.meta.env.DEV) {
+      const contract = AppShell.AUDIT_CONTRACT[screen];
+      if (contract) auditShellScreen(contract, this.root);
+    }
   }
 
   private renderLogin(message?: string): void {
@@ -1400,6 +1450,10 @@ export class AppShell implements ShellContext {
     this.homeTitleEl = title;
     this.chrome.appendChild(title);
 
+    // ---- the world vignette (§35): the 3D scene stays the hero — a graded
+    // darkening instead of an opaque card stack.
+    wrap.appendChild(el('div', 'nf-world-vignette'));
+
     // ---- the player's own character, staged exactly like the lobby line-up
     // (name / level / currency live in the top bar — nothing here repeats them).
     const me = ClientCache.shared.me(this.myHex());
@@ -1417,9 +1471,71 @@ export class AppShell implements ShellContext {
     caption.appendChild(badge);
     wrap.appendChild(caption);
 
+    // ---- THE PLAY MODULE (§8/§9): the strongest primary interaction on the
+    // screen. Eyebrow + current format + the mode switch + the acid PLAY CTA.
+    const moduleEl = el('section', 'nf-play-module nf-glass nf-glass--blur');
+    const copy = el('div', 'nf-play-module__copy');
+    copy.appendChild(el('div', 'nf-eyebrow', 'PLAY'));
+    const modeTitle = el('h1', 'nf-play-module__title', '');
+    const modeSub = el('div', 'nf-play-module__sub', '');
+    copy.append(modeTitle, modeSub);
+
+    const switchEl = el('div', 'nf-mode-switch');
+    const rankBtn = createNFButton({
+      label: 'RANKED',
+      icon: 'rank',
+      tone: 'accent',
+      action: 'rank',
+      sfx: 'select',
+      extraClass: 'nf-mode-switch__item',
+      onClick: () => select('ranked'),
+    });
+    const casualBtn = createNFButton({
+      label: 'CASUAL',
+      icon: 'swords',
+      tone: 'neutral',
+      action: 'casual',
+      sfx: 'select',
+      extraClass: 'nf-mode-switch__item',
+      onClick: () => select('casual'),
+    });
+    switchEl.append(rankBtn, casualBtn);
+
+    const playBtn = createNFButton({
+      label: 'PLAY',
+      icon: 'play',
+      tone: 'primary',
+      action: 'play',
+      sfx: 'confirm',
+      extraClass: 'nf-btn--hero nf-play-module__play',
+      onClick: () => this.launchHomeMode(),
+    });
+
+    // Selection is PER VISIT state on the shell, and only the LAYOUT differs by
+    // viewport — the action set here is identical everywhere (§18/§60).
+    const select = (mode: 'casual' | 'ranked'): void => {
+      this.homeMode = mode;
+      rankBtn.classList.toggle('is-active', mode === 'ranked');
+      casualBtn.classList.toggle('is-active', mode === 'casual');
+      modeTitle.textContent = mode === 'ranked' ? 'RANKED' : 'CASUAL';
+      modeSub.textContent =
+        mode === 'ranked' ? 'Climb the ladder on the intergalactic map' : 'Lobby up — classic 3v3v3 warfare';
+    };
+
+    moduleEl.append(copy, switchEl, playBtn);
+    wrap.appendChild(moduleEl);
+    select(this.homeMode);
+    stagger(moduleEl, 55, 3);
+
     this.screenHost.appendChild(wrap);
     // Stage after the box has laid out (the preview sizes itself from the element).
     this.restageAvatar();
+  }
+
+  /** The PLAY module's CTA: launch the selected format (§8). */
+  private launchHomeMode(): void {
+    if (this.homeMode === 'ranked') this.goRank();
+    else this.goPlay();
   }
 
   /** (Re)hands the avatar stage to the game's shared lobby preview once layout is ready. */
@@ -1842,8 +1958,13 @@ export class AppShell implements ShellContext {
 
   private onNav(key: BottomNavKey): void {
     if (key === 'play') this.goPlay();
-    else if (key === 'customize') this.openCustomize();
-    else this.toast('Events are coming soon.');
+    else if (key === 'galaxy') this.goRank();
+    else if (key === 'friends') this.rail.toggleSheet();
+    else if (key === 'profile') {
+      const hex = this.myHex();
+      if (hex) this.openProfile(hex);
+      else this.toast('Sign in to view your profile.');
+    } else this.moreSheet.toggle();
   }
 
   /**
@@ -2093,45 +2214,34 @@ export class AppShell implements ShellContext {
     if (!show) this.rail.collapse();
   }
 
-  private toggleSettings(): void {
-    const existing = this.root.querySelector('.nf-settings-menu');
-    if (existing) {
-      existing.remove();
-      return;
-    }
-    const menu = el('div', 'nf-settings-menu');
-    menu.appendChild(button('PROFILE', 'nf-btn ghost', () => {
-      menu.remove();
-      this.openProfile(this.myHex());
-    }));
-    menu.appendChild(button('GRAPHICS', 'nf-btn ghost', () => {
-      menu.remove();
-      this.goGraphics();
-    }));
-    menu.appendChild(button('CONTROLS', 'nf-btn ghost', () => {
-      menu.remove();
-      this.openControls();
-    }));
-    menu.appendChild(button('SIGN OUT', 'nf-btn ghost', () => {
-      menu.remove();
-      void this.signOut();
-    }));
+  /** The MORE sheet's entries (§30/§31): everything that does not fit the five tabs. */
+  private moreEntries(): MoreSheetEntry[] {
+    const entries: MoreSheetEntry[] = [];
+    const hex = this.myHex();
+    if (hex) entries.push({ label: 'PROFILE', icon: 'user', action: 'profile', onClick: () => this.openProfile(hex) });
+    entries.push({ label: 'GRAPHICS', icon: 'star', action: 'graphics', onClick: () => this.goGraphics() });
+    entries.push({ label: 'CONTROLS', icon: 'locate', action: 'controls', onClick: () => this.openControls() });
+    entries.push({ label: 'HOW TO PLAY', icon: 'help', action: 'howto', onClick: () => this.openGameScreen('howto') });
+    entries.push({ label: 'CUSTOMIZE', icon: 'wand', action: 'customize', onClick: () => this.openCustomize() });
+    const fs = fullscreenMode() !== 'none';
+    entries.push({
+      label: fs ? 'EXIT FULLSCREEN' : 'FULLSCREEN',
+      icon: fs ? 'collapse' : 'expand',
+      action: 'fullscreen',
+      onClick: () => void toggleFullscreen(),
+    });
     if (this.game && this.shellHidden) {
-      menu.appendChild(button('RESUME GAME', 'nf-btn ghost', () => {
-        menu.remove();
-        if (this.game && (this.game.phase === 'menu' || this.game.phase === 'ended')) this.showShell('home');
-      }));
+      entries.push({
+        label: 'RESUME GAME',
+        icon: 'play',
+        tone: 'primary',
+        onClick: () => {
+          if (this.game && (this.game.phase === 'menu' || this.game.phase === 'ended')) this.showShell('home');
+        },
+      });
     }
-    this.chrome.appendChild(menu);
-    window.setTimeout(() => {
-      const close = (ev: MouseEvent): void => {
-        if (!menu.contains(ev.target as Node)) {
-          menu.remove();
-          document.removeEventListener('click', close);
-        }
-      };
-      document.addEventListener('click', close);
-    }, 0);
+    entries.push({ label: 'SIGN OUT', icon: 'door', action: 'signout', tone: 'danger', onClick: () => void this.signOut() });
+    return entries;
   }
 
   private async signOut(): Promise<void> {

@@ -16,6 +16,11 @@
 import { AppShell } from './app/AppShell';
 import { SpacetimeConnection } from './app/spacetimedb/connection';
 import { maybeMountGenomeLab } from './enemies/procedural/GenomeLab';
+import { installUIFeedback } from './ui/audio/UIAudio';
+
+// Global UI feedback (overhaul §24–§26): every pressable element in the shell
+// gets a short synthesiser tick + a sparing haptic — no per-button wiring.
+installUIFeedback();
 
 const app = document.getElementById('app');
 if (!app) throw new Error('#app container missing');

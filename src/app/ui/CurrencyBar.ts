@@ -1,12 +1,18 @@
-// NECROFALL — top resource bar (plan §8/§37): avatar, name, currencies.
-// Values come from the subscribed wallet/player rows — never from local state.
+// NECROFALL — top resource bar (overhaul §9/§10/§48): avatar, name, RANK,
+// currencies, utilities. Values come from the subscribed wallet/player rows —
+// never from local state. The avatar is the shared NFAvatar component,
+// colony-tinted, so identity reads the same here as in the lobby and profile.
 import { ClientCache } from '../spacetimedb/cache';
+import { COLONIES } from '../../core/Config';
+import { getRankDisplayName } from '../../rank/RankService';
 import { el, formatCurrency } from './dom';
+import { createNFAvatar } from '../../ui/components/NFAvatar';
+import { getIcon } from '../../ui/icons';
 
 export class CurrencyBar {
   readonly element: HTMLElement;
   private nameEl: HTMLElement;
-  private levelEl: HTMLElement;
+  private rankEl: HTMLElement;
   private softEl: HTMLElement;
   private premiumEl: HTMLElement;
 
@@ -14,14 +20,16 @@ export class CurrencyBar {
     this.element = el('header', 'nf-top');
     const me = el('button', 'nf-top-me') as HTMLButtonElement;
     me.type = 'button';
+    me.dataset.action = 'profile';
+    me.setAttribute('aria-label', 'Open your profile');
     me.addEventListener('click', () => this.onProfile());
-    this.avatarEl = el('span', 'nf-top-avatar', '');
+    this.avatarEl = createNFAvatar({ name: '?', size: 'md', status: 'online' });
     me.appendChild(this.avatarEl);
     const who = el('span', 'nf-top-who');
     this.nameEl = el('span', 'nf-top-name', '…');
-    this.levelEl = el('span', 'nf-top-level', '');
+    this.rankEl = el('span', 'nf-top-rank is-unranked', 'UNRANKED');
     who.appendChild(this.nameEl);
-    who.appendChild(this.levelEl);
+    who.appendChild(this.rankEl);
     me.appendChild(who);
     this.element.appendChild(me);
 
@@ -38,15 +46,21 @@ export class CurrencyBar {
     currencies.appendChild(premium);
     this.element.appendChild(currencies);
 
-    this.settings = el('button', 'nf-top-settings', '⚙') as HTMLButtonElement;
+    this.settings = el('button', 'nf-top-settings', '') as HTMLButtonElement;
     this.settings.type = 'button';
-    this.settings.title = 'Settings';
+    this.settings.title = 'Menu — settings, controls, how to play';
+    this.settings.setAttribute('aria-label', 'Open menu');
+    this.settings.dataset.action = 'settings';
+    this.settings.innerHTML = getIcon('settings');
     this.element.appendChild(this.settings);
+
     // "?" — the how-to-play entry, to the LEFT of the settings gear.
-    this.howto = el('button', 'nf-top-settings nf-top-howto', '?') as HTMLButtonElement;
+    this.howto = el('button', 'nf-top-settings nf-top-howto', '') as HTMLButtonElement;
     this.howto.type = 'button';
     this.howto.title = 'How to play';
     this.howto.setAttribute('aria-label', 'How to play');
+    this.howto.dataset.action = 'howto';
+    this.howto.innerHTML = getIcon('help');
     this.element.insertBefore(this.howto, this.settings);
     this.update();
   }
@@ -60,10 +74,29 @@ export class CurrencyBar {
     const hex = this.myHex();
     const player = cache.playerByHex(hex);
     const wallet = cache.walletByHex(hex);
-    this.nameEl.textContent = player?.playerName || 'Recruit';
-    this.levelEl.textContent = player ? `Lv ${player.level}` : '';
+    const name = player?.playerName || 'Recruit';
+    this.nameEl.textContent = name;
     this.softEl.textContent = formatCurrency(wallet?.softCurrency);
     this.premiumEl.textContent = formatCurrency(wallet?.premiumCurrency);
-    if (player) this.avatarEl.textContent = player.playerName.slice(0, 1).toUpperCase();
+
+    // RANK (§9): the real ladder when the player row carries points, else UNRANKED.
+    const points = player?.rankPoints ?? 0;
+    if (player && points > 0) {
+      this.rankEl.textContent = `LV ${player.level} · ${getRankDisplayName(points)}`;
+      this.rankEl.classList.remove('is-unranked');
+    } else if (player) {
+      this.rankEl.textContent = `LV ${player.level} · UNRANKED`;
+      this.rankEl.classList.add('is-unranked');
+    } else {
+      this.rankEl.textContent = 'UNRANKED';
+      this.rankEl.classList.add('is-unranked');
+    }
+
+    // patch the avatar in place (initial + colony accent), no churn per tick
+    const initial = this.avatarEl.querySelector<HTMLElement>('.nf-avatar__initial');
+    if (initial) initial.textContent = name.slice(0, 1).toUpperCase();
+    const colony = player && player.colony < 3 ? COLONIES[player.colony] : null;
+    if (colony) this.avatarEl.style.setProperty('--nf-avatar-accent', colony.css);
+    else this.avatarEl.style.removeProperty('--nf-avatar-accent');
   }
 }

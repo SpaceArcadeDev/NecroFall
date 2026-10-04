@@ -18,6 +18,13 @@ export const party = table(
     created_at: t.timestamp(),
     /** Short shareable invite code — how friends join your party ('' = legacy row). */
     join_code: t.string().default(''),
+    /**
+     * The lobby MODE every member's room wears ('CLASSIC' | 'RANK'). Stored on the LOBBY —
+     * not in each client — so joiners (code, invite link, reload) render the same lobby the
+     * creator opened (user report 2026-10-04: joiners defaulted to CLASSIC for RANK lobbies).
+     * Set by the leader via `set_party_format`.
+     */
+    format: t.string().default('CLASSIC'),
   }
 );
 

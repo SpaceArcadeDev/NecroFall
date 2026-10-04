@@ -180,6 +180,8 @@ export interface PartyRow {
   createdAt: Timestamp;
   /** Short shareable invite code ('' on legacy rows). */
   joinCode: string;
+  /** The lobby MODE every member's room wears ('CLASSIC' | 'RANK'; leader-set, default CLASSIC). */
+  format: string;
 }
 
 export interface PartyMemberRow {

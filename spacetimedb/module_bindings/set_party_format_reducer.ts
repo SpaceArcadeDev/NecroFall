@@ -10,11 +10,6 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  partyId: __t.u32().primaryKey().name("party_id"),
-  leader: __t.identity(),
-  state: __t.u8(),
-  createdAt: __t.timestamp().name("created_at"),
-  joinCode: __t.string().name("join_code"),
+export default {
   format: __t.string(),
-});
+};

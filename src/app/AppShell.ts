@@ -1688,6 +1688,12 @@ export class AppShell implements ShellContext {
       return;
     }
     this.roomLostSince.official = 0;
+    // The room's MODE belongs to the LOBBY (`party.format`) — every member ADOPTS it, so a
+    // joiner never renders CLASSIC for a RANK lobby and a reload keeps the tag (user report
+    // 2026-10-04). The leader's own clients SET it via setPartyFormat when they create/open
+    // the lobby from a page (RANK menu → RANK, CLASSIC menu → CLASSIC).
+    const roomFormat = party.format === 'RANK' ? 'RANK' : 'CLASSIC';
+    if (roomFormat !== this.currentLobbyFormat) this.currentLobbyFormat = roomFormat;
     const members = cache.partyMembers(party.partyId);
     const leader = party.leader.toHexString() === hex;
     const me = cache.playerByHex(hex);

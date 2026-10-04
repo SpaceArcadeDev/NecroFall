@@ -47,12 +47,18 @@ export class OfficialLobby {
       this.ctx.joinLobbyByCode(code);
     });
     this.primaryBtn = button('CREATE LOBBY', 'btn primary nf-small', () => {
+      // a lobby opened from the CLASSIC menu is a CLASSIC lobby — the LEADER tags it on the
+      // SERVER so every member's room renders CLASSIC (user report 2026-10-04)
       this.ctx.setLobbyFormat('CLASSIC');
+      const hex = this.ctx.myHex();
+      const party = hex ? ClientCache.shared.myParty(hex) : null;
       if (this.inParty) {
+        if (party && party.leader.toHexString() === hex) this.ctx.official.setPartyFormat('CLASSIC');
         this.ctx.goLobbyRoom();
         return;
       }
       this.ctx.official.createParty();
+      this.ctx.official.setPartyFormat('CLASSIC');
       this.ctx.goLobbyRoom(); // CREATE LOBBY opens the room
     });
     partyRow.append(this.codeInput, this.joinBtn, this.primaryBtn);

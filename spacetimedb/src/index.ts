@@ -42,6 +42,7 @@ export {
   leave_party,
   kick_from_party,
   set_party_loadout,
+  set_party_format,
   invite_to_party,
   decline_invite,
 } from './matchmaking/party';

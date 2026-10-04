@@ -404,7 +404,8 @@ export class FriendRail {
         action: 'JOIN',
         onAction: () => {
           this.ctx.official.declineInvite(invite.id);
-          this.ctx.setLobbyFormat('CLASSIC');
+          // The ROOM adopts the lobby's own format from the server row (user report
+          // 2026-10-04) — never assume CLASSIC here: the invite may be a RANK lobby.
           this.ctx.joinLobbyByCode(invite.code);
         },
         sound: true,

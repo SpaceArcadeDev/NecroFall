@@ -153,6 +153,9 @@ export const create_party = spacetimedb.reducer({ acc: t.string() }, (ctx, { acc
     state: 0,
     created_at: ctx.timestamp,
     join_code: allocatePartyCode(ctx),
+    // Tagged by the LEADER's client right after create (set_party_format): a lobby opened
+    // from the RANK menu becomes RANK for every member; CLASSIC is the safe default.
+    format: 'CLASSIC',
   });
   ctx.db.party_member.insert({
     id: 0,
@@ -163,6 +166,24 @@ export const create_party = spacetimedb.reducer({ acc: t.string() }, (ctx, { acc
     connected: true,
     disconnected_at: undefined,
   });
+});
+
+/**
+ * SET LOBBY FORMAT (user report 2026-10-04): the room's MODE is a property of the LOBBY, not
+ * of each client — persisted here so joiners (invite code, invite link, reload) render the
+ * same lobby the creator opened. Leader-only; clamps to the two official formats.
+ */
+export const set_party_format = spacetimedb.reducer({ format: t.string() }, (ctx, { format }) => {
+  const member = myMembership(ctx);
+  if (!member) throw new SenderError('You are not in a lobby.');
+  const partyRow = ctx.db.party.party_id.find(member.party_id);
+  if (!partyRow) throw new SenderError('That lobby no longer exists.');
+  if (partyRow.leader.toHexString() !== ctx.sender.toHexString()) {
+    throw new SenderError('Only the leader can change the lobby mode.');
+  }
+  const next = format.trim().toUpperCase() === 'RANK' ? 'RANK' : 'CLASSIC';
+  if (partyRow.format === next) return;
+  ctx.db.party.party_id.update({ ...partyRow, format: next });
 });
 
 export const join_party = spacetimedb.reducer({ party_id: t.u32(), acc: t.string() }, (ctx, { party_id, acc }) => {

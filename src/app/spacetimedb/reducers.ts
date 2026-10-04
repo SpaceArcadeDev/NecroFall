@@ -54,6 +54,8 @@ export const recordProfileView = (profile: Identity): void => callReducer('recor
 
 // ------------------------------------------------------------ parties
 export const createParty = (acc: string): void => callReducer('createParty', { acc });
+/** Leader-only: the lobby's MODE tag every member renders ('CLASSIC' | 'RANK'). */
+export const setPartyFormat = (format: string): void => callReducer('setPartyFormat', { format });
 export const joinParty = (partyId: number, acc: string): void => callReducer('joinParty', { partyId, acc });
 export const joinPartyByCode = (code: string, acc: string): void => callReducer('joinPartyByCode', { code, acc });
 export const leaveParty = (): void => callReducer('leaveParty');

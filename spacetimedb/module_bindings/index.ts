@@ -75,6 +75,7 @@ import SetCustomReadyReducer from "./set_custom_ready_reducer";
 import SetCustomSeatReducer from "./set_custom_seat_reducer";
 import SetGenderReducer from "./set_gender_reducer";
 import SetKeybindsReducer from "./set_keybinds_reducer";
+import SetPartyFormatReducer from "./set_party_format_reducer";
 import SetPartyLoadoutReducer from "./set_party_loadout_reducer";
 import SetPlayerNameReducer from "./set_player_name_reducer";
 import SetProfileNameReducer from "./set_profile_name_reducer";
@@ -615,6 +616,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_custom_seat", SetCustomSeatReducer),
   __reducerSchema("set_gender", SetGenderReducer),
   __reducerSchema("set_keybinds", SetKeybindsReducer),
+  __reducerSchema("set_party_format", SetPartyFormatReducer),
   __reducerSchema("set_party_loadout", SetPartyLoadoutReducer),
   __reducerSchema("set_player_name", SetPlayerNameReducer),
   __reducerSchema("set_profile_name", SetProfileNameReducer),

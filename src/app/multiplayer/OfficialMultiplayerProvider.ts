@@ -20,6 +20,7 @@ import {
   confirmMatch,
   declineMatch,
   createParty,
+  setPartyFormat,
   joinParty,
   joinPartyByCode,
   kickFromParty,
@@ -526,6 +527,11 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
 
   createParty(): void {
     createParty(this.myOutfit());
+  }
+
+  /** Leader-only: tag the lobby's MODE ('CLASSIC' | 'RANK') — the server row every member renders. */
+  setPartyFormat(format: string): void {
+    setPartyFormat(format);
   }
 
   joinPartyByCode(code: string): void {

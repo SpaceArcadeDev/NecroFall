@@ -265,6 +265,7 @@ export const Party = __t.object("Party", {
   state: __t.u8(),
   createdAt: __t.timestamp(),
   joinCode: __t.string(),
+  format: __t.string(),
 });
 export type Party = __Infer<typeof Party>;
 

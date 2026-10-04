@@ -242,13 +242,16 @@ export class RankPage {
     this.quickCreate.addEventListener('click', () => {
       const hex = this.ctx.myHex();
       const party = hex ? ClientCache.shared.myParty(hex) : null;
-      // a lobby opened from the RANK menu is a RANK lobby (the room tags it so)
+      // a lobby opened from the RANK menu is a RANK lobby — the LEADER tags it on the SERVER
+      // so every member's room renders RANK (user report 2026-10-04)
       this.ctx.setLobbyFormat('RANK');
       if (party) {
+        if (party.leader.toHexString() === hex) this.ctx.official.setPartyFormat('RANK');
         this.ctx.goLobbyRoom();
         return;
       }
       this.ctx.official.createParty();
+      this.ctx.official.setPartyFormat('RANK');
       this.ctx.goLobbyRoom(); // CREATE LOBBY opens the room
     });
     this.quickFind.addEventListener('click', () => this.quickRankedSearch());

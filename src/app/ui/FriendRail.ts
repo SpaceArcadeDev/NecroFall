@@ -25,6 +25,10 @@ import type { ShellContext } from '../ShellContext';
 const INVITE_TTL_US = 10n * 60n * 1_000_000n;
 /** A follow only rings the chime when it is genuinely NEW (the initial replay is silent). */
 const FOLLOW_NOTIFY_WINDOW_US = 180_000_000;
+/** After inviting a friend, their button reads INVITED for this long (user ask). */
+const INVITE_COOLDOWN_MS = 10_000;
+/** "IGNORE 1 MIN" silences lobby invites from one player for this long (user ask). */
+const IGNORE_MS = 60_000;
 
 const ICON_DRAWER =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' +
@@ -48,6 +52,9 @@ interface NotifyOptions {
   status?: number;
   action?: string;
   onAction?: () => void;
+  /** A second action rendered BEFORE `action` (friends rail ▸ "IGNORE 1 MIN" on invites). */
+  altAction?: string;
+  onAltAction?: () => void;
   sound?: boolean;
 }
 
@@ -72,6 +79,11 @@ export class FriendRail {
   private notifiedFollowers = new Set<string>();
   /** Invite row ids already surfaced (or consumed). */
   private knownInvites = new Set<number>();
+  /** Friends invited in the last 10 s — their INVITE button reads INVITED until it expires. */
+  private inviteCooldowns = new Map<string, number>();
+  private inviteCooldownTimer = 0;
+  /** Players whose lobby invites are ignored for a minute (friends rail ▸ IGNORE 1 MIN). */
+  private ignoredInvites = new Map<string, number>();
 
   constructor(private ctx: ShellContext) {
     // ---- the collapsed bar
@@ -83,6 +95,9 @@ export class FriendRail {
     // (user ask 2026-09-29: the two drawer glyphs were swapped — the EXPAND control on the
     // collapsed bar wears the left-facing drawer mark; the sheet's control wears the right one.)
     drawer.innerHTML = ICON_COLLAPSE;
+    // (user ask: the sheet's OPEN and CLOSE sounds were swapped — opening now wears the
+    // neutral tick, collapsing the descending back-tick.)
+    drawer.dataset.sfx = 'click';
     drawer.title = 'Open friends';
     drawer.setAttribute('aria-label', 'Open friends');
     this.element.appendChild(drawer);
@@ -96,7 +111,12 @@ export class FriendRail {
     const card = el('div', 'nf-friends-card');
     const head = el('div', 'nf-sheet-head');
 
-    const addBtn = button('', 'nf-sheet-btn', () => this.ctx.openPlayerSearch());
+    // Opening the search CLOSES the sheet first (user ask): the fixed search overlay would
+    // otherwise sit UNDER the sheet and be unclickable.
+    const addBtn = button('', 'nf-sheet-btn', () => {
+      this.closeSheet();
+      this.ctx.openPlayerSearch();
+    });
     addBtn.innerHTML = `<i>${ICON_ADD}</i><span>ADD FRIEND</span>`;
     addBtn.title = 'Search for a survivor by name or player id';
     head.appendChild(addBtn);
@@ -107,6 +127,7 @@ export class FriendRail {
     head.appendChild(this.followersBtn);
 
     const collapse = button('', 'nf-sheet-btn nf-sheet-close', () => this.closeSheet());
+    collapse.dataset.sfx = 'back';
     collapse.innerHTML = ICON_DRAWER;
     collapse.title = 'Collapse the friends menu';
     collapse.setAttribute('aria-label', 'Collapse the friends menu');
@@ -237,7 +258,9 @@ export class FriendRail {
           // The follow state is part of the signature — a FOLLOW BACK press must flip
           // its own row to FRIENDS ✓ without waiting for some unrelated row change.
           const edge = cache.friends(me).includes(hex) ? 2 : cache.isFollowing(me, hex) ? 1 : 0;
-          return `${hex}:${p?.playerName ?? '?'}:${status}:${p?.colony ?? -1}:${inParty ? 1 : 0}:${edge}`;
+          // The INVITED cooldown is part of the signature too — the row must flip back
+          // to INVITE the moment its 10 s window lapses (user ask).
+          return `${hex}:${p?.playerName ?? '?'}:${status}:${p?.colony ?? -1}:${inParty ? 1 : 0}:${edge}:${this.inviteCooling(hex) ? 1 : 0}`;
         })
         .join(';');
     if (sig === this.listSig) return;
@@ -256,11 +279,11 @@ export class FriendRail {
       );
       return;
     }
-    for (const hex of hexes) this.listHost.appendChild(this.buildRow(hex, party !== null, members));
+    for (const hex of hexes) this.listHost.appendChild(this.buildRow(hex, members));
   }
 
   /** One friend / follower row: icon, name, status, and the contextual action. */
-  private buildRow(hex: string, inLobby: boolean, members: { identity: { toHexString(): string } }[]): HTMLElement {
+  private buildRow(hex: string, members: { identity: { toHexString(): string } }[]): HTMLElement {
     const cache = ClientCache.shared;
     const me = this.ctx.myHex();
     const p = cache.playerByHex(hex);
@@ -282,13 +305,16 @@ export class FriendRail {
 
     const act = el('div', 'nf-fr-act');
     const alreadyInParty = members.some((m) => m.identity.toHexString() === hex);
-    if (this.view === 'friends' && inLobby) {
+    if (this.view === 'friends') {
+      // The INVITE action is ALWAYS offered (user ask): with no lobby open it first creates
+      // one for the last-played mode (ShellContext.inviteFriend), then sends the invite.
       if (alreadyInParty) act.appendChild(el('span', 'nf-fr-chip', 'IN LOBBY'));
-      else {
-        const invite = button('INVITE', 'nf-btn small nf-fr-invite', () => {
-          this.ctx.official.inviteToParty(hex);
-          this.ctx.toast(`Lobby invite sent to ${name}.`);
-        });
+      else if (this.inviteCooling(hex)) {
+        const invited = button('INVITED ✓', 'nf-btn small nf-fr-invite', () => {});
+        invited.disabled = true;
+        act.appendChild(invited);
+      } else {
+        const invite = button('INVITE', 'nf-btn small nf-fr-invite', () => this.ctx.inviteFriend(hex));
         invite.title = `Invite ${name} into your lobby`;
         act.appendChild(invite);
       }
@@ -319,6 +345,46 @@ export class FriendRail {
     const target = ClientCache.shared.playerByHex(hex)?.identity;
     if (!target) return;
     followPlayer(target);
+  }
+
+  // ------------------------------------------------------------ invite cooldown
+
+  /** The friend was just sent a lobby invite: show INVITED for the next 10 s (user ask). */
+  markInvited(hex: string): void {
+    this.inviteCooldowns.set(hex, performance.now() + INVITE_COOLDOWN_MS);
+    this.listSig = '';
+    if (this.open) this.renderSheet();
+    this.scheduleCooldownRefresh();
+  }
+
+  private inviteCooling(hex: string): boolean {
+    const until = this.inviteCooldowns.get(hex);
+    return until !== undefined && until > performance.now();
+  }
+
+  /** Wake once when the SOONEST cooldown lapses so its row flips back to INVITE. */
+  private scheduleCooldownRefresh(): void {
+    if (this.inviteCooldownTimer) window.clearTimeout(this.inviteCooldownTimer);
+    const now = performance.now();
+    let soonest = Number.POSITIVE_INFINITY;
+    for (const until of this.inviteCooldowns.values()) if (until > now) soonest = Math.min(soonest, until);
+    if (!Number.isFinite(soonest)) {
+      this.inviteCooldownTimer = 0;
+      return;
+    }
+    this.inviteCooldownTimer = window.setTimeout(() => {
+      this.inviteCooldownTimer = 0;
+      const t = performance.now();
+      for (const [h, until] of [...this.inviteCooldowns]) if (until <= t) this.inviteCooldowns.delete(h);
+      this.listSig = '';
+      if (this.open) this.renderSheet();
+      if (this.inviteCooldowns.size) this.scheduleCooldownRefresh();
+    }, Math.max(50, soonest - now));
+  }
+
+  /** Push a plain top-stack notification (used by the shell for lobby/mode warnings). */
+  notify(title: string, body?: string): void {
+    this.pushNotification({ title, body });
   }
 
   /** Presence first (in match → online → offline), then by name. */
@@ -384,13 +450,19 @@ export class FriendRail {
         this.ctx.official.declineInvite(invite.id);
         continue;
       }
+      const fromHex = hexOf(invite.fromIdentity);
+      // IGNORE 1 MIN: this player's invites are consumed silently for a minute (user ask).
+      if (this.isIgnored(fromHex)) {
+        this.knownInvites.add(invite.id);
+        this.ctx.official.declineInvite(invite.id);
+        continue;
+      }
       const ageUs = nowUs - Number(invite.createdAt.microsSinceUnixEpoch);
       if (ageUs > Number(INVITE_TTL_US)) {
         this.knownInvites.add(invite.id);
         this.ctx.official.declineInvite(invite.id); // stale — never resurrect it
         continue;
       }
-      const fromHex = hexOf(invite.fromIdentity);
       subscribePlayer(fromHex); // pull the inviter's row BEFORE waiting on it
       const player = cache.playerByHex(fromHex);
       if (!player) continue; // wait for the inviter's row (name in the notification)
@@ -408,9 +480,30 @@ export class FriendRail {
           // 2026-10-04) — never assume CLASSIC here: the invite may be a RANK lobby.
           this.ctx.joinLobbyByCode(invite.code);
         },
+        altAction: 'IGNORE 1 MIN',
+        onAltAction: () => {
+          this.ignoreInviter(fromHex);
+          this.ctx.official.declineInvite(invite.id);
+        },
         sound: true,
       });
     }
+  }
+
+  /** The player's lobby invites are dropped without a popup for a minute (user ask). */
+  private isIgnored(hex: string): boolean {
+    const until = this.ignoredInvites.get(hex);
+    if (until === undefined) return false;
+    if (until <= Date.now()) {
+      this.ignoredInvites.delete(hex);
+      return false;
+    }
+    return true;
+  }
+
+  private ignoreInviter(hex: string): void {
+    if (!hex) return;
+    this.ignoredInvites.set(hex, Date.now() + IGNORE_MS);
   }
 
   private pushNotification(o: NotifyOptions): void {
@@ -423,6 +516,16 @@ export class FriendRail {
     col.appendChild(el('b', 'nf-notify-title', o.title));
     if (o.body) col.appendChild(el('span', 'nf-notify-body', o.body));
     node.appendChild(col);
+    // The secondary action sits to the LEFT of the primary one (user ask: "IGNORE 1 MIN"
+    // runs ahead of JOIN on a lobby invite).
+    if (o.altAction && o.onAltAction) {
+      node.appendChild(
+        button(o.altAction, 'nf-btn small nf-notify-alt', () => {
+          o.onAltAction?.();
+          node.remove();
+        })
+      );
+    }
     if (o.action && o.onAction) {
       node.appendChild(
         button(o.action, 'nf-btn small', () => {

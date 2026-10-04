@@ -122,6 +122,13 @@ export class AppShell implements ShellContext {
   private onbConfirm: HTMLButtonElement | null = null;
   private onbColonyPick = -1;
   private playerSearch: PlayerSearch | null = null;
+  /** The search sheet is parked while its VIEW opens a profile; a back restores it as-was. */
+  private playerSearchReturn = false;
+  /** The route the search was opened over — the only route where a return re-shows it. */
+  private playerSearchReturnHash = '';
+  /** Friends the rail asked us to invite; a lobby is created first when none is open. */
+  private pendingLobbyInvites: string[] = [];
+  private pendingLobbyInviteAt = 0;
   private controlsModal: ControlsModal | null = null;
   private backBtn: HTMLButtonElement;
   /** The fixed "RETURN TO LOBBY" chip (user ask 2026-10-03): visible on every shell
@@ -642,6 +649,11 @@ export class AppShell implements ShellContext {
   /** The chevron: the LOBBY ROOM returns to whatever opened it, the setup to the format menu. */
   private onBack(): void {
     if (this.screen === 'room') this.goBackFromLobbyRoom();
+    // A profile opened from the ADD FRIEND search returns to that search (user ask) — the
+    // sheet was only hidden, so the route back restores it untouched (input, results, scroll).
+    else if (this.screen === 'profile' && this.playerSearchReturn) {
+      window.history.back();
+    }
     // RANK is a mode menu: its back returns to the PLAY format menu (user ask 2026-10-03).
     else if (this.screen === 'lobby' || this.screen === 'solo' || this.screen === 'custom' || this.screen === 'rank') this.goPlay();
     else this.goHome();
@@ -716,12 +728,62 @@ export class AppShell implements ShellContext {
       this.playerSearch = new PlayerSearch(
         () => this.myHex(),
         (hex) => {
-          this.playerSearch?.close();
+          // The sheet hides itself; remember to bring it back, exactly as it was, when the
+          // profile is backed out of (user ask).
+          this.playerSearchReturn = true;
+          this.playerSearchReturnHash = window.location.hash;
           this.openProfile(hex);
         }
       );
     }
     this.playerSearch.open(this.root);
+  }
+
+  /**
+   * Friends rail ▸ INVITE (user ask): with a lobby already open the invite goes straight out;
+   * otherwise a lobby is created for the LAST-PLAYED mode first and the invite follows the
+   * moment its rows land. A mode that cannot open a lobby raises the top notification.
+   */
+  inviteFriend(hex: string): void {
+    const me = this.myHex();
+    const cache = ClientCache.shared;
+    const name = cache.playerByHex(hex)?.playerName || 'That survivor';
+    const party = me ? cache.myParty(me) : null;
+    if (party) {
+      this.official.inviteToParty(hex);
+      this.rail.markInvited(hex);
+      this.toast(`Lobby invite sent to ${name}.`);
+      return;
+    }
+    const format = this.lobbyFormatForLastMode();
+    if (!format) {
+      this.notifyTop('Please select correct game Mode', 'Open a CLASSIC or RANK lobby, then invite.');
+      return;
+    }
+    // First invite with no lobby open: create it (and tag its mode) once, then let the party
+    // rows landing send every queued invite. A second INVITE tap just joins the queue.
+    if (this.pendingLobbyInvites.length === 0) {
+      this.setLobbyFormat(format);
+      this.official.createParty();
+      // Tag the lobby's MODE on the server (leader-only) so every joiner renders it.
+      this.official.setPartyFormat(format);
+      this.pendingLobbyInviteAt = performance.now();
+    }
+    this.pendingLobbyInvites.push(hex);
+    // The button flips to INVITED right away; the invite itself rides the party row landing.
+    this.rail.markInvited(hex);
+  }
+
+  /** The FORMAT the last-played mode opens a lobby in, or null when it cannot host one. */
+  private lobbyFormatForLastMode(): LobbyFormat | null {
+    if (this.lastModeId === 'classic') return 'CLASSIC';
+    if (this.lastModeId === 'rank') return 'RANK';
+    return null;
+  }
+
+  /** Push a plain notification onto the friends rail's top stack. */
+  notifyTop(title: string, body?: string): void {
+    this.rail.notify(title, body);
   }
 
   /**
@@ -947,6 +1009,26 @@ export class AppShell implements ShellContext {
       }
     }
 
+    // An INVITE that had to create a lobby first (friends rail): send them the moment the
+    // party rows land, or give up after the same 6 s grace (user ask).
+    if (this.pendingLobbyInvites.length > 0) {
+      const hex = this.myHex();
+      const party = hex ? ClientCache.shared.myParty(hex) : null;
+      if (party) {
+        const targets = this.pendingLobbyInvites;
+        this.pendingLobbyInvites = [];
+        for (const target of targets) {
+          this.official.inviteToParty(target);
+          this.rail.markInvited(target);
+        }
+        const name = ClientCache.shared.playerByHex(targets[0])?.playerName || 'your friend';
+        this.toast(targets.length > 1 ? `Lobby invites sent to ${targets.length} survivors.` : `Lobby invite sent to ${name}.`);
+      } else if (performance.now() - this.pendingLobbyInviteAt > 6000) {
+        this.pendingLobbyInvites = [];
+        this.notifyTop('Could not open a lobby', 'Please try again.');
+      }
+    }
+
     // Control remaps ride the account: apply the authoritative row whenever it arrives.
     const hexNow = this.myHex();
     if (hexNow) Keybinds.hydrate(ClientCache.shared.settingsByHex(hexNow)?.keybinds ?? null);
@@ -1006,6 +1088,14 @@ export class AppShell implements ShellContext {
     if (!this.accountReady || this.shellHidden) return;
     if (this.officialMatchActive || this.soloRunActive) return;
     const route = parseRoute();
+    // Leaving the profile that the ADD FRIEND search opened — via the shell chevron or the
+    // browser back button — restores the search sheet, untouched, when we land back on the
+    // route it was opened over (user ask). Any other destination drops the pending return.
+    if (this.playerSearchReturn && route.name !== 'profile') {
+      const backToSource = window.location.hash === this.playerSearchReturnHash;
+      this.playerSearchReturn = false;
+      if (backToSource) this.playerSearch?.resume();
+    }
     if (route.name === 'profile') this.showShell('profile', route.hex);
     else if (route.name === 'play') this.showShell('play');
     else if (route.name === 'lobby') this.showShell('lobby');

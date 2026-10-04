@@ -18,6 +18,7 @@ Everything the plan demands lives here:
 | Matchmaking 2–9 players, 3/colony, 5 s fill, 10 s confirm | `src/matchmaking/*` |
 | Auto-requeue of confirmed players | `src/matchmaking/queue.ts` (`finalizeCandidate`) |
 | Lobby MODE (CLASSIC/RANK) is a property of the party, leader-set | `src/matchmaking/party.ts` (`set_party_format`), `party.format` |
+| A lobby is never split across the confirmation window | `src/matchmaking/queue.ts` (`abandonForSplitLobby`); no-shows keep dropping |
 | 10 Hz authoritative simulation, one schedule per match | `src/game/simulation.ts` |
 | Input-change-driven movement (NOT per frame) | `sendInput` client + `submit_input` here |
 | Server results → rewards → stats → history | `src/game/rewards.ts` |

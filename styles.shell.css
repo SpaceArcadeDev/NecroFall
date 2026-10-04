@@ -1920,9 +1920,10 @@ html.nf-onb-colony .count-badge { display: none; }
   border-color: color-mix(in srgb, var(--ui-accent-2) 50%, transparent);
   background: rgba(70, 224, 200, 0.12);
 }
-.nf-sheet-close { flex: 0 0 46px; color: var(--ui-accent-2); justify-content: center; }
+/* the collapse glyph reads WHITE, not the accent green (user ask) */
+.nf-sheet-close { flex: 0 0 46px; color: #fff; justify-content: center; }
 .nf-sheet-close svg { display: block; }
-.nf-sheet-close:hover { background: rgba(70, 224, 200, 0.14); }
+.nf-sheet-close:hover { background: rgba(255, 255, 255, 0.24); }
 .nf-sheet-title { font-size: 11px; letter-spacing: 0.22em; color: var(--ui-text-muted); font-weight: 800; }
 .nf-sheet-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .nf-sheet-empty { margin: 12px 4px; }
@@ -1990,6 +1991,8 @@ html.nf-onb-colony .count-badge { display: none; }
 .nf-notify-body { font-size: 10.5px; color: var(--ui-text-muted); }
 .nf-notify-x { border: none; background: none; color: var(--ui-text-muted); cursor: pointer; font-size: 12px; padding: 2px 5px; }
 .nf-notify-x:hover { color: #fff; }
+/* the left-hand secondary action on a notification ("IGNORE 1 MIN") — never wraps */
+.nf-notify-alt { white-space: nowrap; flex: 0 0 auto; }
 
 .nf-card {
   display: flex;
@@ -2051,8 +2054,9 @@ html.nf-onb-colony .count-badge { display: none; }
   text-align: left;
 }
 .nf-search-row:hover { background: rgba(255, 255, 255, 0.5); }
-/* the direct ADD action (follow straight from the search — user ask) */
-.nf-search-add { margin-left: auto; flex: 0 0 auto; }
+/* the row actions (VIEW profile + FOLLOW — user ask) */
+.nf-search-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.nf-search-view { color: var(--ui-text-muted); }
 .nf-search-avatar {
   width: 34px; height: 34px; border-radius: 50%;
   display: grid; place-items: center; font-weight: 800;

@@ -92,6 +92,14 @@ export interface ShellContext {
   stageLobbyAvatars(host: HTMLElement | null, members: LobbySeatInfo[]): void;
   /** The find-survivors sheet (friends ▸ ADD FRIEND): search by name or player id. */
   openPlayerSearch(): void;
+  /**
+   * Friends rail ▸ INVITE (user ask): when no lobby is open, first create one for the
+   * LAST-PLAYED mode, then invite the friend. A mode that cannot open a lobby raises a
+   * top notification instead ("Please select correct game Mode").
+   */
+  inviteFriend(hex: string): void;
+  /** Push a plain notification onto the top stack (friends rail) — lobby/mode warnings. */
+  notifyTop(title: string, body?: string): void;
   /** Remember the mode the player LAUNCHED (user ask 2026-10-03): the bottom bar's hero
    *  button becomes that mode — its own icon, its menu, and RANK's golden star row. */
   setLastMode(id: GameModeDefinition['id']): void;

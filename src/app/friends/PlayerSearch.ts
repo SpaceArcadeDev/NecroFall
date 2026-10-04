@@ -21,7 +21,7 @@ export class PlayerSearch {
   private timer = 0;
   private reqToken = 0;
 
-  constructor(private myHex: () => string, private openProfile: (hex: string) => void) {
+  constructor(private myHex: () => string, private onViewProfile: (hex: string) => void) {
     this.overlay = el('div', 'nf-modal hidden');
     const card = el('div', 'nf-modal-card nf-search-card');
 
@@ -70,6 +70,24 @@ export class PlayerSearch {
       window.clearTimeout(this.timer);
       this.timer = 0;
     }
+  }
+
+  /** VIEW: hand the profile to the shell — the sheet is only HIDDEN, never torn down, so a
+   *  back returns to the identical input, results and scroll position (user ask). */
+  private viewProfile(hex: string): void {
+    this.hide();
+    this.onViewProfile(hex);
+  }
+
+  /** Hide without touching the state (the shell restores it on back from the profile). */
+  hide(): void {
+    this.overlay.classList.add('hidden');
+  }
+
+  /** Re-show after a profile stop, preserving the search exactly as it was. */
+  resume(): void {
+    if (!this.overlay.isConnected) return;
+    this.overlay.classList.remove('hidden');
   }
 
   /** Debounce keystrokes; the server ranks and caps the result list. */
@@ -133,18 +151,24 @@ export class PlayerSearch {
         el('span', 'nf-search-meta', `${p.playerCode || '——————'} · ${colony ? colony.name : 'NO COLONY'} · LV ${p.level}`)
       );
       row.appendChild(col);
-      // ADD = follow straight from the search (ADD FRIEND's whole point — user ask);
-      // mutual follow is what registers the friendship, so the profile stop is optional.
+      // VIEW opens the profile (user ask: to the LEFT of FOLLOW). The search sheet stays
+      // MOUNTED behind the profile so coming back restores the exact input, results and
+      // scroll position (AppShell re-shows it on back).
+      const actions = el('div', 'nf-search-actions');
+      actions.appendChild(button('VIEW', 'nf-btn small nf-search-view', () => this.viewProfile(hex)));
+      // FOLLOW = the follow straight from the search (mutual follow registers the friendship),
+      // so the profile stop is optional.
       const following = ClientCache.shared.isFollowing(mine, hex);
-      const add = button(following ? 'ADDED ✓' : '+ ADD', 'nf-btn small nf-search-add', () => {
-        if (add.disabled) return;
-        add.disabled = true;
-        add.textContent = 'ADDED ✓';
+      const follow = button(following ? 'FOLLOWING ✓' : 'FOLLOW', 'nf-btn small nf-search-follow', () => {
+        if (follow.disabled) return;
+        follow.disabled = true;
+        follow.textContent = 'FOLLOWING ✓';
         followPlayer(p.identity);
       });
-      add.disabled = following;
-      row.appendChild(add);
-      const open = (): void => this.openProfile(hex);
+      follow.disabled = following;
+      actions.appendChild(follow);
+      row.appendChild(actions);
+      const open = (): void => this.viewProfile(hex);
       row.addEventListener('click', (e) => {
         if ((e.target as HTMLElement).closest('button')) return;
         open();

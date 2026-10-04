@@ -351,6 +351,51 @@ function fillCandidate(ctx: any, candidate: any, now: bigint): void {
 }
 
 /**
+ * The parties in this candidate that are SPLIT across the decision — some of their seats
+ * confirmed and some did not. A lobby is admitted as one atomic group (plan §72), so a split
+ * one must never be half-admitted (user ask).
+ */
+function splitPartiesIn(ctx: any, seats: any[]): Set<number> {
+  const seen = new Map<number, boolean>();
+  const split = new Set<number>();
+  for (const s of seats) {
+    const partyId: number | undefined = ctx.db.queue_entry.identity.find(s.identity)?.party_id ?? undefined;
+    if (partyId === undefined) continue;
+    const prev = seen.get(partyId);
+    if (prev === undefined) seen.set(partyId, s.confirmed);
+    else if (prev !== s.confirmed) split.add(partyId);
+  }
+  return split;
+}
+
+/**
+ * A LOBBY must never be split across a confirmation (user ask): the SPLIT party is withdrawn
+ * from the candidate AND from the queue — so its members return to the lobby menu together —
+ * while every other confirmed player is put straight back into the queue (nobody has to press
+ * Find Match again) and any no-show is dropped. The party rows are untouched, so the lobby
+ * stays open and the client's queue-idle path lands on the lobby room.
+ */
+function abandonForSplitLobby(ctx: any, candidateId: number, splitParties: Set<number>): void {
+  const candidate = ctx.db.candidate_match.match_id.find(candidateId);
+  for (const s of [...ctx.db.match_candidate_player.match_id.filter(candidateId)]) {
+    const q = ctx.db.queue_entry.identity.find(s.identity);
+    if (q) {
+      const partyId: number | undefined = q.party_id ?? undefined;
+      if (partyId !== undefined && splitParties.has(partyId)) {
+        ctx.db.queue_entry.identity.delete(s.identity); // the lobby itself steps back out
+      } else if (s.confirmed) {
+        ctx.db.queue_entry.identity.update({ ...q, status: QUEUE_QUEUED, candidate_match_id: undefined });
+      } else {
+        ctx.db.queue_entry.identity.delete(s.identity);
+      }
+    }
+    ctx.db.match_candidate_player.id.delete(s.id);
+  }
+  if (candidate) maybeReleasePlanet(ctx, candidate.planet_key ?? '');
+  ctx.db.candidate_match.match_id.delete(candidateId);
+}
+
+/**
  * Internal: the confirmation window closed (or everyone confirmed).
  * Unconfirmed seats are DROPPED from matchmaking (plan §14); confirmed seats
  * either start the match or — if too few are left — requeue automatically so
@@ -362,6 +407,15 @@ export function finalizeCandidate(ctx: any, candidateId: number): void {
   const seats = [...ctx.db.match_candidate_player.match_id.filter(candidateId)];
   const confirmed = seats.filter(s => s.confirmed);
   const unconfirmed = seats.filter(s => !s.confirmed);
+
+  // NEVER SPLIT A LOBBY (user ask): when a party in this candidate is divided — some of its
+  // seats confirmed, some did not — the match is NOT started. The split lobby steps back out
+  // to the lobby menu and the rest of the confirmed players are requeued automatically.
+  const split = unconfirmed.length > 0 ? splitPartiesIn(ctx, seats) : new Set<number>();
+  if (split.size > 0) {
+    abandonForSplitLobby(ctx, candidateId, split);
+    return;
+  }
 
   // Drop the no-shows entirely — EXCEPT a LONE unconfirmed seat while a region-blocked
   // player is waiting: that player is not a no-show, they are half of a cross-region pair
@@ -424,9 +478,18 @@ export function removeFromQueue(ctx: any, identity: any, now: bigint): void {
   const seat = ctx.db.match_candidate_player.identity.find(identity);
   if (seat) {
     const candidateId = seat.match_id;
+    const partyId = q?.party_id ?? undefined;
     ctx.db.match_candidate_player.identity.delete(identity);
     const remaining = [...ctx.db.match_candidate_player.match_id.filter(candidateId)];
-    if (remaining.length < MATCH_MIN_PLAYERS) {
+    // A LOBBY member bailing out of the confirmation window must not split the lobby (user ask):
+    // while a lobby-mate is still seated here, the whole lobby steps back out to the lobby menu
+    // and the rest of the confirmed players are requeued instead of half the party starting.
+    const lobbyMateLeft = remaining.some(
+      (s: any) => (ctx.db.queue_entry.identity.find(s.identity)?.party_id ?? undefined) === partyId
+    );
+    if (partyId !== undefined && lobbyMateLeft) {
+      abandonForSplitLobby(ctx, candidateId, new Set([partyId]));
+    } else if (remaining.length < MATCH_MIN_PLAYERS) {
       // Not enough left to ever start — do not keep them waiting on a dead candidate.
       releaseCandidate(ctx, candidateId, true);
     } else if (remaining.every(s => s.confirmed)) {

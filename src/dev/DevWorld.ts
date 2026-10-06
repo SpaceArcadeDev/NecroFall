@@ -30,6 +30,13 @@ import { PlanetCollider } from '../rendering/Physics/PlanetCollider';
 import { PhysicsSurface } from '../rendering/Physics/PhysicsSurface';
 import { planetAt } from '../rankmap/procedural/PlanetGenerator';
 import { CONFIG } from '../core/Config';
+import {
+  detectRendererCapabilities,
+  describeRendererCapabilities,
+  enrichRendererCapabilities,
+} from '../rendering/RendererCapabilities';
+import { PerformanceManager } from '../performance/PerformanceManager';
+import { precompileEnabled, precompilePipelines } from '../rendering/PipelinePrecompiler';
 
 const FOOT_OFFSET = 0.05;
 
@@ -110,7 +117,11 @@ export async function startDevWorld(): Promise<void> {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(60, viewport.ratio, 0.1, 2000);
 
-  const rendering = new Rendering(canvas, viewport, quality);
+  // r186 plan §38/§48: the SAME backend choice the match honours, so the WebGL2 fallback can be
+  // exercised (and profiled) in the dev world instead of only on a device without WebGPU.
+  const rendering = new Rendering(canvas, viewport, quality, {
+    forceWebGL: switches.bag['backend'] === 'webgl',
+  });
   setProgress(0.02, 'starting renderer (webgpu)');
   await rendering.init(scene, camera);
 
@@ -177,6 +188,26 @@ export async function startDevWorld(): Promise<void> {
   });
   const { world, spec, surface, surfaceData, generator, nodes, materials, noises, wind, preRenderer } = result;
   document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
+
+  // r186 plan §0.2/§0.3/§15/§49: the Dev World is where acceptance runs happen, so it gets the
+  // SAME capability probe, telemetry snapshot and async precompilation the match does.
+  const capabilities = detectRendererCapabilities(rendering.renderer);
+  console.info('[caps]', describeRendererCapabilities(capabilities));
+  void enrichRendererCapabilities(capabilities).then((enriched) => {
+    if (enriched.gpu) console.info('[caps] adapter', enriched.gpu);
+  });
+  PerformanceManager.init();
+  PerformanceManager.attachRenderer(rendering.renderer, rendering.backend);
+  PerformanceManager.register('world', () => world.counters());
+  if (precompileEnabled()) {
+    const report = await precompilePipelines({
+      renderer: rendering.renderer,
+      scene,
+      camera,
+      onStep: (label, ratio) => setProgress(0.95 + ratio * 0.04, label),
+    });
+    console.info('[precompile]', report);
+  }
   const spawnDirection = result.spawnDirection;
   const spawnPoint = new THREE.Vector3().copy(spawnDirection).multiplyScalar(surface.radiusAt(spawnDirection) + FOOT_OFFSET);
 
@@ -436,8 +467,20 @@ export async function startDevWorld(): Promise<void> {
   });
 
   const stats = switches.stats || RenderDebug.baseline || RenderDebug.foliageDebug ? new StatsOverlay() : null;
+  /** r186 plan §49: refresh the telemetry lines twice a second on the same overlay. */
+  let telemetryT = 0;
   ticker.on(998, () => {
     rendering.render(ticker.delta, stats);
+    // Read the counters AFTER the draw: three resets `info` when a render starts, so a snapshot
+    // taken before it would report last frame's reset state (draws/triangles = 0).
+    if (stats && PerformanceManager.enabled) {
+      telemetryT += ticker.delta;
+      if (telemetryT >= 0.5) {
+        telemetryT = 0;
+        PerformanceManager.attachRenderer(rendering.renderer, rendering.backend);
+        for (const [label, value] of PerformanceManager.overlayLines()) stats.set(label, value);
+      }
+    }
   });
 
   // ---------------------------------------------------------------- visibility / switches
@@ -467,7 +510,7 @@ export async function startDevWorld(): Promise<void> {
     printRenderBaseline({
       world: 'dev',
       renderer: {
-        version: 'three r183 (webgpu)',
+        version: 'three r186 (webgpu)',
         backend: rendering.backend,
         pixelRatio: viewport.pixelRatio,
         toneMapping: (rendering.renderer as any)?.toneMapping ?? -1,
@@ -528,6 +571,8 @@ export async function startDevWorld(): Promise<void> {
     // fixed-step physics (plan §42), then the ordered tick
     physics.advance(delta);
     ticker.update(delta);
+    // r186 plan §0.3: feed the telemetry's frame section the SAME pacing the loop just measured.
+    PerformanceManager.sample(delta * 1000, delta * 1000);
     // throttled background tabs produce meaningless deltas — never degrade on them
     if (!document.hidden) quality.monitor(delta);
   };

@@ -1554,7 +1554,7 @@ export class Game {
     return {
       world: worldName,
       renderer: {
-        version: renderer?.constructor?.name === 'WebGPURenderer' ? 'three r183 (webgpu)' : 'three r183',
+        version: renderer?.constructor?.name === 'WebGPURenderer' ? 'three r186 (webgpu)' : 'three r186',
         backend: this.rendering.backend,
         pixelRatio: this.viewport.pixelRatio,
         toneMapping: renderer?.toneMapping ?? -1,
@@ -1678,6 +1678,11 @@ export class Game {
     // already been advanced by the stages before it.
     this.ticker.on(998, () => {
       if (this.rendererReady) this.rendering.render(this.ticker.delta);
+      // r186 plan §0.3/§49: frame counters are read AFTER the draw (three resets `info` at the
+      // start of a render), so the telemetry snapshot and the overlay agree with the frame that
+      // was just submitted instead of the previous one's reset state.
+      PerformanceManager.sample(this.frameMs, this.simMs + this.renderMs);
+      this.updateDebugOverlay();
     });
     // The environment ticks at its own stage (after the environment's inner stages 10–12): the
     // world always renders the frame the player is in. `PlanetRenderer` owns the order of
@@ -1693,8 +1698,6 @@ export class Game {
         this.envWalkers.push({ id, pos: p.position });
       }
       this.envWorld?.update(focus, this.cam.camera, this.envWalkers, this.ticker.delta);
-      PerformanceManager.sample(this.frameMs, this.simMs + this.renderMs);
-      this.updateDebugOverlay();
     });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
     const wake = (): void => { this.lastInteractionAt = performance.now(); };

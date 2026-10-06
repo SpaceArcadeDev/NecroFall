@@ -409,6 +409,28 @@ The full mobile plan pass is recorded in [`docs/performance/MOBILE_OVERHAUL.md`]
   plan's §121 budgets; `?swarm=200` keeps a crowd of that size alive while it runs. `?debug=true`
   also exposes the running game as `window.game` for console measurements.
 
+### Three.js r186 pass (2026-10)
+
+The r186 performance/rendering pass is recorded in
+[`docs/performance/R186_UPGRADE.md`](docs/performance/R186_UPGRADE.md) (all 50 phases, the
+verification runs, and the deviations with their reasons). In short:
+
+* **Three r186.1** (pinned) — `Object3D.dispose()` / `compileAsync` / `compileComputeAsync` are now
+  the real APIs the renderer code uses.
+* **Capability probe + telemetry** — `[caps]` boot line (backend / compute / limits / tier / GPU)
+  and `PerformanceManager.snapshot()` (frame, world, combat, network, server) feeding the `?stats`
+  overlay in both the game and the dev world.
+* **Memory ownership** — `ResourceRegistry` + `PlanetRoot`: SHARED vs PLANET-OWNED GPU resources,
+  so a planet replacement disposes what it owns (baked textures, gradient, remapped materials,
+  foliage SDF) and never what it borrows.
+* **Dithered grass LOD** — the sector keep fraction now dissolves over ~1.1 s from a stable
+  per-blade seed instead of snapping; transforms still never move.
+* **Async precompilation** — world pipelines compile behind the loading screen (`?precompile=0`),
+  with per-step timeouts and lazy-compilation fallback.
+* **Benchmarks + flags** — `?bench=empty|swarm50|swarm100|colonies|boss|vfx|vegetation|full`
+  (plan TEST A–H) and `?backend=webgl|webgpu`, `?spatialhash=0`, `?enemytiers=0` A/B switches;
+  `?perfcheck` now also reports 1 % low, peak frame, heap delta and the telemetry line.
+
 ## Architecture
 
 ```

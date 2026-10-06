@@ -18,6 +18,7 @@
  *     never become a second, disagreeing frame timer.
  */
 import type * as THREE from 'three/webgpu';
+import { Vector2 } from 'three/webgpu';
 import { readSwitches } from '../rendering/DebugSwitches';
 
 export interface FrameSection {
@@ -121,7 +122,8 @@ interface RendererLike {
     memory: { geometries?: number; textures?: number };
   };
   getPixelRatio(): number;
-  getDrawingBufferSize(target: { x: number; y: number }): { x: number; y: number };
+  /** `getDrawingBufferSize` chains on the target (`set(...).floor()`) — pass a real Vector2. */
+  getDrawingBufferSize(target: Vector2): Vector2;
 }
 
 class PerformanceManagerImpl {
@@ -131,7 +133,8 @@ class PerformanceManagerImpl {
   private renderer: RendererLike | null = null;
   private backend: string = 'none';
   private readonly providers = new Map<SectionName, Set<SectionProvider<SectionName>>>();
-  private readonly size = { x: 0, y: 0 };
+  /** Scratch for `getDrawingBufferSize` — a real Vector2 (the call chains on the target). */
+  private readonly size = new Vector2();
   /** Smoothed frame pacing (ms) — pushed by Game's own loop, never measured twice. */
   private frameMs = 0;
   private cpuMs = 0;

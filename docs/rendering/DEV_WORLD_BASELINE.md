@@ -23,7 +23,7 @@ Deterministic spawn: the dev world scans up to 800 surface samples for a **sunli
 
 | Value | Setting |
 | --- | --- |
-| three | 0.183.2, single instance via the `three -> three/webgpu` vite alias |
+| three | 0.186.1, single instance via the `three -> three/webgpu` vite alias |
 | backend | `webgpu` (WebGL2 fallback only when `navigator.gpu` is missing) |
 | renderer | ONE `WebGPURenderer` (`src/rendering/Rendering.ts`) |
 | pixel ratio | quality-driven (level 0: ≤2, level 1: ≤1.5, level 2: ≤1.25) |

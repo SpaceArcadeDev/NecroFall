@@ -233,9 +233,10 @@ export class PlanetRenderer {
     focusPoint: THREE.Vector3,
     camera?: THREE.Camera,
     walkers?: readonly { id: string; pos: THREE.Vector3 }[],
+    dt = 1 / 60,
   ): void {
     void this.focusScratch;
-    this.grass.update(focusPoint, camera, walkers);
+    this.grass.update(focusPoint, camera, walkers, dt);
     this.puddles.trackTrail(focusPoint);
     if (walkers) for (const w of walkers) this.puddles.trackWalkerTrail(w.id, w.pos);
     this.particles.update(focusPoint, camera);
@@ -288,6 +289,33 @@ export class PlanetRenderer {
       'puddles': `${this.puddles.count}`,
       'motes': `${this.particles.count}`,
       'colliders': `${this.obstacles.count}`,
+    };
+  }
+
+  /**
+   * Numeric world counters for the telemetry snapshot (r186 plan §0.3/§49). The grass numbers
+   * come from the LOD pass's own bookkeeping; the decoration numbers are instance counts the
+   * systems already track — no traversal, no allocation.
+   */
+  counters(): {
+    grassSectors: number;
+    grassSectorsVisible: number;
+    grassInstances: number;
+    grassInstancesDrawn: number;
+    grassFadingSectors: number;
+    vegetationInstances: number;
+  } {
+    const grass = this.grass.stats;
+    let trees = 0;
+    for (const tree of this.trees) trees += tree.treeCount;
+    return {
+      grassSectors: grass.sectors,
+      grassSectorsVisible: grass.visibleSectors,
+      grassInstances: grass.instances,
+      grassInstancesDrawn: grass.drawnInstances,
+      grassFadingSectors: grass.fadingSectors,
+      vegetationInstances:
+        trees + this.bushes.count + this.rocks.count + this.spikes.spikeCount + this.crystals.shardCount,
     };
   }
 }

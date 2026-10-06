@@ -40,7 +40,7 @@ import { Fog } from '../rendering/Environment/Fog';
 import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
 import { createPlanetWorld, type PlanetWorldResult } from '../rendering/Environment/PlanetWorld';
 import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
-import { DebugSwitches, StatsOverlay } from '../rendering/DebugSwitches';
+import { DebugSwitches, StatsOverlay, readSwitches } from '../rendering/DebugSwitches';
 import { RenderDebug, printRenderBaseline } from '../rendering/RenderDebug';
 import { PlanetSurface } from '../planet/PlanetSurface';
 import type { WebGPURenderer } from 'three/webgpu';
@@ -81,6 +81,15 @@ import { NECROTECHS, NecrotechDef, defForDrop, ALL_NECROTECHS, ensureAim, aimDef
 import { PERKS, Perk, rollPerks } from '../necromutation/Perks';
 import { Rand, clamp, dirFromAngles, formatRunTime, formatTime, hashString, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { PerformanceMonitor } from '../performance/PerformanceMonitor';
+import { PerformanceManager } from '../performance/PerformanceManager';
+import {
+  detectRendererCapabilities,
+  describeRendererCapabilities,
+  enrichRendererCapabilities,
+  type RendererCapabilities,
+} from '../rendering/RendererCapabilities';
+import { spacetimeUpdatesPerSecond } from '../app/spacetimedb/cache';
+import { precompileEnabled, precompilePipelines } from '../rendering/PipelinePrecompiler';
 
 export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'starting' | 'playing' | 'ended';
 
@@ -325,6 +334,8 @@ export class Game {
   private readonly debugSwitches: DebugSwitches;
   /** `?renderBaseline=1` / `?foliageDebug=1` overlay. */
   private debugOverlay: StatsOverlay | null = null;
+  /** r186 plan §0.2: the boot capability probe (WebGPU/WebGL, limits, tier). */
+  capabilities: RendererCapabilities | null = null;
   private debugOverlayAccum = 0;
   /** Stale-build guard: only the latest world build may attach itself to the running planet. */
   private worldToken = 0;
@@ -650,6 +661,8 @@ export class Game {
   private frameMs = 16;
   /** Smoothed CPU cost of the match simulation and of `renderer.render` (F1 diagnostics). */
   private simMs = 0;
+  /** Smoothed host authority-tick cost (see `publishSnapshot`) — telemetry `server.tickMs`. */
+  private authorityTickMs = 0;
   private renderMs = 0;
   /**
    * Adaptive render scale: the ladder step (0 = the device-capped DPR) plus the hysteresis clocks
@@ -735,7 +748,11 @@ export class Game {
     this.quality = new Quality();
     // The game keeps its OWN adaptive ladder + rescue watchdog — the renderer's heat monitor off.
     this.quality.adaptive = false;
-    this.rendering = new Rendering(canvas, this.viewport, this.quality);
+    // r186 plan §38/§48: the ONE renderer-adapter choice. `?backend=webgl` (or VITE_RENDERER=webgl)
+    // pins the WebGL compatibility backend — the fallback path every GPU feature must keep alive.
+    this.rendering = new Rendering(canvas, this.viewport, this.quality, {
+      forceWebGL: readSwitches()['backend'] === 'webgl',
+    });
     this.envTime = new Time(this.ticker);
     this.renderer = this.rendering.renderer;
     this.rendererBackend = this.rendering.backend;
@@ -1458,6 +1475,20 @@ export class Game {
         world.dispose();
         return;
       }
+      // r186 plan §15: compile the world's pipelines while the loading screen still covers the
+      // drop. Bounded, error-handled, computed only on WebGPU — a failed pipeline is left to
+      // lazy compilation, never allowed to block the match (`?precompile=0` disables it).
+      if (precompileEnabled()) {
+        const report = await precompilePipelines({
+          renderer: this.renderer,
+          scene: this.scene,
+          camera: this.cam.camera,
+          onStep: (label, ratio) => {
+            if (this.phase === 'starting') this.ui.updateLoading(0.92 + ratio * 0.08, label);
+          },
+        });
+        if (PerformanceMonitor.enabled) console.info('[precompile]', report);
+      }
       this.envWorld = world;
       planet.attachWorld({
         terrainMesh: world.terrain.mesh,
@@ -1535,11 +1566,18 @@ export class Game {
 
   /** `?foliageDebug=1` live counters (plan §33) — refreshed twice per second. */
   private updateDebugOverlay(): void {
-    if (!RenderDebug.foliageDebug || !this.debugOverlay) return;
+    if (!this.debugOverlay) return;
     this.debugOverlayAccum += this.ticker.delta;
     if (this.debugOverlayAccum < 0.5) return;
     this.debugOverlayAccum = 0;
     const overlay = this.debugOverlay;
+    // r186 plan §49: the unified telemetry snapshot feeds the SAME overlay (?stats / ?overlay /
+    // ?perfcheck / ?debug), so the readout and the console numbers can never disagree.
+    if (PerformanceManager.enabled) {
+      PerformanceManager.attachRenderer(this.renderer, this.rendering.backend);
+      for (const [label, value] of PerformanceManager.overlayLines()) overlay.set(label, value);
+    }
+    if (!RenderDebug.foliageDebug) return;
     const world = this.envWorld;
     if (world) {
       for (const [label, value] of Object.entries(world.stats)) overlay.set(`fol.${label}`, value);
@@ -1551,6 +1589,34 @@ export class Game {
     overlay.set('surfaceQueries', `${PlanetSurface.debugQueries}`);
     PlanetSurface.debugSamples = 0;
     PlanetSurface.debugQueries = 0;
+  }
+
+  /**
+   * r186 plan §0.3: registers the pull-based telemetry providers. Each closure runs ONLY when a
+   * snapshot is taken (debug overlay / console), so this costs nothing in a normal boot. Combat
+   * numbers come from the systems' own O(1) counters — the SwarmDirector's tier counts, the
+   * projectile pool's `activeCount`, the particle system's `activeCount`.
+   */
+  private registerTelemetry(): void {
+    PerformanceManager.register('world', () => this.envWorld?.counters() ?? {});
+    PerformanceManager.register('combat', () => {
+      const tiers = this.enemies.director?.stats().tiers ?? [0, 0, 0, 0];
+      return {
+        enemiesActive: this.enemies.aliveCount,
+        enemiesFull: tiers[0],
+        enemiesReduced: tiers[1],
+        enemiesLight: tiers[2],
+        enemiesSleep: tiers[3],
+        projectilesActive: this.combat.activeCount,
+        particlesActive: this.effects.activeCount,
+      };
+    });
+    PerformanceManager.register('network', () => ({
+      rxBytesPerSec: this.net.rxBytesPerSec,
+      txBytesPerSec: this.net.txBytesPerSec,
+      spacetimeUpdatesPerSec: spacetimeUpdatesPerSecond(),
+    }));
+    PerformanceManager.register('server', () => ({ tickMs: this.authorityTickMs }));
   }
 
   start(): void {
@@ -1574,6 +1640,18 @@ export class Game {
     PerformanceMonitor.init();
     // §120 budget checklist (`?perfcheck[=seconds]`) — works without `?debug=true`.
     PerfChecklist.init();
+    // r186 plan §0.2/§0.3: the ONE capability probe + the pull-based telemetry snapshot.
+    PerformanceManager.init();
+    this.capabilities = detectRendererCapabilities(this.renderer);
+    console.info('[caps]', describeRendererCapabilities(this.capabilities));
+    void enrichRendererCapabilities(this.capabilities).then((enriched) => {
+      if (enriched.gpu) console.info('[caps] adapter', enriched.gpu);
+    });
+    PerformanceManager.attachRenderer(this.renderer, this.rendering.backend);
+    this.registerTelemetry();
+    // `?stats` / `?overlay` / `?debug` in the GAME (not just the dev world): the §49 telemetry
+    // overlay is created up front, so the numbers are visible from the first rendered frame.
+    if (PerformanceManager.enabled) this.debugOverlay ??= new StatsOverlay();
     // §51 boot line: the device tier + the resolution cap it grants, so a phone report can be
     // read back without guessing.
     console.info('[device]', DeviceTier.describe());
@@ -1601,7 +1679,8 @@ export class Game {
         if (p.isLocal || !p.alive) continue;
         this.envWalkers.push({ id, pos: p.position });
       }
-      this.envWorld?.update(focus, this.cam.camera, this.envWalkers);
+      this.envWorld?.update(focus, this.cam.camera, this.envWalkers, this.ticker.delta);
+      PerformanceManager.sample(this.frameMs, this.simMs + this.renderMs);
       this.updateDebugOverlay();
     });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
@@ -5996,17 +6075,7 @@ export class Game {
         this.snapshotT -= dt;
         if (this.snapshotT <= 0) {
           this.snapshotT = 1 / CONFIG.netTickSnapshot;
-          const players: PlayerNet[] = [];
-          for (const p of this.players.values()) players.push(p.toNet(now));
-          this.net.broadcast({
-            t: 's',
-            time: now,
-            el: Math.round(this.matchElapsed * 100) / 100,
-            pl: players,
-            en: this.enemies.serialize(),
-            tw: this.towers.serialize(),
-            pk: this.pickups.map(pk => ({ id: pk.id, x: pk.mesh.position.x, y: pk.mesh.position.y, z: pk.mesh.position.z, nt: pk.nt, rare: pk.rare ? 1 : 0, tk: pk.taken ? 1 : 0 })),
-          });
+          this.publishSnapshot(now);
         }
       }
       // Server-side record / liveness feed (the bridge throttles `submitInput` + `syncPose`).
@@ -6027,17 +6096,7 @@ export class Game {
       this.snapshotT -= dt;
       if (this.snapshotT <= 0) {
         this.snapshotT = 1 / CONFIG.netTickSnapshot;
-        const players: PlayerNet[] = [];
-        for (const p of this.players.values()) players.push(p.toNet(now));
-        this.net.broadcast({
-          t: 's',
-          time: now,
-          el: Math.round(this.matchElapsed * 100) / 100,
-          pl: players,
-          en: this.enemies.serialize(),
-          tw: this.towers.serialize(),
-          pk: this.pickups.map(pk => ({ id: pk.id, x: pk.mesh.position.x, y: pk.mesh.position.y, z: pk.mesh.position.z, nt: pk.nt, rare: pk.rare ? 1 : 0, tk: pk.taken ? 1 : 0 })),
-        });
+        this.publishSnapshot(now);
       }
     } else {
       this.stateT -= dt;
@@ -6054,6 +6113,28 @@ export class Game {
         }
       }
     }
+  }
+
+  /**
+   * Host snapshot publish — the authority tick's dominant cost. The players/enemies/towers/pickup
+   * payload is assembled and broadcast through the ONE transport; the wall time spent here is what
+   * the telemetry's `server.tickMs` reports on a hosting client (r186 plan §0.3/§49). A dedicated
+   * server's own tick time is not observable from a browser, so a non-host reports 0.
+   */
+  private publishSnapshot(now: number): void {
+    const players: PlayerNet[] = [];
+    for (const p of this.players.values()) players.push(p.toNet(now));
+    const started = performance.now();
+    this.net.broadcast({
+      t: 's',
+      time: now,
+      el: Math.round(this.matchElapsed * 100) / 100,
+      pl: players,
+      en: this.enemies.serialize(),
+      tw: this.towers.serialize(),
+      pk: this.pickups.map(pk => ({ id: pk.id, x: pk.mesh.position.x, y: pk.mesh.position.y, z: pk.mesh.position.z, nt: pk.nt, rare: pk.rare ? 1 : 0, tk: pk.taken ? 1 : 0 })),
+    });
+    this.authorityTickMs += (performance.now() - started - this.authorityTickMs) * 0.2;
   }
 
   private updateModalTimers(dt: number): void {

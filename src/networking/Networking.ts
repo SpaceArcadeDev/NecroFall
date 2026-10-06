@@ -394,7 +394,7 @@ export class NetworkManager {
       this.lastSeen.set(conn.peer, performance.now());
       const msg = data as NetMessage;
       if (!msg || typeof msg.t !== 'string') return;
-      this.noteTraffic(msg);
+      this.noteTraffic(msg, 'rx');
       if (msg.t === 'ping') {
         if (this.isHost) {
           try {
@@ -967,8 +967,12 @@ export class NetworkManager {
       if (this.statT >= 1) {
         this.msgsPerSec = this.statsOn ? this.statMsgs / this.statT : 0;
         this.bytesPerSec = this.statsOn ? this.statBytes / this.statT : 0;
+        this.rxBytesPerSec = this.statsOn ? this.statRxBytes / this.statT : 0;
+        this.txBytesPerSec = this.statsOn ? this.statTxBytes / this.statT : 0;
         this.statMsgs = 0;
         this.statBytes = 0;
+        this.statRxBytes = 0;
+        this.statTxBytes = 0;
         this.statT = 0;
       }
       return;
@@ -988,8 +992,12 @@ export class NetworkManager {
     if (this.statT >= 1) {
       this.msgsPerSec = this.statsOn ? this.statMsgs / this.statT : 0;
       this.bytesPerSec = this.statsOn ? this.statBytes / this.statT : 0;
+      this.rxBytesPerSec = this.statsOn ? this.statRxBytes / this.statT : 0;
+      this.txBytesPerSec = this.statsOn ? this.statTxBytes / this.statT : 0;
       this.statMsgs = 0;
       this.statBytes = 0;
+      this.statRxBytes = 0;
+      this.statTxBytes = 0;
       this.statT = 0;
     }
     // Never drop peers while the tab is backgrounded: browsers throttle timers there.
@@ -1062,9 +1070,14 @@ export class NetworkManager {
    */
   msgsPerSec = 0;
   bytesPerSec = 0;
+  /** Split RX/TX meters (r186 plan §0.3/§49) — the overlay can show which direction is heavy. */
+  rxBytesPerSec = 0;
+  txBytesPerSec = 0;
   private statsOn = false;
   private statMsgs = 0;
   private statBytes = 0;
+  private statRxBytes = 0;
+  private statTxBytes = 0;
   private statT = 0;
 
   setStats(on: boolean): void {
@@ -1072,8 +1085,12 @@ export class NetworkManager {
     this.statsOn = on;
     this.msgsPerSec = 0;
     this.bytesPerSec = 0;
+    this.rxBytesPerSec = 0;
+    this.txBytesPerSec = 0;
     this.statMsgs = 0;
     this.statBytes = 0;
+    this.statRxBytes = 0;
+    this.statTxBytes = 0;
     this.statT = 0;
   }
 
@@ -1083,13 +1100,17 @@ export class NetworkManager {
     return this.isHost ? 'HOST' : 'CLIENT';
   }
 
-  private noteTraffic(msg: NetMessage): void {
+  private noteTraffic(msg: NetMessage, direction: 'rx' | 'tx' = 'tx'): void {
     if (!this.statsOn) return;
     this.statMsgs++;
+    let size = 0;
     try {
-      this.statBytes += JSON.stringify(msg).length;
+      size = JSON.stringify(msg).length;
     } catch {
       /* circular payload (never happens with the game's messages) — the count still counts */
     }
+    this.statBytes += size;
+    if (direction === 'rx') this.statRxBytes += size;
+    else this.statTxBytes += size;
   }
 }

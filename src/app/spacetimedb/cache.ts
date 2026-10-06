@@ -42,6 +42,39 @@ import {
 
 type Row = { [key: string]: unknown };
 
+/**
+ * Live SpacetimeDB telemetry (r186 plan §0.3/§49). `watch`'s `rebuild` is the ONE choke point
+ * where row updates land in the client cache, so the counter lives next to it instead of in
+ * every subscription. Zero cost beyond an integer bump; the rate only advances when the debug
+ * overlay (or the console) asks for it.
+ */
+const spacetimeMeter = { updates: 0, windowCount: 0, windowStart: 0, rate: 0 };
+
+function noteSpacetimeUpdate(): void {
+  spacetimeMeter.updates++;
+  spacetimeMeter.windowCount++;
+}
+
+/** Total row-update applications since boot (monotonic — safe to diff in the console). */
+export function spacetimeUpdatesApplied(): number {
+  return spacetimeMeter.updates;
+}
+
+/** Row updates applied per second over the last sampling window (diagnostics only). */
+export function spacetimeUpdatesPerSecond(): number {
+  const now = performance.now();
+  if (spacetimeMeter.windowStart === 0) {
+    spacetimeMeter.windowStart = now;
+    return 0;
+  }
+  const elapsed = (now - spacetimeMeter.windowStart) / 1000;
+  if (elapsed < 0.5) return spacetimeMeter.rate;
+  spacetimeMeter.rate = spacetimeMeter.windowCount / elapsed;
+  spacetimeMeter.windowCount = 0;
+  spacetimeMeter.windowStart = now;
+  return spacetimeMeter.rate;
+}
+
 const TABLES = [
   'player',
   'playerStats',
@@ -132,6 +165,7 @@ export class ClientCache {
     const handle = conn.db?.[name];
     if (!handle) return;
     const rebuild = (): void => {
+      noteSpacetimeUpdate();
       try {
         const next = [...handle.iter()] as Row[];
         this.rows.set(name, next);

@@ -29,6 +29,25 @@
  *     it reads.
  */
 import type { Enemy } from './Enemies';
+import { readSwitches } from '../rendering/DebugSwitches';
+
+/**
+ * `?enemytiers=0` (or VITE_ENEMY_TIERS=false) pins every enemy to tier 0 — the A/B switch that
+ * measures what the tiers actually buy on a live device. Read once: the flag cannot change under
+ * a running page, and this is consulted per enemy per frame.
+ */
+let tiersEnabledCache: boolean | null = null;
+
+export function enemyTiersEnabled(): boolean {
+  if (tiersEnabledCache === null) {
+    try {
+      tiersEnabledCache = readSwitches()['enemytiers'] !== '0';
+    } catch {
+      tiersEnabledCache = true;
+    }
+  }
+  return tiersEnabledCache;
+}
 
 /** Update cadence per tier (frame stride). Index = tier. */
 export const SWARM_TIER_STEPS = [1, 2, 4, 6] as const;
@@ -70,6 +89,11 @@ export class SwarmDirector {
    * no maps and allocates nothing). Returns the frame stride the caller must use.
    */
   stepFor(enemy: Enemy, distanceSq: number): number {
+    if (!enemyTiersEnabled()) {
+      enemy.simTier = 0;
+      this.tierCounts[0]++;
+      return SWARM_TIER_STEPS[0];
+    }
     const tier = nextSwarmTier(distanceSq, enemy.simTier);
     enemy.simTier = tier;
     this.tierCounts[tier]++;

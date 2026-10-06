@@ -8,6 +8,11 @@
  *   ?dof=0                  cheap DOF off
  *   ?fog=0                  fog off
  *   ?quality=0|1|2          force a quality level
+ *   ?backend=webgl|webgpu   force the renderer backend (r186 plan §38/§48)
+ *   ?grasslod=0             pin grass to LOD0 (A/B)      ?grassgpu=0  TSL grass → fallback
+ *   ?gpuparticles=0         GPU particle sim → pooled fallback
+ *   ?enemytiers=0           enemy simulation tiers off (A/B)
+ *   ?precompile=0           skip async pipeline precompilation (r186 plan §15)
  *   ?seed=<n>               planet seed override
  *   ?ring=<n>               archetype ring override
  *   ?free                   start in free-fly camera
@@ -20,8 +25,46 @@ export interface SwitchBag {
   [name: string]: string;
 }
 
-export function readSwitches(): SwitchBag {
+/**
+ * BUILD-TIME FEATURE FLAGS (r186 plan §48). Vite inlines `VITE_*` at build time; they act as
+ * DEFAULT values for the URL switch vocabulary, so `readSwitches()` gives one bag regardless of
+ * where a flag came from and a URL parameter ALWAYS wins (that is the isolation tool: ship the
+ * default, flip it per session for an A/B measurement).
+ *
+ *   VITE_RENDERER=auto|webgpu|webgl   → ?backend=…        (renderer adapter choice)
+ *   VITE_GRASS_GPU=true|false         → ?grassgpu=0/1     (TSL grass material vs fallback)
+ *   VITE_GRASS_LOD=true|false         → ?grasslod=0/1     (distance LOD)
+ *   VITE_GPU_PARTICLES=true|false     → ?gpuparticles=0/1 (GPU particle sim vs pooled fallback)
+ *   VITE_ENEMY_TIERS=true|false       → ?enemytiers=0/1   (simulation tiers)
+ *   VITE_SPATIAL_HASH=true|false      → ?spatialhash=0/1  (spatial buckets vs linear scan)
+ *   VITE_WORLD_WORKER=true|false      → ?worldworker=0/1  (generation worker vs main-thread bake)
+ */
+function envSwitchDefaults(): SwitchBag {
   const bag: SwitchBag = {};
+  let env: Record<string, string | undefined> = {};
+  try {
+    env = ((import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {}) as Record<string, string | undefined>;
+  } catch {
+    return bag;
+  }
+  const set = (key: string, name: string, enabled = '1', disabled = '0'): void => {
+    const raw = env[key];
+    if (raw === undefined || raw === '') return;
+    bag[name] = raw === 'false' || raw === '0' ? disabled : enabled;
+  };
+  set('VITE_GRASS_GPU', 'grassgpu');
+  set('VITE_GRASS_LOD', 'grasslod');
+  set('VITE_GPU_PARTICLES', 'gpuparticles');
+  set('VITE_ENEMY_TIERS', 'enemytiers');
+  set('VITE_SPATIAL_HASH', 'spatialhash');
+  set('VITE_WORLD_WORKER', 'worldworker');
+  const renderer = env['VITE_RENDERER'];
+  if (renderer === 'webgl' || renderer === 'webgpu') bag['backend'] = renderer;
+  return bag;
+}
+
+export function readSwitches(): SwitchBag {
+  const bag: SwitchBag = envSwitchDefaults();
   const consume = (query: string) => {
     const cleaned = query.replace(/^[?#]/, '');
     if (!cleaned) return;

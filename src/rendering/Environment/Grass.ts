@@ -53,10 +53,12 @@ import {
   grassCoverage,
 } from './GrassField';
 import {
+  advanceGrassKeep,
   chooseGrassLod,
   grassLodBands,
   grassLodEnabled,
-  grassLodVertexCount,
+  grassLodVertexCountForKeep,
+  GRASS_LOD_FADE_SECONDS,
   GRASS_LOD_KEEP,
   type GrassLod,
   type GrassLodBand,
@@ -113,6 +115,8 @@ export class Grass {
     radius: number;
     blades: number;
     lod: GrassLod;
+    /** Continuous keep fraction — the DITHERED transition in progress (plan §7). */
+    keep: number;
   }[] = [];
   private readonly camScratch = new THREE.Vector3();
   /** Cached LOD bands (rebuilt only when the quality level changes — never per frame). */
@@ -120,6 +124,8 @@ export class Grass {
   private lodBandsLevel = -1;
   /** Blades the last LOD pass left in the draw lists (debug / perfcheck readout). */
   private drawnBladeTotal = 0;
+  private visibleSectorTotal = 0;
+  private fadingSectorTotal = 0;
 
   private readonly uBladeWidth = uniform(0.24);
   /** Tall meadow blades (user ask: "grass needs to be taller" — raised again to chest-high). */
@@ -260,6 +266,7 @@ export class Grass {
           radius: bounds.radius,
           blades: sector.geometry.getAttribute('position').count / 3,
           lod: 0,
+          keep: 1,
         });
       }
     }
@@ -645,6 +652,7 @@ export class Grass {
     focusPlanetPosition?: THREE.Vector3,
     camera?: THREE.Camera,
     walkers?: readonly { id: string; pos: THREE.Vector3 }[],
+    dt = 1 / 60,
   ): void {
     const focus = focusPlanetPosition ?? this.lastFocus;
     if (!focus) return;
@@ -653,7 +661,9 @@ export class Grass {
     // ---- sector horizon culling + distance LOD (plan §9/§10): ONE pass, one distance test
     // per SECTOR (~32 a frame, never per blade), with hysteresis so a sector cannot oscillate
     // at a band edge. The LOD changes only how many of the sector's blades are drawn — their
-    // transforms are baked and never move (plan §7).
+    // transforms are baked and never move (plan §7). The keep fraction WALKS to the target
+    // (plan §7: dithered transition — blades leave/enter in small scattered batches, so a band
+    // crossing can never read as one hard pop).
     if (this.sectorMeshes.length > 0) {
       if (this.quality.level !== this.lodBandsLevel) {
         this.lodBandsLevel = this.quality.level;
@@ -664,21 +674,30 @@ export class Grass {
         const camLen = this.camScratch.length();
         const horizon = this.surface.radius * this.surface.radius * 0.97;
         let drawn = 0;
+        let visibleSectors = 0;
+        let fading = 0;
         for (const sector of this.sectorMeshes) {
           const visible = sector.center.dot(this.camScratch) + sector.radius * camLen > horizon;
           sector.mesh.visible = visible;
           if (!visible) continue;
+          visibleSectors++;
           const distance = Math.max(0, this.camScratch.distanceTo(sector.center) - sector.radius);
           const lod = grassLodEnabled() ? chooseGrassLod(distance, sector.lod, this.lodBands) : 0;
-          if (lod !== sector.lod) {
-            sector.lod = lod;
-            sector.mesh.geometry.setDrawRange(0, grassLodVertexCount(sector.blades, lod));
+          if (lod !== sector.lod) sector.lod = lod;
+          const targetKeep = GRASS_LOD_KEEP[sector.lod];
+          if (sector.keep !== targetKeep) {
+            sector.keep = advanceGrassKeep(sector.keep, targetKeep, dt);
+            if (sector.keep !== targetKeep) fading++;
+            sector.mesh.geometry.setDrawRange(0, grassLodVertexCountForKeep(sector.blades, sector.keep));
           }
-          drawn += Math.floor(sector.blades * GRASS_LOD_KEEP[lod]);
+          drawn += Math.floor(sector.blades * sector.keep);
         }
         this.drawnBladeTotal = drawn;
+        this.visibleSectorTotal = visibleSectors;
+        this.fadingSectorTotal = fading;
       } else {
         for (const sector of this.sectorMeshes) sector.mesh.visible = true;
+        this.visibleSectorTotal = this.sectorMeshes.length;
       }
     }
 
@@ -774,6 +793,29 @@ export class Grass {
   /** Blades the last frame's LOD pass left in the draw lists (debug / perfcheck readout). */
   get bladesDrawn(): number {
     return this.drawnBladeTotal;
+  }
+
+  /**
+   * O(1) counters for the telemetry snapshot (r186 plan §0.3 / §49) — read from the last LOD
+   * pass's bookkeeping, never a per-blade walk. `fading` is the number of sectors currently
+   * walking their dithered keep fraction (§7), so a transition is observable, not guesswork.
+   */
+  get stats(): {
+    sectors: number;
+    visibleSectors: number;
+    instances: number;
+    drawnInstances: number;
+    fadingSectors: number;
+    fadeSeconds: number;
+  } {
+    return {
+      sectors: this.sectorMeshes.length,
+      visibleSectors: this.visibleSectorTotal,
+      instances: this.bladeCount,
+      drawnInstances: this.drawnBladeTotal,
+      fadingSectors: this.fadingSectorTotal,
+      fadeSeconds: GRASS_LOD_FADE_SECONDS,
+    };
   }
 }
 

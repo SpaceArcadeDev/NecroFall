@@ -81,6 +81,39 @@ export function grassLodVertexCount(bladeCount: number, lod: GrassLod): number {
   return blades * 3;
 }
 
+/** Blade slots (3 vertices each) for a CONTINUOUS keep fraction (the fade in progress). */
+export function grassLodVertexCountForKeep(bladeCount: number, keep: number): number {
+  const blades = Math.max(1, Math.floor(bladeCount * Math.min(1, Math.max(0, keep))));
+  return blades * 3;
+}
+
+/**
+ * DITHERED LOD TRANSITION (r186 plan §7).
+ *
+ * Two hard facts about the field make a dissolve free of both randomness and per-blade tests:
+ *
+ *   1. blades inside a sector were bucketed in ACCEPTANCE order, i.e. uniform-random directions,
+ *      so a `drawRange` prefix of length `k` is a spatially unbiased subset — and each blade's
+ *      position in that order is a STABLE seed (it never changes for the life of the field);
+ *   2. the only thing a LOD change alters is how long that prefix is.
+ *
+ * So instead of snapping the prefix to 100 % / 50 % / 25 % in one frame, the keep fraction walks
+ * from the old value to the new one over ~1.1 s. Each frame a few hundred randomly-scattered
+ * blades appear or vanish — a stochastic dissolve, exactly `hash(seed) < keep` with the seed
+ * baked in, never a `random()` call and never a per-blade distance test. The transforms are
+ * untouched: nothing slides, nothing re-spawns, and the fade pauses the moment the sector's
+ * distance leaves the band.
+ */
+export const GRASS_LOD_FADE_SECONDS = 1.1;
+
+/** One fade step: move `current` toward `target` at the §7 rate. */
+export function advanceGrassKeep(current: number, target: number, dt: number): number {
+  if (current === target) return target;
+  const step = (dt / GRASS_LOD_FADE_SECONDS) * (target > current ? 1 : 0.5);
+  if (target > current) return Math.min(target, current + step);
+  return Math.max(target, current - step);
+}
+
 /** `?grasslod=0` pins every sector to LOD0 — the A/B switch for measuring the LOD's effect.
  *  Read once (the flag cannot change under a running page) — this is called per sector, per frame.
  *  Uses the shared switch bag so the flag works in the search AND in the hash query. */

@@ -85,6 +85,36 @@ VITE_SPACETIMEDB_URI=http://localhost:3000
 VITE_SPACETIMEDB_DB_NAME=necrofall
 ```
 
+### The relay budget — why one-shot events must never be dropped
+
+`send_match_msg` throttles each sender to a fixed messages-per-second budget
+(`MSG_MAX_PER_WINDOW`, currently 140) inside a one-second window. The cap has
+TWO tiers because a silent drop costs different things per message kind:
+
+* **State streams** (`s` snapshots, `st` poses, `pshot` shot visuals, batched
+  `ehits` hit feedback) are capped at the base budget — a lost sample is
+  replaced by the next one ~80 ms later, so throttling them is harmless.
+* **One-shot gameplay events** (`pdmg` an enemy's hit on a player, `eev`, `edie`,
+  `pst`, `kill`, `phit`/`ehit` asks, …) may use a reserve on top of the base
+  budget (`MSG_EVENT_RESERVE`, currently 60) — a dropped one is gone FOREVER.
+  A busy stream can therefore never starve them.
+
+That distinction is what stops the "enemies attack but the damage doesn't sync"
+class of bug: with a single shared cap, a per-frame hit-feedback stream could
+push the match authority over the budget, and the messages the module dropped
+were exactly the ones that cannot be recovered. Clients keep their own count and
+log `[NECROFALL] relay budget: sent N messages in the last second …` when a
+window approaches the limit (see `countRelaySend` in the client provider).
+
+Changing either constant is a **logic-only** module change — no schema change,
+no data loss, but the module must be republished for it to take effect:
+
+```bash
+cd spacetimedb
+spacetime publish necrofall-dev --server local -y     # local dev database
+spacetime publish necrofall-35vf3                     # maincloud (as used by the client)
+```
+
 ## Maincloud (production)
 
 ```bash

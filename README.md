@@ -34,6 +34,13 @@ modes; official matches boot with a small bridge (`OfficialGameBridge`,
 SpacetimeDB with the cost rules from the plan (input-change-driven reducers, not
 per frame).
 
+> **Damage can never be lost to throttling.** The match authority relays the P2P
+> protocol (`match_msg` rows); the module's per-sender budget is two-tier so a
+> busy state stream (snapshots/poses/hit feedback) can never starve the one-shot
+> gameplay events — enemy damage, kills, statuses — which have a reserved
+> headroom and are never silently dropped. See
+> [`spacetimedb/README.md`](spacetimedb/README.md) → "The relay budget".
+
 ```bash
 cp .env.example .env.local     # fill in SpacetimeDB + SpacetimeAuth values
 cd spacetimedb && npm install  # module deps

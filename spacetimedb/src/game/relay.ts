@@ -23,13 +23,25 @@ const MSG_MAX_CHARS = 64 * 1024;
 const KIND_MAX_CHARS = 24;
 /** Target hex length cap (identities are 64 hex chars). */
 const TARGET_MAX_CHARS = 80;
-/** Fixed-window budget: at most this many relayed messages per second per sender. Normal
- *  play peaks around 20/s (a 15 Hz pose stream) or ~30/s on the authority — the headroom
- *  covers bursts (a snapshot + several relays in one tick) without letting a runaway client
- *  flood the match. Over-budget messages are DROPPED silently: the streams are continuous,
- *  so the next one recovers. */
+/**
+ * Fixed-window budget per sender. A seat MAY push up to `MSG_MAX_PER_WINDOW` messages of any
+ * kind, plus up to `MSG_EVENT_RESERVE` more if they are ONE-SHOT gameplay events.
+ *
+ * The two-tier form exists because a silent drop costs different things per kind: a lost
+ * snapshot / pose / shot-visual is replaced by the next one ~80 ms later, while a lost `pdmg`
+ * (an enemy's hit on a player), `eev`, `edie`, `pst` or `kill` is gone FOREVER — the exact
+ * symptom is "enemies attack but the damage doesn't sync" while everything still moves.
+ * STATE STREAMS (the continuous, self-replacing kinds below) are therefore capped at the base
+ * budget, which leaves the reserve for the one-shot events behind them; a streaming flood can
+ * no longer starve them. 140 is comfortable headroom for the fan-out wire (12 Hz snapshots +
+ * ≤20 Hz pose + batched hit feedback ≈ 45/s on the authority), and it still bounds a runaway
+ * client.
+ */
 const MSG_WINDOW_US = 1_000_000n;
-const MSG_MAX_PER_WINDOW = 90;
+const MSG_MAX_PER_WINDOW = 140;
+const MSG_EVENT_RESERVE = 60;
+/** Kinds that are CONTINUOUS streams — an individual message is replaceable by the next one. */
+const STATE_STREAM_KINDS = new Set(['s', 'st', 'pshot', 'ehits', 'ping', 'pong']);
 
 /**
  * SEND MATCH MESSAGE — one P2P wire frame carried by SpacetimeDB.
@@ -69,7 +81,10 @@ export const send_match_msg = spacetimedb.reducer(
     } else if (nowUs - rate.window_start >= MSG_WINDOW_US) {
       rate = ctx.db.match_msg_rate.identity.update({ ...rate, window_start: nowUs, count: 0 });
     }
-    if (rate.count >= MSG_MAX_PER_WINDOW) return; // over budget — recovered by the continuous stream
+    // Streams stop at the base budget; one-shot events may still use the reserve on top of it,
+    // so a busy stream can never starve the messages that cannot be recovered (see the constants).
+    const budget = STATE_STREAM_KINDS.has(kind) ? MSG_MAX_PER_WINDOW : MSG_MAX_PER_WINDOW + MSG_EVENT_RESERVE;
+    if (rate.count >= budget) return;
     ctx.db.match_msg_rate.identity.update({ ...rate, count: rate.count + 1 });
 
     // ---- relay it. `to_hex` is trusted as an identity string: receivers only ever apply

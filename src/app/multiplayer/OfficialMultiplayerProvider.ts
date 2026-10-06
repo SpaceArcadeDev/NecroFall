@@ -123,6 +123,12 @@ const STREAM_STRIKES_TO_REPORT = 3;
 /** ...and the pause between reports about the same seat (the server cooldown is 6 s). */
 const REPORT_COOLDOWN_MS = 7000;
 const MAX_REPORTS_PER_TARGET = 3;
+/**
+ * The module's per-sender relay budget (`MSG_MAX_PER_WINDOW` in `spacetimedb/src/game/relay.ts`).
+ * Messages over the budget are dropped by the module WITHOUT telling the sender, so the client
+ * keeps its own count and warns when a window approaches the limit (see `countRelaySend`).
+ */
+const RELAY_BUDGET_PER_SECOND = 140;
 
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
@@ -214,6 +220,10 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private lastRelayId = 0n;
   /** Sender-monotonic counter for outgoing relay messages (diagnostics). */
   private relaySeq = 0n;
+  /** Relay-budget window (see `countRelaySend`). */
+  private relayWindowAt = 0;
+  private relayWindowCount = 0;
+  private relayLastKind = '';
   /** The game id of the current match authority ('' until determined from the seat rows). */
   private authorityId = '';
   /** A disagreed-on authority candidate and when it first appeared (role-handover hysteresis). */
@@ -795,6 +805,7 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
   private relay(msg: OfficialNetMessage, toHex: string, extra?: Record<string, unknown>): void {
     const kind = typeof msg.t === 'string' ? msg.t : '';
     if (!kind) return;
+    this.countRelaySend(kind);
     const body: Record<string, unknown> = { ...extra };
     for (const [k, v] of Object.entries(msg)) if (k !== 't') body[k] = v;
     this.relaySeq += 1n;
@@ -809,6 +820,36 @@ export class OfficialMultiplayerProvider implements MultiplayerProvider, Officia
     } catch (err) {
       console.warn('[NECROFALL] relay encode failed', err);
     }
+  }
+
+  /**
+   * Relay-budget telemetry: the module throttles each sender at a fixed messages/second budget
+   * and DROPS the excess silently (state streams recover; a one-shot event does not). The sender
+   * itself cannot see those drops, so the count is kept here and a warning is raised when the
+   * window approaches the budget — the difference between "netcode is broken" and "this seat
+   * talks too much" has to be visible in a console log.
+   */
+  private countRelaySend(kind: string): void {
+    const now = performance.now();
+    if (this.relayWindowAt === 0 || now - this.relayWindowAt >= 1000) {
+      if (this.relayWindowAt !== 0 && this.relayWindowCount > RELAY_BUDGET_PER_SECOND * 0.8) {
+        console.warn(
+          `[NECROFALL] relay budget: sent ${this.relayWindowCount} messages in the last second ` +
+            `(budget ~${RELAY_BUDGET_PER_SECOND}/s per seat, last kind "${this.relayLastKind}") — ` +
+            'the module drops the excess, so one-shot events (enemy damage) can be lost. ' +
+            'Report this line with a bug.'
+        );
+      }
+      this.relayWindowAt = now;
+      this.relayWindowCount = 0;
+    }
+    this.relayWindowCount++;
+    this.relayLastKind = kind;
+  }
+
+  /** Debug/telemetry: messages this seat pushed through the relay in the current 1 s window. */
+  relaySendRate(): number {
+    return this.relayWindowCount;
   }
 
   /** A game id ("og-<hex12>") back to the sender's identity hex — reverse of `gameIdFor`. */

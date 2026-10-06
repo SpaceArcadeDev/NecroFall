@@ -579,6 +579,8 @@ export class Game {
   private relaySentAt = 0;
   private enemyHitBatch: { eid: number; amt: number; src: string; aoe: number }[] = [];
   private killBatch: number[] = [];
+  /** Official wire: seconds until the batched combat messages may flush (snapshot cadence). */
+  private batchFlushT = 0;
   private bossScratch: Enemy[] = [];
   /**
    * Mutation ids this client has already been shown the reveal for. The panel is for DISCOVERY:
@@ -5866,7 +5868,7 @@ export class Game {
         if (buff.time > 0) buff.time = Math.max(0, buff.time - dt);
       }
 
-      this.flushEnemyBatches();
+      this.flushEnemyBatches(dt);
       this.networkTick(dt);
     } else {
       // keep visuals alive in menus (planet spin is static; effects still update)
@@ -5898,8 +5900,25 @@ export class Game {
     this.net.update(dt);
   }
 
-  private flushEnemyBatches(): void {
+  /**
+   * Enemy hit feedback + deaths, batched. Called every frame; the BATCH keeps filling and the
+   * message goes out at the wire's own cadence.
+   *
+   * OFFICIAL matches flush at the snapshot cadence (12 Hz) instead of every frame: the relay
+   * counts every message against a per-sender budget (see `spacetimedb/src/game/relay.ts`), and a
+   * per-frame `ehits` stream could push the match authority over it — at which point the relay
+   * silently dropped messages, and the ones that vanish for good are the one-shot events like
+   * `pdmg` (an enemy's hit on a player). Damage numbers may lag one tick; damage itself never
+   * gets dropped. P2P keeps per-frame sends: a DataChannel has no budget, and the feedback is
+   * instant there.
+   */
+  private flushEnemyBatches(dt = 1): void {
     if (!this.isHost) return;
+    if (this.officialMatch) {
+      this.batchFlushT -= dt;
+      if (this.batchFlushT > 0) return;
+      this.batchFlushT = 1 / CONFIG.netTickSnapshot;
+    }
     if (this.enemyHitBatch.length > 0) {
       const list = this.enemyHitBatch;
       this.enemyHitBatch = [];

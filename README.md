@@ -431,6 +431,34 @@ verification runs, and the deviations with their reasons). In short:
   (plan TEST A–H) and `?backend=webgl|webgpu`, `?spatialhash=0`, `?enemytiers=0` A/B switches;
   `?perfcheck` now also reports 1 % low, peak frame, heap delta and the telemetry line.
 
+### Art-direction / visual rework (2026-10)
+
+The stylised visual pass is recorded in
+[`docs/rendering/ART_DIRECTION_REWORK.md`](docs/rendering/ART_DIRECTION_REWORK.md) (phase-by-phase
+status, captures, deviations). In short:
+
+* **ONE tuning document** — `src/rendering/ArtDirection.ts` holds the cel/atmosphere/vegetation/
+  radiation/outline values and the sky palette, so the planet's look is re-tuned from one file.
+* **Cel shading** — `CelShading.ts` quantises the shared `MeshDefaultMaterial` lighting ramp into
+  4 soft bands (plan §3) and the terrain adds the shadow→mid→light ladder; `?cel=0` restores the
+  pre-rework smooth ramp for A/B.
+* **Hand-painted terrain** — `TerrainMaterial.ts` layers the baked masks (height/grass/wetness/
+  radiation/rock/biome) with large+medium+fine noise, noise-blended elevation bands, slope-based
+  rock, wet-ground cooling, radiation tint + glow, distance colour compression and an atmospheric
+  rim — one material, no per-region variants.
+* **Sci-fi sky** — `SkyDome.ts`: horizon gradient, drifting cloud bands, orbital dust, a banded
+  giant, a moon and a sun disc whose core alone feeds the (restrained) bloom. `?sky=0` removes it.
+* **Landmark composition** — `Landmarks.ts` grows a prop composition around every carved landmark
+  (crystal grove, dead forest, bone valley, ruined colony, nest, fungal forest, floating rocks)
+  plus ONE hero formation per planet for long-range navigation; instanced, terrain-aligned,
+  deterministic from the planet seed. `?landmarks=0` removes the layer.
+* **Emissive accents** — `EmissiveMaterial.ts` (pulse + high/medium/low bloom tiers) is the one
+  factory for crystals, landmark cores and hero energy beams; `OutlineMaterial.ts` gives the hero
+  formation its selective inverted-hull outline.
+* **Capture aids** — `?view=<landmarkIndex>&viewAlt=<m>` (dev world, free camera) frames a landmark
+  deterministically for the visual-regression captures; the `?stats` overlay now reports quality
+  level, live DPR, interpolation spread and the landmark/hero identity.
+
 ## Architecture
 
 ```

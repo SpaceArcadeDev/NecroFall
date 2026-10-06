@@ -131,6 +131,13 @@ and the SpacetimeDB layer subscribes scoped queries only
 ([`subscriptions.ts`](../../src/app/spacetimedb/subscriptions.ts) — never the whole universe).
 The overlay now reports the host clock's arrival spread as the interpolation-delay readout.
 
+The plan's rate checks resolve to the shipped server design (all pre-existing, unchanged here):
+`TICK_INTERVAL_US = 100_000n` — a **10 Hz authoritative simulation** whose frame the relay carries
+at **12 Hz snapshots + ≤20 Hz player poses**, with a fixed-window mutation budget
+(`MSG_MAX_PER_WINDOW = 140`, `MSG_EVENT_RESERVE = 60`) that keeps one-shot gameplay events from
+being starved by state streams (see `spacetimedb/src/game/relay.ts`). Visual effects are never
+networked — every client renders grass, terrain, particles and VFX locally (plan §51).
+
 ---
 
 ## Deliberate deviations (summary)
@@ -146,6 +153,9 @@ The overlay now reports the host clock's arrival spread as the interpolation-del
 4. **S25-Ultra 10/20/30-minute matrix (plan §71) is a device test**, not reproducible from this
    repository; the governors it targets (DPR ladder, quality watchdog, thermal hysteresis) shipped
    earlier and are untouched.
+5. **Phase 8 / Phase 9 are pre-existing deliveries** (spatial hash, swarm tiers, pooling, relay
+   budget, scoped subscriptions) — this pass verified and documented them rather than rewriting
+   working systems, exactly as the plan's own priority order (§76 items 18–19) ranks them.
 
 ## Switches (plan §69/§90)
 

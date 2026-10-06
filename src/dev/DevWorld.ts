@@ -24,6 +24,7 @@ import { Fog } from '../rendering/Environment/Fog';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { createPlanetWorld } from '../rendering/Environment/PlanetWorld';
 import { CaveDebug } from '../rendering/Environment/CaveDebug';
+import { caveApproachAzimuth, caveChamberNode } from '../world/caves/CaveGenerator';
 import { generateSciFiSites } from '../world/formations/FormationGenerator';
 import type { PlanetGenerator } from '../planet/PlanetGenerator';
 import { PlanetSurface, createSurfaceSample } from '../planet/PlanetSurface';
@@ -314,21 +315,61 @@ export async function startDevWorld(): Promise<void> {
     // `?view=<landmarkIndex>` (visual rework plan §70): hover the FREE camera beside that
     // landmark at `?viewAlt=<m>` (default 14) and aim it at the landmark centre, so a
     // deterministic capture script can photograph spawn / landmark / horizon without steering.
+    // `?view=cave:N` (underground rework, user ask 2026-10-06) frames cave N's MOUTH from
+    // outside; `?view=vista&viewAlt=<m>` hovers and looks along the horizon for range captures.
     const viewSwitch = switches.bag['view'];
     if (viewSwitch !== undefined && freeCamera) {
-      const index = Math.max(0, Math.min(generator.terrain.landmarks.length - 1, Number.parseInt(viewSwitch, 10) || 0));
-      const targetDirection = generator.terrain.landmarks[index]?.dir ?? spawnDirection;
-      const altitude = Number.parseFloat(switches.bag['viewAlt'] ?? '') || 14;
-      const target = targetDirection.clone().multiplyScalar(surface.radiusAt(targetDirection));
-      const tangent = PlanetSurface.stableTangent(targetDirection.clone(), new THREE.Vector3());
-      const eye = target
-        .clone()
-        .addScaledVector(targetDirection, altitude)
-        .addScaledVector(tangent, -altitude * 1.4);
-      const forward = target.clone().sub(eye).normalize();
-      freeState.position.copy(eye);
-      freeState.yaw = Math.atan2(forward.x, forward.z);
-      freeState.pitch = clampNumber(Math.asin(forward.y), -1.5, 1.5);
+      const caveView = /^cave:?(\d+)$/i.exec(viewSwitch);
+      if (caveView) {
+        const caves = generator.terrain.caves;
+        const cave = caves[Number(caveView[1]) % caves.length];
+        const height = cave.depth + 5;
+        const chamber = caveChamberNode(cave);
+        const approachAzimuth = caveApproachAzimuth(cave);
+        // Mouth direction in the SAME frame the Caves layer builds: tangent basis of cave.dir.
+        const t1 = PlanetSurface.stableTangent(cave.dir.clone(), new THREE.Vector3());
+        const t2 = new THREE.Vector3().crossVectors(cave.dir, t1).normalize();
+        const atAzimuth = (radial: number): THREE.Vector3 =>
+          cave.dir
+            .clone()
+            .multiplyScalar(Math.cos(radial * cave.radius))
+            .addScaledVector(t1, Math.sin(radial * cave.radius) * Math.cos(approachAzimuth))
+            .addScaledVector(t2, Math.sin(radial * cave.radius) * Math.sin(approachAzimuth))
+            .normalize();
+        // Stand well outside the mouth and aim at the LIP so the rocky dome + dark opening frame
+        // the shot (looking straight at the floor buries the frame in darkness).
+        const mouthDir = atAzimuth(1.85);
+        const lipDir = atAzimuth(0.8);
+        const eye = mouthDir.clone().multiplyScalar(surface.radiusAt(mouthDir) + height * 0.6);
+        const target = lipDir.clone().multiplyScalar(surface.radiusAt(lipDir) + height * 0.25);
+        const forward = target.clone().sub(eye).normalize();
+        freeState.position.copy(eye);
+        freeState.yaw = Math.atan2(forward.x, forward.z);
+        freeState.pitch = clampNumber(Math.asin(forward.y), -1.5, 1.5);
+        void chamber;
+      } else if (viewSwitch.toLowerCase() === 'vista') {
+        const altitude = Number.parseFloat(switches.bag['viewAlt'] ?? '') || 42;
+        const eye = spawnDirection.clone().multiplyScalar(surface.radiusAt(spawnDirection) + altitude);
+        const tangent = PlanetSurface.stableTangent(spawnDirection.clone(), new THREE.Vector3());
+        const forward = tangent.clone().addScaledVector(spawnDirection, -0.24).normalize();
+        freeState.position.copy(eye);
+        freeState.yaw = Math.atan2(forward.x, forward.z);
+        freeState.pitch = clampNumber(Math.asin(forward.y), -1.5, 1.5);
+      } else {
+        const index = Math.max(0, Math.min(generator.terrain.landmarks.length - 1, Number.parseInt(viewSwitch, 10) || 0));
+        const targetDirection = generator.terrain.landmarks[index]?.dir ?? spawnDirection;
+        const altitude = Number.parseFloat(switches.bag['viewAlt'] ?? '') || 14;
+        const target = targetDirection.clone().multiplyScalar(surface.radiusAt(targetDirection));
+        const tangent = PlanetSurface.stableTangent(targetDirection.clone(), new THREE.Vector3());
+        const eye = target
+          .clone()
+          .addScaledVector(targetDirection, altitude)
+          .addScaledVector(tangent, -altitude * 1.4);
+        const forward = target.clone().sub(eye).normalize();
+        freeState.position.copy(eye);
+        freeState.yaw = Math.atan2(forward.x, forward.z);
+        freeState.pitch = clampNumber(Math.asin(forward.y), -1.5, 1.5);
+      }
     }
   }
 

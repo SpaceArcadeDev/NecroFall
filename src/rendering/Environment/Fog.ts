@@ -22,8 +22,8 @@ export interface FogOptions {
 }
 
 export class Fog implements FogGlobals {
-  readonly colorA = uniform(color('#2b4f40')); // inner haze — contaminated green
-  readonly colorB = uniform(color('#070d0b')); // outer sky — near black
+  readonly colorA = uniform(color('#2e5560')); // inner haze — contaminated teal (user ask 2026-10-06: cyan atmosphere)
+  readonly colorB = uniform(color('#08111a')); // outer sky — deep blue-black
   readonly radialCenter = uniform(vec2(0.5, 0.44));
   readonly radialStart = uniform(0.18);
   readonly radialEnd = uniform(1.05);
@@ -31,7 +31,7 @@ export class Fog implements FogGlobals {
   /** Sky colour used as the scene background (screen-space radial mix). */
   readonly skyColor: any;
   /** Distance fog colour materials blend toward. */
-  readonly color = uniform(color('#1d3a30'));
+  readonly color = uniform(color('#20414c'));
 
   readonly near: any;
   readonly far: any;

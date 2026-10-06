@@ -46,6 +46,8 @@ const CAVE_STRATA = '#232c33';
 const CAVE_STRATA_DEEP = '#101820';
 /** Crystal light spilled on the cave floor (plan §34/§35 — environmental, never a flashlight). */
 const CAVE_GLOW = 0.3;
+/** Warm ochre cliff tone (user ask 2026-10-06): separates mid-slope rock from the green wash. */
+const OCHRE_ROCK = '#7d6034';
 
 export interface TerrainMaterialBundle {
   material: MeshDefaultMaterial;
@@ -92,15 +94,18 @@ export function createTerrainMaterial(options: TerrainMaterialOptions): TerrainM
 
     // 2 — vegetation wash + the fixed grass-clump shadow, EXACTLY the shipped samples/thresholds
     const grassBlend = mix(color(RADIOACTIVE_PALETTE.grass), color(RADIOACTIVE_PALETTE.grassDark), radiation.mul(0.6));
-    result = mix(result, grassBlend, grass);
+    result = mix(result, grassBlend, grass.mul(0.85));
     const patchNoise = texture(noises.patch, (direction.xz as any).mul(GRASS_PATCH_UV_SCALE)).r as any;
     const clumpShade = smoothstep(GRASS_SHADOW_EDGE_LOW, GRASS_SHADOW_EDGE_HIGH, patchNoise);
     result = result.mul(mix(float(1), float(GRASS_SHADOW_DEPTH), clumpShade));
 
-    // 3 — elevation bands (muted, noise-weighted so they never band visibly)
+    // 3 — elevation bands (muted, noise-weighted so they never band visibly) + the WARM ochre
+    // mid-slope family the concept sheet reads on every cliff (user ask 2026-10-06: the planet
+    // must not be one green wash — warm rock, ochre soil and teal low ground separate the layers).
     result = mix(result, color(RADIOACTIVE_PALETTE.soilDark), lowBand.mul(0.45).mul(mediumNoise.mul(0.4).add(0.8)));
-    result = mix(result, color(RADIOACTIVE_PALETTE.soil), midBand.mul(0.30));
-    result = mix(result, color(RADIOACTIVE_PALETTE.rock), highBand.mul(0.5).mul(rock.mul(0.5).add(0.75)));
+    result = mix(result, color(RADIOACTIVE_PALETTE.soil), midBand.mul(0.3));
+    result = mix(result, color(OCHRE_ROCK), midBand.mul(0.26).mul(largeNoise.mul(0.5).add(0.75)));
+    result = mix(result, color(RADIOACTIVE_PALETTE.rock), highBand.mul(0.58).mul(rock.mul(0.5).add(0.75)));
     result = mix(result, color(RADIOACTIVE_PALETTE.rockLight), peakBand.mul(0.55));
 
     // 4 — slope-based rock exposure (plan §7): steep faces lose colour and become rock

@@ -83,14 +83,15 @@ placement + the shared `MeshDefaultMaterial` lighting/fog.
 
 | System | Value |
 | --- | --- |
-| caves | 6 entrances (3 small · 2 medium · 1 large major), landmark-attracted, 317 props · 258 motes |
+| caves | 6 entrances (3 small · 2 medium · 1 large major), landmark-attracted; each wears a rock roof DOME with a wedge mouth + 14-circle collision ring; ~300 props · 258 motes |
 | cave types | ROOT CAVERN ×2 · BURIED RUINS ×2 · NECROPHAGE BURROW · CRYSTAL CAVERN (this seed) |
 | formations | 11 sites · 151 props (rock clusters, boulder fields, stone rings, spire fields, cliff lines, crystal beds) |
 | sci-fi sites | 4 · 31 props (crashed colony ship at COLONY_WRECK + landing pad, ruined antenna, energy relay) |
-| colliders | 1873 total (+501 from the new layers) |
-| underground blend | fog 34/270 → 14/95, core-shadow edge −0.2 → 0.42, sun ×0.12 (+colour lerp to the cave air), bounce ×1.15, eased per frame (≈1 s to settle at 60 fps) |
-| measured cave captures | crystal cavern interior mean-luminance 59 (dark share 13 %), root cavern 40 (dark share 63 %) — surface spawn 85 |
-| safety net | panic floor `radius − 35.5` (clamp band is `radius − 34`), sustained-fall catch at 6 s |
+| colliders | ~1870 total (new layers included) |
+| terrain relief band | `[−48, +64]` m (giant-mountain pass; peaks ~half the planet radius) |
+| underground blend | fog 34/270 → 14/95, core-shadow edge −0.2 → 0.42, sun ×0.12 (+colour lerp into the cave air), bounce ×0.85 tinted to the cave's crystal light; triggers at > 4 m carve depth, settles ≈1 s at 60 fps |
+| measured cave captures | framed mouth 26 % dark pixels; interior (terrain hidden) cave layer = 32 % of frame; surface spawn mean-luminance ~85 |
+| safety net | panic floor `radius − 49.5` (clamp band is `radius − 48`), sustained-fall catch at 6 s |
 
 ## Verification
 

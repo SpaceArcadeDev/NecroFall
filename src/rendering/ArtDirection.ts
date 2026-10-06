@@ -49,9 +49,10 @@ export const ART_DIRECTION = {
     shadow: 0.72,
     mid: 0.88,
     light: 1.08,
-    /** Colour grade applied to the terrain albedo (plan §2): mildly desaturated, contrast up. */
-    saturation: 0.88,
-    contrast: 1.12,
+    /** Colour grade applied to the terrain albedo (plan §2): mildly desaturated, contrast up.
+     *  Raised toward the concept sheet's richer planetary colour (user ask 2026-10-06). */
+    saturation: 0.98,
+    contrast: 1.16,
   },
 
   cel: {

@@ -112,6 +112,35 @@ export function padGeometry(radius: number, thickness: number): THREE.BufferGeom
   return new THREE.CylinderGeometry(radius, radius, thickness, 6, 1);
 }
 
+/**
+ * Cave roof dome (user ask 2026-10-06): a partial sphere with a wedge REMOVED — the wedge is the
+ * cave mouth. The gap is centred on local −X (SphereGeometry's phi=0 direction), so the instance
+ * basis maps −X to the cave's approach azimuth. Unit radius (scale x/z by the dome spread, y by
+ * its height) with hashed vertex jitter so the rock reads organic, never a smooth ball.
+ */
+export function domeGeometry(seed: number, wedge = 1.15, segments = 36, rings = 14): THREE.BufferGeometry {
+  const geometry = new THREE.SphereGeometry(1, segments, rings, wedge / 2, Math.PI * 2 - wedge, 0, Math.PI * 0.54);
+  const position = geometry.attributes.position as THREE.BufferAttribute;
+  const array = position.array as Float32Array;
+  for (let i = 0; i < array.length; i += 3) {
+    const x = array[i];
+    const y = array[i + 1];
+    const z = array[i + 2];
+    const h = mulberry32(
+      seed ^
+        Math.imul(Math.round(x * 1000) | 0, 374761393) ^
+        Math.imul(Math.round(y * 1000) | 0, 668265263) ^
+        Math.imul(Math.round(z * 1000) | 0, 1442695041),
+    )();
+    const scale = 1 + (h - 0.5) * 0.14;
+    array[i] = x * scale;
+    array[i + 1] = y * scale;
+    array[i + 2] = z * scale;
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 /** Unit box the caller scales — mast segments, posts, beams. */
 export function beamGeometry(): THREE.BufferGeometry {
   return new THREE.BoxGeometry(1, 1, 1);

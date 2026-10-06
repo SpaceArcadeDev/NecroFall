@@ -89,6 +89,8 @@ export class SciFiStructures {
     composer.bucket('scifiGlow', fanGeo, mat(emberGlow), false);
 
     const sample = createSurfaceSample();
+    let partSample = createSurfaceSample();
+    const partDir = new THREE.Vector3();
     const up = new THREE.Vector3();
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
@@ -124,9 +126,15 @@ export class SciFiStructures {
       roll = 0,
       collider?: { radius: number; height: number; steppable: boolean },
       outline = 0,
+      lateral = 0,
     ): THREE.Mesh => {
       const mesh = new THREE.Mesh(geometry, material as THREE.Material);
-      mesh.position.copy(s.point).addScaledVector(forward, along).addScaledVector(up, height);
+      // EVERY module grounds on the terrain UNDER ITSELF (user ask 2026-10-06): the part's own
+      // direction is sampled, so a hull segment 7 m up the wreck's spine sits on the slope there
+      // instead of floating on the site's centre plane.
+      partDir.copy(s.point).addScaledVector(forward, along).addScaledVector(right, lateral).normalize();
+      partSample = surface.sample(partDir, partSample);
+      mesh.position.copy(partSample.point).addScaledVector(partSample.up, height);
       scratchQuat.setFromRotationMatrix(basis);
       scratchQuat.multiply(tiltQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), localYaw));
       if (tilt !== 0) scratchQuat.multiply(tiltQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), tilt));
@@ -145,14 +153,14 @@ export class SciFiStructures {
         const placement: Placement = {
           matrix: mesh.matrixWorld,
           position: mesh.position.clone(),
-          normal: s.normal.clone(),
+          normal: partSample.normal.clone(),
           scale: Math.max(scale.x, scale.y, scale.z),
           yaw: localYaw,
-          grass: s.grass,
-          slope: s.slope,
-          radiation: s.radiation,
-          wetness: s.wetness,
-          height: s.height,
+          grass: partSample.grass,
+          slope: partSample.slope,
+          radiation: partSample.radiation,
+          wetness: partSample.wetness,
+          height: partSample.height,
         };
         obstacles.add(placement, collider.radius, collider.height, collider.steppable);
       }
@@ -168,22 +176,25 @@ export class SciFiStructures {
       switch (site.type) {
         case 'CRASHED_SHIP': {
           // ---- fuselage: three modular segments, nose buried, tail broken off and kicked up.
-          part(hullGeo, hullMaterial, s, -3.6, 0.15, new THREE.Vector3(1.5, 1.25, 4.5), 0, 0.16, 0, { radius: 2.3, height: 3.4, steppable: false }, 2.6);
-          part(hullGeo, hullMaterial, s, 2.6, 0.35, new THREE.Vector3(1.4, 1.15, 4.1), 0.12, -0.05, 0, { radius: 2.2, height: 3.2, steppable: false });
-          part(hullGeo, hullMaterial, s, 7.4, 0.9, new THREE.Vector3(1.15, 0.95, 2.6), 0.34, 0.42, 0, { radius: 1.8, height: 2.6, steppable: false });
+          // Sizes connect (fin/rear overlap the hull top) — nothing hovers.
+          part(hullGeo, hullMaterial, s, -3.6, 0.1, new THREE.Vector3(1.8, 1.5, 4.5), 0, 0.16, 0, { radius: 2.3, height: 3.4, steppable: false }, 2.6);
+          part(hullGeo, hullMaterial, s, 2.6, 0.25, new THREE.Vector3(1.7, 1.35, 4.1), 0.12, -0.05, 0, { radius: 2.2, height: 3.2, steppable: false });
+          part(hullGeo, hullMaterial, s, 7.4, 0.7, new THREE.Vector3(1.4, 1.05, 2.6), 0.34, 0.42, 0, { radius: 1.8, height: 2.6, steppable: false });
 
-          // ---- fins + wing slab (hull geometry is a 2-unit cylinder along Z; scale.z = length/2)
-          part(finGeo, darkMaterial, s, 2.2, 3.6, new THREE.Vector3(0.4, 2.6, 2.6), 0.1, 0.24, 0.35);
-          part(finGeo, darkMaterial, s, 4.0, 3.3, new THREE.Vector3(0.4, 2.2, 2.3), 0.5, -0.2, -0.3);
-          part(wingGeo, hullMaterial, s, -0.6, 0.6, new THREE.Vector3(4.6, 0.4, 2.8), 0.55, 0.1, 0.35, { radius: 3.0, height: 1.2, steppable: false });
+          // ---- dorsal/tail fins ride the hull spine; wings break off to the sides
+          part(finGeo, darkMaterial, s, 2.2, 1.9, new THREE.Vector3(0.4, 2.4, 2.6), 0.1, 0.24, 0.35);
+          part(finGeo, darkMaterial, s, 4.6, 1.8, new THREE.Vector3(0.4, 2.0, 2.3), 0.5, -0.2, -0.3);
+          part(wingGeo, hullMaterial, s, -0.8, 0.5, new THREE.Vector3(4.6, 0.4, 2.8), 0.5, 0.1, 0.35, { radius: 3.0, height: 1.2, steppable: false }, 0, 2.4);
+          part(wingGeo, darkMaterial, s, 0.8, 0.45, new THREE.Vector3(3.4, 0.35, 2.2), 0.9, -0.12, -0.5, undefined, 0, -2.6);
 
           // ---- running lights along the spine + the torn reactor glow
           for (let i = 0; i < 4; i++) {
             const along = -5 + i * 3.6;
-            part(beamGeo, redLight, s, along, 2.35, new THREE.Vector3(0.16, 0.16, 0.16), 0, 0, 0);
-            keyLightAt(new THREE.Vector3().copy(s.point).addScaledVector(forward, along).addScaledVector(up, 2.6));
+            const side = i % 2 === 0 ? 1.1 : -1.1;
+            part(beamGeo, redLight, s, along, 1.5, new THREE.Vector3(0.16, 0.16, 0.16), 0, 0, 0, undefined, 0, side);
+            keyLightAt(new THREE.Vector3().copy(s.point).addScaledVector(forward, along).addScaledVector(up, 1.8));
           }
-          part(shardGeo, cyanLight, s, 5.1, 0.8, new THREE.Vector3(0.55, 1.2, 0.55), 0, 0, 0.2, { radius: 1.4, height: 3.2, steppable: false });
+          part(shardGeo, cyanLight, s, 5.1, 0.6, new THREE.Vector3(0.55, 1.2, 0.55), 0, 0, 0.2, { radius: 1.4, height: 3.2, steppable: false });
 
           // ---- debris field + scorched rocks
           const debris = 12 + Math.floor(random() * 6);
@@ -196,9 +207,9 @@ export class SciFiStructures {
             composer.place(random() < 0.72 ? 'scifiPanel' : 'scifiHull', spot, {
               yaw: random() * Math.PI * 2,
               scale: new THREE.Vector3(scale, scale * (0.7 + random() * 0.6), scale * (0.8 + random() * 0.5)),
-              sink: scale * 0.32,
-              tiltX: (random() - 0.5) * 0.9,
-              tiltZ: (random() - 0.5) * 0.9,
+              sink: scale * 0.5,
+              tiltX: (random() - 0.5) * 0.5,
+              tiltZ: (random() - 0.5) * 0.5,
               collide: { radius: 0.9 * scale, height: 0.8 * scale, steppable: true },
             });
             if (random() < 0.2) keyLightAt(spot.point.clone().addScaledVector(spot.up, 0.4));

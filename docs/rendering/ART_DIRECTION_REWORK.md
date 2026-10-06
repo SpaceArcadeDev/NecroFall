@@ -257,6 +257,40 @@ Two contract rules hold everywhere in this pass:
 | §73–§74 checklists | ✅ below | see "Visual checklist" + "Performance checklist" |
 | §76–§80 composition doctrine | ✅ | the pass is composition/masks/lighting — no "add more grass" moves anywhere |
 
+## Follow-up pass (2026-10-06, later) — "make it read like the concept sheet"
+
+User verdict on the first delivery: *no cave entrances, floating black boxes, no giant mountains,
+terrain shader worse than before*. Root causes found and fixed:
+
+1. **Floating black boxes** — the cave ceiling "caps" were deliberate floating slabs (dark boxes,
+   no collision) and several props (hull fins/lights, debris panels, ruin slabs) were grounded on
+   the site CENTRE instead of their own terrain point. The caps are GONE; every sci-fi module now
+   samples the surface under itself (`part()` in `SciFiStructures.ts`); debris/ruin/rim props sink
+   deeper (0.3–0.46 of scale) so nothing hovers; the roof ring registers blocking obstacles.
+2. **Cave entrances** — caves now wear a **rock roof dome** (`domeGeometry`: a partial sphere with
+   a wedge removed) planted on the chamber floor, scaled to the footprint and lifted `depth + 5 m`.
+   The terrain swallows the rim, so the visible read is a rock hill whose dark mouth faces the
+   approach azimuth; the roof blocks the sun (real overhang), carries stalactites anchored to its
+   analytic shell, and its ring is collidable except at the mouth. The Caves layer and the dev
+   capture aid share `caveApproachAzimuth`/`caveChamberNode`, so the mouth is ONE geometry.
+3. **No giant mountains** — mountain amplitude 12.5 → **22 m** (chain reinforcement ×5.5), basins
+   ×1.57 and valleys ×1.6 deeper, collision band widened `[−34,+46] → [−48,+64]` (panic floor
+   follows at `radius − 49.5`). Peaks now stand ~half the planet radius against the horizon.
+4. **Terrain shader** — the cave mask never touched the surface, but two real regressions were
+   fixed: the underground blend used to trigger at 1.2 m of carve depth (walking near a cave
+   dimmed everything — now > 4 m, i.e. truly inside), and the underground ambient was daylight
+   green (bounce now lerps to the cave's crystal tint). The surface gained the concept sheet's
+   warmth: an ochre mid-slope band, saturation 0.88 → 0.98, contrast 1.12 → 1.16, and the fog
+   family moved from contaminated green to **cyan/teal** (`#2e5560`/`#20414c`/`#08111a`).
+
+New dev capture aids: `?view=cave:N` (frames cave N's mouth from outside — same azimuth frame the
+Caves layer builds), `?view=vista&viewAlt=<m>` (hover + look along the horizon for range shots).
+
+Evidence: `docs/rendering/underground-mouth.png` (26 % dark = a real dark opening),
+`docs/rendering/vista-mountains.png` (cyan-teal horizon), plus the framed-shot probe transcripts
+(cave props contribute 32 % of an interior frame with the terrain hidden; 0.7 %→5.8 % in framed
+mouth views). No console errors on either world.
+
 ## Deviations (deliberate)
 
 1. **Caves are carved into the height field, not a separate mesh layer** (plan §26 suggests
@@ -284,6 +318,8 @@ Two contract rules hold everywhere in this pass:
 | `?scifi=0` | sci-fi structures (crashed ship, pad, antenna, relay) off |
 | `?cavedebug=1` | cave footprint/node overlay + live cave/underground HUD |
 | `?at=caveN` / `?at=caveinN` / `?at=ship` | dev spawn: cave N's rim / cave N's chamber floor / the crashed ship |
+| `?view=cave:N` | dev capture aid: frame cave N's MOUTH from outside (free camera) |
+| `?view=vista&viewAlt=<m>` | dev capture aid: hover and look along the horizon (range shots) |
 | `?visualSeed=VISUAL_001…005` | the five deterministic visual sweep seeds |
 
 ## Verification (2026-10-06)

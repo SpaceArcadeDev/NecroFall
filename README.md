@@ -469,15 +469,20 @@ document. It adds the vertical half of the world without a second collision mode
   types, landmark-attracted) and `TerrainGenerator` carves them as stepped, warped basins, so the
   rendered ground, collision, the baked masks and every placement estimate agree by construction
   — the fall-through class is structurally gone.
+* **Cave mouths that read** — every cave wears a rock roof DOME (a partial sphere with a wedge
+  opening facing its approach azimuth): the terrain swallows the rim, the sun never reaches the
+  floor, stalactites hang from the analytic shell and the ring blocks movement except at the
+  mouth. `?view=cave:N` frames a mouth deterministically for captures.
+* **Giant mountains** — amplitude 22 m with ×5.5 chain reinforcement and deeper basins/valleys in
+  a `[−48,+64]` m collision band, so ranges stand ~half the planet radius against a cyan-teal
+  atmosphere (fog family moved from contaminated green to `#2e5560`/`#20414c`).
 * **Fall safety net** — `Player` tracks the last valid ground position and restores it if a body
   ever leaves the generator's collision band or falls for more than six seconds; ordinary terrain
   can never collapse into an infinite fall.
-* **Underground atmosphere** — walking below a cave rim eases the fog in (34/270 → 14/95) and
-  tints it, lifts the core-shadow edge, lerps the shadow colour, fades the sun to 12 % into the
-  cave's own air and lifts the bounce term as the ambient floor; crystal glow and bloom become
-  the light (measured: crystal-cavern mean luminance 59 vs 85 at the surface, root cavern 40 —
-  no crushed blacks). `?cavedebug=1` overlays the cave footprint/nodes and prints the underground
-  state.
+* **Underground atmosphere** — once more than 4 m below a cave rim, fog pulls in (34/270 → 14/95)
+  and takes the cave's tint, the core-shadow edge rises, the sun fades to 12 % into the cave air
+  and the bounce ambient shifts to the cave's crystal light. `?cavedebug=1` overlays the cave
+  footprint/nodes and prints the underground state.
 * **Geological formations** — `FormationGenerator.ts` + `Formations.ts` compose 12 authored sites
   per planet (rock clusters, boulder fields, stone rings with an altar shard, spire fields, cliff
   lines, crystal beds) from the shared `PropGeometry` asset library.

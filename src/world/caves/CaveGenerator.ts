@@ -12,6 +12,7 @@
 // jittered golden-angle spiral with a guaranteed minimum separation. Nothing is random-anywhere.
 import * as THREE from 'three/webgpu';
 import { Rand } from '../../utils/Utils';
+import { mulberry32 } from '../../planet/PlanetSeed';
 import type { EnemyBias, Landmark } from '../LandmarkGenerator';
 import type { BiomeClass } from '../PlanetArchetypes';
 
@@ -143,6 +144,20 @@ function nodeAxes(dir: THREE.Vector3, rng: Rand): { axis: THREE.Vector3; axis2: 
   const axis = new THREE.Vector3().crossVectors(seedish, dir).normalize();
   const axis2 = new THREE.Vector3().crossVectors(axis, dir).normalize();
   return { axis, axis2 };
+}
+
+/**
+ * Approach azimuth of a cave's MOUTH (user ask 2026-10-06): the Caves render layer clears this
+ * azimuth for the entrance and orients the roof dome's wedge at it. Shared here so dev capture
+ * aids frame the actual mouth instead of guessing.
+ */
+export function caveApproachAzimuth(cave: PlanetCave): number {
+  return mulberry32(cave.seed ^ 0x51ed270b)() * Math.PI * 2;
+}
+
+/** Centre direction of a cave's deepest chamber (the roof dome is planted on its floor). */
+export function caveChamberNode(cave: PlanetCave): CaveNode {
+  return [...cave.nodes].reverse().find((node) => node.chamber) ?? cave.nodes[cave.nodes.length - 1];
 }
 
 /**

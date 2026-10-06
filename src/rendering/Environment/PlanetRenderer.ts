@@ -48,6 +48,8 @@ const nextLoop = yieldToMain;
 
 /** Scratch colour for the underground fog blend (never allocated per frame). */
 const _undergroundColor = new THREE.Color();
+/** Scratch colour for the underground ambient/bounce tint. */
+const _undergroundGlowColor = new THREE.Color();
 
 export interface PlanetWorldDependencies {
   scene: THREE.Scene;
@@ -342,12 +344,15 @@ export class PlanetRenderer {
         bounce: lighting.lightBounceMultiplier.value,
         sunIntensity: lighting.intensityUniform.value,
         sunColor: (lighting.colorUniform.value as THREE.Color).clone(),
+        bounceColor: (lighting.bounceColor.value as THREE.Color).clone(),
       };
     }
     const base = this.undergroundBase;
-    // 0 at the rim, 1 once the body is well inside the carve (plan §33 threshold).
-    const target = cave && depth > 1.2 ? Math.min(1, Math.max(0, (depth - 1.2) / 6)) : 0;
-    const k = 1 - Math.exp(-dt * 3.2);
+    // 0 at the mouth, 1 once the body is well inside the carve. The threshold sits BELOW the
+    // dome mouth's lip so walking near (or under the open rim of) a cave never dims the world
+    // from outside — the atmosphere only changes once you are genuinely underground.
+    const target = cave && depth > 4 ? Math.min(1, Math.max(0, (depth - 4) / 8)) : 0;
+    const k = 1 - Math.exp(-dt * 5);
     this.undergroundBlend += (target - this.undergroundBlend) * k;
     const u = this.undergroundBlend;
     const caveFog = cave ? (cave.palette.fog as number) : 0x0a1416;
@@ -362,12 +367,16 @@ export class PlanetRenderer {
     lighting.coreShadowEdgeHigh.value = base.shadowHigh + (1.06 - base.shadowHigh) * u;
     (lighting.shadowColor.value as THREE.Color).copy(base.shadowColor).lerp(caveColor, u * 0.8);
     // The sun does not reach the floor (plan §34): once inside, the key light fades almost out
-    // and shifts into the cave's own air. The bounce term becomes the cave's ambient — lifted so
-    // ordinary rock never collapses to black (plan §7's ambient floor) while crystal glow and
-    // bloom carry the readable light. Never a flashlight on the player.
+    // and shifts into the cave's own air. The bounce term becomes the cave's ambient — tinted
+    // toward the cave's crystal light (NOT daylight green) so the interior reads underground
+    // while ordinary rock never collapses to black (plan §7's ambient floor).
     lighting.intensityUniform.value = base.sunIntensity * (1 - u * 0.88);
     (lighting.colorUniform.value as THREE.Color).copy(base.sunColor).lerp(caveColor, u * 0.5);
-    lighting.lightBounceMultiplier.value = base.bounce + (1.15 - base.bounce) * u;
+    lighting.lightBounceMultiplier.value = base.bounce + (0.85 - base.bounce) * u;
+    _undergroundGlowColor
+      .setHex(cave ? cave.palette.crystal : 0x36f5ff)
+      .lerp(caveColor, 0.55);
+    (lighting.bounceColor.value as THREE.Color).copy(base.bounceColor).lerp(_undergroundGlowColor, u * 0.85);
   }
 
   private undergroundBase: {
@@ -380,6 +389,7 @@ export class PlanetRenderer {
     bounce: number;
     sunIntensity: number;
     sunColor: THREE.Color;
+    bounceColor: THREE.Color;
   } | null = null;
   private undergroundBlend = 0;
 

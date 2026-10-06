@@ -2100,7 +2100,7 @@ export class Player {
    */
   private safetyNet(): void {
     const g = this.game;
-    const floorRadius = g.planet.radius - 35.5; // generator clamp is radius − 34; 1.5 m margin
+    const floorRadius = g.planet.radius - 49.5; // generator clamp is radius − 48; 1.5 m margin
     const len = this.position.length();
     const sustainedFall = !this.grounded && this.airTime > 6 && this.velocity.dot(_up) < -0.5;
     if (Number.isFinite(len) && len >= floorRadius && !sustainedFall) return;

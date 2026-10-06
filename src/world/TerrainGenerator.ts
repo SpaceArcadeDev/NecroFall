@@ -152,9 +152,13 @@ export class TerrainGenerator {
     const ridges = 1 - Math.abs(fbm(x * 1.9 + 5.1 + wob * 1.2, y * 1.9 + 1.9, z * 1.9 + 3.3 + wob * 1.2, 3, s + 7) * 2 - 1);
     const chainBoost = 0.35 + Math.min(chainMask, 1.25) * 0.85;
     const landBoost = Math.min(0.18 + Math.max(0, cont) * 0.9, 1.15);
+    // GIANT MOUNTAINS (user ask 2026-10-06): the concept sheet's dominant read is huge, sharp
+    // ranges on the horizon. Amplitude raised 12.5 → 22 m and chain reinforcement ×5.5, with the
+    // collision band widened to match (see the clamp below) so peaks stand ~half the planet
+    // radius tall while the ramp slopes the player crosses stay within the traverse budget.
     const mountains =
-      Math.pow(ridges, Math.min(arch.ridgeSharpness, 2.8)) * 12.5 * Math.min(arch.mountainPower, 1.2) * landBoost * chainBoost +
-      chainMask * 3.4;
+      Math.pow(ridges, Math.min(arch.ridgeSharpness, 2.8)) * 22.0 * Math.min(arch.mountainPower, 1.2) * landBoost * chainBoost +
+      chainMask * 5.5;
 
     // ---- hills + fine detail scaled by the archetype's roughness
     const hills = (fbm(x * 5.4 + 2.2, y * 5.4 + 9.4, z * 5.4 + 1.5, 3, s + 3) - 0.5) * 4.6 * arch.roughness;
@@ -164,15 +168,15 @@ export class TerrainGenerator {
     // sweep flagged narrow seam walls as unclimbable at body scale — plan §69)
     const seam = 1 - Math.min(1, Math.abs(cont) * 2.6);
     const canyon = -Math.pow(Math.max(0, seam), 2) * Math.min(arch.canyonDepth, 5.5);
-    const basin = -Math.max(0, -cont) * 5.4;
+    const basin = -Math.max(0, -cont) * 8.5;
 
     let h = cont * 5.4 + plateau + mountains + hills + detail + canyon + basin;
 
-    // ---- broad valleys
+    // ---- broad valleys (deepened with the mountains so the silhouette alternates peak/valley)
     for (const v of this.valleys) {
       const d = x * v.nx + y * v.ny + z * v.nz;
       const band = Math.max(0, 1 - (d * d) / (v.w * v.w));
-      h -= band * band * v.p;
+      h -= band * band * v.p * 1.6;
     }
 
     // ---- rivers (sinuous belts carved into the low ground)
@@ -235,8 +239,10 @@ export class TerrainGenerator {
     h -= this.caveCarve(x, y, z, true);
 
     const out = this.radius + h;
-    // Safety clamp: procedural QA (plan §69) requires the field inside the collision band.
-    return clamp(out, this.radius - 34, this.radius + 46);
+    // Safety clamp: procedural QA (plan §69) requires the field inside the collision band. The
+    // band widened with the giant-mountain rework (−34/+46 → −48/+64); `Player.safetyNet` and the
+    // cave depth budget read the SAME constants.
+    return clamp(out, this.radius - 48, this.radius + 64);
   }
 
   /**

@@ -46,9 +46,10 @@
     "formations": { "sites": 11, "props": 151 },
     "scifi": { "sites": 4, "props": 31 },
     "colliders": 1873,
-    "blend": { "fogNear": 14, "fogFar": 95, "coreShadowEdgeLow": 0.42, "sunMul": 0.12, "sunColorLerp": 0.5, "bounceMul": 1.15, "settleSecondsAt60fps": 1 },
-    "safety": { "panicFloor": 82.5, "sustainedFallSeconds": 6 },
-    "carveClampMeters": [-34, 46]
+    "blend": { "fogNear": 14, "fogFar": 95, "coreShadowEdgeLow": 0.42, "sunMul": 0.12, "sunColorLerp": 0.5, "bounceMul": 0.85, "bounceColorLerp": 0.85, "triggerDepth": 4, "settleSecondsAt60fps": 1 },
+    "safety": { "panicFloor": 68.5, "sustainedFallSeconds": 6 },
+    "carveClampMeters": [-48, 64],
+    "fog": { "colorA": "#2e5560", "colorB": "#08111a", "color": "#20414c" }
   },
   "sunAzimuthRadians": 0.9198,
   "sunElevationRadians": 0.9375

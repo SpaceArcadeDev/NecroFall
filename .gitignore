@@ -7,6 +7,7 @@ dist/
 *.log
 .DS_Store
 .playwright-mcp/
+.test-shots/
 
 # SpacetimeDB generated client bindings: COMMIT them if your deploy workflow
 # wants deterministic builds (the loader picks them up from

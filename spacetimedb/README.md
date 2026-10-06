@@ -57,6 +57,27 @@ The web client picks the bindings up automatically from
 `spacetimedb/module_bindings/index.ts` (it loads them lazily; when the folder is
 missing the client stays in offline mode).
 
+### Reverting to older module code (breaking schema)
+
+The client in this repo and the *published* module must always be the same
+revision. When the module source is rolled back past a schema change (e.g. after
+reverting the ONLINE "shared world" work), the running database still holds the
+newer schema and every client fails to connect — the symptom is the login wall
+with "Could not reach the game server". Republish from the reverted source:
+
+```bash
+cd spacetimedb
+spacetime publish necrofall-dev --server local -y --delete-data=on-conflict
+# cloud databases carry the same old name; republish each one that a client uses
+spacetime publish necrofall-dev    --server maincloud -y --delete-data=on-conflict
+spacetime publish necrofall-35vf3  --server maincloud -y --delete-data=on-conflict
+```
+
+`--delete-data=on-conflict` clears the database **only when the schema
+conflicts**, and that clear is total: every account, party and match row in that
+database is destroyed. Use it deliberately, and never as a way around a real
+migration.
+
 Then point the client at the local server in `.env.local`:
 
 ```env

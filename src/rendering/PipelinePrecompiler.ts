@@ -58,7 +58,7 @@ export interface PrecompileReport {
   ms: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 4000;
+const DEFAULT_TIMEOUT_MS = 3000;
 
 /** Reads the URL switches ONCE per step set (the flags cannot change under a running page). */
 export function precompileEnabled(): boolean {

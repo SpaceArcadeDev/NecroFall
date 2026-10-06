@@ -52,7 +52,7 @@ Two rules from the plan are kept everywhere:
 | 30 | Server AI scheduling | **DEVIATION — no server AI** | the server runs no per-enemy AI to bucket; enemy AI is host-client authoritative with tiered strides (Phase 21). The tick's per-player work is a bounded linear scan of live inputs |
 | 31 | World generation worker | **DEVIATION (documented)** | generation is chunked + yielding and runs behind the loading screen/pre-build; a worker would ship a second three.js bundle to phones for a non-blocking task. See notes |
 | 32 | Structure of generated data | **DONE (pre-existing)** | typed arrays throughout (`PlanetSurfaceData`, grass sector geometry, instance matrices/colours) |
-| 33 | Texture optimization | **DONE (audited)** | KTX2/Basis + Draco loaders are wired (build emits the transcoders); baked planet data is 384×192; no 4K maps; atlas palette per world |
+| 33 | Texture optimization | **DONE (audited, nothing to move)** | the whole runtime environment asset set is ~13 KB (`public/environment/folio`: palette atlas 362 B + 3 draco GLBs ≈ 4.5 KB each); planet data is baked to 384×192 `DataTexture`s; KTX2/Basis + Draco decoders are wired for any future compressed asset |
 | 34 | Material sharing | **DONE (pre-existing + fixed)** | one material per variant, instance attributes for variation; the per-world remap cache is now disposed with the world |
 | 35 | Animation optimization | **DONE (pre-existing)** | enemy animation rides the tier stride; distant vegetation animation is shader-side; invisible systems are not updated |
 | 36 | Scene graph audit | **DONE (verified)** | dev world with full decorations: 52 draw calls, 57 geometries, 30 textures, 2,227 decoration instances in one group tree |

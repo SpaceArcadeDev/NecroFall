@@ -1481,7 +1481,10 @@ export class Game {
       // r186 plan §15: compile the world's pipelines while the loading screen still covers the
       // drop. Bounded, error-handled, computed only on WebGPU — a failed pipeline is left to
       // lazy compilation, never allowed to block the match (`?precompile=0` disables it).
-      if (precompileEnabled()) {
+      // Gated on the phases that HAVE a loading screen: a mid-match world rebuild (late joiner
+      // already playing, plate swap) must never stall behind a compile.
+      const loadingScreenUp = this.phase === 'starting' || this.phase === 'menu';
+      if (precompileEnabled() && loadingScreenUp) {
         const report = await precompilePipelines({
           renderer: this.renderer,
           scene: this.scene,
@@ -1491,6 +1494,8 @@ export class Game {
           },
         });
         if (PerformanceMonitor.enabled) console.info('[precompile]', report);
+      } else if (PerformanceMonitor.enabled && !loadingScreenUp) {
+        console.info('[precompile] skipped — no loading screen to hide behind');
       }
       this.envWorld = world;
       planet.attachWorld({

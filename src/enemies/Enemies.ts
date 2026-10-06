@@ -10,6 +10,7 @@ import { CONFIG } from '../core/Config';
 import { SpatialHash } from '../utils/SpatialHash';
 import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { buildCreature, CreatureRig } from './EnemyModels';
+import { SwarmDirector } from './SwarmDirector';
 import {
   ABILITY_META,
   AbilityId,
@@ -294,6 +295,12 @@ export class Enemy {
    * The manager recycles it once it passes `CONFIG.enemy.campDespawn`.
    */
   shelterT = 0;
+  /**
+   * Swarm simulation tier owned by `SwarmDirector` (0 = full rate … 3 = sixth rate). Kept on the
+   * body so the director needs no per-enemy maps: one distance test per frame decides it, with
+   * hysteresis on the band edges.
+   */
+  simTier = 0;
 
   // ------------------------------------------------------------ behaviour
   /** Current behavioural state (see BehaviorState). Simulated by the host. */
@@ -2467,6 +2474,8 @@ export class EnemyManager {
   private spawnAnchors: Player[] = [];
   private spawnPos = new THREE.Vector3();
   private frame = 0;
+  /** Owns the simulation tiers + the population target (mobile plan §31–§64). */
+  readonly director = new SwarmDirector();
   /** Squared distance beyond which a plain Necrophage is not rendered at all. */
   private visibleRangeSq = 130 * 130;
   private nextId = 1;
@@ -2702,6 +2711,7 @@ export class EnemyManager {
     this.frame++;
     this.spatial.clear();
     for (const e of this.enemies) if (e.alive) this.spatial.insert(e);
+    this.director.beginFrame(this.enemies.length, this.populationCap);
 
     // FREEROAM (user ask): the sandbox world never spawns anything — the swarm, the packs, the
     // apexes, the hunters and the survival bosses all live inside `runSpawner`, so one gate here
@@ -2716,9 +2726,9 @@ export class EnemyManager {
       const d2 = this.game.nearestPlayerDistanceSq(e.position);
       e.group.visible = d2 < this.visibleRangeSq || e.isBoss || e.isNamed;
       if (g.isHost) {
-        let step = 1;
-        if (d2 > 140 * 140) step = 4;
-        else if (d2 > 78 * 78) step = 2;
+        // Simulation tier from the SwarmDirector (mobile plan §30–§33): the same 78 m / 140 m
+        // steps the horde always ran at, plus the far band and hysteresis, id-staggered below.
+        const step = this.director.stepFor(e, d2);
         if (step > 1 && this.frame % step !== e.id % step) continue;
         e.update(dt * step, g);
         this.keepOutOfSafeZones(g, e, dt * step);
@@ -2893,8 +2903,9 @@ export class EnemyManager {
     const elapsed = g.matchElapsed * g.enemyRampMul;
     if (elapsed < 3) return;
     const power = enemyPowerScale(elapsed);
-    const cap = this.populationCap;
-    const target = Math.min(cap, Math.floor(14 + elapsed * 0.17 + g.playerCount * 8));
+    // Population target owned by the SwarmDirector (mobile plan §64) — the shipped curve,
+    // centralized so one number answers "how many may exist right now".
+    const target = this.director.desiredPopulation(g.playerCount, elapsed, this.populationCap);
     this.spawnT -= dt;
     if (this.enemies.length < target && this.spawnT <= 0) {
       this.spawnT = Math.max(0.14, 1.15 - elapsed / 260);

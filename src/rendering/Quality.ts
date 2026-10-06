@@ -7,6 +7,7 @@
  * below target — quality never oscillates upward on its own.
  */
 import { Events } from './Events';
+import { DeviceTier } from '../performance/DeviceTier';
 
 export type QualityLevel = 0 | 1 | 2;
 
@@ -23,9 +24,10 @@ export class Quality {
   /** `?adaptive=0` / forced quality levels pin the level. */
   adaptive = true;
 
+  /** Boot level from the device tier (mobile plan §71): mobile starts at MEDIUM, a low-end
+   *  mobile at LOW, desktop at HIGH. The watchdog still owns every later step. */
   static detect(): QualityLevel {
-    const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-    return isMobile ? 1 : 0;
+    return DeviceTier.initialQualityLevel();
   }
 
   changeLevel(level: QualityLevel): void {
@@ -69,8 +71,10 @@ export class Quality {
 
   // ------------------------------------------------------------- capability table
 
+  /** Level ladder (2 / 1.5 / 1.25), clamped by the device tier + width ladder (plan §2/§71). */
   pixelRatioMax(): number {
-    return this.level === 0 ? 2 : this.level === 1 ? 1.5 : 1.25;
+    const ladder = this.level === 0 ? 2 : this.level === 1 ? 1.5 : 1.25;
+    return Math.min(ladder, DeviceTier.dprCap());
   }
 
   /**

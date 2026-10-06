@@ -25,6 +25,9 @@ import {
   beaconName,
 } from './Config';
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
+import { DeviceTier } from '../performance/DeviceTier';
+import { PerfHarness } from '../performance/PerfHarness';
+import { PerfChecklist } from '../performance/PerfChecklist';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
 import { Rendering } from '../rendering/Rendering';
@@ -702,6 +705,8 @@ export class Game {
   private rescueFloor = 0;
   /** Live crowd budget — the watchdog lowers it under load and raises it back when frames recover. */
   enemyBudget = 0;
+  /** §120 dev swarm harness (`?swarm=N`); null in every normal boot. */
+  private perfHarness: PerfHarness | null = null;
   /** Worst frame time seen recently (diagnostics). */
   private worstMs = 0;
   private worstDecayT = 0;
@@ -750,6 +755,9 @@ export class Game {
       classicFill: { skyColor: 0xb9a6ff, groundColor: 0x2a1d3d, intensity: 1.15, rimColor: 0x7a5cff, rimIntensity: 0.35 },
     });
     this.debugSwitches = new DebugSwitches();
+    // §120 swarm load harness (`?swarm=400`) — inert unless the URL asks for it.
+    const swarmTarget = PerfHarness.readTarget();
+    this.perfHarness = swarmTarget > 0 ? new PerfHarness(this, swarmTarget) : null;
     PlanetSurface.debugCounters = RenderDebug.foliageDebug;
     const forcedQuality = this.debugSwitches.bag['quality'];
     if (forcedQuality !== undefined) {
@@ -1171,7 +1179,9 @@ export class Game {
    * is a ceiling, not a target — a phone preset can never out-rank the 1.25 cap.
    */
   private baseDpr(): number {
-    const cap = IS_MOBILE ? DPR_CAP.mobile : DPR_CAP.desktop;
+    // Mobile: the DeviceTier width/tier ladder (plan §2/§71), floored at the historical 1.25.
+    // Desktop: the 2x allowance. Either way the graphics preset stays a ceiling, not a target.
+    const cap = IS_MOBILE ? Math.max(DPR_CAP.mobile, DeviceTier.dprCap()) : DPR_CAP.desktop;
     return Math.min(window.devicePixelRatio || 1, cap, this.settings.pixelRatio);
   }
 
@@ -1560,6 +1570,17 @@ export class Game {
       this.ui.banner('GRAPHICS RESTORED', 2600);
     });
     PerformanceMonitor.init();
+    // §120 budget checklist (`?perfcheck[=seconds]`) — works without `?debug=true`.
+    PerfChecklist.init();
+    // §51 boot line: the device tier + the resolution cap it grants, so a phone report can be
+    // read back without guessing.
+    console.info('[device]', DeviceTier.describe());
+    // DEV HANDLE: with `?debug`/`?perfcheck` the running game is reachable from the console for
+    // acceptance measurements (`game.rendering.renderer.info`, `game.enemies.director.stats()`,
+    // `game.envWorld.grass.bladesDrawn`, ...). Never exposed in a normal boot.
+    if (PerformanceMonitor.enabled || PerfChecklist.enabled) {
+      (window as unknown as { game?: Game }).game = this;
+    }
     // The render step is the ticker's LAST stage (folio 998) — everything the frame draws has
     // already been advanced by the stages before it.
     this.ticker.on(998, () => {
@@ -5570,6 +5591,9 @@ export class Game {
     this.hostSync = new ClockSync();
     this.peerSync.clear();
     for (const p of this.players.values()) p.resetNet();
+    // The pose change-gate (see `poseSignature`) restarts with the timeline: the first pose
+    // after a role flip must go out immediately, not wait behind the previous gate state.
+    this.relaySig = '';
   }
 
   /**
@@ -5829,6 +5853,8 @@ export class Game {
       this.towers.update(dt);
       this.pads.update(dt);
       this.bases.update(dt, this.matchElapsed);
+      // §120 dev harness: keep the `?swarm=N` population alive while the budget checklist runs.
+      this.perfHarness?.update(dt);
       this.enemies.update(dt);
       this.combat.update(dt);
       this.abilities.update(dt);
@@ -5888,6 +5914,16 @@ export class Game {
     }
   }
 
+  /**
+   * The change signature of a pose report (plan §94–§96): pose, hp, level, mutations and the
+   * renderable status flags. Both transports send only when this changes — or once a second as
+   * a liveness heartbeat — so an idle player costs 1 message/s instead of 20, and a moving one
+   * still leaves on the very first changed frame.
+   */
+  private poseSignature(state: PlayerNet): string {
+    return `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
+  }
+
   private networkTick(dt: number): void {
     // Every state packet carries the sender's clock, so the other side can place the poses on a
     // timeline that network delay does not distort.
@@ -5909,7 +5945,7 @@ export class Game {
           // Sends when anything the other side renders CHANGED — pose, hp, level, mutations,
           // shields, frozen/blitz — plus a 1 Hz idle heartbeat. That is what keeps hp/level/
           // mutation live on every other screen the frame they change.
-          const sig = `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
+          const sig = this.poseSignature(state);
           if (sig !== this.relaySig || now - this.relaySentAt > 1) {
             this.relaySig = sig;
             this.relaySentAt = now;
@@ -5968,7 +6004,15 @@ export class Game {
       this.stateT -= dt;
       if (this.stateT <= 0 && this.localPlayer) {
         this.stateT = 1 / CONFIG.netTickPlayers;
-        this.net.sendToHost({ t: 'st', time: now, state: this.localPlayer.toNet(now) });
+        const state = this.localPlayer.toNet(now);
+        // The same change gate the official wire uses (plan §94–§96): an idle P2P client drops
+        // from 20 messages/s to 1, a moving one is never throttled below the tick rate.
+        const sig = this.poseSignature(state);
+        if (sig !== this.relaySig || now - this.relaySentAt > 1) {
+          this.relaySig = sig;
+          this.relaySentAt = now;
+          this.net.sendToHost({ t: 'st', time: now, state });
+        }
       }
     }
   }

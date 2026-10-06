@@ -581,10 +581,14 @@ export function qualitySettings(name: QualityName): QualitySettings {
 /**
  * Render-resolution caps. A phone panel runs at 2.5-3.5 CSS device pixels per point, and WebGL was
  * drawing every one of them: at DPR 1.5 an S25 Ultra shades ~3.1 M pixels a frame for a 1080p-ish
- * view, and at DPR 3 it would shade 12 M. Capping the WebGL buffer at 1.25 cuts that by a third
- * with no visible loss at arm's length; the CSS/UI resolution is never touched (that stays at the
- * device DPR, so text and HUD icons stay razor sharp). Raise the mobile number and the adaptive
- * ladder below scales with it.
+ * view, and at DPR 3 it would shade 12 M. Capping the render buffer cuts that by a third with no
+ * visible loss at arm's length; the CSS/UI resolution is never touched (that stays at the device
+ * DPR, so text and HUD icons stay razor sharp). Raise the mobile number and the adaptive ladder
+ * below scales with it.
+ *
+ * MOBILE is owned by `DeviceTier.dprCap()` (mobile plan §2/§71): the width ladder (1.25/1.4/1.5)
+ * × the device-tier ceiling. Kept here as the floor so the historical 1.25 minimum holds even on a
+ * device the detector cannot read.
  */
 export const DPR_CAP = { mobile: 1.25, desktop: 2 };
 

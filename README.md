@@ -383,6 +383,23 @@ On top of that, the game is built so it **cannot lock up**:
 * Press `F1` for live diagnostics: FPS, worst frame, draw calls, triangles, geometries, textures,
   JS heap, crowd size and the current rescue level.
 
+### Mobile performance overhaul (2026-10)
+
+The full mobile plan pass is recorded in [`docs/performance/MOBILE_OVERHAUL.md`](docs/performance/MOBILE_OVERHAUL.md)
+(phase-by-phase status, measurements, deviations). In short:
+
+* **Device tier + DPR cap** (`src/performance/DeviceTier.ts`) — one ladder (1.25 / 1.4 / 1.5 by
+  viewport, capped by cores+m memory) picks the boot quality level and the render-resolution
+  ceiling; the adaptive ladder and heat watchdog still own everything after that.
+* **Grass sector LOD** (`GrassLOD.ts`) — the static field is split into 128 fixed sectors (was 32)
+  and each sector draws 100 % / 50 % / 25 % of its blades by camera distance with hysteresis. Blade
+  transforms never move; decimation is a `drawRange` prefix. `?grasslod=0` A/Bs it.
+* **SwarmDirector** (`src/enemies/SwarmDirector.ts`) — owns the enemy simulation tiers (full / ½ /
+  ¼ / ⅙ by distance, id-staggered, hysteretic) and the population target.
+* **Budget checklist** — `?perfcheck=30` (live match only) prints a PASS/FAIL line against the
+  plan's §121 budgets; `?swarm=200` keeps a crowd of that size alive while it runs. `?debug=true`
+  also exposes the running game as `window.game` for console measurements.
+
 ## Architecture
 
 ```

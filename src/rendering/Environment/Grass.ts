@@ -52,7 +52,17 @@ import {
   GRASS_PATCH_UV_SCALE,
   grassCoverage,
 } from './GrassField';
+import {
+  chooseGrassLod,
+  grassLodBands,
+  grassLodEnabled,
+  grassLodVertexCount,
+  GRASS_LOD_KEEP,
+  type GrassLod,
+  type GrassLodBand,
+} from './GrassLOD';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+import { readSwitches } from '../DebugSwitches';
 // Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
 // in an occluded tab and stretched this build from seconds to minutes behind the loading screen;
 // rAF is paused outright there).
@@ -96,9 +106,20 @@ export class Grass {
   private plantChain: Promise<void> = Promise.resolve();
   /** Only the NEWEST planting pass may swap its geometry in (a stale one is disposed). */
   private plantToken = 0;
-  /** Per-sector draw records for the horizon cull in `update`. */
-  private readonly sectorMeshes: { mesh: THREE.Mesh; center: THREE.Vector3; radius: number }[] = [];
+  /** Per-sector draw records for the horizon cull + distance LOD in `update`. */
+  private readonly sectorMeshes: {
+    mesh: THREE.Mesh;
+    center: THREE.Vector3;
+    radius: number;
+    blades: number;
+    lod: GrassLod;
+  }[] = [];
   private readonly camScratch = new THREE.Vector3();
+  /** Cached LOD bands (rebuilt only when the quality level changes — never per frame). */
+  private lodBands: readonly [GrassLodBand, GrassLodBand] = grassLodBands(0);
+  private lodBandsLevel = -1;
+  /** Blades the last LOD pass left in the draw lists (debug / perfcheck readout). */
+  private drawnBladeTotal = 0;
 
   private readonly uBladeWidth = uniform(0.24);
   /** Tall meadow blades (user ask: "grass needs to be taller" — raised again to chest-high). */
@@ -232,7 +253,15 @@ export class Grass {
       mesh.name = `grass_sector_${sector.id}`;
       this.root.add(mesh);
       const bounds = sector.geometry.boundingSphere;
-      if (bounds) this.sectorMeshes.push({ mesh, center: bounds.center.clone(), radius: bounds.radius });
+      if (bounds) {
+        this.sectorMeshes.push({
+          mesh,
+          center: bounds.center.clone(),
+          radius: bounds.radius,
+          blades: sector.geometry.getAttribute('position').count / 3,
+          lod: 0,
+        });
+      }
     }
     if (this.placeholder.parent) this.root.remove(this.placeholder);
     if (grassStats()) {
@@ -621,15 +650,33 @@ export class Grass {
     if (!focus) return;
     this.lastFocus = focus;
 
-    // ---- sector horizon culling
+    // ---- sector horizon culling + distance LOD (plan §9/§10): ONE pass, one distance test
+    // per SECTOR (~32 a frame, never per blade), with hysteresis so a sector cannot oscillate
+    // at a band edge. The LOD changes only how many of the sector's blades are drawn — their
+    // transforms are baked and never move (plan §7).
     if (this.sectorMeshes.length > 0) {
+      if (this.quality.level !== this.lodBandsLevel) {
+        this.lodBandsLevel = this.quality.level;
+        this.lodBands = grassLodBands(this.lodBandsLevel);
+      }
       if (camera) {
         camera.getWorldPosition(this.camScratch);
         const camLen = this.camScratch.length();
         const horizon = this.surface.radius * this.surface.radius * 0.97;
+        let drawn = 0;
         for (const sector of this.sectorMeshes) {
-          sector.mesh.visible = sector.center.dot(this.camScratch) + sector.radius * camLen > horizon;
+          const visible = sector.center.dot(this.camScratch) + sector.radius * camLen > horizon;
+          sector.mesh.visible = visible;
+          if (!visible) continue;
+          const distance = Math.max(0, this.camScratch.distanceTo(sector.center) - sector.radius);
+          const lod = grassLodEnabled() ? chooseGrassLod(distance, sector.lod, this.lodBands) : 0;
+          if (lod !== sector.lod) {
+            sector.lod = lod;
+            sector.mesh.geometry.setDrawRange(0, grassLodVertexCount(sector.blades, lod));
+          }
+          drawn += Math.floor(sector.blades * GRASS_LOD_KEEP[lod]);
         }
+        this.drawnBladeTotal = drawn;
       } else {
         for (const sector of this.sectorMeshes) sector.mesh.visible = true;
       }
@@ -723,6 +770,11 @@ export class Grass {
   get bladeCount(): number {
     return this.bladeTotal || this.subdivisions * this.subdivisions;
   }
+
+  /** Blades the last frame's LOD pass left in the draw lists (debug / perfcheck readout). */
+  get bladesDrawn(): number {
+    return this.drawnBladeTotal;
+  }
 }
 
 /** Trample-trail ring buffer: recent player positions (xyz + drop time). 96 slots × 1 m ≈ 96 m
@@ -731,12 +783,17 @@ const TRAIL_SLOTS = 96;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
 
 /**
- * Spatial sectors (plan §8/§39): lat bands × lon bands. 32 draws worst-case, but the frustum
- * only ever keeps the ~6-12 sectors the camera can actually see, so the vertex stage drops from
- * EVERY blade to the visible fraction. The split is indexing-only — no blade moves.
+ * Spatial sectors (plan §8/§9/§39): lat bands × lon bands. 128 draws worst-case, but the horizon
+ * + frustum tests keep the ~15-30 sectors the camera can actually see, so the vertex stage drops
+ * from EVERY blade to the visible fraction. The split is indexing-only — no blade moves.
+ *
+ * 8 × 16 (was 4 × 8): the sector is also the LOD UNIT, and a 45°-wide patch carries a ~60 m
+ * bounding radius on this planet — far coarser than “nearest blade” and it left most visible
+ * sectors pinned to LOD0. At 22.5° a sector's bounds actually discriminate distance, which is
+ * what the plan's “100-300 sector distance checks a frame” sizing assumes (§9).
  */
-const GRASS_SECTORS_LAT = 4;
-const GRASS_SECTORS_LON = 8;
+const GRASS_SECTORS_LAT = 8;
+const GRASS_SECTORS_LON = 16;
 const GRASS_SECTORS = GRASS_SECTORS_LAT * GRASS_SECTORS_LON;
 /** Bounding-sphere margin (m) covering the maximum wind sway + player push a blade can receive. */
 const GRASS_BOUNDS_MARGIN = 6;
@@ -752,7 +809,7 @@ const WATER_EDGE_CUT = 0.045;
 /** `?grassstats=1` — one line per planting pass (blades / sectors / verts / draw ceiling). */
 function grassStats(): boolean {
   try {
-    return new URLSearchParams(window.location.search).get('grassstats') === '1';
+    return readSwitches()['grassstats'] === '1';
   } catch {
     return false;
   }

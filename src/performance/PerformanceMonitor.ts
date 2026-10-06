@@ -11,6 +11,7 @@
 // the console, so a phone (or a remote-debug session) can be watched without pressing keys.
 import { Vector2 } from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
+import { PerfChecklist, frameDrawCalls } from './PerfChecklist';
 
 /**
  * Both renderer generations expose the fields this monitor reads (info counters, DPR and the
@@ -80,31 +81,48 @@ export class PerformanceMonitor {
     }
   }
 
+  /** Last frame gap — also feeds the §120 budget checklist when `?perfcheck` is on. */
+  private static checkGapMs = 16.7;
+
   /** `gapMs` is the wall-clock interval since the previous PROCESSED frame (pacing included). */
   static beginFrame(gapMs: number): void {
-    if (!PerformanceMonitor.enabled) return;
+    PerformanceMonitor.checkGapMs = gapMs;
+    if (!PerformanceMonitor.enabled && !PerfChecklist.enabled) return;
     PerformanceMonitor.frameStart = performance.now();
     PerformanceMonitor.gapMs += (gapMs - PerformanceMonitor.gapMs) * 0.2;
   }
 
   static beginUpdate(): void {
-    if (!PerformanceMonitor.enabled) return;
+    if (!PerformanceMonitor.enabled && !PerfChecklist.enabled) return;
     PerformanceMonitor.updateStart = performance.now();
   }
 
   /** Closes the update block and opens the render block. */
   static beginRender(): void {
-    if (!PerformanceMonitor.enabled) return;
+    if (!PerformanceMonitor.enabled && !PerfChecklist.enabled) return;
     const now = performance.now();
     PerformanceMonitor.updateMs += (now - PerformanceMonitor.updateStart - PerformanceMonitor.updateMs) * 0.2;
     PerformanceMonitor.renderStart = now;
   }
 
   static endRender(renderer: RendererLike, phase: string, quality: string): void {
-    if (!PerformanceMonitor.enabled) return;
+    if (!PerformanceMonitor.enabled && !PerfChecklist.enabled) return;
     const now = performance.now();
     PerformanceMonitor.renderMs += (now - PerformanceMonitor.renderStart - PerformanceMonitor.renderMs) * 0.2;
     PerformanceMonitor.workMs += (now - PerformanceMonitor.frameStart - PerformanceMonitor.workMs) * 0.2;
+    if (PerfChecklist.enabled) {
+      // §120 acceptance run: feed the budget checklist (works without `?debug=true`).
+      // Only LIVE MATCH frames are sampled — a menu's paced frames say nothing about the match.
+      const info = renderer.info as { render?: { drawCalls?: number; triangles?: number } };
+      PerfChecklist.sample(
+        PerformanceMonitor.checkGapMs,
+        now - PerformanceMonitor.frameStart,
+        frameDrawCalls(info),
+        info?.render?.triangles ?? 0,
+        phase === 'playing',
+      );
+    }
+    if (!PerformanceMonitor.enabled) return;
     if (PerformanceMonitor.stress) {
       // Raw per-frame interval for the stress statistics (1 % low, peak), capped so a
       // 30-60 s run can never grow without bound.
@@ -126,7 +144,8 @@ export class PerformanceMonitor {
       workMs: +PerformanceMonitor.workMs.toFixed(2),
       updateMs: +PerformanceMonitor.updateMs.toFixed(2),
       renderMs: +PerformanceMonitor.renderMs.toFixed(2),
-      calls: info.render.calls,
+      // `render.calls` is CUMULATIVE in three's Info — the per-frame number is `drawCalls`.
+      calls: frameDrawCalls(info),
       triangles: info.render.triangles,
       points: info.render.points,
       lines: info.render.lines,
@@ -164,7 +183,7 @@ export class PerformanceMonitor {
       low1PctFps: fpsOf(p99ms),
       avgMs: +avgMs.toFixed(2),
       peakMs: +peakMs.toFixed(2),
-      calls: info.render.calls,
+      calls: frameDrawCalls(info),
       triangles: info.render.triangles,
       points: info.render.points,
       lines: info.render.lines,

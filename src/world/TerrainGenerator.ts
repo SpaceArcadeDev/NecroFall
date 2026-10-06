@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { fbm, smoothstep, clamp, Rand } from '../utils/Utils';
 import { deriveArchetype, type PlanetArchetype } from './PlanetArchetypes';
 import { generateLandmarks, type Landmark } from './LandmarkGenerator';
+import { generateCaves, type PlanetCave } from './caves/CaveGenerator';
 
 interface Belt {
   // great-circle normal + half width + power
@@ -35,6 +36,8 @@ const SHAPE_ID: Record<Landmark['shape'], number> = { BOWL: 0, CRATER: 1, PEAK: 
 export class TerrainGenerator {
   readonly archetype: PlanetArchetype;
   readonly landmarks: Landmark[];
+  /** Deterministic cave graph (plan §28) — carved into the SAME height field the player walks. */
+  readonly caves: PlanetCave[];
   readonly radius: number;
 
   private readonly seed: number;
@@ -44,10 +47,16 @@ export class TerrainGenerator {
   private readonly craters: Belt[] = [];
   private readonly sinkholes: Belt[] = [];
   private readonly sites: Site[] = [];
+  /** Per-cave prefilters: cos(footprint radius) — the hot loop skips caves instantly. */
+  private readonly caveCosReach: number[] = [];
   /** River influence is needed by the moisture field too — remember its last value per sample. */
   private lastRiverT = 0;
   private lastSiteT = 0;
   private lastSiteIdx = -1;
+  /** Cave carve of the last `sample`/`caveDropAt` — depth below the local surface, metres. */
+  lastCaveDrop = 0;
+  lastCaveIdx = -1;
+  lastCaveT = 1;
 
   constructor(seed: number, radius: number, archetype?: PlanetArchetype, ring = 0, focusDir?: THREE.Vector3) {
     this.seed = seed >>> 0;
@@ -97,6 +106,11 @@ export class TerrainGenerator {
         landmark: lm,
       });
     }
+
+    // ---- caves (plan §28/§38): node graphs whose carve is folded into `sample()` below, so the
+    // rendered ground, collision and every placement estimate agree by construction.
+    this.caves = generateCaves(this.seed, radius, this.landmarks, this.archetype.biome, focusDir);
+    for (const cave of this.caves) this.caveCosReach.push(Math.cos(Math.min(Math.PI, cave.radius + 0.03)));
   }
 
   /** A deterministic great-circle normal, biased toward the XZ plane so belts read as bands. */
@@ -214,9 +228,76 @@ export class TerrainGenerator {
     this.lastSiteT = siteT;
     this.lastSiteIdx = siteIdx;
 
+    // ---- CAVES (plan §24/§26/§28): carve the deterministic node graph into the SAME field the
+    // rest of the pipeline samples. The stepped profile (three terraced walls + a flat chamber
+    // floor) keeps every descent walkable; the anisotropic warp stops the basins reading as
+    // perfect circles. `h` below the carve is what grass/vegetation estimates read too.
+    h -= this.caveCarve(x, y, z, true);
+
     const out = this.radius + h;
     // Safety clamp: procedural QA (plan §69) requires the field inside the collision band.
     return clamp(out, this.radius - 34, this.radius + 46);
+  }
+
+  /**
+   * Depth (metres) the cave system carves below the local surface at a direction — the ONE cave
+   * query everything reads (shader mask bake, underground state, safety net, props). Returns 0
+   * outside every cave footprint. Allocation-free.
+   */
+  caveDropAt(x: number, y: number, z: number): number {
+    return this.caveCarve(x, y, z, true);
+  }
+
+  /**
+   * The carve itself. `record` writes the `lastCave*` state (hot path does; pure probes may skip
+   * it). Only caves whose footprint prefilter passes are examined — at most a couple of nodes
+   * run the terrace profile per sample.
+   */
+  private caveCarve(x: number, y: number, z: number, record: boolean): number {
+    const caves = this.caves;
+    if (caves.length === 0) return 0;
+    let best = 0;
+    let bestIdx = -1;
+    let bestT = 1;
+    for (let ci = 0; ci < caves.length; ci++) {
+      const cave = caves[ci];
+      if (x * cave.dir.x + y * cave.dir.y + z * cave.dir.z < this.caveCosReach[ci]) continue;
+      const nodes = cave.nodes;
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const node = nodes[ni];
+        const d = x * node.dir.x + y * node.dir.y + z * node.dir.z;
+        const chord2 = 2 - 2 * d;
+        if (chord2 >= node.radius * node.radius) continue;
+        // t = normalised radial distance 0 centre → 1 rim, warped ±11 % + a rim harmonic so the
+        // chamber is never a circle (plan §58 imperfection).
+        let t = Math.sqrt(Math.max(0, chord2)) / node.radius;
+        t *= 1 + 0.11 * (x * node.axis.x + y * node.axis.y + z * node.axis.z);
+        t += 0.04 * (x * node.axis2.x + y * node.axis2.y + z * node.axis2.z);
+        if (t >= 1 || t < 0) continue;
+        // Terraced descent: lip → wall → wall → floor (three smoothstep ledges).
+        const w =
+          smoothstep(1.0, 0.8, t) * 0.24 +
+          smoothstep(0.82, 0.56, t) * 0.3 +
+          smoothstep(0.6, 0.3, t) * 0.46;
+        const drop = node.depth * Math.min(1, w);
+        if (drop > best) {
+          best = drop;
+          bestIdx = ci;
+          bestT = t;
+        }
+      }
+    }
+    if (record) {
+      this.lastCaveDrop = best;
+      this.lastCaveIdx = bestIdx;
+      this.lastCaveT = bestT;
+    }
+    return best;
+  }
+
+  /** The cave owning the last carve (or null) — for underground state + cave-aware shading. */
+  lastCave(): PlanetCave | null {
+    return this.lastCaveIdx >= 0 ? this.caves[this.lastCaveIdx] : null;
   }
 
   /** Aggregated crater/sinkhole contribution; `rim` adds the raised ring (slope-limited). */

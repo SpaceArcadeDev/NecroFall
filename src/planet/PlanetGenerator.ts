@@ -12,6 +12,7 @@ import { clamp, fbm, smoothstep } from '../utils/Utils';
 import { TerrainGenerator } from '../world/TerrainGenerator';
 import { BiomeGenerator } from '../world/BiomeGenerator';
 import type { BiomeClass, PlanetArchetype } from '../world/PlanetArchetypes';
+import type { PlanetCave } from '../world/caves/CaveGenerator';
 import { mulberry32, type PlanetSpec } from './PlanetSeed';
 import { biomeProfileOf, type PlanetBiomeProfile } from './PlanetBiomes';
 
@@ -47,6 +48,22 @@ export class PlanetGenerator {
     return this.terrain.sample(x, y, z) - this.radius;
   }
 
+  // ------------------------------------------------------------ caves (plan §24/§28)
+  //
+  // The carve lives in the height field itself, so these are the ONLY cave queries gameplay
+  // needs: how deep the underground is at a direction, and which cave owns it.
+
+  /** Metres of cave carve below the local surface at a unit direction (0 = open ground). */
+  caveDepthAt(x: number, y: number, z: number): number {
+    return this.terrain.caveDropAt(x, y, z);
+  }
+
+  /** The cave owning a direction (within its footprint), or null. */
+  caveAt(x: number, y: number, z: number): PlanetCave | null {
+    this.terrain.caveDropAt(x, y, z);
+    return this.terrain.lastCave();
+  }
+
   // ------------------------------------------------------------ shared estimates
   //
   // Both the texture bake and the runtime CPU queries call THESE — the two
@@ -59,7 +76,10 @@ export class PlanetGenerator {
     const grove = smoothstep(0.36, 0.62, patch);
     const slopeFactor = 1 - smoothstep(0.45, 0.95, slope);
     const base = (0.3 + moisture * 0.85) * this.archetype.plantDensity * (0.25 + patch * 1.1);
-    return clamp(base * (0.35 + grove * 0.9) * slopeFactor, 0, 1);
+    // Caves are dead ground: sun-starved rock floors shed almost all vegetation (plan §8/§35).
+    // `lastCaveDrop` is fresh from the radiusAt probe in the same sample() call chain.
+    const caveShade = Math.min(1, this.terrain.lastCaveDrop / 6);
+    return clamp(base * (0.35 + grove * 0.9) * slopeFactor * (1 - caveShade * 0.88), 0, 1);
   }
 
   /** 0..1 — wet ground and shallow basins; `waterLevel` is a radius in metres. */

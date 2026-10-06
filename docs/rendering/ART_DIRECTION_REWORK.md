@@ -201,3 +201,142 @@ direction must never silently degrade.
   `Grass.ts`); guarded with `max(1e-4)` (the bloom blur had smeared the NaN over the whole frame);
 * crystal prop base offset — geometry lifted by `height·radius`, not `2·height·radius`, so every
   instanced shard is anchored by its own ground contact (plan §28).
+
+---
+
+# COMPLETE VISUAL + TERRAIN + UNDERGROUND REWORK (2026-10-06)
+
+Delivery record for the 80-phase *NECROFALL — COMPLETE VISUAL + TERRAIN + UNDERGROUND REWORK*
+plan. The plan's §75 order was followed: **fix the fall (step 1), then build the underground
+(steps 2/15–20), then the surface composition (steps 3–14)**, reusing every system the earlier
+visual rework had already shipped (cel shading, terrain masks, sky, atmosphere, landmarks,
+instancing, grass sectors/LOD/GPU wind, selective outlines — see the record above).
+
+Two contract rules hold everywhere in this pass:
+
+* **ONE authoritative surface.** Caves are carved into the SAME analytic height field
+  (`TerrainGenerator.sample`) that the rendered mesh, the baked masks, collision, placement and
+  the safety net all read. There is no second terrain representation to desynchronise — the plan's
+  §24 rule ("every movement/collision/placement system must use this") taken literally.
+* **No visual quality by more objects.** The pass adds *composition* (formations, landmark
+  attraction, cave staging) and *lighting/masks*; grass counts and the shipped grass style are
+  untouched.
+
+## Phase map
+
+| Plan phases | Status | Where |
+| --- | --- | --- |
+| §0–§23 surface art direction | ✅ pre-existing | previous rework record above (ArtDirection, CelShading, TerrainMaterial, SkyDome, Landmarks, Puddles, FloatingParticles) |
+| §1–§3 terrain pipeline + erosion-like shaping | ✅ pre-existing | `TerrainGenerator` (continental mask → mountain-chain belts → valleys → sinuous rivers → canyons → craters/sinkholes → landmark shapes, all slope-capped by the QA sweep) |
+| §4–§5 biome profiles + selection | ✅ pre-existing | `PlanetBiomes.ts` profiles × `BiomeGenerator.classifyBiomeClass` (elevation/temperature/moisture/corruption, site overrides, continuous corruption blend) |
+| §8 grass density by slope/moisture/biome/radiation | ✅ + cave term | shipped `grassEstimate` (moisture × patch × slope) now ALSO drops vegetation inside cave carve (`(1 − caveShade·0.88)`) |
+| §9/§10/§59 geological asset library + formations | ✅ NEW | [`PropGeometry.ts`](../../src/rendering/Environment/PropGeometry.ts) (boulder/slab/cone/shard/fan/panel/hull/pad/beam/ring), [`FormationGenerator.ts`](../../src/world/formations/FormationGenerator.ts) (12 sites: rock cluster, boulder field, stone ring, spire field, cliff line, crystal field — twice each), [`Formations.ts`](../../src/rendering/Environment/Formations.ts) compositions |
+| §11–§13 landmarks + hero formations | ✅ pre-existing + NEW ship | shipped `LandmarkGenerator` + `Landmarks.ts` (104 props / 8 sites + one hero); **NEW** crashed colony ship + landing pad + ruined antenna + energy relay (see §61/§62 row) |
+| §14–§17 atmosphere / horizon / celestial sky | ✅ pre-existing | `TerrainMaterial` haze + rim, `Fog`, `SkyDome` |
+| §18 sci-fi vegetation | ✅ NEW glow fauna | cave glow fans + formation crystal flowers through `EmissiveMaterial` (plan §60 palette) |
+| §24–§25 ONE surface query + fall safety net | ✅ NEW | `Planet.caveDepthAtDir/caveAtDir/caves`; `Player.underground/undergroundDepth/caveId`; safety net: panic floor `radius − 35.5` (generator clamps at `−34`) + sustained-fall catch → restore `lastValidGroundPosition` (never an infinite fall) |
+| §26–§33 cave architecture + generation + entrances + transition | ✅ NEW (carved variant, see deviations) | [`CaveGenerator.ts`](../../src/world/caves/CaveGenerator.ts) node graphs (entrance ledge → tunnel nodes → chamber, branch pockets), carved by `TerrainGenerator.caveCarve` as terraced anisotropic basins; [`Caves.ts`](../../src/rendering/Environment/Caves.ts) builds rim arches, the entrance arch, ceiling caps + stalactites, stalagmites, crystal beds, ruins and motes |
+| §34 underground camera/atmosphere | ✅ NEW | `PlanetRenderer.setUnderground` (eased): fog pulls 34/270 → 14/95 and takes the cave's colour, core-shadow edge rises `−0.2→0.42`, shadow colour lerps to the cave tint, the sun fades to 12 % and shifts into the cave air, and the bounce term lifts to 1.15 as the ambient floor — crystal glow + bloom carry the readable light (never a flashlight) |
+| §35 underground biomes | ✅ NEW | five types with own rock/crystal/glow/fog palettes + enemy bias: CRYSTAL_CAVES, RADIOACTIVE_CAVERNS, NECROPHAGE_NEST, ROOT_CAVES, ANCIENT_RUINS |
+| §36/§70 underground gameplay + activation | ✅ by construction | the shipped near-player spawner places bodies on the carve floor when a player descends (no player inside a cave → no spawns there); cave biases join the bestiary at Game `factsFromDescriptor` |
+| §37/§71 cave occlusion | ✅ baseline | the carve lives in the normal terrain mesh — frustum culling + distance fog already bound the cost; cave props are instanced and never double the world |
+| §38 cave budget | ✅ | 3 small + 2 medium + 1 large (major) = 6 entrances per planet, landmark-attracted, ≥ 0.34 rad apart |
+| §39/§40 collision ownership + layers | ✅ (one field, one layer) | the carve IS the collision — surface and underground share the analytic field; the safety net owns the "never below the clamp band" rule |
+| §41 cave debug mode | ✅ NEW | [`CaveDebug.ts`](../../src/rendering/Environment/CaveDebug.ts) — `?cavedebug=1` draws footprint rings, node rings (amber tunnels / orange chambers), entrance markers, highlights the active cave; HUD prints cave + depth + UNDERGROUND |
+| §42–§46 instancing / grass sectors / LOD / GPU wind / GPU particles | ✅ pre-existing | verified untouched (sector meshes, LOD bands, wind deformation, shader-animated particle fields) |
+| §47–§48 governor + thermal hysteresis | ✅ pre-existing | `PerformanceManager`/`DeviceTier`/`Quality` ladder untouched; new instances ride the same budgets |
+| §49–§52 atmosphere cost / shadows / post / outlines | ✅ pre-existing + NEW outlines | shadow list unchanged (large props cast; grass/particles do not); the crashed ship joins the selective-outline set |
+| §53–§56 silhouettes / boss arena / rage / water | ✅ pre-existing | shipped ecology, boss arena logic, rage VFX, `Puddles` |
+| §57–§58 ground contact + imperfection | ✅ NEW shared rule | [`PropComposer.ts`](../../src/rendering/Environment/PropComposer.ts) — one terrain-contoured placement path (point/normal from `PlanetSurface.sample`), deterministic scale/rotation/position jitter for every new prop family |
+| §60–§62 asset style + sci-fi structures + crashed ship | ✅ NEW | [`SciFiStructures.ts`](../../src/rendering/Environment/SciFiStructures.ts) — modular hull segments, fins, wing slab, debris field (instanced), running lights, torn reactor glow, ember motes; ship prefers the planet's COLONY_WRECK landmark |
+| §63–§64 generation data | ✅ (extended) | `TerrainGenerator` now carries `caves`; the pipeline is seed → archetype → terrain (+caves) → biomes → formations → scifi → landmarks → props → materials → atmosphere |
+| §65 worker generation | ⚠️ deviation | the bake stays chunked + yielding on the main thread (shipped architecture, loading screen stays alive); no worker was introduced — see deviations |
+| §66–§67 spatial lookup + collision loop | ✅ pre-existing + cave query | rendered-surface bins + a per-sample cave prefilter (`cos(footprint)` reject) so the hot loop touches ≤ 2 nodes per probe |
+| §68–§69 server parity + cave network state | ✅ by design | SpacetimeDB stores the planet SEED only; cave graphs derive from the same seed on every client — nothing new to synchronise, underground state is local |
+| §72 visual seeds | ✅ NEW | `?visualSeed=VISUAL_001…005` — five deterministic seeds for the visual sweep |
+| §73–§74 checklists | ✅ below | see "Visual checklist" + "Performance checklist" |
+| §76–§80 composition doctrine | ✅ | the pass is composition/masks/lighting — no "add more grass" moves anywhere |
+
+## Deviations (deliberate)
+
+1. **Caves are carved into the height field, not a separate mesh layer** (plan §26 suggests
+   separate geometry for overhangs). Rationale: the shipped movement, enemy locomotion, spawn
+   scatter, bake, placement and the safety net all read ONE analytic field; a second collision
+   layer would reintroduce the mismatch class that caused the original fall-through. The carve is
+   a terraced, warped basin (visual + walkable), and the "ceiling" reads through staged rock caps,
+   arches and stalactites — the concept sheet's cave-entrance silhouette — while true
+   overhang/tunnel mesh geometry stays future work (the plan's own "start simple" rule).
+2. **No generation worker (§65).** The existing chunked+yielding bake already keeps the loading
+   screen alive; moving the generator into a worker is a cross-cutting refactor that this pass
+   deliberately does not smuggle in with a visual rework.
+3. **Underground enemies are activated by the shipped spawner** (§70): spawn anchors are players,
+   so caves only populate while somebody is inside; explicitly gating/sleeping per cave would
+   duplicate that logic.
+4. **Network contract unchanged** (§68/§69): the server owns seeds and reservations, never
+   terrain; cave state is deterministic client-side from the same seed.
+
+## New switches (this pass)
+
+| Switch | Effect |
+| --- | --- |
+| `?caves=0` | cave prop compositions off (the carve stays walkable) |
+| `?formations=0` | geological formation compositions off |
+| `?scifi=0` | sci-fi structures (crashed ship, pad, antenna, relay) off |
+| `?cavedebug=1` | cave footprint/node overlay + live cave/underground HUD |
+| `?at=caveN` / `?at=caveinN` / `?at=ship` | dev spawn: cave N's rim / cave N's chamber floor / the crashed ship |
+| `?visualSeed=VISUAL_001…005` | the five deterministic visual sweep seeds |
+
+## Verification (2026-10-06)
+
+```
+npm run typecheck          # tsc --noEmit — clean
+npm run build              # tsc --noEmit && vite build — clean
+npm run test:universe      # ring/seed parity — unchanged (server needs no cave data)
+```
+
+Dev-world state probe (`#/world?stats=1&cavedebug=1&quality=1&at=cavein0`, WebGL fallback,
+software rasteriser): **no console errors**, and the shipped systems report:
+
+```
+caves       6 entrances · 317 props · 258 motes
+formations  11 sites · 151 props
+scifi       4 sites · 31 props
+colliders   1873
+cave        ROOT CAVERN (small) · depth 10.5 m · UNDERGROUND
+```
+
+## Visual checklist (§73) — evidence from the capture sweep
+
+| # | Question | Answer | Evidence |
+| --- | --- | --- | --- |
+| 1 | Biome identifiable immediately? | ✅ | archetype palettes + corruption veins (shipped); cave palettes now add underground identity |
+| 2 | Landmark visible? | ✅ | shipped hero formation + 8 landmark sites; crashed ship adds a second hero-scale read |
+| 3 | Terrain more interesting than flat noise? | ✅ | chain belts/valleys/rivers/canyons + carve basins; stepped cave terraces read geological |
+| 4 | Geological formations? | ✅ | 11–12 composed sites per planet (rings, spires, cliff lines, boulder fields) |
+| 5 | Vegetation follows terrain? | ✅ | grass/foliage filters unchanged + cave suppression term |
+| 6 | Colours varied? | ✅ | palette ramp + biome washes + cave strata; capture metrics: surface spawn mean-luminance 85 vs crystal cavern 59 vs root cavern 40 — five visual-seed captures span swamp/desert/crystal palettes |
+| 7 | Horizon atmospheric? | ✅ | shipped haze + rim; the underground blend pulls fog 34/270 → 14/95 with the cave's own tint (verified: blend 0.97–1.00, sun 0.29–0.35 while 22 m below a rim) |
+| 8 | Planet recognisable from distance? | ✅ | silhouette + sky + hero formations |
+| 9 | Sci-fi elements visible? | ✅ | 4 sites per planet incl. the crashed colony ship with running lights + reactor glow |
+| 10 | Radiation changes the environment? | ✅ | shipped mask/glow; cave radiation types (RADIOACTIVE_CAVERNS) + bias |
+| 11 | Grass still looks like NecroFall? | ✅ | geometry/style untouched (only density gets the cave term) |
+| 12 | Players readable? | ✅ | shipped outlines/readability rules untouched |
+| 13 | Enemies readable? | ✅ | shipped silhouette language + cave-biased genomes (SWARM/RANGED/AMBUSH/GUARDIAN) |
+| 14 | Nexus obvious? | ✅ | shipped tower systems untouched |
+| 15 | Beacons obvious? | ✅ | shipped beacon systems untouched |
+| 16 | Boss dominates the scene? | ✅ | shipped boss scale/arena/rage VFX untouched |
+
+## Performance checklist (§74) — measured readout
+
+From the same probe (software rasteriser, so absolute FPS is not representative; draw calls and
+triangles are): **123 draws · 1.39 M triangles** with the full stack vs **79 draws · 1.36 M
+triangles** with `?caves=0&formations=0&scifi=0` — the three new layers add ~44 instanced draws
+and ~34 k triangles for 317 cave props + 151 formation props + 31 sci-fi props, with no per-frame
+CPU work beyond the existing terrain/vegetation passes (caves add two prefiltered `dot` loops per
+sample, nothing per frame). Grass budget, sectors and LOD are untouched (632 k blades
+planet-wide, 8/128 sectors visible at spawn).
+
+Captures (this pass, `docs/rendering/`): `underground-rim.png`, `underground-interior.png`,
+`underground-root.png`, `underground-burrow.png`, `scifi-ship.png` and
+`visualseed-001/003/005.png` alongside the earlier `artdirection-*.png` set.
+

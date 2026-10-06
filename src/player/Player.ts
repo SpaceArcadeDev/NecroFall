@@ -405,6 +405,17 @@ export class Player {
   grounded = false;
   alive = true;
   frozen = false; // level-up / pickup / results
+
+  // ------------------------------------------------------------ underground (plan §24/§25/§33)
+  /** True while the body walks inside a carved cave footprint (depth > plan §33 threshold). */
+  underground = false;
+  /** Metres below the local surface at the body's direction (0 = open ground). */
+  undergroundDepth = 0;
+  /** Id of the cave the body is inside, or -1. */
+  caveId = -1;
+  /** Safety net (plan §25/§39): the last position the body stood on real terrain. */
+  private readonly lastValidGroundPosition = new THREE.Vector3();
+  private hasValidGround = false;
   /**
    * RECALL channel lock (user ask 2026-09-29): while the local player's recall runs, the body may
    * neither move nor fire anything. Set/cleared by `Game.requestRecall` / `cancelRecall`; a FRESH
@@ -2006,6 +2017,9 @@ export class Player {
     const g = this.game;
     this.position.addScaledVector(this.velocity, dt);
     _up.copy(this.position).normalize();
+    // Safety net (plan §25/§39): a body that escaped the terrain field snaps back to the last
+    // real ground BEFORE any support maths reads the corrupted position.
+    this.safetyNet();
     // A colony SHIP is a platform that MOVES: whoever is standing on it rides along — rotate the
     // rider by the ship's own turn before the support test below, or the deck slides out from under
     // them a couple of metres a second.
@@ -2030,7 +2044,10 @@ export class Player {
 
     if (canStand) {
       if (onDeck && deck) this.position.multiplyScalar(deck.deckRadius / Math.max(1, this.position.dot(deck.up)));
-      else this.position.copy(_up).multiplyScalar(h);
+      else {
+        this.position.copy(_up).multiplyScalar(h);
+        this.noteGround();
+      }
       const vr = this.velocity.dot(_up);
       if (vr < 0) this.velocity.addScaledVector(_up, -vr);
       this.grounded = true;
@@ -2052,7 +2069,10 @@ export class Player {
     } else if (this.grounded && this.jumpLock <= 0 && near < 1.5 && near > -1.6 && this.velocity.dot(_up) <= 2) {
       // stick to the surface (or the deck) while running across bumps
       if (onDeck && deck) this.position.multiplyScalar(deck.deckRadius / Math.max(1, this.position.dot(deck.up)));
-      else this.position.copy(_up).multiplyScalar(h);
+      else {
+        this.position.copy(_up).multiplyScalar(h);
+        this.noteGround();
+      }
       const vr = this.velocity.dot(_up);
       if (vr < 0) this.velocity.addScaledVector(_up, -vr);
       this.grounded = true;
@@ -2061,6 +2081,48 @@ export class Player {
       this.grounded = false;
       this.airTime += dt;
     }
+
+    // ---- underground state (plan §24/§33): read from the ONE analytic cave carve the terrain,
+    // collision and shader masks all share. Local body only — proxies do not drive the camera.
+    if (this.isLocal) {
+      const depth = g.planet.caveDepthAtDir(_up.x, _up.y, _up.z);
+      this.undergroundDepth = depth;
+      this.underground = depth > 2.4;
+      this.caveId = this.underground ? g.planet.caveAtDir(_up.x, _up.y, _up.z)?.id ?? -1 : -1;
+    }
+  }
+
+  /**
+   * Plan §25/§39 safety net: the only two ways a body may leave the terrain field are (a) a
+   * position outside the generator's clamp band (bad query, NaN, teleport mismatch) or (b) a
+   * sustained fall that never lands (fall-through somewhere in the visual/collision seam). Both
+   * restore the last position the body legitimately stood on — never an infinite fall.
+   */
+  private safetyNet(): void {
+    const g = this.game;
+    const floorRadius = g.planet.radius - 35.5; // generator clamp is radius − 34; 1.5 m margin
+    const len = this.position.length();
+    const sustainedFall = !this.grounded && this.airTime > 6 && this.velocity.dot(_up) < -0.5;
+    if (Number.isFinite(len) && len >= floorRadius && !sustainedFall) return;
+    if (this.hasValidGround) {
+      this.position.copy(this.lastValidGroundPosition);
+      this.velocity.set(0, 0, 0);
+      _up.copy(this.position).normalize();
+      this.up.copy(_up);
+      this.grounded = true;
+      this.airTime = 0;
+      return;
+    }
+    // No ground reference yet (first frames after spawn): snap to the analytic surface.
+    const h = g.planet.heightAtDir(_up.x, _up.y, _up.z);
+    this.position.copy(_up).multiplyScalar(h + 0.4);
+    this.velocity.set(0, 0, 0);
+  }
+
+  /** Remember the last terrain (never deck) position the body stood on (plan §25). */
+  private noteGround(): void {
+    this.lastValidGroundPosition.copy(this.position);
+    this.hasValidGround = true;
   }
 
   // ------------------------------------------------------------ combat

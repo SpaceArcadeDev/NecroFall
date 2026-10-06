@@ -40,6 +40,16 @@
     "spikes": 74,
     "crystals": 48
   },
+  "underground": {
+    "caves": { "entrances": 6, "small": 3, "medium": 2, "large": 1, "props": 317, "motes": 258 },
+    "caveTypes": ["ROOT_CAVES", "ANCIENT_RUINS", "ROOT_CAVES", "ANCIENT_RUINS", "NECROPHAGE_NEST", "CRYSTAL_CAVES"],
+    "formations": { "sites": 11, "props": 151 },
+    "scifi": { "sites": 4, "props": 31 },
+    "colliders": 1873,
+    "blend": { "fogNear": 14, "fogFar": 95, "coreShadowEdgeLow": 0.42, "sunMul": 0.12, "sunColorLerp": 0.5, "bounceMul": 1.15, "settleSecondsAt60fps": 1 },
+    "safety": { "panicFloor": 82.5, "sustainedFallSeconds": 6 },
+    "carveClampMeters": [-34, 46]
+  },
   "sunAzimuthRadians": 0.9198,
   "sunElevationRadians": 0.9375
 }

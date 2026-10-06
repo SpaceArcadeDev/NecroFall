@@ -459,6 +459,34 @@ status, captures, deviations). In short:
   deterministically for the visual-regression captures; the `?stats` overlay now reports quality
   level, live DPR, interpolation spread and the landmark/hero identity.
 
+### Terrain + underground rework (2026-10)
+
+The follow-up pass — *complete visual + terrain + underground rework* — is recorded in the same
+document. It adds the vertical half of the world without a second collision model:
+
+* **Caves carved into the ONE terrain field** — `CaveGenerator.ts` builds 6 deterministic cave
+  graphs (3 small / 2 medium / 1 large major; crystal, radioactive, necrophage, root and ruin
+  types, landmark-attracted) and `TerrainGenerator` carves them as stepped, warped basins, so the
+  rendered ground, collision, the baked masks and every placement estimate agree by construction
+  — the fall-through class is structurally gone.
+* **Fall safety net** — `Player` tracks the last valid ground position and restores it if a body
+  ever leaves the generator's collision band or falls for more than six seconds; ordinary terrain
+  can never collapse into an infinite fall.
+* **Underground atmosphere** — walking below a cave rim eases the fog in (34/270 → 14/95) and
+  tints it, lifts the core-shadow edge, lerps the shadow colour, fades the sun to 12 % into the
+  cave's own air and lifts the bounce term as the ambient floor; crystal glow and bloom become
+  the light (measured: crystal-cavern mean luminance 59 vs 85 at the surface, root cavern 40 —
+  no crushed blacks). `?cavedebug=1` overlays the cave footprint/nodes and prints the underground
+  state.
+* **Geological formations** — `FormationGenerator.ts` + `Formations.ts` compose 12 authored sites
+  per planet (rock clusters, boulder fields, stone rings with an altar shard, spire fields, cliff
+  lines, crystal beds) from the shared `PropGeometry` asset library.
+* **Sci-fi structures** — `SciFiStructures.ts` places the crashed colony ship (hull segments,
+  fins, wing, debris field, running lights, torn reactor glow, ember motes, selective outline) at
+  the planet's colony-wreck landmark, plus a landing pad, ruined antenna and energy relay.
+* **Visual sweep seeds** — `?visualSeed=VISUAL_001…005` pins the five deterministic captures every
+  check runs against; `?at=caveN|caveinN|ship` spawns at the interesting places.
+
 ## Architecture
 
 ```

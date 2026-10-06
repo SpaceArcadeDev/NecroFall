@@ -14,6 +14,9 @@
 | `#/world?render=unlit` etc. | material debug modes (§33) |
 | `#/world?renderBaseline=1` | prints + overlays this entire baseline |
 | `#/world?foliageDebug=1` | live foliage / terrain-query counters |
+| `#/world?visualSeed=VISUAL_001…005` | the five deterministic visual-sweep seeds (underground rework §72) |
+| `#/world?at=caveN` / `?at=caveinN` / `?at=ship` | spawn at cave N's rim / chamber floor / the crashed colony ship |
+| `#/world?cavedebug=1` | cave footprint + node overlay, live cave/underground HUD line |
 
 Deterministic spawn: the dev world scans up to 800 surface samples for a **sunlit** (up·sun > 0.45),
 **grassy** (grass > 0.3), **flat** (slope < 0.12) spot above the waterline, starting from
@@ -75,6 +78,19 @@ Deterministic spawn: the dev world scans up to 800 surface samples for a **sunli
 trees 180 (birch 74 / oak 62 / cherry 44) · bushes 520 · rocks 550 · spikes 74 clusters
 · crystals 48 · puddles 62 · motes 6000 · obstacles 1372. All via `PlanetSurface.sample()`
 placement + the shared `MeshDefaultMaterial` lighting/fog.
+
+## Underground rework additions (2026-10, frozen at the same seed)
+
+| System | Value |
+| --- | --- |
+| caves | 6 entrances (3 small · 2 medium · 1 large major), landmark-attracted, 317 props · 258 motes |
+| cave types | ROOT CAVERN ×2 · BURIED RUINS ×2 · NECROPHAGE BURROW · CRYSTAL CAVERN (this seed) |
+| formations | 11 sites · 151 props (rock clusters, boulder fields, stone rings, spire fields, cliff lines, crystal beds) |
+| sci-fi sites | 4 · 31 props (crashed colony ship at COLONY_WRECK + landing pad, ruined antenna, energy relay) |
+| colliders | 1873 total (+501 from the new layers) |
+| underground blend | fog 34/270 → 14/95, core-shadow edge −0.2 → 0.42, sun ×0.12 (+colour lerp to the cave air), bounce ×1.15, eased per frame (≈1 s to settle at 60 fps) |
+| measured cave captures | crystal cavern interior mean-luminance 59 (dark share 13 %), root cavern 40 (dark share 63 %) — surface spawn 85 |
+| safety net | panic floor `radius − 35.5` (clamp band is `radius − 34`), sustained-fall catch at 6 s |
 
 ## Verification
 

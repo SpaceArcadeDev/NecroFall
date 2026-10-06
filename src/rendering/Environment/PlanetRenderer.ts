@@ -33,7 +33,11 @@ import { Puddles } from './Puddles';
 import { FloatingParticles } from './FloatingParticles';
 import { SkyDome } from './SkyDome';
 import { Landmarks } from './Landmarks';
+import { Caves } from './Caves';
+import { Formations } from './Formations';
+import { SciFiStructures } from './SciFiStructures';
 import { readSwitches, DebugSwitches } from '../DebugSwitches';
+import type { PlanetCave } from '../../world/caves/CaveGenerator';
 import { ASSETS } from '../Assets/AssetManifest';
 // Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
 // in an occluded tab and stretched this build from seconds to minutes behind the loading screen).
@@ -41,6 +45,9 @@ import { yieldToMain } from '../../utils/Yield';
 
 /** Yield between build stages so a loading screen / picker keeps animating. */
 const nextLoop = yieldToMain;
+
+/** Scratch colour for the underground fog blend (never allocated per frame). */
+const _undergroundColor = new THREE.Color();
 
 export interface PlanetWorldDependencies {
   scene: THREE.Scene;
@@ -115,6 +122,12 @@ export class PlanetRenderer {
   sky!: SkyDome;
   /** Landmark prop compositions + the hero formation (plan §16–§18). */
   landmarks!: Landmarks;
+  /** Cave compositions + the ONE underground mote cloud (plan §30/§35). */
+  caves!: Caves;
+  /** Geological formations (plan §9/§10) — composed rock families, rings, spires, cliffs. */
+  formations!: Formations;
+  /** Sci-fi structures + the crashed colony ship (plan §61/§62). */
+  scifi!: SciFiStructures;
   readonly trees: Trees[] = [];
 
   private readonly focusScratch = new THREE.Vector3();
@@ -234,7 +247,7 @@ export class PlanetRenderer {
     // planet seed, terrain-aligned, instanced. Built after the scatter systems so the clusters
     // own their space; `?landmarks=0` removes the whole layer for A/B.
     if (this.switches.enabled('landmarks')) {
-      onProgress?.(0.94, 'composing landmarks');
+      onProgress?.(0.92, 'composing landmarks');
       this.landmarks = new Landmarks(
         deps.surface,
         deps.generator,
@@ -244,6 +257,35 @@ export class PlanetRenderer {
         this.obstacles,
       );
       this.group.add(this.landmarks.group);
+      await nextLoop();
+    }
+
+    // 7b — cave compositions (plan §30/§35): rim arches, entrance arch, ceiling caps +
+    // stalactites, crystal beds, glow fans, ruins and the ONE mote cloud. The CARVE itself is
+    // already part of the terrain height field, so this layer is pure dressing — `?caves=0`
+    // removes it and the caverns stay walkable.
+    if (this.switches.enabled('caves')) {
+      onProgress?.(0.94, 'opening caverns');
+      this.caves = new Caves(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles);
+      this.group.add(this.caves.group);
+      await nextLoop();
+    }
+
+    // 7c — geological formations (plan §9/§10/§59): composed rock families, boulder fields,
+    // stone rings, spire fields, cliff lines and crystal beds — the authored mid-ground.
+    if (this.switches.enabled('formations')) {
+      onProgress?.(0.95, 'raising formations');
+      this.formations = new Formations(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles);
+      this.group.add(this.formations.group);
+      await nextLoop();
+    }
+
+    // 7d — sci-fi structures (plan §61/§62): the crashed colony ship + landing pad, ruined
+    // antenna and energy relay. `?scifi=0` removes the layer for A/B.
+    if (this.switches.enabled('scifi')) {
+      onProgress?.(0.955, 'recovering wreckage');
+      this.scifi = new SciFiStructures(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles);
+      this.group.add(this.scifi.group);
       await nextLoop();
     }
 
@@ -279,6 +321,73 @@ export class PlanetRenderer {
     this.particles.update(focusPoint, camera);
   }
 
+  /**
+   * Underground blend (plan §33/§34/§35): while the local body walks inside a cave, the surface
+   * atmosphere fades out and the cave's own air takes over — fog pulls in and takes the cave's
+   * colour, the sun's core-shadow edge rises so the floor reads as shaded rock (not a black
+   * hole), and bloom carries the crystal light. The blend eases, so the surface→cave transition
+   * is a walk down a ramp, never a cut.
+   */
+  setUnderground(depth: number, cave: PlanetCave | null, dt: number): void {
+    const fog = this.deps.fog;
+    const lighting = this.deps.lighting;
+    if (this.undergroundBase === null) {
+      this.undergroundBase = {
+        fogNear: (fog as any).near?.value ?? 34,
+        fogFar: (fog as any).far?.value ?? 270,
+        fogColor: (fog.color.value as THREE.Color).clone(),
+        shadowLow: lighting.coreShadowEdgeLow.value,
+        shadowHigh: lighting.coreShadowEdgeHigh.value,
+        shadowColor: (lighting.shadowColor.value as THREE.Color).clone(),
+        bounce: lighting.lightBounceMultiplier.value,
+        sunIntensity: lighting.intensityUniform.value,
+        sunColor: (lighting.colorUniform.value as THREE.Color).clone(),
+      };
+    }
+    const base = this.undergroundBase;
+    // 0 at the rim, 1 once the body is well inside the carve (plan §33 threshold).
+    const target = cave && depth > 1.2 ? Math.min(1, Math.max(0, (depth - 1.2) / 6)) : 0;
+    const k = 1 - Math.exp(-dt * 3.2);
+    this.undergroundBlend += (target - this.undergroundBlend) * k;
+    const u = this.undergroundBlend;
+    const caveFog = cave ? (cave.palette.fog as number) : 0x0a1416;
+    const caveColor = _undergroundColor.setHex(caveFog).convertSRGBToLinear();
+
+    fog.setDistances(
+      base.fogNear + (14 - base.fogNear) * u,
+      base.fogFar + (95 - base.fogFar) * u,
+    );
+    (fog.color.value as THREE.Color).copy(base.fogColor).lerp(caveColor, u * 0.85);
+    lighting.coreShadowEdgeLow.value = base.shadowLow + (0.42 - base.shadowLow) * u;
+    lighting.coreShadowEdgeHigh.value = base.shadowHigh + (1.06 - base.shadowHigh) * u;
+    (lighting.shadowColor.value as THREE.Color).copy(base.shadowColor).lerp(caveColor, u * 0.8);
+    // The sun does not reach the floor (plan §34): once inside, the key light fades almost out
+    // and shifts into the cave's own air. The bounce term becomes the cave's ambient — lifted so
+    // ordinary rock never collapses to black (plan §7's ambient floor) while crystal glow and
+    // bloom carry the readable light. Never a flashlight on the player.
+    lighting.intensityUniform.value = base.sunIntensity * (1 - u * 0.88);
+    (lighting.colorUniform.value as THREE.Color).copy(base.sunColor).lerp(caveColor, u * 0.5);
+    lighting.lightBounceMultiplier.value = base.bounce + (1.15 - base.bounce) * u;
+  }
+
+  private undergroundBase: {
+    fogNear: number;
+    fogFar: number;
+    fogColor: THREE.Color;
+    shadowLow: number;
+    shadowHigh: number;
+    shadowColor: THREE.Color;
+    bounce: number;
+    sunIntensity: number;
+    sunColor: THREE.Color;
+  } | null = null;
+  private undergroundBlend = 0;
+
+  /** Live underground blend (0 surface → 1 deep cave) — diagnostics only. */
+  get undergroundBlendValue(): number {
+    return this.undergroundBlend;
+  }
+
   /** Debug switches (plan §90). */
   applyVisibility(switches: {
     grass: boolean;
@@ -290,6 +399,9 @@ export class PlanetRenderer {
     particles: boolean;
     sky?: boolean;
     landmarks?: boolean;
+    caves?: boolean;
+    formations?: boolean;
+    scifi?: boolean;
   }): void {
     this.grass.setVisible(switches.grass);
     this.bushes.setVisible(switches.foliage);
@@ -304,6 +416,9 @@ export class PlanetRenderer {
     this.particles.setVisible(switches.particles);
     if (this.sky) this.sky.setVisible(switches.sky ?? true);
     if (this.landmarks) this.landmarks.setVisible(switches.landmarks ?? true);
+    if (this.caves) this.caves.setVisible(switches.caves ?? true);
+    if (this.formations) this.formations.setVisible(switches.formations ?? true);
+    if (this.scifi) this.scifi.setVisible(switches.scifi ?? true);
   }
 
   dispose(): void {
@@ -317,6 +432,9 @@ export class PlanetRenderer {
     this.particles.dispose();
     this.sky?.dispose();
     this.landmarks?.dispose();
+    this.caves?.dispose();
+    this.formations?.dispose();
+    this.scifi?.dispose();
     this.terrain.material.dispose();
     this.terrain.mesh.geometry.dispose();
     // r186 plan §1: the explicit teardown order — systems first (they release their own roots),
@@ -338,6 +456,9 @@ export class PlanetRenderer {
       'puddles': `${this.puddles.count}`,
       'motes': `${this.particles.count}`,
       'landmarks': `${this.landmarks ? `${this.landmarks.propCount} props${this.landmarks.heroLabel ? ` · hero ${this.landmarks.heroLabel}` : ''}` : 'off'}`,
+      'caves': `${this.caves ? `${this.caves.caveCount} entrances · ${this.caves.propCount} props · ${this.caves.moteCount} motes` : 'off'}`,
+      'formations': `${this.formations ? `${this.formations.formationCount} sites · ${this.formations.propCount} props` : 'off'}`,
+      'scifi': `${this.scifi ? `${this.scifi.siteCount} sites · ${this.scifi.propCount} props` : 'off'}`,
       'colliders': `${this.obstacles.count}`,
     };
   }
@@ -365,7 +486,14 @@ export class PlanetRenderer {
       grassInstancesDrawn: grass.drawnInstances,
       grassFadingSectors: grass.fadingSectors,
       vegetationInstances:
-        trees + this.bushes.count + this.rocks.count + this.spikes.spikeCount + this.crystals.shardCount,
+        trees +
+        this.bushes.count +
+        this.rocks.count +
+        this.spikes.spikeCount +
+        this.crystals.shardCount +
+        (this.caves?.propCount ?? 0) +
+        (this.formations?.propCount ?? 0) +
+        (this.scifi?.propCount ?? 0),
     };
   }
 }

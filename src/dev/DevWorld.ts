@@ -23,6 +23,8 @@ import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
 import { Fog } from '../rendering/Environment/Fog';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { createPlanetWorld } from '../rendering/Environment/PlanetWorld';
+import { CaveDebug } from '../rendering/Environment/CaveDebug';
+import { generateSciFiSites } from '../world/formations/FormationGenerator';
 import type { PlanetGenerator } from '../planet/PlanetGenerator';
 import { PlanetSurface, createSurfaceSample } from '../planet/PlanetSurface';
 import { Physics } from '../rendering/Physics/Physics';
@@ -135,7 +137,17 @@ export async function startDevWorld(): Promise<void> {
   const ring = switches.number('ring', 0);
   const planetIndex = switches.number('planet', 2); // 0:0:0:2 = SWAMP (lush + water for terrain tests)
   const descriptor = planetAt(0, ring, 0, 0, planetIndex);
-  const seed = switches.number('seed', descriptor.seed);
+  // Plan §72: five deterministic VISUAL seeds for the visual-quality sweep — every checklist
+  // capture uses one of these (or a URL `?seed=`), so two runs are always comparable.
+  const VISUAL_SEEDS: Record<string, number> = {
+    VISUAL_001: 0x5eed001,
+    VISUAL_002: 0x5eed002,
+    VISUAL_003: 0x5eed003,
+    VISUAL_004: 0x5eed004,
+    VISUAL_005: 0x5eed005,
+  };
+  const visualKey = switches.bag['visualSeed'] ?? switches.bag['visualseed'] ?? '';
+  const seed = VISUAL_SEEDS[visualKey.toUpperCase()] ?? switches.number('seed', descriptor.seed);
   // spec/title come from the shared world factory below (plan §30).
 
   // ---------------------------------------------------------------- environment owners
@@ -149,6 +161,32 @@ export async function startDevWorld(): Promise<void> {
     const random = generator.rand(1);
     const spawnSample = createSurfaceSample();
     const direction = new THREE.Vector3(0.55, 0.52, 0.65).normalize();
+    // Plan §41/§72 dev hooks: `?at=caveN` spawns at cave N's rim (approach side), `?at=caveinN`
+    // spawns on its chamber floor — deterministic cave captures without flying the camera.
+    const at = (switches.bag['at'] ?? '').toLowerCase();
+    if (at === 'ship') {
+      // `?at=ship` — the crashed colony ship site (plan §62 capture hook).
+      const sites = generateSciFiSites(generator.seed, generator.radius, generator.terrain.landmarks, null);
+      const ship = sites.find((site) => site.type === 'CRASHED_SHIP');
+      if (ship) return ship.dir.clone();
+    }
+    const caveMatch = /^cave(in)?(\d+)$/.exec(at);
+    if (caveMatch) {
+      const caves = generator.terrain.caves;
+      const index = Number(caveMatch[2]) % Math.max(1, caves.length);
+      const cave = caves[index];
+      if (cave) {
+        if (caveMatch[1]) {
+          // inside: the chamber node's centre direction, dropped on the carve floor
+          const chamber = [...cave.nodes].reverse().find((node) => node.chamber) ?? cave.nodes[cave.nodes.length - 1];
+          return chamber.dir.clone();
+        }
+        // rim: a step outside the footprint on the tangent side, so the bowl opens in front
+        const tangent = new THREE.Vector3(-cave.dir.z, 0.15, cave.dir.x).normalize();
+        const axis = new THREE.Vector3().crossVectors(tangent, cave.dir).normalize();
+        return cave.dir.clone().applyAxisAngle(axis, cave.radius * 1.18).normalize();
+      }
+    }
     const sunDirection = lighting.sunDirection.clone().normalize();
     for (let i = 0; i < 800; i++) {
       surface.randomSample(random, spawnSample);
@@ -188,6 +226,12 @@ export async function startDevWorld(): Promise<void> {
   });
   const { world, spec, surface, surfaceData, generator, nodes, materials, noises, wind, preRenderer } = result;
   document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
+
+  // Plan §41: `?cavedebug=1` overlays the analytic cave system (footprint rings, node rings,
+  // entrance markers) the game actually walks on.
+  const caveDebugEnabled = switches.enabled('cavedebug', false);
+  const caveDebug = caveDebugEnabled ? new CaveDebug(surface, generator) : null;
+  if (caveDebug) scene.add(caveDebug.group);
 
   // r186 plan §0.2/§0.3/§15/§49: the Dev World is where acceptance runs happen, so it gets the
   // SAME capability probe, telemetry snapshot and async precompilation the match does.
@@ -480,6 +524,23 @@ export async function startDevWorld(): Promise<void> {
 
   ticker.on(9, () => {
     focusScratch.set(playerState.position.x, playerState.position.y, playerState.position.z);
+    // Underground blend (plan §33/§34): read the ONE analytic carve at the body's direction.
+    const dirLen = focusScratch.length();
+    if (dirLen > 0.001) {
+      stageScratch.copy(focusScratch).multiplyScalar(1 / dirLen);
+      const depth = surface.generator.caveDepthAt(stageScratch.x, stageScratch.y, stageScratch.z);
+      const cave = depth > 0.5 ? surface.generator.caveAt(stageScratch.x, stageScratch.y, stageScratch.z) : null;
+      world.setUnderground(depth, cave, ticker.delta);
+      caveDebug?.setActive(cave && depth > 2.4 ? cave.id : -1);
+      if (caveDebug && stats) {
+        stats.set(
+          'cave',
+          cave
+            ? `${cave.label} (${cave.size}) · depth ${depth.toFixed(1)} m${depth > 2.4 ? ' · UNDERGROUND' : ''} · blend ${world.undergroundBlendValue.toFixed(2)}`
+            : `surface · no cave here · blend ${world.undergroundBlendValue.toFixed(2)}`,
+        );
+      }
+    }
     world.update(focusScratch, camera, undefined, ticker.delta);
   });
 
@@ -487,7 +548,7 @@ export async function startDevWorld(): Promise<void> {
     freeStep(ticker.delta);
   });
 
-  const stats = switches.stats || RenderDebug.baseline || RenderDebug.foliageDebug ? new StatsOverlay() : null;
+  const stats = switches.stats || caveDebugEnabled || RenderDebug.baseline || RenderDebug.foliageDebug ? new StatsOverlay() : null;
   /** r186 plan §49: refresh the telemetry lines twice a second on the same overlay. */
   let telemetryT = 0;
   ticker.on(998, () => {
@@ -513,6 +574,7 @@ export async function startDevWorld(): Promise<void> {
     crystals: switches.enabled('crystals', true),
     water: switches.enabled('water', true),
     particles: switches.enabled('particles', true),
+    caves: switches.enabled('caves', true),
   });
   if (!switches.enabled('shadows', true)) {
     rendering.renderer.shadowMap.enabled = false;
@@ -560,6 +622,7 @@ export async function startDevWorld(): Promise<void> {
       'no enemies · unlimited time · ground spawn',
       'WASD move · SHIFT run · SPACE jump · drag orbit · wheel zoom',
       'V free camera · 1/2/3 quality · R respawn · H hide UI',
+      caveDebugEnabled ? `caves ${generator.terrain.caves.length} · ${generator.terrain.caves.map((c) => c.label).join(' / ')}` : '',
       switches.stats ? '' : '(add ?stats for render statistics)',
     ].filter(Boolean).join('\n');
   }
@@ -599,9 +662,9 @@ export async function startDevWorld(): Promise<void> {
   };
   requestAnimationFrame(frame);
 
-  // debug handle
+  // debug handle (plan §41: cave probes use `devWorld.lighting`/`devWorld.fog` directly)
   (window as unknown as Record<string, unknown>).devWorld = {
-    scene, camera, rendering, world, generator, surface, surfaceData, quality, ticker, physics, playerState, spec,
+    scene, camera, rendering, world, generator, surface, surfaceData, quality, ticker, physics, playerState, spec, lighting, fog,
   };
 }
 

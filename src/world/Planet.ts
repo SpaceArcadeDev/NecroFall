@@ -22,6 +22,7 @@ import { deriveArchetype, type PlanetArchetype } from './PlanetArchetypes';
 import { TerrainGenerator } from './TerrainGenerator';
 import { BiomeGenerator } from './BiomeGenerator';
 import type { Landmark } from './LandmarkGenerator';
+import type { PlanetCave } from './caves/CaveGenerator';
 import { NECRO_UNIFORMS, syncNecroChunks } from '../rendering/materials/NecroChunks';
 
 const _up = new THREE.Vector3();
@@ -234,6 +235,27 @@ export class Planet {
     if (len < 0.001) return this.radius;
     d.multiplyScalar(1 / len);
     return this.heightAtDir(d.x, d.y, d.z);
+  }
+
+  // ------------------------------------------------------------ caves (plan §24/§33)
+
+  /**
+   * Metres of carved underground below the local surface at a unit direction (0 = open ground).
+   * THE query for the underground state, the cave fog/camera blend and the fall safety net.
+   */
+  caveDepthAtDir(x: number, y: number, z: number): number {
+    return this.terrain.caveDropAt(x, y, z);
+  }
+
+  /** The cave owning a unit direction (within its footprint), or null. */
+  caveAtDir(x: number, y: number, z: number): PlanetCave | null {
+    this.terrain.caveDropAt(x, y, z);
+    return this.terrain.lastCave();
+  }
+
+  /** Every deterministic cave of this planet (plan §28/§38). */
+  get caves(): readonly PlanetCave[] {
+    return this.terrain.caves;
   }
 
   // ------------------------------------------------------------ rendered-surface lookup

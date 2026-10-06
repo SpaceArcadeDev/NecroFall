@@ -6,7 +6,7 @@
  * these textures — baked from the SAME estimates so both agree.
  *
  *   tex1: R height01 · G grass · B wetness · A radiation
- *   tex2: R rock    · G biome · B puddle  · A spare
+ *   tex2: R rock    · G biome · B puddle  · A cave (plan §35)
  *
  * The bake is row-chunked and yields to the event loop, so the loading screen
  * keeps animating while the planet is measured.
@@ -97,8 +97,12 @@ export class PlanetSurfaceData {
 
         const radius = generator.radiusAt(x, y, z);
         heights[index] = radius;
-        if (radius < reliefMin) reliefMin = radius;
-        if (radius > reliefMax) reliefMax = radius;
+        // The WATERLINE is a surface law: measure relief on the un-carved surface (the carve is
+        // added back), so caves deepen underground WITHOUT draining every surface lake — cave
+        // floors below the line still read wet (underground pools), which is the wanted look.
+        const surfaceRadius = radius + generator.caveDepthAt(x, y, z);
+        if (surfaceRadius < reliefMin) reliefMin = surfaceRadius;
+        if (surfaceRadius > reliefMax) reliefMax = surfaceRadius;
       }
       if (iy % 12 === 11) {
         await yieldToLoop();
@@ -142,10 +146,11 @@ export class PlanetSurfaceData {
         const z = directions[index * 3 + 2];
         const height = heights[index] - generator.radius;
 
+        const cave = generator.caveDepthAt(x, y, z);
         const grass = generator.grassEstimate(x, y, z, slope);
         const wetness = generator.wetnessEstimate(x, y, z, height, this.waterLevel);
         const radiation = generator.radiationEstimate(x, y, z, height, this.waterLevel);
-        const rock = generator.rockEstimate(slope);
+        const rock = Math.max(generator.rockEstimate(slope), Math.min(1, cave / 5));
         const biome = generator.biomeWeightEstimate(x, y, z);
         const puddle = Math.max(0, wetness - 0.55) / 0.45 * (1 - Math.min(1, Math.max(0, (slope - 0.2) / 0.3)));
 
@@ -160,7 +165,9 @@ export class PlanetSurfaceData {
         channels2[i4] = Math.round(Math.min(1, rock) * 255);
         channels2[i4 + 1] = Math.round(Math.min(1, biome) * 255);
         channels2[i4 + 2] = Math.round(Math.min(1, puddle) * 255);
-        channels2[i4 + 3] = 0;
+        // A — cave mask (plan §35): how far below the local surface the carved underground is,
+        // saturated at 6 m, so the terrain shader can darken strata + drop the vegetation wash.
+        channels2[i4 + 3] = Math.round(Math.min(1, cave / 6) * 255);
       }
 
       if (iy % 48 === 47) onProgress?.(0.55 + (iy / rows) * 0.45, 'classifying biomes');

@@ -10,6 +10,8 @@ import * as THREE from 'three/webgpu';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import { PlanetObstacles } from '../../planet/PlanetObstacles';
+import { PlanetRoot } from '../../world/PlanetRoot';
+import { ResourceRegistry } from '../ResourceRegistry';
 import type { Quality } from '../Quality';
 import type { Ticker } from '../Ticker';
 import type { Materials } from '../materials/Materials';
@@ -94,7 +96,9 @@ const TREE_SPECIES: TreeSpeciesOptions[] = [
 ];
 
 export class PlanetRenderer {
-  readonly group = new THREE.Group();
+  /** r186 plan §1: the world's OWNED resources (baked textures, remapped materials, …). */
+  readonly resources = new ResourceRegistry();
+  readonly group = new PlanetRoot(this.resources);
 
   terrain!: PlanetTerrain;
   grass!: Grass;
@@ -276,6 +280,12 @@ export class PlanetRenderer {
     this.particles.dispose();
     this.terrain.material.dispose();
     this.terrain.mesh.geometry.dispose();
+    // r186 plan §1: the explicit teardown order — systems first (they release their own roots),
+    // then the subtree safety net (anything a system forgot), then the registry (baked textures,
+    // gradient lookups, remapped GLB materials, particle atlases). Shared app-lifetime resources
+    // are skipped by BOTH the subtree walk and the registry.
+    this.group.dispose();
+    this.resources.disposeAll();
     this.group.removeFromParent();
   }
 

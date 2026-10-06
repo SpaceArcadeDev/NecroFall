@@ -65,4 +65,12 @@ export class PreRenderer {
     texture.generateMipmaps = false;
     return texture;
   }
+
+  /**
+   * The foliage SDF is generated per world (r186 plan §1) — every planet's material samples it,
+   * so it is disposed with the planet instead of surviving to the next one.
+   */
+  dispose(): void {
+    this.foliageTexture.dispose();
+  }
 }

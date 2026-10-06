@@ -156,5 +156,11 @@ export async function createPlanetWorld(params: PlanetWorldParams): Promise<Plan
     (ratio, label) => onProgress?.(0.42 + ratio * 0.58, label),
   );
 
+  // r186 plan §1: the world now OWNS the resources it was built from. `PlanetRenderer.dispose`
+  // releases them through the registry after its systems are torn down — the baked terrain
+  // textures, the gradient lookup, the per-world material registry (palette atlas + every GLB
+  // remap) and the generated foliage SDF. Without this, every planet replacement leaked them.
+  world.resources.own(surfaceData).own(gradientTexture).own(materials).own(preRenderer);
+
   return { world, spec, generator, surfaceData, surface, nodes, materials, preRenderer, noises, wind, spawnDirection };
 }

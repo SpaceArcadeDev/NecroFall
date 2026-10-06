@@ -69,4 +69,23 @@ export class Materials {
   get paletteGrassColor(): string {
     return RADIOACTIVE_PALETTE.grass;
   }
+
+  /**
+   * Disposes every resource this registry created for ONE world (r186 plan §1): the palette
+   * atlas, the palette material, and every material created through `save()` — including the
+   * per-world GLB remaps. `Materials` is constructed per world (`createPlanetWorld`), so nothing
+   * here is app-lifetime shared; a later world builds its own.
+   */
+  dispose(): void {
+    for (const material of this.list.values()) {
+      try {
+        material.dispose();
+      } catch (err) {
+        console.warn('[NECROFALL] material dispose failed', err);
+      }
+    }
+    this.list.clear();
+    this.paletteTexture.dispose();
+    this.remapper.dispose();
+  }
 }

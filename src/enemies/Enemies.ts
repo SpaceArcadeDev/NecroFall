@@ -8,6 +8,7 @@ import type { QualitySettings } from '../core/Config';
 import type { StatusKind } from '../necrotech/NecrotechData';
 import { CONFIG } from '../core/Config';
 import { SpatialHash } from '../utils/SpatialHash';
+import { readSwitches } from '../rendering/DebugSwitches';
 import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { buildCreature, CreatureRig } from './EnemyModels';
 import { SwarmDirector } from './SwarmDirector';
@@ -57,6 +58,23 @@ const F_BOSS = 2;
 const F_ENRAGED = 4;
 const F_STUNNED = 8;
 const F_ENRAGING = 16;
+
+/**
+ * `?spatialhash=0` / VITE_SPATIAL_HASH=false — the A/B control for the spatial buckets (r186
+ * plan §22/§48). Read once; consulted per query.
+ */
+let spatialHashCache: boolean | null = null;
+
+function spatialHashEnabled(): boolean {
+  if (spatialHashCache === null) {
+    try {
+      spatialHashCache = readSwitches()['spatialhash'] !== '0';
+    } catch {
+      spatialHashCache = true;
+    }
+  }
+  return spatialHashCache;
+}
 
 // ---------------------------------------------------------------- boss heavies
 
@@ -2571,6 +2589,13 @@ export class EnemyManager {
   }
 
   query(x: number, y: number, z: number, r: number, out: Enemy[]): Enemy[] {
+    // `?spatialhash=0` (VITE_SPATIAL_HASH=false): the pre-hash LINEAR scan as the A/B control
+    // (r186 plan §22/§48). Callers re-check exact distances, so a superset is always correct.
+    if (!spatialHashEnabled()) {
+      out.length = 0;
+      for (const e of this.enemies) if (e.alive) out.push(e);
+      return out;
+    }
     this.spatial.query(x, y, z, r, this.cand);
     out.length = 0;
     for (const e of this.cand) if (e.alive) out.push(e);

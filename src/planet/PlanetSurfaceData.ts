@@ -173,6 +173,16 @@ export class PlanetSurfaceData {
     this.tex2.needsUpdate = true;
   }
 
+  /**
+   * Releases the baked terrain textures (r186 plan §1). Every environment material samples these
+   * through `TerrainNodeBundle`, so they are world-owned: disposed with the planet that baked
+   * them, exactly once.
+   */
+  dispose(): void {
+    this.tex1.dispose();
+    this.tex2.dispose();
+  }
+
   /** Bilinear height lookup from the baked grid (used by CPU scatter checks). */
   heightAt(direction: THREE.Vector3): number {
     const u = 0.5 + Math.atan2(direction.z, direction.x) / (Math.PI * 2);

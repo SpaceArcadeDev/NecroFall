@@ -14,6 +14,23 @@ export class MaterialRemapper {
 
   constructor(private readonly wireframe = false) {}
 
+  /**
+   * Releases the converted materials this remapper created for one world (r186 plan §1). The
+   * SOURCE GLB materials are app-lifetime (the loader cache reuses them across planets) and are
+   * never touched — only the conversions this map owns.
+   */
+  dispose(): void {
+    for (const material of this.cache.values()) {
+      if (material === undefined) continue;
+      try {
+        material.dispose();
+      } catch (err) {
+        console.warn('[NECROFALL] remapped material dispose failed', err);
+      }
+    }
+    this.cache.clear();
+  }
+
   /** Converts one source material (usually MeshStandardMaterial from a GLB). */
   convert(source: THREE.Material): THREE.Material {
     const cached = this.cache.get(source);

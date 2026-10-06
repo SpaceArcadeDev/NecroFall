@@ -17,6 +17,8 @@ export interface TerrainNodeBundle extends TerrainGlobals {
   directionToUv: (position: any) => any;
   reliefMin: any;
   reliefSpan: any;
+  /** The planet's palette ramp — shared with the terrain material (plan §4). */
+  gradientTexture: THREE.Texture;
 }
 
 export function createTerrainNodes(
@@ -55,5 +57,5 @@ export function createTerrainNodes(
     return mix(withGrass, radioactive, terrainData.a.mul(terrainData.a).mul(0.28));
   };
 
-  return { directionToUv, terrainNode, data2Node, colorNode, heightMeters, reliefMin, reliefSpan };
+  return { directionToUv, terrainNode, data2Node, colorNode, heightMeters, reliefMin, reliefSpan, gradientTexture };
 }

@@ -1588,6 +1588,11 @@ export class Game {
       PerformanceManager.attachRenderer(this.renderer, this.rendering.backend);
       for (const [label, value] of PerformanceManager.overlayLines()) overlay.set(label, value);
     }
+    // Art-direction rework §69: the two governance values the snapshot cannot know — the live
+    // render scale and the quality step the watchdog has walked to — plus the interpolation
+    // buffer's own input (the host clock's arrival spread, seconds) as the delay readout.
+    overlay.set('quality', `level ${this.quality.level} · dpr ${this.currentDpr().toFixed(2)}`);
+    overlay.set('interp', this.hostSync.synced ? `${(this.hostSync.spread * 1000).toFixed(0)}ms` : 'unsynced');
     if (!RenderDebug.foliageDebug) return;
     const world = this.envWorld;
     if (world) {

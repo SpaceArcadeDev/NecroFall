@@ -266,6 +266,27 @@ export async function startDevWorld(): Promise<void> {
     freeState.yaw = Math.atan2(look.x, look.z);
     freeState.pitch = Math.asin(look.y);
   }
+  {
+    // `?view=<landmarkIndex>` (visual rework plan §70): hover the FREE camera beside that
+    // landmark at `?viewAlt=<m>` (default 14) and aim it at the landmark centre, so a
+    // deterministic capture script can photograph spawn / landmark / horizon without steering.
+    const viewSwitch = switches.bag['view'];
+    if (viewSwitch !== undefined && freeCamera) {
+      const index = Math.max(0, Math.min(generator.terrain.landmarks.length - 1, Number.parseInt(viewSwitch, 10) || 0));
+      const targetDirection = generator.terrain.landmarks[index]?.dir ?? spawnDirection;
+      const altitude = Number.parseFloat(switches.bag['viewAlt'] ?? '') || 14;
+      const target = targetDirection.clone().multiplyScalar(surface.radiusAt(targetDirection));
+      const tangent = PlanetSurface.stableTangent(targetDirection.clone(), new THREE.Vector3());
+      const eye = target
+        .clone()
+        .addScaledVector(targetDirection, altitude)
+        .addScaledVector(tangent, -altitude * 1.4);
+      const forward = target.clone().sub(eye).normalize();
+      freeState.position.copy(eye);
+      freeState.yaw = Math.atan2(forward.x, forward.z);
+      freeState.pitch = clampNumber(Math.asin(forward.y), -1.5, 1.5);
+    }
+  }
 
   let dragging = false;
   canvas.addEventListener('pointerdown', () => (dragging = true));

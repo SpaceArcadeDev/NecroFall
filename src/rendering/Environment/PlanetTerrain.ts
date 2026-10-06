@@ -9,17 +9,11 @@
  * The build is chunked so the loading screen keeps running.
  */
 import * as THREE from 'three/webgpu';
-import { mix, normalize, positionLocal, smoothstep, texture } from 'three/tsl';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
 import type { Noises } from './Noises';
-import {
-  GRASS_PATCH_UV_SCALE,
-  GRASS_SHADOW_DEPTH,
-  GRASS_SHADOW_EDGE_HIGH,
-  GRASS_SHADOW_EDGE_LOW,
-} from './GrassField';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+import { createTerrainMaterial } from '../materials/TerrainMaterial';
 import { yieldToMain } from '../../utils/Yield';
 
 const RES_X = 320;
@@ -142,30 +136,11 @@ export class PlanetTerrain {
     // data + palette colour nodes are built ONCE: the colour node shades the ground, and the
     // lawn-glow term reuses the very same samples instead of re-reading terrain + palette per
     // pixel (plan §32 — repeated shader work moved out of the fragment path).
-    const terrainData = nodes.terrainNode(positionLocal);
-    const base = nodes.colorNode(terrainData);
-    const material = new MeshDefaultMaterial({
-      colorNode: (() => {
-        // THE GRASS SHADOW (fixed): a soft, planet-stable shade that exists EXACTLY where the
-        // blade field grows — the SAME patch sample, scale and thresholds the grass build uses
-        // (GrassField.ts). The band sits INSIDE the clumps (blades are already dense where it
-        // starts), so the ground darkens only under packed grass and can never show as
-        // standalone dark patches on the bare ground.
-        const direction = normalize(positionLocal);
-        const patchNoise = texture(noises.patch, direction.xz.mul(GRASS_PATCH_UV_SCALE)).r;
-        const shade = smoothstep(GRASS_SHADOW_EDGE_LOW, GRASS_SHADOW_EDGE_HIGH, patchNoise);
-        return base.mul(mix(1.0, GRASS_SHADOW_DEPTH, shade)) as any;
-      })(),
-      lawnGlowData: terrainData,
-      lawnGlowColor: base,
-      // A convex planet constantly presents far-slope BACKFACES to a low camera;
-      // single-sided terrain left see-through voids wherever grass didn't cover.
-      side: THREE.DoubleSide,
-      hasCoreShadows: true,
-      hasDropShadows: true,
-      hasLightBounce: false,
-      hasFog: true,
-    });
+    //
+    // The visual rework (plan §4–§7/§19–§21/§62) lives in ONE shared factory — masks, noise
+    // breakup, elevation bands, slope/wetness/radiation layers, distance compression and the
+    // atmospheric rim — so no other system needs its own terrain material (plan §43).
+    const { material } = createTerrainMaterial({ nodes, noises });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;

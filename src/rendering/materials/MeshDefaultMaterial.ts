@@ -27,6 +27,7 @@ import {
 } from 'three/tsl';
 import { WorldGlobals } from '../WorldGlobals';
 import { RenderDebug, type MaterialDebugMode } from '../RenderDebug';
+import { celBandTint, celQuantize } from './CelShading';
 
 /** Lawn glow (see `lawnGlow`): fraction of the local vegetation colour spilled on to the
  *  surfaces around the glowing blades. Faint by design — the blades' OWN glow (Grass) stays
@@ -85,6 +86,12 @@ export interface MeshDefaultMaterialParameters {
   flipBackfaceNormal?: boolean;
   /** Kept for API parity with folio; puddle tinting lives in the puddle shader. */
   hasWater?: boolean;
+  /**
+   * Cel band ladder (visual rework plan §2/§3): when set, the lit part of the surface is tinted
+   * per quantised band (shadow → mid → light multipliers). Terrain passes
+   * `ART_DIRECTION.terrain`; every other material shades with the plain cel bands.
+   */
+  bandTint?: { shadow: number; mid: number; light: number };
 }
 
 export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
@@ -198,9 +205,31 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         );
       }
 
+      // ---- the ONE lighting ramp every stylisation term reads: `smoothstep(ndotl)` with the
+      // shipped shadow edges, quantised into cel bands (visual rework plan §3). `lightRamp` is
+      // 0 in full core shadow, 1 fully lit; the core-shadow mix below is its complement.
+      const lightRamp: any = this.hasCoreShadows
+        ? celQuantize(
+            reorientedNormal.dot(directionNode).smoothstep(coreShadowEdgeLow, coreShadowEdgeHigh),
+          )
+        : float(1);
+
       // ---- direct light
       if (lighting) {
         outputColor.mulAssign(lighting.colorUniform.mul(lighting.intensityUniform));
+      }
+
+      // ---- cel band ladder (visual rework plan §3/§4): the SAME ramp the core shadow uses,
+      // quantised into discrete levels. Shadowed areas keep the shipped shadow-colour language
+      // (the multiply is cancelled by the shadow mix below); lit areas ride the band multipliers.
+      if (parameters.bandTint) {
+        const tint = celBandTint(
+          lightRamp,
+          parameters.bandTint.shadow,
+          parameters.bandTint.mid,
+          parameters.bandTint.light,
+        );
+        if (tint) outputColor.mulAssign(tint);
       }
 
       // ---- core shadow (facing away from the sun)
@@ -209,10 +238,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         // GLSL allowed reversed-edge smoothstep; WGSL defines it only for ascending edges
         // (Tint evaluated the reversed form to 1 for lit normals — every surface went black).
         // The equivalent, portal-safe form is `1 - smoothstep(low, high, x)`.
-        coreShadowMix = reorientedNormal
-          .dot(directionNode)
-          .smoothstep(coreShadowEdgeLow, coreShadowEdgeHigh)
-          .oneMinus();
+        coreShadowMix = lightRamp.oneMinus();
       }
 
       // ---- cast / drop shadow

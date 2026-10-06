@@ -10,6 +10,7 @@ import * as THREE from 'three/webgpu';
 import { color, uniform } from 'three/tsl';
 import type { Quality } from '../Quality';
 import type { LightingGlobals } from '../WorldGlobals';
+import { ART_DIRECTION } from '../ArtDirection';
 
 export interface LightingOptions {
   /** Shadow follow window (metres around the focus point). */
@@ -31,8 +32,8 @@ export interface LightingOptions {
 }
 
 export class Lighting implements LightingGlobals {
-  readonly colorUniform = uniform(color('#fff8ec'));
-  readonly intensityUniform = uniform(2.35);
+  colorUniform = uniform(color('#fff8ec'));
+  intensityUniform = uniform(ART_DIRECTION.lighting.sunIntensity);
   readonly directionUniform: any;
   readonly coreShadowEdgeLow = uniform(-0.2);
   readonly coreShadowEdgeHigh = uniform(1);

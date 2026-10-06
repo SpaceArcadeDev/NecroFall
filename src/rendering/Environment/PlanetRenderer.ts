@@ -31,6 +31,9 @@ import { Spikes } from './Spikes';
 import { RadioactiveCrystals } from './RadioactiveCrystals';
 import { Puddles } from './Puddles';
 import { FloatingParticles } from './FloatingParticles';
+import { SkyDome } from './SkyDome';
+import { Landmarks } from './Landmarks';
+import { readSwitches, DebugSwitches } from '../DebugSwitches';
 import { ASSETS } from '../Assets/AssetManifest';
 // Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
 // in an occluded tab and stretched this build from seconds to minutes behind the loading screen).
@@ -108,9 +111,15 @@ export class PlanetRenderer {
   crystals!: RadioactiveCrystals;
   puddles!: Puddles;
   particles!: FloatingParticles;
+  /** Sci-fi sky dome (plan §22) — always behind the world; `?sky=0` removes it. */
+  sky!: SkyDome;
+  /** Landmark prop compositions + the hero formation (plan §16–§18). */
+  landmarks!: Landmarks;
   readonly trees: Trees[] = [];
 
   private readonly focusScratch = new THREE.Vector3();
+  /** URL switches (`?sky=0`, `?landmarks=0`, …) — read once per world. */
+  private readonly switches = new DebugSwitches();
 
   /** Environmental colliders (trees / bushes / rocks / spikes / crystals). */
   readonly obstacles: PlanetObstacles;
@@ -134,6 +143,13 @@ export class PlanetRenderer {
     const deps = this.deps;
     deps.scene.add(this.group);
     const spawnClear = { direction: deps.spawnDirection, radius: 9 };
+
+    // 0 — the sky dome goes in FIRST: the renderer runs with `sortObjects = false`, so insertion
+    // order is draw order and the sky must never be submitted after the world (plan §22).
+    if (this.switches.enabled('sky')) {
+      this.sky = new SkyDome(deps.noises, deps.time, 1500);
+      this.group.add(this.sky.mesh);
+    }
 
     // 1 — terrain first: everything else contours to it (plan §46)
     onProgress?.(0.05, 'building terrain mesh');
@@ -214,6 +230,23 @@ export class PlanetRenderer {
     this.group.add(this.particles.group);
     await nextLoop();
 
+    // 7 — landmark compositions + the ONE hero formation (plan §16–§18): deterministic from the
+    // planet seed, terrain-aligned, instanced. Built after the scatter systems so the clusters
+    // own their space; `?landmarks=0` removes the whole layer for A/B.
+    if (this.switches.enabled('landmarks')) {
+      onProgress?.(0.94, 'composing landmarks');
+      this.landmarks = new Landmarks(
+        deps.surface,
+        deps.generator,
+        deps.noises,
+        deps.time,
+        spawnClear,
+        this.obstacles,
+      );
+      this.group.add(this.landmarks.group);
+      await nextLoop();
+    }
+
     // ---- FREEZE THE STATIC WORLD (plan §15/§37): every environment transform is final —
     // nothing in this subtree ever moves (all animation lives in shader uniforms), so the
     // renderer must not rebuild world matrices for the static scene on every frame. Pads,
@@ -255,6 +288,8 @@ export class PlanetRenderer {
     crystals: boolean;
     water: boolean;
     particles: boolean;
+    sky?: boolean;
+    landmarks?: boolean;
   }): void {
     this.grass.setVisible(switches.grass);
     this.bushes.setVisible(switches.foliage);
@@ -267,6 +302,8 @@ export class PlanetRenderer {
     this.crystals.setVisible(switches.crystals);
     this.puddles.setVisible(switches.water);
     this.particles.setVisible(switches.particles);
+    if (this.sky) this.sky.setVisible(switches.sky ?? true);
+    if (this.landmarks) this.landmarks.setVisible(switches.landmarks ?? true);
   }
 
   dispose(): void {
@@ -278,6 +315,8 @@ export class PlanetRenderer {
     this.crystals.dispose();
     this.puddles.dispose();
     this.particles.dispose();
+    this.sky?.dispose();
+    this.landmarks?.dispose();
     this.terrain.material.dispose();
     this.terrain.mesh.geometry.dispose();
     // r186 plan §1: the explicit teardown order — systems first (they release their own roots),
@@ -298,6 +337,7 @@ export class PlanetRenderer {
       'crystals': `${this.crystals.shardCount}`,
       'puddles': `${this.puddles.count}`,
       'motes': `${this.particles.count}`,
+      'landmarks': `${this.landmarks ? `${this.landmarks.propCount} props${this.landmarks.heroLabel ? ` · hero ${this.landmarks.heroLabel}` : ''}` : 'off'}`,
       'colliders': `${this.obstacles.count}`,
     };
   }

@@ -65,6 +65,7 @@ import {
 } from './GrassLOD';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { readSwitches } from '../DebugSwitches';
+import { ART_DIRECTION } from '../ArtDirection';
 // Throttle-proof build yields — see utils/Yield.ts (a `setTimeout(0)` yield is clamped to 1 s+
 // in an occluded tab and stretched this build from seconds to minutes behind the loading screen;
 // rAF is paused outright there).
@@ -466,8 +467,12 @@ export class Grass {
       colorNode: (() => {
         const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
-        const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
-        return vivid.mul((bladeTint as any).mul(0.3).add(0.87));
+        // Vegetation saturation from the ONE art-direction document (plan §2/§10) — the shipped
+        // tuned pop, now globally tunable instead of hard-coded.
+        const saturation = ART_DIRECTION.vegetation.saturation;
+        const vivid: any = ramp.mul(saturation).sub(vec3(luma, luma, luma).mul(saturation - 1));
+        const variation = ART_DIRECTION.vegetation.variation;
+        return vivid.mul((bladeTint as any).mul(variation * 2).add(1 - variation));
       })(),
       normalNode: normalize(positionWorld) as any,
       // safety net for degenerate winding at grazing angles
@@ -501,7 +506,8 @@ export class Grass {
       glowNode: (() => {
         const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
-        const vivid: any = ramp.mul(1.32).sub(vec3(luma, luma, luma).mul(0.32));
+        const saturation = ART_DIRECTION.vegetation.saturation;
+        const vivid: any = ramp.mul(saturation).sub(vec3(luma, luma, luma).mul(saturation - 1));
         const gradient: any = (tipness as any).mul(0.5).add((tipness as any).mul(tipness).mul(0.5));
         const vary: any = (bladeTint as any).mul(0.4).add(0.8);
         // COLOUR-LED glow: keeps the blade's own hue (the white-lifted pass bleached whole lawns —

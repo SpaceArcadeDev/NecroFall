@@ -10,6 +10,10 @@
  *   ?quality=0|1|2          force a quality level
  *   ?backend=webgl|webgpu   force the renderer backend (r186 plan §38/§48)
  *   ?grasslod=0             pin grass to LOD0 (A/B)
+ *   ?cel=0                  pin the pre-rework smooth lighting ramp (A/B)
+ *   ?outlines=0             selective object outlines off
+ *   ?sky=0                  sci-fi sky dome off
+ *   ?landmarks=0            landmark prop compositions + hero formation off
  *   ?spatialhash=0          enemy candidate lookup -> linear scan (A/B)
  *   ?enemytiers=0           enemy simulation tiers off (A/B)
  *   ?precompile=0           skip async pipeline precompilation (r186 plan §15)
@@ -85,6 +89,9 @@ export function readSwitches(): SwitchBag {
     grassoff: 'grass',
     treesoff: 'foliage',
     postoff: 'post',
+    skyoff: 'sky',
+    landmarksoff: 'landmarks',
+    celoff: 'cel',
   };
   const mapped = alias[render];
   if (mapped && bag[mapped] === undefined) bag[mapped] = '0';

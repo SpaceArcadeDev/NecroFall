@@ -6,11 +6,12 @@
  * pulse is GPU-side: zero CPU material updates per frame.
  */
 import * as THREE from 'three/webgpu';
-import { color, mix, normalWorld, uv } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import { scatterPlacements } from '../../planet/Placement';
 import type { PlanetObstacles } from '../../planet/PlanetObstacles';
+import { createEmissiveMaterial } from '../materials/EmissiveMaterial';
+import { ART_DIRECTION } from '../ArtDirection';
 
 export class RadioactiveCrystals {
   readonly mesh: THREE.InstancedMesh | null;
@@ -38,15 +39,19 @@ export class RadioactiveCrystals {
     geometry.scale(0.5, 1.9, 0.5);
     geometry.translate(0, 0.75, 0);
 
-    // ---- emissive radioactive material (values > 1 feed the bloom)
-    const core = color('#b6ff54');
-    const edge = color('#36ff9b');
-    const pulse = (timeUniform as any).mul(1.35).sin().mul(0.22).add(0.92);
-    const facet = (normalWorld as any).y.mul(0.25).add(0.78);
-
-    const material = new THREE.MeshBasicNodeMaterial();
-    material.colorNode = mix(core, edge, (uv() as any).y).mul(1.9).mul(pulse).mul(facet) as any;
-    material.transparent = false;
+    // ---- emissive radioactive material through the SHARED emissive factory (plan §25/§26):
+    // values above 1 feed the bloom; the medium tier keeps only crystal cores glowing.
+    const material = createEmissiveMaterial({
+      color: '#b6ff54',
+      edgeColor: '#36ff9b',
+      intensity: ART_DIRECTION.radiation.intensity,
+      bloom: 'medium',
+      pulseSpeed: 1.35,
+      pulseAmount: 0.22,
+      facet: true,
+      gradient: 'uv',
+      time: timeUniform,
+    });
 
     const matrices: THREE.Matrix4[] = [];
     const dummy = new THREE.Object3D();

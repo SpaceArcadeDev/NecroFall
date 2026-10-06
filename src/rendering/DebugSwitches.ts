@@ -9,8 +9,8 @@
  *   ?fog=0                  fog off
  *   ?quality=0|1|2          force a quality level
  *   ?backend=webgl|webgpu   force the renderer backend (r186 plan §38/§48)
- *   ?grasslod=0             pin grass to LOD0 (A/B)      ?grassgpu=0  TSL grass → fallback
- *   ?gpuparticles=0         GPU particle sim → pooled fallback
+ *   ?grasslod=0             pin grass to LOD0 (A/B)
+ *   ?spatialhash=0          enemy candidate lookup -> linear scan (A/B)
  *   ?enemytiers=0           enemy simulation tiers off (A/B)
  *   ?precompile=0           skip async pipeline precompilation (r186 plan §15)
  *   ?seed=<n>               planet seed override
@@ -32,12 +32,12 @@ export interface SwitchBag {
  * default, flip it per session for an A/B measurement).
  *
  *   VITE_RENDERER=auto|webgpu|webgl   → ?backend=…        (renderer adapter choice)
- *   VITE_GRASS_GPU=true|false         → ?grassgpu=0/1     (TSL grass material vs fallback)
  *   VITE_GRASS_LOD=true|false         → ?grasslod=0/1     (distance LOD)
- *   VITE_GPU_PARTICLES=true|false     → ?gpuparticles=0/1 (GPU particle sim vs pooled fallback)
  *   VITE_ENEMY_TIERS=true|false       → ?enemytiers=0/1   (simulation tiers)
  *   VITE_SPATIAL_HASH=true|false      → ?spatialhash=0/1  (spatial buckets vs linear scan)
- *   VITE_WORLD_WORKER=true|false      → ?worldworker=0/1  (generation worker vs main-thread bake)
+ *
+ * Flags whose feature has not landed yet (GPU particle compute, world-generation worker) are NOT
+ * declared here: a build flag is added with its consumer, never before it.
  */
 function envSwitchDefaults(): SwitchBag {
   const bag: SwitchBag = {};
@@ -52,12 +52,9 @@ function envSwitchDefaults(): SwitchBag {
     if (raw === undefined || raw === '') return;
     bag[name] = raw === 'false' || raw === '0' ? disabled : enabled;
   };
-  set('VITE_GRASS_GPU', 'grassgpu');
   set('VITE_GRASS_LOD', 'grasslod');
-  set('VITE_GPU_PARTICLES', 'gpuparticles');
   set('VITE_ENEMY_TIERS', 'enemytiers');
   set('VITE_SPATIAL_HASH', 'spatialhash');
-  set('VITE_WORLD_WORKER', 'worldworker');
   const renderer = env['VITE_RENDERER'];
   if (renderer === 'webgl' || renderer === 'webgpu') bag['backend'] = renderer;
   return bag;

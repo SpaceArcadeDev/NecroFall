@@ -45,6 +45,14 @@ export interface PerfCheckResult {
   seconds: number;
   frames: number;
   tier: DeviceTierName;
+  /** r186 plan §40/§41: scenario label, frame-pacing and memory readouts for the report. */
+  context?: {
+    scenario: string;
+    low1PctFps: number;
+    peakMs: number;
+    heapDeltaMB: number | null;
+    telemetry: string;
+  };
 }
 
 /** Per-frame draw calls live in `info.render.drawCalls` — `info.render.calls` is cumulative
@@ -80,6 +88,20 @@ export class PerfChecklist {
   private static lastCalls = 0;
   private static lastTriangles = 0;
   private static result: PerfCheckResult | null = null;
+  /** r186 plan §41: 1 % low / peak need the gap DISTRIBUTION — bounded (20 s @ 240 Hz max). */
+  private static readonly gaps: number[] = [];
+  private static heapStartMB: number | null = null;
+  /** Scenario / telemetry text supplied by the game (Phase 40/49), never required. */
+  private static context: { scenario: string; telemetry: () => string } = {
+    scenario: 'default',
+    telemetry: () => '',
+  };
+
+  /** Game hook: label the run (benchmark scenario) and expose the §49 telemetry line. */
+  static setContext(context: { scenario?: string; telemetry?: () => string }): void {
+    if (context.scenario !== undefined) PerfChecklist.context.scenario = context.scenario;
+    if (context.telemetry !== undefined) PerfChecklist.context.telemetry = context.telemetry;
+  }
 
   /** Read the URL flags (`?perfcheck[=seconds]`, search or hash query). Called once at boot. */
   static init(): void {
@@ -123,14 +145,23 @@ export class PerfChecklist {
       // First sampled frame: reset the window so leftover warmup numbers cannot leak in.
       PerfChecklist.sumGap = 0;
       PerfChecklist.sumWork = 0;
+      PerfChecklist.gaps.length = 0;
+      PerfChecklist.heapStartMB = PerfChecklist.heapMB();
     }
     PerfChecklist.frames++;
     PerfChecklist.sumGap += Math.min(gapMs, 1000); // a hidden-tab gap must not poison the average
     PerfChecklist.sumWork += Math.min(workMs, 1000);
+    // 1 % low / peak (plan §41): one small push per sampled frame, hard-bounded.
+    if (PerfChecklist.gaps.length < 8192) PerfChecklist.gaps.push(gapMs);
     PerfChecklist.lastCalls = calls;
     PerfChecklist.lastTriangles = triangles;
     const elapsed = (now - PerfChecklist.sampleStart) / 1000;
     if (elapsed >= PerfChecklist.seconds) PerfChecklist.finish();
+  }
+
+  private static heapMB(): number | null {
+    const memory = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+    return memory ? memory.usedJSHeapSize / 1048576 : null;
   }
 
   private static finish(): void {
@@ -172,12 +203,32 @@ export class PerfChecklist {
       },
     ];
     const pass = rows.every(r => r.pass);
-    PerfChecklist.result = { pass, rows, seconds: PerfChecklist.seconds, frames, tier };
+    // r186 plan §41: frame pacing (1 % low / peak) and memory growth ride along as context —
+    // they are what separates "average fps is fine" from "the phone is heating".
+    const sorted = [...PerfChecklist.gaps].sort((a, b) => a - b);
+    const low1PctGap = sorted.length > 0 ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.99))] : avgGap;
+    const peakMs = sorted.length > 0 ? sorted[sorted.length - 1] : avgGap;
+    const heapEnd = PerfChecklist.heapMB();
+    const heapDeltaMB =
+      PerfChecklist.heapStartMB !== null && heapEnd !== null ? heapEnd - PerfChecklist.heapStartMB : null;
+    const context = {
+      scenario: PerfChecklist.context.scenario,
+      low1PctFps: low1PctGap > 0 ? 1000 / low1PctGap : 0,
+      peakMs,
+      heapDeltaMB,
+      telemetry: PerfChecklist.context.telemetry(),
+    };
+    PerfChecklist.result = { pass, rows, seconds: PerfChecklist.seconds, frames, tier, context };
     console.table(rows.map(r => ({ metric: r.metric, measured: r.measured, budget: r.budget, verdict: r.pass ? 'PASS' : 'FAIL' })));
     // One copyable line (a phone report is read back from a log, not a table).
     const lines = rows.map(r => `${r.metric}=${r.measured}/${r.budget} ${r.pass ? 'PASS' : 'FAIL'}`).join(' · ');
     console.info(
-      `[perfcheck] ${pass ? 'PASS' : 'FAIL'} — tier ${tier}, ${frames} frames over ${PerfChecklist.seconds}s — ${lines}`
+      `[perfcheck] ${pass ? 'PASS' : 'FAIL'} — tier ${tier}, scenario ${context.scenario}, ${frames} frames over ${PerfChecklist.seconds}s — ${lines}`
+    );
+    console.info(
+      `[perfcheck] pacing — 1% low ${context.low1PctFps.toFixed(1)} fps · peak ${peakMs.toFixed(1)} ms · heap ${
+        heapDeltaMB === null ? 'n/a' : `${heapDeltaMB >= 0 ? '+' : ''}${heapDeltaMB.toFixed(1)} MB`
+      }${context.telemetry ? ` · ${context.telemetry}` : ''}`
     );
   }
 }

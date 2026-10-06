@@ -26,7 +26,7 @@ import {
 } from './Config';
 import { GameCamera, CameraTarget } from '../camera/GameCamera';
 import { DeviceTier } from '../performance/DeviceTier';
-import { PerfHarness } from '../performance/PerfHarness';
+import { PerfHarness, readBenchScenario, type BenchScenario } from '../performance/PerfHarness';
 import { PerfChecklist } from '../performance/PerfChecklist';
 import { InputManager } from '../input/InputManager';
 import { Planet } from '../world/Planet';
@@ -90,6 +90,7 @@ import {
 } from '../rendering/RendererCapabilities';
 import { spacetimeUpdatesPerSecond } from '../app/spacetimedb/cache';
 import { precompileEnabled, precompilePipelines } from '../rendering/PipelinePrecompiler';
+import { pinGrassLodFull } from '../rendering/Environment/GrassLOD';
 
 export type Phase = 'menu' | 'lobby' | 'colony' | 'necrotech' | 'starting' | 'playing' | 'ended';
 
@@ -334,6 +335,8 @@ export class Game {
   private readonly debugSwitches: DebugSwitches;
   /** `?renderBaseline=1` / `?foliageDebug=1` overlay. */
   private debugOverlay: StatsOverlay | null = null;
+  /** r186 plan §40: `?bench=<name>` pins a deterministic load for the whole session. */
+  private readonly benchScenario: BenchScenario | null = readBenchScenario();
   /** r186 plan §0.2: the boot capability probe (WebGPU/WebGL, limits, tier). */
   capabilities: RendererCapabilities | null = null;
   private debugOverlayAccum = 0;
@@ -775,8 +778,8 @@ export class Game {
     });
     this.debugSwitches = new DebugSwitches();
     // §120 swarm load harness (`?swarm=400`) — inert unless the URL asks for it.
-    const swarmTarget = PerfHarness.readTarget();
-    this.perfHarness = swarmTarget > 0 ? new PerfHarness(this, swarmTarget) : null;
+    const swarmTarget = PerfHarness.readTarget() || this.benchScenario?.swarm || 0;
+    this.perfHarness = swarmTarget > 0 || this.benchScenario?.boss ? new PerfHarness(this, swarmTarget, this.benchScenario?.boss ?? false) : null;
     PlanetSurface.debugCounters = RenderDebug.foliageDebug;
     const forcedQuality = this.debugSwitches.bag['quality'];
     if (forcedQuality !== undefined) {
@@ -1531,14 +1534,17 @@ export class Game {
 
   /** One-shot visibility flags from the URL switches (`?grass=0`, `?foliage=0`, …). */
   private applyDebugVisibility(world: PlanetRenderer): void {
+    // r186 plan §40: a benchmark scenario owns the decoration switches while it runs (`empty`
+    // hides them all, `vegetation`/`full` force them on), so two runs compare the same load.
+    const bench = this.benchScenario?.decorations ?? null;
     world.applyVisibility({
-      grass: this.debugSwitches.enabled('grass', true),
-      foliage: this.debugSwitches.enabled('foliage', true),
-      rocks: this.debugSwitches.enabled('rocks', true),
-      spikes: this.debugSwitches.enabled('spikes', true),
-      crystals: this.debugSwitches.enabled('crystals', true),
-      water: this.debugSwitches.enabled('water', true),
-      particles: this.debugSwitches.enabled('particles', true),
+      grass: bench ?? this.debugSwitches.enabled('grass', true),
+      foliage: bench ?? this.debugSwitches.enabled('foliage', true),
+      rocks: bench ?? this.debugSwitches.enabled('rocks', true),
+      spikes: bench ?? this.debugSwitches.enabled('spikes', true),
+      crystals: bench ?? this.debugSwitches.enabled('crystals', true),
+      water: bench ?? this.debugSwitches.enabled('water', true),
+      particles: bench ?? this.debugSwitches.enabled('particles', true),
     });
   }
 
@@ -1640,6 +1646,13 @@ export class Game {
     PerformanceMonitor.init();
     // §120 budget checklist (`?perfcheck[=seconds]`) — works without `?debug=true`.
     PerfChecklist.init();
+    // r186 plan §40/§41: label the acceptance run with its benchmark scenario and append the §49
+    // telemetry line to the verdict, so a phone report says WHAT was running, not just the fps.
+    PerfChecklist.setContext({
+      scenario: this.benchScenario?.label ?? 'default',
+      telemetry: () => PerformanceManager.overlayLines().map(([label, value]) => `${label} ${value}`).join(' · '),
+    });
+    if (this.benchScenario?.grassLodFull) pinGrassLodFull(true);
     // r186 plan §0.2/§0.3: the ONE capability probe + the pull-based telemetry snapshot.
     PerformanceManager.init();
     this.capabilities = detectRendererCapabilities(this.renderer);

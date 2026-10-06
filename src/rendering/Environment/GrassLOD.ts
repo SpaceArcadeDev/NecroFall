@@ -129,3 +129,11 @@ export function grassLodEnabled(): boolean {
   }
   return lodEnabledCache;
 }
+
+/**
+ * Benchmark hook (r186 plan §40, `?bench=vegetation`): pin every sector to LOD0 for the whole
+ * session — the maximum-vegetation load. Must be called before the first frame.
+ */
+export function pinGrassLodFull(pin: boolean): void {
+  lodEnabledCache = !pin;
+}

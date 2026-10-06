@@ -104,7 +104,9 @@ class of bug: with a single shared cap, a per-frame hit-feedback stream could
 push the match authority over the budget, and the messages the module dropped
 were exactly the ones that cannot be recovered. Clients keep their own count and
 log `[NECROFALL] relay budget: sent N messages in the last second …` when a
-window approaches the limit (see `countRelaySend` in the client provider).
+window approaches the limit (see `countRelaySend` in the client provider). With
+`?debug` in the URL, `game.netDebug()` in the console reports the same live:
+role, authority seat, per-seat transport (direct vs relay) and relay sends/second.
 
 Changing either constant is a **logic-only** module change — no schema change,
 no data loss, but the module must be republished for it to take effect:

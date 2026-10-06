@@ -38,7 +38,9 @@ per frame).
 > protocol (`match_msg` rows); the module's per-sender budget is two-tier so a
 > busy state stream (snapshots/poses/hit feedback) can never starve the one-shot
 > gameplay events — enemy damage, kills, statuses — which have a reserved
-> headroom and are never silently dropped. See
+> headroom and are never silently dropped. A seat that approaches the budget warns
+> in the console, and `?debug` exposes `game.netDebug()` (role, authority, per-seat
+> transport, relay sends/second). See
 > [`spacetimedb/README.md`](spacetimedb/README.md) → "The relay budget".
 
 ```bash

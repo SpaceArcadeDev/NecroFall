@@ -1579,7 +1579,7 @@ export class Game {
     console.info('[device]', DeviceTier.describe());
     // DEV HANDLE: with `?debug`/`?perfcheck` the running game is reachable from the console for
     // acceptance measurements (`game.rendering.renderer.info`, `game.enemies.director.stats()`,
-    // `game.envWorld.grass.bladesDrawn`, ...). Never exposed in a normal boot.
+    // `game.envWorld.grass.bladesDrawn`, `game.netDebug()`, ...). Never exposed in a normal boot.
     if (PerformanceMonitor.enabled || PerfChecklist.enabled) {
       (window as unknown as { game?: Game }).game = this;
     }
@@ -5941,6 +5941,26 @@ export class Game {
    */
   private poseSignature(state: PlayerNet): string {
     return `${state.x},${state.y},${state.z},${state.fx},${state.fy},${state.fz},${state.hp},${state.alive},${state.lvl},${state.mut},${state.ntc},${state.ntn},${state.bl ?? 0},${state.frz ?? 0},${state.sh ?? 0},${state.shm ?? 0},${state.inv ?? 0},${state.dsh ?? 0},${state.acc ?? ''}`;
+  }
+
+  /**
+   * Debug/telemetry (`?debug`: `game.netDebug()` in the console). The official wire's health in
+   * one object: role, authority seat, per-seat transport topology (direct WebRTC vs relay), and
+   * this seat's relay sends in the current second — a count approaching the budget is exactly
+   * what silently drops one-shot events like enemy damage (see `spacetimedb/src/game/relay.ts`).
+   */
+  netDebug(): unknown {
+    const bridge = this.officialMatch?.bridge as unknown as {
+      relaySendRate?: () => number;
+      transportState?: () => unknown;
+    } | undefined;
+    return {
+      official: this.officialMatch !== null,
+      host: this.isHost,
+      authority: this.officialAuthorityId,
+      relayPerSecond: bridge?.relaySendRate?.() ?? null,
+      transport: bridge?.transportState?.() ?? null,
+    };
   }
 
   private networkTick(dt: number): void {

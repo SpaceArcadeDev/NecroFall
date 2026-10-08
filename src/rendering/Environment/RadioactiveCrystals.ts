@@ -34,7 +34,6 @@ export class RadioactiveCrystals {
 
     const random = generator.rand(56);
     // Solid hazards (user ask): the shard bed blocks players — radius covers the leaned spread.
-    for (const cluster of clusters) obstacles?.add(cluster, 0.9 * cluster.scale, 1.8 * cluster.scale, false);
     const geometry = new THREE.OctahedronGeometry(0.46, 0);
     geometry.scale(0.5, 1.9, 0.5);
     geometry.translate(0, 0.75, 0);
@@ -42,8 +41,8 @@ export class RadioactiveCrystals {
     // ---- emissive radioactive material through the SHARED emissive factory (plan §25/§26):
     // values above 1 feed the bloom; the medium tier keeps only crystal cores glowing.
     const material = createEmissiveMaterial({
-      color: '#b6ff54',
-      edgeColor: '#36ff9b',
+      color: generator.archetype.art?.infection ?? '#b6ff54',
+      edgeColor: generator.archetype.art?.foliageLight ?? '#36ff9b',
       intensity: ART_DIRECTION.radiation.intensity,
       bloom: 'medium',
       pulseSpeed: 1.35,

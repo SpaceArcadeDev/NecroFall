@@ -18,6 +18,7 @@ import type { PlanetObstacles } from '../../planet/PlanetObstacles';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 import { RADIOACTIVE_PALETTE } from '../materials/PlanetPalette';
 import { dotDissolve } from './DotDissolve';
+import { createRenderedRadiusAt } from '../../planet/RenderedTerrain';
 
 export class Spikes {
   readonly mesh: THREE.InstancedMesh | null;
@@ -46,7 +47,6 @@ export class Spikes {
 
     // Solid hazards (user ask): the cluster's footprint blocks players. Radius covers the
     // scaled spike spread (+ the lean), so no cone can be walked through.
-    for (const cluster of clusters) obstacles?.add(cluster, 1.3 * cluster.scale, 2.6 * cluster.scale, false);
 
     // ROUND-DOT SEE-THROUGH (user ask): the spike dissolves into the SHARED round-dot pattern
     // (DotDissolve.ts — the tree canopies use the very same one), growing from distinct dots at
@@ -64,12 +64,8 @@ export class Spikes {
     })();
 
     const material = new MeshDefaultMaterial({
-      colorNode: mix(
-        color(RADIOACTIVE_PALETTE.spike),
-        color(RADIOACTIVE_PALETTE.radioactive),
-        (normalWorld as any).y.abs().pow(1.6).mul(0.45),
-      ),
-      alphaNode: seeThroughAlpha,
+      colorNode: color(generator.archetype.art?.rock ?? RADIOACTIVE_PALETTE.spike),
+      playerOcclusion: true,
       hasLightBounce: false,
       hasFog: true,
     });
@@ -80,6 +76,9 @@ export class Spikes {
     const local = new THREE.Matrix4();
     const tiltMatrix = new THREE.Matrix4();
     const tiltEuler = new THREE.Euler();
+    const radiusAt = createRenderedRadiusAt(generator);
+    const foot = new THREE.Vector3();
+    const up = new THREE.Vector3();
 
     for (const cluster of clusters) {
       // RANDOM GROUP LEAN (user ask: "random angles, not always 90 degrees vertical"): the
@@ -96,11 +95,22 @@ export class Spikes {
 
         dummy.position.set(Math.cos(angle) * distance, 0, Math.sin(angle) * distance);
         // each spike leans on its own — up to ±46° off the group's axis
-        dummy.rotation.set((random() - 0.5) * 1.6, random() * Math.PI * 2, (random() - 0.5) * 1.6);
+        dummy.rotation.set(0, random() * Math.PI * 2, 0);
         dummy.scale.set(scale * (0.8 + random() * 0.4), scale * (0.9 + random() * 0.8), scale * (0.8 + random() * 0.4));
         dummy.updateMatrix();
 
         local.multiplyMatrices(cluster.matrix, dummy.matrix);
+        up.copy(cluster.position).normalize();
+        let gap = 0;
+        for (let corner = 0; corner < 5; corner++) {
+          const angle = corner / 5 * Math.PI * 2;
+          foot.set(Math.sin(angle) * 0.34, 0, Math.cos(angle) * 0.34).applyMatrix4(local);
+          const length = foot.length();
+          gap = Math.max(gap, length - radiusAt(foot.clone().normalize()));
+        }
+        local.elements[12] -= up.x * (gap + 0.03);
+        local.elements[13] -= up.y * (gap + 0.03);
+        local.elements[14] -= up.z * (gap + 0.03);
         matrices.push(local.clone());
       }
     }

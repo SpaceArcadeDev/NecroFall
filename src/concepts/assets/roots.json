@@ -1,0 +1,50 @@
+{
+  "source": "https://polyhaven.com/a/root_cluster_01",
+  "license": "CC0-1.0",
+  "modifications": [
+    "geometry normalized and canopy profile edited where applicable",
+    "authored texture detail recolored to NECROFALL palette",
+    "opacity restored where supplied",
+    "near/far simplification and meshopt compression"
+  ],
+  "role": "infected-roots",
+  "sourceTriangles": 225261,
+  "variants": [
+    {
+      "file": "roots-near.glb",
+      "triangles": 4486,
+      "bytes": 1204128,
+      "bounds": {
+        "min": [
+          -4.0973591804504395,
+          0.01114827908352889,
+          -2.66389848365045
+        ],
+        "max": [
+          4.0973591804504395,
+          2.9954792889602393,
+          2.6565287269518416
+        ]
+      },
+      "sha256": "1b01a6ed31f7e0e95670e9877b2774e2038397ac546c2c0d6f174a6027cfe34b"
+    },
+    {
+      "file": "roots-far.glb",
+      "triangles": 1169,
+      "bytes": 1173048,
+      "bounds": {
+        "min": [
+          -4.0973591804504395,
+          0.011223557477892943,
+          -2.6636543945990114
+        ],
+        "max": [
+          4.036959171295166,
+          2.9954040105658755,
+          2.656284637900403
+        ]
+      },
+      "sha256": "9d3a624704bde8a4ba583262f29f63d4858477070c8d933750cb181427284298"
+    }
+  ]
+}

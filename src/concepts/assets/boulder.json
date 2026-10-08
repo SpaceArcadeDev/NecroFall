@@ -1,0 +1,50 @@
+{
+  "source": "https://polyhaven.com/a/boulder_01",
+  "license": "CC0-1.0",
+  "modifications": [
+    "geometry normalized and canopy profile edited where applicable",
+    "authored texture detail recolored to NECROFALL palette",
+    "opacity restored where supplied",
+    "near/far simplification and meshopt compression"
+  ],
+  "role": "mineral-strata",
+  "sourceTriangles": 66122,
+  "variants": [
+    {
+      "file": "boulder-near.glb",
+      "triangles": 3735,
+      "bytes": 1197752,
+      "bounds": {
+        "min": [
+          -1.9007165530295698,
+          0.013529144741328158,
+          -2.7095561027526855
+        ],
+        "max": [
+          1.9010785916419355,
+          2.9953618305253666,
+          2.733659029006958
+        ]
+      },
+      "sha256": "2d074d0eebf78d1f17c41a34aa931252680a9ebac244063e7765d52d70691404"
+    },
+    {
+      "file": "boulder-far.glb",
+      "triangles": 1281,
+      "bytes": 1178240,
+      "bounds": {
+        "min": [
+          -1.8793587563537528,
+          0.007323887987385591,
+          -2.6982369422912598
+        ],
+        "max": [
+          1.8007954237960746,
+          2.905013071981867,
+          2.6971819400787354
+        ]
+      },
+      "sha256": "aa377eea0d2e899f6eff32fc6abd2d08937497522bc6d239942c164b3d50597b"
+    }
+  ]
+}

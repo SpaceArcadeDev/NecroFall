@@ -37,6 +37,8 @@ export class Fog implements FogGlobals {
   readonly far: any;
   /** 1 = on, 0 = `?fog=0` — multiplied into the one distance-fog factor (§24/§33). */
   private readonly enabled = uniform(1);
+  private readonly atmosphere = uniform(1);
+  private readonly legacyDensity: number;
   /** Distance fog factor — `?fog=0` turns the whole world's fog off through this ONE node. */
   readonly strength: any;
 
@@ -52,7 +54,8 @@ export class Fog implements FogGlobals {
 
     this.near = uniform(options.near ?? 34);
     this.far = uniform(options.far ?? 270);
-    this.strength = rangeFogFactor(this.near, this.far).mul(this.enabled);
+    this.strength = rangeFogFactor(this.near, this.far).mul(this.enabled).mul(this.atmosphere);
+    this.legacyDensity = options.legacyExp2?.density ?? 0;
 
     if (options.legacyExp2) {
       this.legacy = new THREE.FogExp2(options.legacyExp2.color, options.legacyExp2.density);
@@ -78,5 +81,11 @@ export class Fog implements FogGlobals {
   setDistances(near: number, far: number): void {
     this.near.value = near;
     this.far.value = far;
+  }
+
+  setAltitude(cameraRadius: number, planetRadius: number): void {
+    const amount = 1 - THREE.MathUtils.smoothstep(cameraRadius, planetRadius * 1.2, planetRadius * 2.3);
+    this.atmosphere.value = amount;
+    if (this.legacy) { this.legacy.density = this.legacyDensity * amount; this.legacy.color.copy(this.color.value as THREE.Color); }
   }
 }

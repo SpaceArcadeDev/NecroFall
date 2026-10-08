@@ -12,6 +12,49 @@ npm run dev      # http://localhost:5173
 Open a second browser tab/window (or send the invite link / lobby code to another device on
 your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v3 match.
 
+## Base Planets
+
+The main spherical game draws from ten approved profiles: Cinderbloom, Glass Tide,
+Saffron Waste, Mycelial Night, Frostwound, Verdant Tempest, Emberwake, Roseshard Basin,
+Stormglass Reach and Aether Garden. A planet seed determines its profile, terrain,
+palette variation, radiation, ecology and solar system. Fresh local classic matches
+roll a new seed and avoid immediately repeating the previous base profile; joining
+an existing match preserves its seed.
+
+The system sun stays fixed in world space. Crossing the planet's terminator blends
+through warm twilight into the dark hemisphere; the sun does not follow the player.
+Water is limited to shallow basins (at most 0.35 m), with grounded walking wakes.
+Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes,
+crystals and cave rock meshes provide shape-based capsule collisions and top support;
+steep upward-facing slopes remain climbable while vertical walls block movement.
+Only the Mega Necrophage uses the imported enemy model. Towers, bases, shields,
+pads and the other enemy rigs retain their gameplay.
+
+The preserved gallery is at [/base-planets.html](base-planets.html), with
+[concepts.html](concepts.html) retained for compatibility. Both pages ship in
+`npm run build`. The game's **How To Play** screen links to the gallery and
+[asset credits](src/concepts/assets/ATTRIBUTION.md). The gallery can also be built
+separately with `npm run build:base-planets`.
+
+```bash
+npm run test:planet-physics
+npm run test:main-planets
+npm run test:main-planets -- --planet=cinderbloom
+npm run test:main-planets -- --classic
+npm run test:main-planets -- --variants
+npm run test:base-planets
+npm run test:base-planets -- --visibility
+```
+
+The main browser suite uses installed Edge (`BROWSER_CHANNEL` overrides it), starts
+its own local server, and writes captures to `.test-shots/main-planets/`. It covers
+all ten profiles, day/twilight/night, classic structures and Mega animation,
+mobile rotation, WebGL fallback, and fixed-clock grass/water trail pixel comparisons.
+The physics suite covers exact rendered terrain sampling, collision support,
+75-degree climbing, shallow water, trail lifetimes, twilight and classic seed rolls.
+These local tests do not certify physical-phone performance or live multiplayer/auth
+services. Local account login still requires the configuration described below.
+
 ---
 
 ## Online architecture — accounts, OFFICIAL (SpacetimeDB) and P2P

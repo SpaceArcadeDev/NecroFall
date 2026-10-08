@@ -384,12 +384,7 @@ export class Caves {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.name = bucket.key;
       this.group.add(mesh);
-      if (obstacles && bucket.obstacle) {
-        const config = bucket.obstacle;
-        for (const placement of bucket.placements) {
-          obstacles.add(placement, config.radius * placement.scale, config.height * placement.scale, config.steppable);
-        }
-      }
+      if (!bucket.key.startsWith('caveGlow:')) obstacles?.addMesh(mesh);
     }
 
     // ---- the ONE mote cloud

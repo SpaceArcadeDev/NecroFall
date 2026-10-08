@@ -34,6 +34,7 @@ export class Bushes {
     count = 240,
     spawnClear?: SpawnClear,
     obstacles?: PlanetObstacles,
+    blocked?: (positionX: number, positionY: number, positionZ: number) => boolean,
   ) {
     const placements = scatterPlacements(surface, generator, {
       count,
@@ -48,6 +49,7 @@ export class Bushes {
       attemptsPerInstance: 10,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
+      accept: sample => !blocked?.(sample.up.x, sample.up.y, sample.up.z),
     });
 
     for (const placement of placements) obstacles?.add(placement, 0.45 * placement.scale, 0.55 * placement.scale, true);
@@ -57,8 +59,8 @@ export class Bushes {
       preRenderer,
       wind,
       matrices,
-      uniform(color(RADIOACTIVE_PALETTE.foliageDark)),
-      uniform(color(RADIOACTIVE_PALETTE.foliage)),
+      uniform(color(generator.archetype.art?.foliage ?? RADIOACTIVE_PALETTE.foliageDark)),
+      uniform(color(generator.archetype.art?.foliageLight ?? RADIOACTIVE_PALETTE.foliage)),
       ticker,
       // NO see-through fade on bushes (user ask): unlike tall tree canopies a knee-high bush
       // never blocks the view, so it just stays solid — no pop-out when the camera pans past.

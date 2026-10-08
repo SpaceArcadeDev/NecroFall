@@ -80,6 +80,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    assetsInlineLimit: filePath => filePath.endsWith('ATTRIBUTION.md') ? false : undefined,
+    rollupOptions: { input: { main: 'index.html', bases: 'base-planets.html', concepts: 'concepts.html' } },
     sourcemap: false,
     chunkSizeWarningLimit: 2000,
   },

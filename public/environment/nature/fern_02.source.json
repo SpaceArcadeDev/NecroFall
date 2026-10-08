@@ -1,0 +1,8 @@
+{
+  "asset": "fern_02",
+  "source": "https://polyhaven.com/a/fern_02",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "resolution": 1024,
+  "modelOptimizer": "@gltf-transform/cli@4.2.1"
+}

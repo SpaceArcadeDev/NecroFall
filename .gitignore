@@ -1,6 +1,7 @@
 # NECROFALL — never commit secrets or build output.
 node_modules/
 dist/
+dist-concepts/
 .env
 .env.local
 .env.*.local
@@ -8,6 +9,7 @@ dist/
 .DS_Store
 .playwright-mcp/
 .test-shots/
+.asset-sources/
 
 # SpacetimeDB generated client bindings: COMMIT them if your deploy workflow
 # wants deterministic builds (the loader picks them up from

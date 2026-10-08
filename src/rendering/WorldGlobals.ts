@@ -7,6 +7,11 @@
  * inventing their own lighting equations (plan §8/§9).
  */
 
+import type { BasePlanet } from '../concepts/definitions';
+import { Vector2, Vector3 } from 'three/webgpu';
+import { uniform } from 'three/tsl';
+import { playerDistance, playerScreen } from './materials/PlayerOcclusion';
+
 export interface LightingGlobals {
   /** vec3 uniform – sun colour × intensity folded into one node by Lighting. */
   colorUniform: any;
@@ -58,6 +63,10 @@ export class WorldGlobals {
   fog: FogGlobals | null = null;
   terrain: TerrainGlobals | null = null;
   wind: WindGlobals | null = null;
+  basePlanet: BasePlanet | null = null;
+  readonly playerPosition = uniform(new Vector3());
+  readonly playerScreen = playerScreen;
+  readonly playerDistance = playerDistance;
   /** Planet radius in metres. */
   radius = 0;
 

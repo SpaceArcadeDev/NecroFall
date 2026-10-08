@@ -11,6 +11,7 @@
 import * as THREE from 'three/webgpu';
 import { pass, renderOutput } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { fxaa } from 'three/addons/tsl/display/FXAANode.js';
 import { cheapDOF } from './Passes/cheapDOF';
 import type { Quality } from './Quality';
 import type { Viewport } from './Viewport';
@@ -118,8 +119,8 @@ export class Rendering {
   private createPostProcessing(scene: THREE.Scene, camera: THREE.Camera): void {
     this.postProcessing = new THREE.RenderPipeline(this.renderer);
 
-    this.scenePass = pass(scene, camera);
-    this.scenePassColor = this.scenePass.getTextureNode('output');
+    this.scenePass = pass(scene, camera, { samples: 0 });
+    this.scenePassColor = fxaa(this.scenePass.getTextureNode('output'));
 
     this.bloomPass = bloom(this.scenePassColor);
     this.bloomPass._nMips = this.quality.bloomMips();
@@ -127,7 +128,7 @@ export class Rendering {
     // halo keys hard on them (real glare) while ordinary lit geometry (≤1) stays out of it —
     // a strong, saturated glow instead of a broad soft wash over the whole frame.
     this.bloomPass.threshold.value = 0.9;
-    this.bloomPass.strength.value = 0.85;
+    this.bloomPass.strength.value = 0.4;
     this.bloomPass.smoothWidth.value = 0.5;
 
     this.cheapDOFPass = cheapDOF(renderOutput(this.scenePass));

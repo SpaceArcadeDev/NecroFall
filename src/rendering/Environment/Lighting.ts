@@ -11,6 +11,7 @@ import { color, uniform } from 'three/tsl';
 import type { Quality } from '../Quality';
 import type { LightingGlobals } from '../WorldGlobals';
 import { ART_DIRECTION } from '../ArtDirection';
+import { daylightAt, twilightAt, TWILIGHT_COLOR } from './Daylight';
 
 export interface LightingOptions {
   /** Shadow follow window (metres around the focus point). */
@@ -45,6 +46,10 @@ export class Lighting implements LightingGlobals {
   readonly bounceColor = uniform(color('#2f6b4f'));
 
   readonly sunDirection = new THREE.Vector3();
+  readonly daylightColor = new THREE.Color('#fff8ec');
+  private readonly sunColor = new THREE.Color('#fff8ec');
+  private readonly sunsetColor = new THREE.Color(TWILIGHT_COLOR);
+  private readonly fillColor = new THREE.Color();
 
   private readonly light: THREE.DirectionalLight;
   private readonly shadowAmplitude: number;
@@ -87,6 +92,7 @@ export class Lighting implements LightingGlobals {
     this.fillIntensity = fill?.intensity ?? 0;
     this.rimIntensity = fill?.rimIntensity ?? 0;
     if (fill) {
+      this.fillColor.set(fill.skyColor);
       this.fill = new THREE.HemisphereLight(fill.skyColor, fill.groundColor, fill.intensity);
       this.scene.add(this.fill);
       this.rim = new THREE.DirectionalLight(fill.rimColor, fill.rimIntensity);
@@ -113,6 +119,23 @@ export class Lighting implements LightingGlobals {
   setQuality(quality: Quality): void {
     this.mapSize = quality.shadowMapSize();
     this.applyShadowSettings();
+  }
+
+  setSunDirection(direction: THREE.Vector3, tint = '#fff8ec'): void {
+    this.sunDirection.copy(direction).normalize().multiplyScalar(this.distance);
+    (this.directionUniform.value as THREE.Vector3).copy(direction).normalize();
+    (this.colorUniform.value as THREE.Color).set(tint);
+    this.light.color.set(tint);
+    this.sunColor.set(tint);
+    this.daylightColor.copy(this.sunColor);
+    this.intensityUniform.value = 1.1;
+    (this.shadowColor.value as THREE.Color).set('#172133');
+  }
+
+  setSurfacePalette(ground: string, horizon: string): void {
+    this.fillColor.set(horizon);
+    if (this.fill) { this.fill.color.set(horizon); this.fill.groundColor.set(ground).multiplyScalar(0.5); }
+    (this.shadowColor.value as THREE.Color).set(horizon).lerp(new THREE.Color(ground), 0.6).multiplyScalar(0.16).add(new THREE.Color(0.015, 0.018, 0.025));
   }
 
   /** Debug switch: `?shadows=0` turns the sun's shadow casting off. */
@@ -142,6 +165,17 @@ export class Lighting implements LightingGlobals {
     const texel = (this.shadowAmplitude * 2) / this.mapSize;
 
     const direction = this.scratchDirection.copy(this.directionUniform.value as THREE.Vector3);
+    const elevation = focus.dot(direction) / Math.max(0.001, focus.length());
+    const day = daylightAt(elevation), twilight = twilightAt(elevation);
+    this.daylightColor.copy(this.sunColor).lerp(this.sunsetColor, twilight * 0.78);
+    (this.colorUniform.value as THREE.Color).copy(this.daylightColor);
+    this.light.color.copy(this.daylightColor);
+    this.light.intensity = 4.2 * THREE.MathUtils.smoothstep(elevation, -0.1, 0.48);
+    if (this.fill) {
+      this.fill.intensity = this.fillIntensity * (0.035 + day * 0.22);
+      this.fill.color.copy(this.fillColor).lerp(this.sunsetColor, twilight * 0.35);
+    }
+    if (this.rim) this.rim.intensity = this.rimIntensity * (0.025 + day * 0.055);
     // stable light basis
     this.stable.set(0, 1, 0);
     if (Math.abs(direction.dot(this.stable)) > 0.95) this.stable.set(1, 0, 0);

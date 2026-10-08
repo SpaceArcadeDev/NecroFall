@@ -1,0 +1,23 @@
+{
+  "source": "https://polyhaven.com/a/aerial_grass_rock",
+  "author": "Rob Tuytel",
+  "license": "CC0-1.0",
+  "modifications": "Subtle saturation/brightness adjustment and runtime texture compression.",
+  "files": [
+    {
+      "file": "ground-color.webp",
+      "bytes": 493854,
+      "sha256": "e814ea5fee5a264ac4d9e0874fa63626319507a4ed49b9581ebf170d649202a6"
+    },
+    {
+      "file": "ground-normal.webp",
+      "bytes": 499384,
+      "sha256": "002ceb70e8eb8861f93e6cc331f33564b95f6b7b65c7ba180790afff9ed8be15"
+    },
+    {
+      "file": "ground-arm.webp",
+      "bytes": 318590,
+      "sha256": "6b4c10c26118833745d8dc9ba3b6bc44f6bab3795745d3b43075d0db3b0f2f64"
+    }
+  ]
+}

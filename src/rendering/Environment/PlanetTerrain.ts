@@ -12,18 +12,19 @@ import * as THREE from 'three/webgpu';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
 import type { Noises } from './Noises';
-import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+import { SurfaceMaterial, type SurfaceMaps } from '../materials/SurfaceMaterial';
 import { createTerrainMaterial } from '../materials/TerrainMaterial';
 import { yieldToMain } from '../../utils/Yield';
+import { createTerrainIndices } from '../../planet/RenderedTerrain';
 
 const RES_X = 320;
 const RES_Y = 160;
 
 export class PlanetTerrain {
   readonly mesh: THREE.Mesh;
-  readonly material: MeshDefaultMaterial;
+  readonly material: SurfaceMaterial;
 
-  private constructor(mesh: THREE.Mesh, material: MeshDefaultMaterial) {
+  private constructor(mesh: THREE.Mesh, material: SurfaceMaterial) {
     this.mesh = mesh;
     this.material = material;
   }
@@ -33,6 +34,7 @@ export class PlanetTerrain {
     nodes: TerrainNodeBundle,
     noises: Noises,
     onProgress?: (ratio: number) => void,
+    surfaceMaps?: SurfaceMaps,
   ): Promise<PlanetTerrain> {
     const width = RES_X;
     const height = RES_Y;
@@ -114,22 +116,12 @@ export class PlanetTerrain {
     }
 
     // ---- indices
-    const indices: number[] = [];
-    for (let iy = 0; iy < height; iy++) {
-      for (let ix = 0; ix < width; ix++) {
-        const ixNext = (ix + 1) % width;
-        const a = iy * width + ix;
-        const b = (iy + 1) * width + ix;
-        const c = iy * width + ixNext;
-        const d = (iy + 1) * width + ixNext;
-        indices.push(a, b, c, b, d, c);
-      }
-    }
+    const indices = createTerrainIndices(width, height);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-    geometry.setIndex(indices);
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeBoundingSphere();
 
     // ---- material: folio's terrain read — palette colour via the shared node. The terrain
@@ -140,7 +132,7 @@ export class PlanetTerrain {
     // The visual rework (plan §4–§7/§19–§21/§62) lives in ONE shared factory — masks, noise
     // breakup, elevation bands, slope/wetness/radiation layers, distance compression and the
     // atmospheric rim — so no other system needs its own terrain material (plan §43).
-    const { material } = createTerrainMaterial({ nodes, noises });
+    const { material } = createTerrainMaterial({ nodes, noises, archetype: generator.archetype, surfaceMaps });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;

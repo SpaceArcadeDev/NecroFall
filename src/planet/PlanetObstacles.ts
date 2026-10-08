@@ -1,13 +1,12 @@
 /**
- * NECROFALL — environmental object colliders (trees, bushes, rocks, spikes,
- * crystals). A flat list of surface-anchored circles; the player resolver
- * pushes the body out of any overlapping circle in the local tangent plane.
- *
- * ~1 100 obstacles, one dot-product prefilter each per physics step — the
- * brute-force query is cheaper than maintaining a spatial index at this scale.
+ * NECROFALL — world-space triangle BVH for capsule collisions and radial top
+ * support on terrain and solid scenery. Legacy decorative obstacles retain
+ * their surface-anchored circle resolver.
  */
 import * as THREE from 'three/webgpu';
 import type { Placement } from './Placement';
+import { MeshBVH } from 'three-mesh-bvh';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 interface Obstacle {
   /** Surface point (planet space). */
@@ -28,8 +27,19 @@ interface Obstacle {
 
 /** Objects at most this tall are stepped onto automatically (all rock sizes). */
 const STEP_HEIGHT = 1.5;
+const MIN_SUPPORT_DOT = 0.12;
 
 export class PlanetObstacles {
+  private meshTree: MeshBVH | null = null;
+  private readonly meshes: THREE.Mesh[] = [];
+  private meshCount = 0;
+  private readonly capsule = new THREE.Line3();
+  private readonly capsuleBounds = new THREE.Box3();
+  private readonly trianglePoint = new THREE.Vector3();
+  private readonly capsulePoint = new THREE.Vector3();
+  private readonly collisionNormal = new THREE.Vector3();
+  private readonly collisionUp = new THREE.Vector3();
+  private readonly supportRay = new THREE.Ray();
   private readonly list: Obstacle[] = [];
   private readonly scratchUp = new THREE.Vector3();
   private readonly scratchTo = new THREE.Vector3();
@@ -38,8 +48,92 @@ export class PlanetObstacles {
   constructor(private readonly planetRadius: number) {}
 
   get count(): number {
-    return this.list.length;
+    return this.list.length + this.meshCount;
   }
+
+  addMesh(mesh: THREE.Mesh): void { this.meshes.push(mesh); }
+
+  build(): void {
+    this.meshTree?.geometry.dispose();
+    const pieces: THREE.BufferGeometry[] = [];
+    const matrix = new THREE.Matrix4(), instance = new THREE.Matrix4();
+    this.meshCount = 0;
+    for (const mesh of this.meshes) {
+      mesh.updateWorldMatrix(true, false);
+      const count = mesh instanceof THREE.InstancedMesh ? mesh.count : 1;
+      for (let index = 0; index < count; index++) {
+        matrix.copy(mesh.matrixWorld);
+        if (mesh instanceof THREE.InstancedMesh) { mesh.getMatrixAt(index, instance); matrix.multiply(instance); }
+        const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+        for (const name of Object.keys(geometry.attributes)) if (name !== 'position') geometry.deleteAttribute(name);
+        geometry.clearGroups(); geometry.applyMatrix4(matrix); pieces.push(geometry);
+      }
+      this.meshCount += count;
+    }
+    if (!pieces.length) { this.meshTree = null; return; }
+    const geometry = mergeGeometries(pieces)!; pieces.forEach(piece => piece.dispose());
+    this.meshTree = new MeshBVH(geometry, { targetLeafSize: 12 });
+  }
+
+  supportRadius(position: THREE.Vector3, stepHeight = STEP_HEIGHT, bodyRadius = 0): number | null {
+    if (!this.meshTree) return null;
+    this.collisionUp.copy(position).normalize();
+    this.supportRay.origin.copy(position).addScaledVector(this.collisionUp, stepHeight);
+    this.supportRay.direction.copy(this.collisionUp).negate();
+    const hits = this.meshTree.raycast(this.supportRay, THREE.DoubleSide, 0, stepHeight + 3);
+    let distance = Infinity, radius: number | null = null;
+    for (const hit of hits) {
+      if (!hit.face || hit.distance >= distance) continue;
+      const alignment = hit.face.normal.dot(this.collisionUp);
+      if (alignment < MIN_SUPPORT_DOT) continue;
+      distance = hit.distance;
+      radius = hit.point.length() + bodyRadius * (1 / alignment - 1);
+    }
+    return radius;
+  }
+
+  move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean): void {
+    const steps = Math.max(1, Math.min(48, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5))));
+    for (let step = 0; step < steps; step++) {
+      position.addScaledVector(velocity, delta / steps);
+      if (stepUp) {
+        const support = this.supportRadius(position, STEP_HEIGHT, bodyRadius);
+        if (support !== null && support > position.length()) position.setLength(support);
+      }
+      this.resolve(position, bodyRadius, velocity);
+    }
+  }
+
+  private resolveMesh(position: THREE.Vector3, bodyRadius: number, velocity?: THREE.Vector3): boolean {
+    if (!this.meshTree) return false;
+    let moved = false;
+    for (let iteration = 0; iteration < 4; iteration++) {
+      this.collisionUp.copy(position).normalize();
+      this.capsule.start.copy(position).addScaledVector(this.collisionUp, bodyRadius);
+      this.capsule.end.copy(position).addScaledVector(this.collisionUp, Math.max(bodyRadius, 1.7 - bodyRadius));
+      this.capsuleBounds.makeEmpty().expandByPoint(this.capsule.start).expandByPoint(this.capsule.end).expandByScalar(bodyRadius * 1.5);
+      let corrected = false;
+      this.meshTree.shapecast({
+        intersectsBounds: bounds => bounds.intersectsBox(this.capsuleBounds),
+        intersectsTriangle: triangle => {
+          const distance = triangle.closestPointToSegment(this.capsule, this.trianglePoint, this.capsulePoint);
+          if (distance >= bodyRadius - 0.0001) return false;
+          this.collisionNormal.subVectors(this.capsulePoint, this.trianglePoint);
+          if (distance > 1e-7) this.collisionNormal.multiplyScalar(1 / distance);
+          else triangle.getNormal(this.collisionNormal);
+          const depth = bodyRadius - distance + 0.0001;
+          position.addScaledVector(this.collisionNormal, depth);
+          this.capsule.start.addScaledVector(this.collisionNormal, depth); this.capsule.end.addScaledVector(this.collisionNormal, depth);
+          if (velocity) { const inward = velocity.dot(this.collisionNormal); if (inward < 0) velocity.addScaledVector(this.collisionNormal, -inward); }
+          corrected = true; moved = true; return false;
+        },
+      });
+      if (!corrected) break;
+    }
+    return moved;
+  }
+
+  dispose(): void { this.meshTree?.geometry.dispose(); this.meshTree = null; this.meshes.length = 0; this.list.length = 0; }
 
   /** Registers a placed object as a solid circle of `radius` metres. */
   add(placement: Placement, radius: number, height = radius, steppable = false): void {
@@ -132,6 +226,6 @@ export class PlanetObstacles {
       adjusted = true;
     }
 
-    return adjusted;
+    return this.resolveMesh(position, bodyRadius, velocity) || adjusted;
   }
 }

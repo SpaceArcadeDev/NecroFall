@@ -14,13 +14,18 @@
 import * as THREE from 'three/webgpu';
 import {
   color,
+  cameraPosition,
   float,
   frontFacing,
   Fn,
   max,
   mix,
-  normalWorld,
+  normalWorldGeometry,
+  normalViewGeometry,
   positionWorld,
+  screenSize,
+  screenUV,
+  vec2,
   vec3,
   vec4,
   If,
@@ -28,6 +33,9 @@ import {
 import { WorldGlobals } from '../WorldGlobals';
 import { RenderDebug, type MaterialDebugMode } from '../RenderDebug';
 import { celBandTint, celQuantize } from './CelShading';
+import { dotDissolve } from '../Environment/DotDissolve';
+import { playerOcclusionNode } from './PlayerOcclusion';
+import { NIGHT_ELEVATION, DAY_ELEVATION } from '../Environment/Daylight';
 
 /** Lawn glow (see `lawnGlow`): fraction of the local vegetation colour spilled on to the
  *  surfaces around the glowing blades. Faint by design — the blades' OWN glow (Grass) stays
@@ -39,6 +47,7 @@ const LAWN_GLOW_STRENGTH = 0.35;
 const LAWN_GLOW_REACH = 7;
 
 export interface MeshDefaultMaterialParameters {
+  playerOcclusion?: boolean;
   colorNode?: any;
   normalNode?: any;
   alphaNode?: any;
@@ -95,6 +104,7 @@ export interface MeshDefaultMaterialParameters {
 }
 
 export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
+  readonly surfaceColorNode: any;
   /** Forced per-material discard threshold (plan §9 alpha handling). */
   alphaTest: number;
 
@@ -141,15 +151,20 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
     // scene-fog hookup: a legacy THREE.FogExp2 on the scene would otherwise DOUBLE-fog every
     // folio material (three appends the scene fog to any material whose `fog` flag is true).
     this.fog = false;
+    this.toneMapped = false;
 
     const colorNode = (parameters.colorNode ?? color(0xffffff)) as any;
-    const normalNode = (parameters.normalNode ?? normalWorld) as any;
-    const alphaNode = (parameters.alphaNode ?? float(1)) as any;
+    this.surfaceColorNode = colorNode;
+    const normalNode = (parameters.normalNode ?? normalWorldGeometry) as any;
+    let alphaNode = (parameters.alphaNode ?? float(1)) as any;
+    if (parameters.playerOcclusion) {
+      alphaNode = alphaNode.mul(playerOcclusionNode());
+    }
     const shadowNode = (parameters.shadowNode ?? float(0)) as any;
     this.alphaTest = parameters.alphaTest ?? 0.1;
 
     // get rid of the NodeMaterial normal warning
-    (this as any).normalNode = normalNode;
+    this.normalNode = normalViewGeometry;
 
     /**
      * Shadow catcher: the engine's drop shadow is caught as a float and removed
@@ -211,7 +226,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
       const lightRamp: any = this.hasCoreShadows
         ? celQuantize(
             reorientedNormal.dot(directionNode).smoothstep(coreShadowEdgeLow, coreShadowEdgeHigh),
-          )
+          ).mul(positionWorld.normalize().dot(directionNode).smoothstep(NIGHT_ELEVATION, DAY_ELEVATION))
         : float(1);
 
       // ---- direct light
@@ -298,6 +313,7 @@ export class MeshDefaultMaterial extends THREE.MeshLambertNodeMaterial {
         outputColor.addAssign(
           ((this.lawnGlowColor ?? terrain.colorNode(lawnData)) as any)
             .mul(lawnData.y)
+            .mul(lawnData.a.mul(lawnData.a))
             .mul(LAWN_GLOW_STRENGTH)
             .mul((reach as any).mul(darkness)),
         );

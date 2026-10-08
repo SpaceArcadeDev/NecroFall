@@ -38,6 +38,7 @@ import { Time } from '../rendering/Time';
 import { Lighting } from '../rendering/Environment/Lighting';
 import { Fog } from '../rendering/Environment/Fog';
 import { ResourcesLoader } from '../rendering/Assets/ResourcesLoader';
+import { classicPlanetSeed, rollClassicMatchSeed } from '../planet/BasePlanetProfile';
 import { createPlanetWorld, type PlanetWorldResult } from '../rendering/Environment/PlanetWorld';
 import { PlanetRenderer } from '../rendering/Environment/PlanetRenderer';
 import { DebugSwitches, StatsOverlay, readSwitches } from '../rendering/DebugSwitches';
@@ -478,6 +479,7 @@ export class Game {
    * necrotech"). -1 = not locked yet (a fallback seed is rolled at finalize).
    */
   private pendingMatchSeed = -1;
+  private lastClassicPlanetSeed: number | undefined;
   /**
    * Background planet pre-build for the impending match: hidden in the scene until `beginPlaying`
    * adopts it through `wireWorld`. Disposed when it turns out stale (left lobby, other planet).
@@ -1472,6 +1474,7 @@ export class Game {
         focusDir: planet.focusDir,
         spawnDirection,
         time: this.envTime.uTime,
+        solar: { planetKey: this.soloRun?.planetKey || this.officialMatch?.match.planetKey, universeSeed: this.soloRun?.universeSeed ?? this.officialMatch?.match.universeSeed ?? DEFAULT_UNIVERSE_SEED },
       }));
       const world = result.world;
       if (token !== this.worldToken || this.planet !== planet) {
@@ -1497,7 +1500,13 @@ export class Game {
       } else if (PerformanceMonitor.enabled && !loadingScreenUp) {
         console.info('[precompile] skipped — no loading screen to hide behind');
       }
+      if (token !== this.worldToken || this.planet !== planet) {
+        world.dispose();
+        return;
+      }
       this.envWorld = world;
+      world.activateLighting();
+      planet.setSunDirection(this.lighting.directionUniform.value);
       planet.attachWorld({
         terrainMesh: world.terrain.mesh,
         reliefMin: result.surfaceData.reliefMin,
@@ -2784,7 +2793,7 @@ export class Game {
     // Lock the match seed NOW and broadcast it with the phase: every peer starts pre-building
     // the planet in the background while the players pick (user ask). The planet no longer
     // freezes the frame that finalizes the pick — it is already built by then.
-    this.pendingMatchSeed = (Math.random() * 0xffffffff) >>> 0;
+    this.pendingMatchSeed = rollClassicMatchSeed(this.lastClassicPlanetSeed);
     this.preloadMatchWorld(this.pendingMatchSeed);
     for (const [id, colony] of Object.entries(assignments)) {
       const r = this.roster.get(id);
@@ -2848,6 +2857,7 @@ export class Game {
     // FREEROAM (user ask) is the exception: it keeps CLASSIC's PROCEDURAL world — the run's own
     // random seed IS the planet seed, and the bestiary generates from it like any classic match.
     const { planetSeed, rankRing, rankedPlanet, planetKey, universeSeed } = plan;
+    if (!this.soloRun && !rankedPlanet) this.lastClassicPlanetSeed = planetSeed;
     const centerDir = plan.centerDir;
     const oldPlanet = this.planet;
     this.planet = new Planet(this.scene, this.settings, planetSeed, centerDir, rankRing);
@@ -2919,7 +2929,7 @@ export class Game {
     else this.towers.clear();
     // Launch / blitz pads: placed from the same seed, so every peer sees them in the same spots.
     this.pads.build(this.planet, seed);
-    this.planet.aimSunAt(this.towers.centerDir);
+    this.planet.setSunDirection(this.lighting.directionUniform.value);
     // The folio world: a background pre-build for THIS planet (started while the players picked
     // a Necrotech) is adopted at once; anything else (late arrivals, preload failure) builds on
     // demand. Either way the loading screen has been covering the swap.
@@ -3147,7 +3157,7 @@ export class Game {
       ? this.soloRun.seed >>> 0
       : this.pendingMatchSeed >= 0
         ? this.pendingMatchSeed >>> 0
-        : (Math.random() * 0xffffffff) >>> 0;
+        : rollClassicMatchSeed(this.lastClassicPlanetSeed);
     // The world is already pre-building — the match now WAITS for it behind the loading screen
     // (user ask). The 'play' broadcast follows the moment the world is in `startMatchWhenReady`,
     // so no client ever freezes on the frame that finalizes the pick.
@@ -3231,7 +3241,7 @@ export class Game {
     const rankRing = solo
       ? (solo.ring >= 0 && solo.ring < 8 ? solo.ring : 0)
       : rankedPlanet && (official?.rankRing ?? 255) < 8 ? official!.rankRing! : 0;
-    const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : (seed * 2654435761 % 4294967296) >>> 0;
+    const planetSeed = solo ? solo.seed >>> 0 : official ? seed >>> 0 : classicPlanetSeed(seed);
     const centerDir = battlefieldCenterDir(seed, new THREE.Vector3());
     const key = `${planetSeed}:${rankRing}:${centerDir.x.toFixed(5)},${centerDir.y.toFixed(5)},${centerDir.z.toFixed(5)}`;
     return { planetSeed, rankRing, centerDir, rankedPlanet, planetKey, universeSeed, key };
@@ -3269,6 +3279,7 @@ export class Game {
         spawnDirection: plan.centerDir.clone().normalize(),
         time: this.envTime.uTime,
         hidden: true, // the menu world keeps the screen until the match adopts this one
+        solar: { planetKey: plan.planetKey, universeSeed: plan.universeSeed },
         onProgress: (ratio, label) => {
           preload.progress.ratio = ratio;
           preload.progress.label = label;
@@ -6000,11 +6011,10 @@ export class Game {
     this.cosmeticFx.update(dt);
     this.telegraphs.update(dt);
     this.decoys.update(dt, this);
-    // Keep the sun's lit disc over the local player (a static sun leaves a day/night terminator
-    // for the player to walk into). The planet eases the sun smoothly.
-    if (this.localPlayer) this.planet.aimSunAt(this.localPlayer.position);
+    // Keep the sun fixed to the generated system as the player crosses the terminator.
+    this.planet.setSunDirection(this.lighting.directionUniform.value);
     this.planet.update(dt, this.cam.camera.position);
-    // The folio sun follows the action, texel-snapped so the shadows never shimmer.
+    // Only the texel-snapped shadow window follows the action.
     this.lighting.update((this.localPlayer ?? this.camTarget).position);
     this.cam.update(dt, target, this.planet, this.effects.consumeShake());
     this.updateIndicators(dt);

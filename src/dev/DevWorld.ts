@@ -226,6 +226,7 @@ export async function startDevWorld(): Promise<void> {
     onProgress: (ratio, label) => setProgress(0.05 + ratio * 0.9, label),
   });
   const { world, spec, surface, surfaceData, generator, nodes, materials, noises, wind, preRenderer } = result;
+  world.activateLighting();
   document.title = `NECROFALL — ${spec.label} (seed ${seed})`;
 
   // Plan §41: `?cavedebug=1` overlays the analytic cave system (footprint rings, node rings,

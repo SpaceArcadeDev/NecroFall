@@ -12,6 +12,7 @@ import { readSwitches } from '../rendering/DebugSwitches';
 import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { buildCreature, CreatureRig } from './EnemyModels';
 import { SwarmDirector } from './SwarmDirector';
+import { MegaVisual } from './MegaVisual';
 import {
   ABILITY_META,
   AbilityId,
@@ -306,6 +307,8 @@ export class Enemy {
   readonly netVel = new THREE.Vector3();
   group = new THREE.Group();
   rig: CreatureRig | null = null;
+  megaVisual: MegaVisual | null = null;
+  private megaLoading: THREE.Group | null = null;
   /** White hit-flash amount, decayed every frame. */
   flashAmt = 0;
   /**
@@ -430,7 +433,8 @@ export class Enemy {
   // ------------------------------------------------------------ setup
 
   setGenome(genome: EnemyGenome): void {
-    if (this.rig && this.genomeIdx === genome.idx) return; // pooled instance already built
+    if (this.rig && this.genome === genome) return; // pooled instance already built
+    this.megaVisual?.dispose(); this.megaVisual = null;
     this.genomeIdx = genome.idx;
     this.genome = genome;
     this.isBoss = genome.tier === 'boss' || genome.tier === 'nexus';
@@ -477,6 +481,19 @@ export class Enemy {
     this.rigBaseAccent = (this.rig.carapace.uAccent.value as THREE.Color).clone();
     this.group.visible = false;
     this.ensureStatusFx();
+  }
+
+  ensureMegaVisual(): void {
+    if (this.genome.tier !== 'nexus' || this.megaVisual || this.megaLoading === this.group) return;
+    const group = this.group;
+    this.megaLoading = group;
+    void MegaVisual.create(Math.max(5, this.radius * 1.7)).then(visual => {
+      if (!this.alive || group !== this.group) { visual.dispose(); return; }
+      for (const child of group.children) if (child !== this.fxToxin) child.visible = false;
+      group.add(visual.root); this.megaVisual = visual;
+    }).catch(error => console.error('[Mega Necrophage] Imported visual failed', error)).finally(() => {
+      if (this.megaLoading === group) this.megaLoading = null;
+    });
   }
 
   /**
@@ -2267,7 +2284,7 @@ export class Enemy {
     // The gait solver owns the whole walk cycle (plan §20/§21): the locomotion class picks the
     // style, the behaviour profile still scales it, and secondary motion (breathing, sac pulse,
     // tail sway, head bearing) rides on top. Zero per-species animation data.
-    animateEnemyRig(rig, this.genome, this.animPhase, moving, dt);
+    if (!this.megaVisual) animateEnemyRig(rig, this.genome, this.animPhase, moving, dt);
 
     const targetAggro = this.targetId ? 1 : 0;
     this.aggro += (targetAggro - this.aggro) * 0.08;
@@ -2312,6 +2329,7 @@ export class Enemy {
     }
 
     this.updateStatusFx(dt);
+    this.megaVisual?.update(dt, moving, { flash: this.flashAmt, frost: this.iceAmt, stunned: this.stunnedT > 0, enraged: this.enraged || this.bossState === 'enrage_transition' });
     this.emitRageTells(dt);
   }
 
@@ -2645,6 +2663,7 @@ export class EnemyManager {
     e.hp = genome.hp * hpScale * shrink;
     e.maxHp = e.hp;
     e.alive = true;
+    e.ensureMegaVisual();
     e.dots.length = 0;
     e.slowMul = 1;
     e.slowT = 0;

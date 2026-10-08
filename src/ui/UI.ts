@@ -1338,6 +1338,15 @@ export class UI {
 
     const row = el('div', 'howto-actions');
     row.appendChild(button('CONTROLS', 'btn primary', () => this.show('controls')));
+    for (const [label, href] of [
+      ['BASE PLANETS', '/base-planets.html'],
+      ['ASSET CREDITS', new URL('../concepts/assets/ATTRIBUTION.md', import.meta.url).href],
+    ]) {
+      const link = document.createElement('a');
+      link.className = 'btn'; link.textContent = label; link.href = href;
+      link.target = '_blank'; link.rel = 'noopener';
+      row.appendChild(link);
+    }
     panel.appendChild(row);
     s.appendChild(panel);
     this.addBack(s, 'Back', () => this.exitToMenu());

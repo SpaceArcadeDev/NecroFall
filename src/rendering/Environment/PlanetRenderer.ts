@@ -26,12 +26,20 @@ import { PlanetTerrain } from './PlanetTerrain';
 import { Grass } from './Grass';
 import { Trees, type TreeSpeciesOptions } from './Trees';
 import { Bushes } from './Bushes';
-import { Rocks } from './Rocks';
+import { BaseRocks } from './BaseRocks';
+import { BaseEcology } from './BaseEcology';
+import { EnvironmentWeather } from '../../concepts/EnvironmentWeather';
+import { createSurfaceSample } from '../../planet/PlanetSurface';
+import { positionWorld } from 'three/tsl';
 import { Spikes } from './Spikes';
 import { RadioactiveCrystals } from './RadioactiveCrystals';
 import { Puddles } from './Puddles';
 import { FloatingParticles } from './FloatingParticles';
 import { SkyDome } from './SkyDome';
+import { SystemSky } from './SystemSky';
+import { daylightAt, twilightAt, TWILIGHT_COLOR } from './Daylight';
+import type { PlanetSystem } from '../../planet/PlanetSystem';
+import type { WorldGlobals } from '../WorldGlobals';
 import { Landmarks } from './Landmarks';
 import { Caves } from './Caves';
 import { Formations } from './Formations';
@@ -52,6 +60,9 @@ const _undergroundColor = new THREE.Color();
 const _undergroundGlowColor = new THREE.Color();
 
 export interface PlanetWorldDependencies {
+  system: PlanetSystem;
+  globals: WorldGlobals;
+  obstacles?: PlanetObstacles;
   scene: THREE.Scene;
   ticker: Ticker;
   quality: Quality;
@@ -115,13 +126,15 @@ export class PlanetRenderer {
   terrain!: PlanetTerrain;
   grass!: Grass;
   bushes!: Bushes;
-  rocks!: Rocks;
+  rocks!: BaseRocks;
+  ecology!: BaseEcology;
+  weather!: EnvironmentWeather;
   spikes!: Spikes;
   crystals!: RadioactiveCrystals;
   puddles!: Puddles;
   particles!: FloatingParticles;
   /** Sci-fi sky dome (plan §22) — always behind the world; `?sky=0` removes it. */
-  sky!: SkyDome;
+  sky!: SkyDome | SystemSky;
   /** Landmark prop compositions + the hero formation (plan §16–§18). */
   landmarks!: Landmarks;
   /** Cave compositions + the ONE underground mote cloud (plan §30/§35). */
@@ -162,7 +175,7 @@ export class PlanetRenderer {
     // 0 — the sky dome goes in FIRST: the renderer runs with `sortObjects = false`, so insertion
     // order is draw order and the sky must never be submitted after the world (plan §22).
     if (this.switches.enabled('sky')) {
-      this.sky = new SkyDome(deps.noises, deps.time, 1500);
+      this.sky = new SystemSky(deps.system, deps.generator.archetype.art!, deps.generator.radius, deps.time);
       this.group.add(this.sky.mesh);
     }
 
@@ -178,6 +191,10 @@ export class PlanetRenderer {
     onProgress?.(0.32, 'flooding puddles');
     this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
     this.group.add(this.puddles.mesh);
+    this.rocks = await BaseRocks.create({ ...deps, obstacles: this.obstacles });
+    this.group.add(this.rocks.group);
+    this.ecology = await BaseEcology.create({ ...deps, obstacles: this.obstacles }, this.rocks, this.puddles);
+    this.group.add(this.ecology.group);
     await nextLoop();
 
     // 3 — grass field (planet-wide and static: every blade is baked at build; the only runtime
@@ -186,20 +203,27 @@ export class PlanetRenderer {
     // culls the planet behind the player. The planting itself is chunked (see Grass.plant) —
     // `ready` resolves when the sector meshes are in.
     onProgress?.(0.33, 'planting grass');
-    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time);
+    this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time,
+      (positionX, positionY, positionZ) => (this.rocks as BaseRocks).blocked(positionX, positionY, positionZ));
     this.group.add(this.grass.root);
     await this.grass.ready;
     await nextLoop();
 
     // 4 — bushes (leaf-card canopies) — raised count + bigger sizes per user ask. Note there is
     // no see-through fade on bushes anymore (they are knee-high; only tree canopies need it).
-    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 780, spawnClear, this.obstacles);
+    const blocked = (positionX: number, positionY: number, positionZ: number) => (this.rocks as BaseRocks).blocked(positionX, positionY, positionZ);
+    this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 420, spawnClear, this.obstacles, blocked);
     this.group.add(this.bushes.foliage.mesh);
     await nextLoop();
 
     // 4 — trees (trunk instancing + leaf-card canopies)
     for (let i = 0; i < TREE_SPECIES.length; i++) {
-      const species = TREE_SPECIES[i];
+      const art = deps.generator.archetype.art!;
+      const chosenSpecies = art.treeSpecies ?? (art.flora === 'canopy' ? 'cherry' : art.flora === 'coral' ? 'oak' : 'birch');
+      if (art.flora === 'fungus' || TREE_SPECIES[i].name.toLowerCase() !== chosenSpecies) continue;
+      const species = { ...TREE_SPECIES[i], leafColorA: art.foliage, leafColorB: art.foliageLight,
+        count: Math.round(140 * Math.min(1.2, deps.generator.archetype.plantDensity)),
+        heightMin: art.flora === 'sail' ? 4 : 7, heightMax: art.flora === 'sail' ? 8 : 14 };
       onProgress?.(0.35 + i * 0.12, `planting ${species.name.toLowerCase()} trees`);
       const tree = await Trees.create(species, {
         loader: deps.loader,
@@ -211,6 +235,7 @@ export class PlanetRenderer {
         generator: deps.generator,
         spawnClear,
         obstacles: this.obstacles,
+        blocked,
       });
       this.trees.push(tree);
       this.group.add(tree.group);
@@ -218,8 +243,6 @@ export class PlanetRenderer {
 
     // 5 — rocks / spikes / crystals
     onProgress?.(0.72, 'scattering rocks');
-    this.rocks = new Rocks(deps.surface, deps.generator, spawnClear, this.obstacles);
-    this.group.add(this.rocks.group);
     await nextLoop();
 
     onProgress?.(0.78, 'planting spikes');
@@ -243,12 +266,23 @@ export class PlanetRenderer {
       deps.spawnDirection,
     );
     this.group.add(this.particles.group);
+    const weatherSample = createSurfaceSample();
+    this.weather = new EnvironmentWeather(deps.generator.archetype.art!, deps.generator.seed,
+      window.matchMedia('(max-width: 700px)').matches, deps.time, undefined, undefined, {
+        radiation: deps.nodes.terrainNode(positionWorld).a,
+        anchor: (random, dry) => {
+          deps.surface.randomSample(random, weatherSample);
+          if (dry && (weatherSample.radius < deps.surface.waterLevel + 0.8 || blocked(weatherSample.up.x, weatherSample.up.y, weatherSample.up.z))) return null;
+          return weatherSample.up.clone().multiplyScalar(Math.max(weatherSample.radius + 0.06, deps.surface.waterLevel + 0.06));
+        },
+      });
+    this.group.add(this.weather.group);
     await nextLoop();
 
     // 7 — landmark compositions + the ONE hero formation (plan §16–§18): deterministic from the
     // planet seed, terrain-aligned, instanced. Built after the scatter systems so the clusters
     // own their space; `?landmarks=0` removes the whole layer for A/B.
-    if (this.switches.enabled('landmarks')) {
+    if (this.switches.enabled('landmarks') && !deps.generator.archetype.art) {
       onProgress?.(0.92, 'composing landmarks');
       this.landmarks = new Landmarks(
         deps.surface,
@@ -275,7 +309,7 @@ export class PlanetRenderer {
 
     // 7c — geological formations (plan §9/§10/§59): composed rock families, boulder fields,
     // stone rings, spire fields, cliff lines and crystal beds — the authored mid-ground.
-    if (this.switches.enabled('formations')) {
+    if (this.switches.enabled('formations') && !deps.generator.archetype.art) {
       onProgress?.(0.95, 'raising formations');
       this.formations = new Formations(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles);
       this.group.add(this.formations.group);
@@ -296,6 +330,13 @@ export class PlanetRenderer {
     // renderer must not rebuild world matrices for the static scene on every frame. Pads,
     // bases, towers, enemies and players are separate systems and stay dynamic.
     this.group.updateMatrixWorld(true);
+    this.obstacles.addMesh(this.terrain.mesh);
+    this.rocks.group.traverse(object => { if (object instanceof THREE.Mesh) this.obstacles.addMesh(object); });
+    for (const tree of this.trees) if (tree.trunkMesh) this.obstacles.addMesh(tree.trunkMesh);
+    if (this.spikes.mesh) this.obstacles.addMesh(this.spikes.mesh);
+    if (this.crystals.mesh) this.obstacles.addMesh(this.crystals.mesh);
+    this.ecology.group.traverse(object => { if (object instanceof THREE.Mesh && (object.name === 'painted-mushrooms' || object.name === 'lava-vents')) this.obstacles.addMesh(object); });
+    this.obstacles.build();
     this.group.matrixAutoUpdate = false;
     this.group.traverse((object) => {
       object.matrixAutoUpdate = false;
@@ -316,11 +357,36 @@ export class PlanetRenderer {
     walkers?: readonly { id: string; pos: THREE.Vector3 }[],
     dt = 1 / 60,
   ): void {
-    void this.focusScratch;
+    this.deps.globals.playerPosition.value.copy(focusPoint);
+    if (camera) {
+      this.deps.fog.setAltitude(camera.position.length(), this.deps.generator.radius);
+      this.focusScratch.copy(focusPoint).addScaledVector(focusPoint.clone().normalize(), 0.8).project(camera);
+      this.deps.globals.playerScreen.value.set(this.focusScratch.x * 0.5 + 0.5, 0.5 - this.focusScratch.y * 0.5);
+      this.deps.globals.playerDistance.value = camera.position.distanceTo(focusPoint);
+    }
     this.grass.update(focusPoint, camera, walkers, dt);
     this.puddles.trackTrail(focusPoint);
     if (walkers) for (const w of walkers) this.puddles.trackWalkerTrail(w.id, w.pos);
     this.particles.update(focusPoint, camera);
+    this.weather.update(Number(this.deps.time.value), camera);
+    if (this.sky instanceof SystemSky) this.sky.update(focusPoint, camera);
+    const elevation = focusPoint.dot(this.deps.system.sunDirection) / Math.max(0.001, focusPoint.length());
+    this.daylight = daylightAt(elevation);
+    this.surfaceFog.copy(this.dayFog).lerp(this.sunsetFog, twilightAt(elevation) * 0.35).multiplyScalar(0.035 + this.daylight * 0.965);
+    if (this.undergroundBlend < 0.01) (this.deps.fog.color.value as THREE.Color).copy(this.surfaceFog);
+  }
+
+  private readonly dayFog = new THREE.Color();
+  private readonly surfaceFog = new THREE.Color();
+  private readonly sunsetFog = new THREE.Color(TWILIGHT_COLOR);
+  private daylight = 1;
+  activateLighting(): void {
+    this.deps.lighting.setSunDirection(this.deps.system.sunDirection, this.deps.system.sunColor);
+    this.deps.lighting.setSurfacePalette(this.deps.generator.archetype.art!.ground, this.deps.generator.archetype.art!.horizon);
+    this.dayFog.set(this.deps.generator.archetype.art!.horizon);
+    this.surfaceFog.copy(this.dayFog);
+    (this.deps.fog.color.value as THREE.Color).copy(this.dayFog);
+    (this.deps.lighting.bounceColor.value as THREE.Color).set(this.deps.generator.archetype.art!.ground);
   }
 
   /**
@@ -348,6 +414,8 @@ export class PlanetRenderer {
       };
     }
     const base = this.undergroundBase;
+    base.fogColor.copy(this.surfaceFog);
+    base.sunColor.copy(lighting.daylightColor);
     // 0 at the mouth, 1 once the body is well inside the carve. The threshold sits BELOW the
     // dome mouth's lip so walking near (or under the open rim of) a cave never dims the world
     // from outside — the atmosphere only changes once you are genuinely underground.
@@ -415,6 +483,7 @@ export class PlanetRenderer {
   }): void {
     this.grass.setVisible(switches.grass);
     this.bushes.setVisible(switches.foliage);
+    this.ecology.setVisible(switches.foliage);
     for (const tree of this.trees) {
       if (tree.foliage) tree.foliage.setVisible(switches.foliage);
       if (tree.trunkMesh) tree.trunkMesh.visible = true; // trunks stay
@@ -424,6 +493,7 @@ export class PlanetRenderer {
     this.crystals.setVisible(switches.crystals);
     this.puddles.setVisible(switches.water);
     this.particles.setVisible(switches.particles);
+    this.weather.group.visible = switches.particles;
     if (this.sky) this.sky.setVisible(switches.sky ?? true);
     if (this.landmarks) this.landmarks.setVisible(switches.landmarks ?? true);
     if (this.caves) this.caves.setVisible(switches.caves ?? true);
@@ -432,10 +502,12 @@ export class PlanetRenderer {
   }
 
   dispose(): void {
+    this.obstacles.dispose();
     this.grass.dispose();
     this.bushes.dispose();
     for (const tree of this.trees) tree.dispose();
     this.rocks.dispose();
+    this.ecology.dispose();
     this.spikes.dispose();
     this.crystals.dispose();
     this.puddles.dispose();
@@ -458,9 +530,11 @@ export class PlanetRenderer {
 
   get stats(): Record<string, string> {
     return {
+      'base planet': this.deps.generator.archetype.art?.name ?? this.deps.generator.archetype.biome,
       'grass': `${this.grass.bladeCount.toLocaleString()} blades`,
       'trees': `${this.trees.reduce((total, tree) => total + tree.treeCount, 0)}`,
       'rocks': `${this.rocks.count}`,
+      'mushrooms': `${this.ecology.mushroomCount}`,
       'spikes': `${this.spikes.spikeCount}`,
       'crystals': `${this.crystals.shardCount}`,
       'puddles': `${this.puddles.count}`,

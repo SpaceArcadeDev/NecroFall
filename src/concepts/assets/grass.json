@@ -1,0 +1,50 @@
+{
+  "source": "https://polyhaven.com/a/grass_medium_01",
+  "license": "CC0-1.0",
+  "modifications": [
+    "geometry normalized and canopy profile edited where applicable",
+    "authored texture detail recolored to NECROFALL palette",
+    "opacity restored where supplied",
+    "near/far simplification and meshopt compression"
+  ],
+  "role": "sulfur-meadow",
+  "sourceTriangles": 24730,
+  "variants": [
+    {
+      "file": "grass-near.glb",
+      "triangles": 550,
+      "bytes": 1091900,
+      "bounds": {
+        "min": [
+          -0.5257165410675302,
+          -0.00002764576642033667,
+          -0.5624035596847534
+        ],
+        "max": [
+          0.5283157804168954,
+          1.0000276457664203,
+          0.5655717849731445
+        ]
+      },
+      "sha256": "12d807bac52e068ef5260bd84c45b6293b05c3d421c6bd52f3df4d28f4f6afb8"
+    },
+    {
+      "file": "grass-far.glb",
+      "triangles": 79,
+      "bytes": 1082148,
+      "bounds": {
+        "min": [
+          -0.29947813348796043,
+          0,
+          -0.32798242133854183
+        ],
+        "max": [
+          0.29947813348796043,
+          1,
+          0.32798242133854183
+        ]
+      },
+      "sha256": "2c12a92028b7375e0a440e4735a59e4193d9a5ca45b7476d35a51785ba3bef69"
+    }
+  ]
+}

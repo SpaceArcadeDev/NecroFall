@@ -8,15 +8,16 @@
  * field. ONE draw call per tree type / bush family.
  */
 import * as THREE from 'three/webgpu';
-import { float, Fn, mix, normalWorld, positionLocal, rotateUV, screenSize, screenUV, smoothstep, texture, uniform, uv, vec2, vec3 } from 'three/tsl';
+import { cameraPosition, color, float, Fn, mix, normalWorld, positionLocal, positionWorld, rotateUV, screenSize, screenUV, smoothstep, texture, uniform, uv, vec2, vec3 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../../planet/PlanetSeed';
-import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
+import { SurfaceMaterial } from '../materials/SurfaceMaterial';
 import { WorldGlobals } from '../WorldGlobals';
 import type { PreRenderer } from '../PreRenderer';
 import type { Ticker } from '../Ticker';
 import type { Wind } from './Wind';
 import { dotDissolve } from './DotDissolve';
+import { leafTexture } from '../../concepts/EnvironmentVegetation';
 
 export interface FoliageOptions {
   /** Leaf card size in metres. */
@@ -39,7 +40,7 @@ export interface FoliageOptions {
 
 export class Foliage {
   readonly mesh: THREE.InstancedMesh;
-  readonly material: MeshDefaultMaterial;
+  readonly material: SurfaceMaterial;
   readonly seeThroughPosition = uniform(vec2(0.5, 0.5));
   readonly seeThroughEdgeMin = uniform(0.08);
   readonly seeThroughEdgeMax = uniform(0.24);
@@ -47,6 +48,7 @@ export class Foliage {
   readonly shadowOffset = uniform(1);
 
   private referenceCount: number;
+  private readonly leafMap?: THREE.Texture;
 
   constructor(
     private readonly preRenderer: PreRenderer,
@@ -58,6 +60,8 @@ export class Foliage {
     options: FoliageOptions = {},
   ) {
     const globals = WorldGlobals.get();
+    this.seeThroughPosition.value = globals.playerScreen.value;
+    this.leafMap = globals.basePlanet ? leafTexture() : undefined;
     const planeSize = options.planeSize ?? 0.8;
     const planeCount = options.planeCount ?? 80;
 
@@ -70,7 +74,7 @@ export class Foliage {
         (wind.offsetNode(positionLocal.xz) as any).length().mul(2.2),
         vec2(0.5),
       );
-      return texture(this.preRenderer.foliageTexture, rotatedUv).r;
+      return this.leafMap ? texture(this.leafMap, rotatedUv).a : texture(this.preRenderer.foliageTexture, rotatedUv).r;
     });
 
     const alphaNode = Fn(() => {
@@ -85,7 +89,8 @@ export class Foliage {
         // spikes"): ONE shared pattern definition (DotDissolve.ts) — near the player the canopy
         // breaks into round dots of leaves, and the dots grow with distance until the leaves have
         // merged back into their normal cutout by the bubble's rim.
-        alpha = alpha.mul(dotDissolve(distanceFade));
+        const closeOccluder = positionWorld.sub(cameraPosition).length().lessThan(globals.playerDistance.sub(0.25)).select(1, 0);
+        alpha = alpha.mul(mix(float(1), dotDissolve(distanceFade), closeOccluder));
       }
 
       return alpha.sub(this.threshold);
@@ -97,15 +102,16 @@ export class Foliage {
       return mix(colorA, colorB, mixStrength);
     })();
 
-    const material = new MeshDefaultMaterial({
+    const material = new SurfaceMaterial({
       colorNode,
-      alphaNode,
+      opacityNode: alphaNode,
       // leaf cards are viewed from every angle (under canopies included) —
       // single-sided cards made whole trees look leafless from below
       side: THREE.DoubleSide,
-      hasWater: false,
+      roughness: 1,
       hasLightBounce: false,
-      hasFog: true,
+      lawnGlow: false,
+      glowNode: globals.basePlanet && globals.terrain ? color(globals.basePlanet.infection).mul(globals.terrain.terrainNode(positionWorld).a).mul(uv().y).mul(0.2) : undefined,
     });
     // folio law: leaves are OPAQUE with an alpha-test cutout — stacking blended
     // cards turned every canopy into black murk. The alphaNode still drives the
@@ -116,7 +122,7 @@ export class Foliage {
     (material as any).receivedShadowPositionNode = positionLocal.add(
       globals.lighting!.directionUniform.mul(this.shadowOffset),
     );
-    (material as any).maskShadowNode = texture(this.preRenderer.foliageTexture).r.greaterThan(0.5);
+    (material as any).maskShadowNode = this.leafMap ? texture(this.leafMap).a.greaterThan(0.5) : texture(this.preRenderer.foliageTexture).r.greaterThan(0.5);
 
     // ---- wind deformation in instance space (positionLocal is already
     // instance-transformed here, so this adds on top of the placement)
@@ -214,6 +220,7 @@ export class Foliage {
   }
 
   dispose(): void {
+    this.leafMap?.dispose();
     this.mesh.geometry.dispose();
     this.material.dispose();
   }

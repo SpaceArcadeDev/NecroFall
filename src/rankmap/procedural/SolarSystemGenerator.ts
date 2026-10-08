@@ -103,12 +103,13 @@ function placeSystem(g: GalaxyDescriptor, r: () => number): DiscPlacement {
 }
 
 /** Per-galaxyId descriptor cache (bounded — plan §43) so system sweeps never re-hash. */
-const descriptorCache = new Map<number, GalaxyDescriptor>();
+const descriptorCache = new Map<string, GalaxyDescriptor>();
 const DESCRIPTOR_CACHE_CAP = 320;
 
 /** Resolve a galaxy descriptor from its id; synthesises a fallback for empty cells. */
 function descriptorFor(universeSeed: number, ring: number, galaxyId: number): GalaxyDescriptor {
-  const hit = descriptorCache.get(galaxyId);
+  const cacheKey = `${universeSeed >>> 0}:${ring}:${galaxyId}`;
+  const hit = descriptorCache.get(cacheKey);
   if (hit) return hit;
   const { gx, gy } = decodeGalaxyId(galaxyId);
   let g = galaxyAt(universeSeed, gx, gy);
@@ -131,7 +132,7 @@ function descriptorFor(universeSeed: number, ring: number, galaxyId: number): Ga
     const first = descriptorCache.keys().next().value;
     if (first !== undefined) descriptorCache.delete(first);
   }
-  descriptorCache.set(galaxyId, g);
+  descriptorCache.set(cacheKey, g);
   return g;
 }
 

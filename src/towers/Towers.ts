@@ -1,6 +1,8 @@
 // NECROFALL — the 5 towers: 4 Beacon Towers + the central Nexus.
 // Bosses -> capture -> timed shield -> Beacon ability / expiry -> exposure -> steal -> Nexus -> win.
 import * as THREE from 'three';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import { playerOcclusionNode } from '../rendering/materials/PlayerOcclusion';
 import type { Game } from '../core/Game';
 import type { Player } from '../player/Player';
 import { COLONIES, CONFIG, beaconName } from '../core/Config';
@@ -151,8 +153,9 @@ export class Tower {
     // radius, and the height bracket that runs past the crown.
     this.bodyRadius = 2.2 * scale;
     this.bodyHeight = 6 * scale;
-    const stone = new THREE.MeshLambertMaterial({ color: 0x3a3050, flatShading: true });
-    const dark = new THREE.MeshLambertMaterial({ color: 0x211a33, flatShading: true });
+    const stone = new MeshLambertNodeMaterial({ color: 0x3a3050, flatShading: true, alphaTest: 0.1 });
+    const dark = new MeshLambertNodeMaterial({ color: 0x211a33, flatShading: true, alphaTest: 0.1 });
+    stone.opacityNode = playerOcclusionNode(); dark.opacityNode = playerOcclusionNode();
     this.glowMat = new THREE.MeshLambertMaterial({
       color: isNexus ? 0xff2d6b : 0x9a6bff,
       emissive: isNexus ? 0xff2d6b : 0x7a3bff,

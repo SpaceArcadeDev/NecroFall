@@ -1,0 +1,50 @@
+{
+  "source": "https://polyhaven.com/a/namaqualand_cliff_02",
+  "license": "CC0-1.0",
+  "modifications": [
+    "geometry normalized and canopy profile edited where applicable",
+    "authored texture detail recolored to NECROFALL palette",
+    "opacity restored where supplied",
+    "near/far simplification and meshopt compression"
+  ],
+  "role": "mineral-strata",
+  "sourceTriangles": 194080,
+  "variants": [
+    {
+      "file": "cliff-near.glb",
+      "triangles": 10000,
+      "bytes": 1185392,
+      "bounds": {
+        "min": [
+          -22.525617599487305,
+          -0.0008932514856807572,
+          -7.343846421131599
+        ],
+        "max": [
+          22.525617599487305,
+          15.987778708989058,
+          7.341423611530769
+        ]
+      },
+      "sha256": "3fceab818f11134b56ca503f01c8e7ecdda47fe2d2e6e838870b1373d67acb59"
+    },
+    {
+      "file": "cliff-far.glb",
+      "triangles": 2599,
+      "bytes": 1112436,
+      "bounds": {
+        "min": [
+          -22.4940242767334,
+          -0.0002775646498891504,
+          -7.341948163583223
+        ],
+        "max": [
+          22.525617599487305,
+          15.960694745175726,
+          7.311040532662813
+        ]
+      },
+      "sha256": "a4a04b3f8b13662cb0583eb8109381836aa02ee136055041c448bc0c7a72f920"
+    }
+  ]
+}

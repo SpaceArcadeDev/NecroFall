@@ -29,6 +29,8 @@ import { MeshDefaultMaterial } from './MeshDefaultMaterial';
 import { ART_DIRECTION, SKY_PALETTE } from '../ArtDirection';
 import { gradeAlbedo } from './CelShading';
 import { RADIOACTIVE_PALETTE } from './PlanetPalette';
+import { createBaseTerrainMaterial, type SurfaceMaps } from './SurfaceMaterial';
+import type { PlanetArchetype } from '../../world/PlanetArchetypes';
 import {
   GRASS_PATCH_UV_SCALE,
   GRASS_SHADOW_DEPTH,
@@ -39,6 +41,8 @@ import {
 export interface TerrainMaterialOptions {
   nodes: TerrainNodeBundle;
   noises: Noises;
+  archetype?: PlanetArchetype;
+  surfaceMaps?: SurfaceMaps;
 }
 
 /** Cave strata (plan §35): dark blue-teal rock the carved underground settles toward. */
@@ -56,6 +60,7 @@ export interface TerrainMaterialBundle {
 }
 
 export function createTerrainMaterial(options: TerrainMaterialOptions): TerrainMaterialBundle {
+  if (options.archetype?.art) return createBaseTerrainMaterial(options.nodes, options.noises, options.archetype);
   const { nodes, noises } = options;
   const gradientTexture = nodes.gradientTexture;
 

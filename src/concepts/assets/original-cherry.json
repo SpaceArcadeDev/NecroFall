@@ -1,0 +1,8 @@
+{
+  "source": "public/environment/folio/trees/cherryTreesVisual.glb",
+  "sourceSHA256": "5b30b7ada13c16902a4e331b187a48ec09cdc28c93ba13d36292a4d56775c241",
+  "license": "Existing project asset; retain its original applicable license and attribution. No new license asserted.",
+  "modifications": "Container recompressed to Meshopt; trunk and canopy markers preserved for the user-authorized reuse.",
+  "file": "original-cherry.glb",
+  "canopyMarkers": 6
+}

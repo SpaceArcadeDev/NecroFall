@@ -5,6 +5,9 @@
 // `PlanetGenerator` and the match world's `Planet` both call `deriveClimate(seed, ring)`, so
 // the biome shown on the map is the biome you actually land on.
 import { Rand, clamp } from '../utils/Utils';
+import { basePlanetClimate, basePlanetVariant, baseTerrainParameters } from '../planet/BasePlanetProfile';
+import type { BasePlanet } from '../concepts/definitions';
+import { Color } from 'three/webgpu';
 
 /** Biome classes — the same vocabulary the galactic map uses (plan §8/§13). */
 export type BiomeClass =
@@ -36,6 +39,8 @@ export interface PlanetSky {
 
 export interface PlanetArchetype {
   id: string;
+  basePlanetId?: string;
+  art?: BasePlanet;
   biome: BiomeClass;
   climate: PlanetClimate;
   /** -1 pulls the continental mask into deep basins, +1 raises it into continents. */
@@ -223,22 +228,21 @@ export function classifyBiomeClass(temperature: number, moisture: number, corrup
  * ranked ring when the caller knows it, 0 otherwise.
  */
 export function deriveClimate(seed: number, ring = 0): PlanetClimate {
-  const rng = new Rand((seed ^ 0x5f356495) >>> 0);
-  const temperature = rng.next();
-  const moisture = rng.next();
-  const corruption = clamp(rng.next() * (0.45 + ring * 0.08) + ring * 0.02, 0, 1);
-  return { temperature, moisture, corruption, biome: classifyBiomeClass(temperature, moisture, corruption) };
+  return basePlanetClimate(seed, ring);
 }
 
 /** Seed → full archetype (pipeline step 1; plan §11). */
 export function deriveArchetype(seed: number, ring = 0): PlanetArchetype {
   const rng = new Rand((seed ^ 0x1d872b41) >>> 0);
   const climate = deriveClimate(seed, ring);
-  const base = ARCHETYPES[climate.biome];
+  const art = basePlanetVariant(seed);
+  const base = { ...ARCHETYPES[climate.biome], ...baseTerrainParameters(seed) };
   // per-seed personality: ±20 % on the big strokes so two worlds of one biome still differ
   const w = (v: number, spread = 0.2): number => v * (1 + rng.range(-spread, spread));
   return {
-    id: `${climate.biome}-${(seed >>> 0).toString(16).slice(0, 4)}`,
+    id: `${art.id}-${(seed >>> 0).toString(16).slice(0, 4)}`,
+    basePlanetId: art.id,
+    art,
     biome: climate.biome,
     climate,
     continentBias: base.continentBias * w(1, 0.5),
@@ -255,8 +259,10 @@ export function deriveArchetype(seed: number, ring = 0): PlanetArchetype {
     craterCount: Math.max(0, Math.round(w(base.craterCount, 0.4))),
     craterDepth: Math.max(0, w(base.craterDepth, 0.3)),
     sinkholeCount: Math.max(0, Math.round(w(base.sinkholeCount, 0.4))),
-    palette: base.palette,
-    sky: base.sky,
+    palette: { deep: new Color(art.ground).multiplyScalar(0.35).getHex(), low: new Color(art.ground).getHex(),
+      mid: new Color(art.ground).lerp(new Color(art.highland), 0.25).getHex(), ridge: new Color(art.rock).getHex(),
+      peak: new Color(art.highland).getHex(), vein: new Color(art.infection).getHex() },
+    sky: { zenith: new Color(art.sky).getHex(), horizon: new Color(art.horizon).getHex(), nebula: new Color(art.infection).getHex(), fog: new Color(art.horizon).getHex() },
     veinStrength: clamp(w(base.veinStrength, 0.25), 0, 1),
     plantDensity: clamp(w(base.plantDensity, 0.2), 0.1, 2),
   };

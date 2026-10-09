@@ -1,0 +1,8 @@
+{
+  "source": "public/environment/folio/trees/oakTreesVisual.glb",
+  "sourceSHA256": "f81118b75a5a8dcc8164128c1c518bb4baffff442c8755c7842688c2d0e59e41",
+  "license": "Existing project asset; retain its original applicable license and attribution. No new license asserted.",
+  "modifications": "Container recompressed to Meshopt; trunk and canopy markers preserved for the user-authorized reuse.",
+  "file": "original-oak.glb",
+  "canopyMarkers": 6
+}

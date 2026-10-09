@@ -2015,7 +2015,8 @@ export class Player {
 
   private integrate(dt: number): void {
     const g = this.game;
-    this.position.addScaledVector(this.velocity, dt);
+    if (g.envWorld) g.envWorld.obstacles.move(this.position, this.velocity, dt, CONFIG.player.radius, this.grounded && this.jumpLock <= 0 && this.velocity.dot(this.up) <= 2);
+    else this.position.addScaledVector(this.velocity, dt);
     _up.copy(this.position).normalize();
     // Safety net (plan §25/§39): a body that escaped the terrain field snaps back to the last
     // real ground BEFORE any support maths reads the corrupted position.
@@ -2030,7 +2031,8 @@ export class Player {
       _up.copy(this.position).normalize();
     }
     this.up.copy(_up);
-    const h = g.planet.heightAtDir(_up.x, _up.y, _up.z);
+    const terrainHeight = g.planet.meshHeightAtDir(_up.x, _up.y, _up.z);
+    const h = Math.max(terrainHeight, g.envWorld?.obstacles.supportRadius(this.position, this.grounded && this.jumpLock <= 0 ? 1.5 : 0.05, CONFIG.player.radius) ?? -Infinity);
     const dist = this.position.length();
     // A floating colony fortress is a support only from ABOVE: over its deck the ground is the deck's
     // own flat plane (exactly the plane the mesh is drawn in, so the feet never sink through it as the

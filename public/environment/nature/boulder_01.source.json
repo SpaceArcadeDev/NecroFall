@@ -1,0 +1,8 @@
+{
+  "asset": "boulder_01",
+  "source": "https://polyhaven.com/a/boulder_01",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "resolution": 1024,
+  "modelOptimizer": "@gltf-transform/cli@4.2.1"
+}

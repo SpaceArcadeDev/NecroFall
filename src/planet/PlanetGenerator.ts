@@ -74,7 +74,7 @@ export class PlanetGenerator {
     const moisture = this.terrain.moistureAt(x, y, z);
     const patch = fbm(x * 7.3 + 31.7, y * 7.3 + 5.3, z * 7.3 + 11.1, 2, (this.seed + 991) >>> 0);
     const grove = smoothstep(0.36, 0.62, patch);
-    const slopeFactor = 1 - smoothstep(0.45, 0.95, slope);
+    const slopeFactor = 1 - smoothstep(0.1, 0.3, slope);
     const base = (0.3 + moisture * 0.85) * this.archetype.plantDensity * (0.25 + patch * 1.1);
     // Caves are dead ground: sun-starved rock floors shed almost all vegetation (plan §8/§35).
     // `lastCaveDrop` is fresh from the radiusAt probe in the same sample() call chain.
@@ -93,7 +93,9 @@ export class PlanetGenerator {
   radiationEstimate(x: number, y: number, z: number, height: number, waterLevel: number): number {
     const corruption = this.terrain.corruptionAt(x, y, z);
     const lowWash = smoothstep(waterLevel + 4 - this.radius, waterLevel - 2 - this.radius, height) * 0.18;
-    return clamp(corruption * 0.92 + lowWash + this.archetype.veinStrength * 0.12, 0, 1);
+    const field = fbm(x * 3.8 + 12.7, y * 3.8 - 9.1, z * 3.8 + 3.3, 3, (this.seed ^ 0x76bca31f) >>> 0);
+    const zone = smoothstep(0.46 - this.ring * 0.008, 0.64 - this.ring * 0.008, field);
+    return clamp(zone * 0.94 + corruption * 0.07 + lowWash * 0.2, 0, 1);
   }
 
   rockEstimate(slope: number): number {

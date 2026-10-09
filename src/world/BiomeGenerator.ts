@@ -67,7 +67,7 @@ export class BiomeGenerator {
 
     // corruption veins reach up wherever the field says necrotic
     const corr = this.terrain.corruptionAt(x, y, z);
-    if (corr > 0.55) out.lerp(scratch.setHex(0x8b4dff), (corr - 0.55) * 0.7);
+    if (corr > 0.55) out.lerp(scratch.setHex(p.vein), (corr - 0.55) * 0.7);
 
     // landmark accent (burned-in colour of the site)
     const site = this.terrain.lastSite();

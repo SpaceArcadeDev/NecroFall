@@ -173,6 +173,11 @@ export class Planet {
     this.sunTarget.copy(dir).multiplyScalar(0.62).addScaledVector(_t1, 0.72).addScaledVector(_t2, 0.22).normalize();
   }
 
+  setSunDirection(direction: THREE.Vector3): void {
+    this.sunBase.copy(direction).normalize();
+    this.sunTarget.copy(this.sunBase);
+  }
+
   /** Per-frame uniform updates (shared by the gameplay materials and the world layer). */
   update(dt: number, cameraPos: THREE.Vector3): void {
     updateShaderGlobals(dt, cameraPos);

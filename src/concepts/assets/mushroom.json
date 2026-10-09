@@ -1,0 +1,20 @@
+{
+  "source": "https://sketchfab.com/3d-models/stylized-mushrooms-9d22e02ce2a548959b1c4c4c1d546842",
+  "author": "QumoDone",
+  "license": "CC-BY-4.0",
+  "licenseURL": "https://creativecommons.org/licenses/by/4.0/",
+  "sourceSHA256": "09a4cb387b9ca8b4649ce04093faf81ec3de37d43c04203fd86e90fd5268b361",
+  "modifications": "Hero mushroom mesh extracted, normalized, LOD/texture optimized; painted color and emission preserved for biome shading.",
+  "variants": [
+    {
+      "file": "mushroom-near.glb",
+      "triangles": 2016,
+      "bytes": 204308
+    },
+    {
+      "file": "mushroom-far.glb",
+      "triangles": 1008,
+      "bytes": 198332
+    }
+  ]
+}

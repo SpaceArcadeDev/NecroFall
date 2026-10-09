@@ -20,6 +20,7 @@ import * as THREE from 'three/webgpu';
 import {
   attribute,
   cameraPosition,
+  color,
   cross,
   dot,
   float,
@@ -40,6 +41,7 @@ import {
   vertexIndex,
 } from 'three/tsl';
 import type { PlanetSurface } from '../../planet/PlanetSurface';
+import { WorldGlobals } from '../WorldGlobals';
 import type { Quality } from '../Quality';
 import type { TerrainNodeBundle } from './PlanetTerrainNodes';
 import type { Wind } from './Wind';
@@ -163,6 +165,8 @@ export class Grass {
   /** Trample-trail data texture (xyz = world pos, w = drop time). */
   private readonly trailTexture: THREE.DataTexture;
   private readonly trailData: Float32Array;
+  private readonly trailMin = uniform(new THREE.Vector3(1e6, 1e6, 1e6));
+  private readonly trailMax = uniform(new THREE.Vector3(-1e6, -1e6, -1e6));
   private readonly lastTrailPoint = new THREE.Vector3();
   private trailCursor = 0;
   private trailStarted = false;
@@ -175,6 +179,7 @@ export class Grass {
     private readonly noises: Noises,
     private readonly water: Puddles | undefined,
     private readonly uTime: any,
+    private readonly blocked?: (positionX: number, positionY: number, positionZ: number) => boolean,
   ) {
     this.subdivisions = quality.grassSubdivisions();
 
@@ -317,6 +322,7 @@ export class Grass {
       const dx = ring * Math.cos(angle);
       const dy = z;
       const dz = ring * Math.sin(angle);
+      if (this.blocked?.(dx, dy, dz)) continue;
 
       // patch acceptance — PATCHES ONLY: outside the patch band there is no blade at all
       // (bare ground stays bare), and inside it the coverage^power curve packs blades
@@ -334,7 +340,7 @@ export class Grass {
       // water itself. `WATER_TAPER` metres above the waterline the blade size eases from full
       // down to 20 %; at `WATER_EDGE_CUT` below it the blade is dropped.
       let waterFactor = 1;
-      if (this.water && this.water.sites.length > 0) {
+      if (this.water) {
         this.scratchDir.set(dx, dy, dz);
         const depth = this.water.waterDepthAt(this.scratchDir);
         if (depth > WATER_EDGE_CUT) continue; // under the water film — the lawn stops
@@ -439,6 +445,7 @@ export class Grass {
   private createMaterial(): MeshDefaultMaterial {
     const nodes = this.nodes;
     const wind = this.wind;
+    const art = WorldGlobals.get().basePlanet;
 
     const vertexLoop = vertexIndex.toFloat().mod(3);
     const isTip = vertexLoop.lessThan(0.5);
@@ -450,14 +457,16 @@ export class Grass {
     // for the colour ramp and the root shadow.
     const tipness = varying(vertexLoop.oneMinus().clamp(0, 1));
     // per-blade brightness variation (the reference world's tufts are not uniform)
-    const bladeTint = varying(attribute('bladeRandom') as any);
+    const bladeTint: any = varying(attribute('bladeRandom') as any);
     // THE PER-BLADE TERRAIN COLOUR — evaluated ONCE PER VERTEX and interpolated (plan §32:
     // "move repeated calculations out of fragment"). The blades used to re-read the terrain
     // (terrain tex + gradient palette + patch mask) TWICE PER FRAGMENT — once for the colour
     // ramp, once again for the glow — across one of the largest screen areas in the game. All
     // three vertices of a blade share its position, so the interpolated value is identical to
     // the old per-fragment sample, at a fraction of the cost.
-    const bladeBase: any = varying(nodes.colorNode(nodes.terrainNode(attribute('position') as any)) as any);
+    const bladeData: any = nodes.terrainNode(attribute('position') as any);
+    const bladeBase: any = varying(nodes.colorNode(bladeData) as any);
+    const radiation: any = varying(bladeData.a);
 
     const material = new MeshDefaultMaterial({
       // THE VISIBLE GRADIENT (user ask: "more vibrant and more visible gradient"): the root
@@ -465,6 +474,7 @@ export class Grass {
       // reads blade by blade instead of blending into the terrain colour under it.
       // Saturation > 1 is applied as colour × 1.32 − luma × 0.32 (the mix() identity).
       colorNode: (() => {
+        if (art) return mix(color(art.ground).mul(0.5), color(art.highland), tipness).mul(bladeTint.mul(0.18).add(0.88));
         const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
         // Vegetation saturation from the ONE art-direction document (plan §2/§10) — the shipped
@@ -504,6 +514,7 @@ export class Grass {
       //    root and stays well under the bloom threshold, so it reads as a gentle gradient of
       //    light (root dark → tip faintly lit) instead of glitter.
       glowNode: (() => {
+        if (art) return color(art.infection).mul(tipness.smoothstep(0.65, 0.96)).mul(bladeTint.mul(79).sin().mul(0.5).add(0.5).smoothstep(0.55, 0.8)).mul(radiation.mul(radiation).mul(1.4).add(0.025));
         const ramp: any = mix(bladeBase.mul(0.42), bladeBase.mul(1.55), tipness);
         const luma: any = dot(ramp, vec3(0.2126, 0.7152, 0.0722));
         const saturation = ART_DIRECTION.vegetation.saturation;
@@ -591,19 +602,12 @@ export class Grass {
       // OR any tracked remote player, so every survivor's wake bends the lawn where THEY
       // walked. The per-blade cost of the remote test is one radial distance per walker slot,
       // and the whole block sits behind `uWalkersActive` — in solo play the branch is inert.
-      const nearAny = playerDistance.lessThan(2.4).select(float(1), float(0)).toVar();
-      If((this.uWalkersActive as any).greaterThan(0.5), () => {
-        for (let w = 0; w < Grass.MAX_REMOTE_WALKERS; w++) {
-          const toWalker = basePosition.sub(this.uWalkerPos[w]);
-          const horizontalWalker = (toWalker as any).sub(direction.mul((toWalker as any).dot(direction)));
-          const walkerDistance = (horizontalWalker as any).length();
-          const active = (this.uWalkerOn[w] as any).greaterThan(0.5);
-          const nearWalker = active.select(walkerDistance.lessThan(2.4).select(float(1), float(0)), float(0));
-          nearAny.assign(max(nearAny, nearWalker));
-        }
-      });
+      const nearTrail = basePosition.x.greaterThan(this.trailMin.x).and(basePosition.x.lessThan(this.trailMax.x))
+        .and(basePosition.y.greaterThan(this.trailMin.y)).and(basePosition.y.lessThan(this.trailMax.y))
+        .and(basePosition.z.greaterThan(this.trailMin.z)).and(basePosition.z.lessThan(this.trailMax.z));
       const trailBend = vec3(0, 0, 0).toVar();
-      If(nearAny.greaterThan(0.5), () => {
+      const trailFlatten = float(0).toVar();
+      If(nearTrail, () => {
         const accumulated = vec3(0, 0, 0).toVar();
         Loop(TRAIL_SLOTS, ({ i }) => {
           const slotUv = vec2(float(i).add(0.5).mul(TRAIL_TEXEL), 0.5);
@@ -617,6 +621,7 @@ export class Grass {
           const influence = smoothstep(0.4, 2.0, trailDistance).oneMinus()
             .mul(smoothstep(4.0, 7.0, age).oneMinus())
             .mul(smoothstep(0.0, 0.3, age));
+          trailFlatten.assign(max(trailFlatten, influence));
           accumulated.addAssign(
             normalize(horizontalTrail.add(vec3(0.0001, 0.0001, 0.0001)) as any).mul(influence),
           );
@@ -631,7 +636,7 @@ export class Grass {
 
       const vertexPosition = basePosition
         .add(facing.mul(shapeX))
-        .add(direction.mul(shapeUp))
+        .add(direction.mul(shapeUp.mul(trailFlatten.mul(-0.65).add(1))))
         // Sway rides the blade's WORLD-STABLE tangent frame (a pure function of
         // the blade's own direction) — never the camera-facing axis. Displacing
         // along `facing` made every blade's wobble direction rotate with the
@@ -710,17 +715,15 @@ export class Grass {
     // Parting centre = the player's exact world position.
     this.uPushCenter.value.copy(focus);
 
-    // Drop a trample-trail sample every TRAIL_DROP_STEP metres of travel.
-    if (!this.trailStarted || this.lastTrailPoint.distanceTo(focus) > TRAIL_DROP_STEP) {
-      this.pushTrailSample(focus);
-      this.lastTrailPoint.copy(focus);
-      this.trailStarted = true;
-    }
-
     // Parting only happens at ground level — the lawn is untouched mid-air.
     this.scratchDir.copy(focus).normalize();
     const height = Math.max(0, focus.length() - this.surface.radiusAt(this.scratchDir));
     this.uGrassPush.value = 1 - smoothstepCpu01(0.35, 1.1, height);
+    if (height <= 1.1 && (!this.trailStarted || this.lastTrailPoint.distanceTo(focus) > TRAIL_DROP_STEP)) {
+      this.pushTrailSample(focus);
+      this.lastTrailPoint.copy(focus);
+      this.trailStarted = true;
+    } else if (height > 1.1) this.trailStarted = false;
 
     // ---- REMOTE WALKERS (user ask 2026-10-03): the other players' proxy positions join the
     // same trail ring and are published to the shader (blades near them run the trail loop too).
@@ -737,6 +740,18 @@ export class Grass {
     }
     for (; slot < Grass.MAX_REMOTE_WALKERS; slot++) this.uWalkerOn[slot].value = 0;
     this.uWalkersActive.value = slot > 0 ? 1 : 0;
+    this.trailMin.value.set(1e6, 1e6, 1e6);
+    this.trailMax.value.set(-1e6, -1e6, -1e6);
+    for (let sample = 0; sample < TRAIL_SLOTS; sample++) {
+      const offset = sample * 4;
+      const age = Number(this.uTime.value) - this.trailData[offset + 3];
+      if (age < 0 || age >= 7) continue;
+      this.scratchDir.fromArray(this.trailData, offset);
+      this.trailMin.value.min(this.scratchDir);
+      this.trailMax.value.max(this.scratchDir);
+    }
+    this.trailMin.value.addScalar(-2.2);
+    this.trailMax.value.addScalar(2.2);
   }
 
   /** Append one trail sample (xyz + now) to the ring and re-upload the texture. */

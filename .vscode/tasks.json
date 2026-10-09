@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Preview main planet integration",
+			"type": "shell",
+			"command": "npm run dev -- --host 127.0.0.1 --port 5198",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

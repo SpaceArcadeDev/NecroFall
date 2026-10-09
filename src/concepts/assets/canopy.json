@@ -1,0 +1,50 @@
+{
+  "source": "https://polyhaven.com/a/jacaranda_tree",
+  "license": "CC0-1.0",
+  "modifications": [
+    "geometry normalized and canopy profile edited where applicable",
+    "authored texture detail recolored to NECROFALL palette",
+    "opacity restored where supplied",
+    "near/far simplification and meshopt compression"
+  ],
+  "role": "scarlet-canopy",
+  "sourceTriangles": 3863832,
+  "variants": [
+    {
+      "file": "canopy-near.glb",
+      "triangles": 59929,
+      "bytes": 4241188,
+      "bounds": {
+        "min": [
+          -16.52037811279297,
+          -0.000888753389167718,
+          -12.444236766765592
+        ],
+        "max": [
+          16.8170166015625,
+          20.406272817109873,
+          12.256384860942838
+        ]
+      },
+      "sha256": "678007b2d35fbea6222b4c3fd3780a3ec818e2f7df450061c3cbaf49e18f988b"
+    },
+    {
+      "file": "canopy-far.glb",
+      "triangles": 5965,
+      "bytes": 2685436,
+      "bounds": {
+        "min": [
+          -16.1695499420166,
+          0.04467354015510061,
+          -11.683982430144116
+        ],
+        "max": [
+          15.9646577835083,
+          20.19389171480138,
+          12.109472809477612
+        ]
+      },
+      "sha256": "f69415602e36ce3693260ca84f3e9a1d4241941bfa605008833a69d60cbde3eb"
+    }
+  ]
+}

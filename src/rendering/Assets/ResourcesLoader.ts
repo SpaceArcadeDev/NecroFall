@@ -8,6 +8,7 @@ import * as THREE from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 export class ResourcesLoader {
   private readonly cache = new Map<string, Promise<unknown>>();
@@ -33,6 +34,7 @@ export class ResourcesLoader {
     }
 
     this.gltf = new GLTFLoader();
+    this.gltf.setMeshoptDecoder(MeshoptDecoder);
     this.gltf.setDRACOLoader(this.draco);
     if (this.ktx2) this.gltf.setKTX2Loader(this.ktx2);
     return this.gltf;

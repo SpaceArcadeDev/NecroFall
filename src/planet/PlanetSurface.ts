@@ -12,6 +12,7 @@
 import * as THREE from 'three/webgpu';
 import type { PlanetGenerator } from './PlanetGenerator';
 import type { PlanetSurfaceData } from './PlanetSurfaceData';
+import { createRenderedRadiusAt, type RenderedRadiusAt } from './RenderedTerrain';
 
 export interface SurfaceSample {
   point: THREE.Vector3;
@@ -65,6 +66,7 @@ const _worldUp = new THREE.Vector3(0, 1, 0);
 const PROBE_ANGLE = 0.004; // ≈0.5 m arc on a 118 m planet
 
 export class PlanetSurface {
+  private readonly renderedRadiusAt: RenderedRadiusAt;
   readonly center = new THREE.Vector3(0, 0, 0);
 
   /** `?foliageDebug=1` counters (plan §33) — zero cost unless the debug overlay is armed. */
@@ -75,7 +77,7 @@ export class PlanetSurface {
   constructor(
     readonly generator: PlanetGenerator,
     readonly data: PlanetSurfaceData,
-  ) {}
+  ) { this.renderedRadiusAt = createRenderedRadiusAt(generator); }
 
   get radius(): number {
     return this.generator.radius;
@@ -91,7 +93,7 @@ export class PlanetSurface {
 
   radiusAt(direction: THREE.Vector3): number {
     if (PlanetSurface.debugCounters) PlanetSurface.debugQueries++;
-    return this.generator.radiusAt(direction.x, direction.y, direction.z);
+    return this.renderedRadiusAt(direction);
   }
 
   heightAt(direction: THREE.Vector3): number {

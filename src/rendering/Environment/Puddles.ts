@@ -60,6 +60,7 @@ const SPOKES = 8;
 const MIN_RIM_DROP = 0.22; // metres — the centre must sit this far below its rim
 const TARGET_SITES = 120;
 const MAX_ATTEMPTS = 9000;
+export const MAX_WATER_DEPTH = 0.35;
 
 /** Walking-wake ring buffer: ripple centres kept as one RGBA float row. */
 const TRAIL_SLOTS = 16;
@@ -151,14 +152,14 @@ export class Puddles {
             .normalize();
 
           const renderedRadius = this.renderedRadiusAt(direction);
-          const depth = site.waterLevel - renderedRadius;
+          const depth = Math.min(MAX_WATER_DEPTH, site.waterLevel - renderedRadius);
           // flat water inside the basin; over the outer band it slopes down to
           // hug the VISIBLE ground so the shoreline sits exactly where the
           // camera's terrain meets the water
           const edgeDrop = smoothstepCpu(0.82, 1.0, r);
           const conformRadius = renderedRadius + 0.035;
           const surfaceRadius = depth > 0.02
-            ? site.waterLevel * (1 - edgeDrop) + conformRadius * edgeDrop
+            ? (renderedRadius + depth) * (1 - edgeDrop) + conformRadius * edgeDrop
             : conformRadius;
 
           positions.push(direction.x * surfaceRadius, direction.y * surfaceRadius, direction.z * surfaceRadius);
@@ -187,6 +188,7 @@ export class Puddles {
     geometry.setAttribute('aRing', new THREE.BufferAttribute(new Float32Array(rings), 1));
     geometry.setAttribute('aSeed', new THREE.BufferAttribute(new Float32Array(seeds), 1));
     geometry.setIndex(indices);
+    geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
 
     // ---------------------------------------------------------------- folio water
@@ -231,7 +233,8 @@ export class Puddles {
 
     const material = new MeshDefaultMaterial({
       // folio: the detail pass is the foam — soft seafoam, never milk-white
-      colorNode: mix(color(0xdff7ee), color(0x86c7b6), 0.55) as any,
+      colorNode: mix(color(generator.archetype.art!.water).mul(0.45), color(generator.archetype.art!.horizon).mul(0.7), 0.35),
+      glowNode: generator.archetype.art!.waterSurface === 'lava' ? color(generator.archetype.art!.infection).mul(0.65) : undefined,
       alphaNode: detailsMask,
       alphaTest: 0,
       depthWrite: false,
@@ -248,18 +251,22 @@ export class Puddles {
     // thin bright rings; dry pixels vanish entirely.
     const baseOutput = (material as any).outputNode as any;
     (material as any).outputNode = Fn(() => {
+      if (generator.archetype.art!.waterSurface !== 'liquid') {
+        const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(0.84, 1.0, ring).oneMinus());
+        return vec4(baseOutput.rgb, wet);
+      }
       const blurOutput = (hashBlur as any)(viewportSharedTexture(screenUV), floatLike(0.012), {
         repeats: 25,
         premultipliedAlpha: true,
       });
       // contaminated tint over the screen mirror (radioactive puddle water)
-      const mirrored = mix(blurOutput.rgb, vec3(0.06, 0.24, 0.25), 0.38);
+      const mirrored = mix(blurOutput.rgb, vec3(baseOutput.rgb), 0.38);
       const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(0.84, 1.0, ring).oneMinus());
       // smooth foam compositing (a hard >0.5 cut turned every mask edge into a
       // solid white patch — the over-foamed shores)
       const foamed = mix(mirrored, baseOutput.rgb, detailsMask);
       // walking wake: crisp rings on top of the water, not foam blobs
-      const rgb = mix(foamed, baseOutput.rgb, (wake as any).mul(0.65));
+      const rgb = mix(foamed, mix(vec3(baseOutput.rgb), color(generator.archetype.art!.horizon), 0.65), (wake as any).mul(0.85));
       return vec4(rgb, wet.mul(0.97));
     })();
 
@@ -268,6 +275,9 @@ export class Puddles {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
     this.mesh.name = 'puddles';
+    this.mesh.userData.surface = generator.archetype.art!.waterSurface;
+    this.mesh.userData.maxDepth = MAX_WATER_DEPTH;
+    this.mesh.userData.palette = generator.archetype.art!.water;
   }
 
   /**
@@ -340,9 +350,9 @@ export class Puddles {
       const drop = found.rimMin - centreRadius;
       // fill to 85% of the drop: a real pool, its waterline just below the
       // lowest rim point; never beneath the visible mesh floor
-      const fill = Math.min(drop * 0.85, 1.2);
+      const fill = Math.min(drop * 0.85, MAX_WATER_DEPTH);
       const renderedCentre = this.renderedRadiusAt(direction);
-      const waterLevel = Math.max(centreRadius + Math.max(0.2, fill), renderedCentre + 0.15);
+      const waterLevel = Math.min(renderedCentre + MAX_WATER_DEPTH, Math.max(centreRadius + Math.max(0.2, fill), renderedCentre + 0.15));
       sites.push({
         direction: direction.clone(),
         radius: found.radius,
@@ -381,7 +391,11 @@ export class Puddles {
       }
     }
     if (!best) return -Infinity;
-    return best.waterLevel - this.renderedRadiusAt(direction);
+    return Math.min(MAX_WATER_DEPTH, best.waterLevel - this.renderedRadiusAt(direction));
+  }
+
+  surfaceRadiusAt(direction: THREE.Vector3): number {
+    return this.renderedRadiusAt(direction) + Math.max(0, this.waterDepthAt(direction));
   }
 
   /**
@@ -401,6 +415,7 @@ export class Puddles {
   }
 
   private trackTrailFor(id: string, focusPoint: THREE.Vector3): void {
+    if (this.generator.archetype.art!.waterSurface !== 'liquid') return;
     let state = this.trailState.get(id);
     if (!state) {
       if (this.trailState.size > 24) this.trailState.clear(); // stale seats fall away with the roster
@@ -415,9 +430,9 @@ export class Puddles {
     for (const site of this.sites) {
       if (direction.dot(site.direction) < site.reachCos) continue;
       // must be AT the water surface — flying/jumping over a puddle leaves no wake
-      if (playerRadius > site.waterLevel + 0.4) continue;
+      if (playerRadius > this.renderedRadiusAt(direction) + 0.75) continue;
       // visible depth — the wake follows the water the camera shows
-      const waterDepth = site.waterLevel - this.renderedRadiusAt(direction);
+      const waterDepth = Math.min(MAX_WATER_DEPTH, site.waterLevel - this.renderedRadiusAt(direction));
       if (waterDepth > 0.045 && waterDepth > wadingDepth) {
         wadingDepth = waterDepth;
         wadingSite = site;
@@ -429,7 +444,7 @@ export class Puddles {
       return;
     }
 
-    const point = direction.multiplyScalar(wadingSite.waterLevel);
+    const point = direction.multiplyScalar(this.surfaceRadiusAt(direction));
     if (state.started && state.last.distanceTo(point) < TRAIL_STEP) return;
 
     const offset = (this.trailCursor % TRAIL_SLOTS) * 4;

@@ -36,8 +36,10 @@ import { PlanetSurfaceData } from '../../planet/PlanetSurfaceData';
 import { PlanetSurface } from '../../planet/PlanetSurface';
 import { makePlanetSpec, type PlanetSpec } from '../../planet/PlanetSeed';
 import { createTerrainGradient } from '../materials/PlanetPalette';
+import { createPlanetSystem, type PlanetSystemContext } from '../../planet/PlanetSystem';
 
 export interface PlanetWorldParams {
+  solar?: PlanetSystemContext;
   scene: THREE.Scene;
   ticker: Ticker;
   quality: Quality;
@@ -99,13 +101,22 @@ export interface PlanetWorldResult {
  * current world may stay attached — a stale build (the match changed while baking) must be
  * disposed by the caller immediately.
  */
-export async function createPlanetWorld(params: PlanetWorldParams): Promise<PlanetWorldResult> {
+let buildQueue: Promise<void> = Promise.resolve();
+
+export function createPlanetWorld(params: PlanetWorldParams): Promise<PlanetWorldResult> {
+  const result = buildQueue.then(() => buildPlanetWorld(params));
+  buildQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function buildPlanetWorld(params: PlanetWorldParams): Promise<PlanetWorldResult> {
   const { onProgress } = params;
   const spec = makePlanetSpec(params.seed, params.ring, params.radius, params.label);
   if (params.focusDir) spec.focusDir = params.focusDir;
 
   onProgress?.(0.05, 'generating planet');
   const generator = new PlanetGenerator(spec);
+  const system = createPlanetSystem(params.seed, params.radius, params.ring, params.solar);
   const surfaceData = await PlanetSurfaceData.bake(generator, (ratio, label) => {
     onProgress?.(0.05 + ratio * 0.35, label);
   });
@@ -123,6 +134,7 @@ export async function createPlanetWorld(params: PlanetWorldParams): Promise<Plan
   globals.fog = params.fog;
   globals.terrain = nodes;
   globals.wind = wind;
+  globals.basePlanet = generator.archetype.art ?? null;
   WorldGlobals.current = globals;
 
   // Materials bind the globals at construction — always created AFTER the context exists.
@@ -152,6 +164,8 @@ export async function createPlanetWorld(params: PlanetWorldParams): Promise<Plan
       time: params.time,
       spawnDirection,
       hidden: params.hidden,
+      system,
+      globals,
     },
     (ratio, label) => onProgress?.(0.42 + ratio * 0.58, label),
   );

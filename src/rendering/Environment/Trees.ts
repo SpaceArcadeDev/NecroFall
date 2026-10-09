@@ -54,6 +54,7 @@ export interface TreesDependencies {
   spawnClear?: SpawnClear;
   /** Solid trunks register here (player collision). */
   obstacles?: PlanetObstacles;
+  blocked?: (positionX: number, positionY: number, positionZ: number) => boolean;
 }
 
 export class Trees {
@@ -72,7 +73,7 @@ export class Trees {
 
   static async create(species: TreeSpeciesOptions, deps: TreesDependencies): Promise<Trees> {
     const gltf = await deps.loader.loadGLTF(species.url);
-    const scene = gltf.scene;
+    const scene = gltf.scene.clone(true);
     scene.updateMatrixWorld(true);
 
     // every GLB material goes through the shared lighting language (plan §53)
@@ -106,12 +107,10 @@ export class Trees {
       attemptsPerInstance: 14,
       excludeDirection: deps.spawnClear?.direction,
       excludeRadius: deps.spawnClear?.radius,
+      accept: sample => !deps.blocked?.(sample.up.x, sample.up.y, sample.up.z),
     });
 
     // ---- solid trunks: the player collides with a thin trunk cylinder
-    for (const placement of placements) {
-      deps.obstacles?.add(placement, 0.028 * assetHeight * placement.scale, 0, false);
-    }
 
     // ---- trunk instancing
     let trunkMesh: THREE.InstancedMesh | null = null;

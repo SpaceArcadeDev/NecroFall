@@ -1,0 +1,199 @@
+:root { color-scheme: dark; font-family: 'Bahnschrift', 'DIN Alternate', 'Trebuchet MS', sans-serif; font-synthesis: none; letter-spacing: 0; color: #eaf4ef; background: #091719; }
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+button, select { cursor: pointer; }
+button { border: 1px solid #ffffff30; background: #0d232ccc; border-radius: 3px; }
+button:hover { background: #28414add; border-color: #ffffff7a; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #e4ff99; outline-offset: 4px; }
+button[aria-selected='true'] { border-color: #ffffffb0; }
+[hidden] { display: none !important; }
+a { color: inherit; text-decoration: none; }
+.viewport, .viewport canvas, .vignette { position: fixed; inset: 0; width: 100%; height: 100%; }
+.viewport canvas { touch-action: none; }
+.vignette { pointer-events: none; background: linear-gradient(180deg, #05121a70, transparent 24%, transparent 57%, #06141d20 66%, #041019e0 95%); }
+.masthead { height: 66px; position: absolute; inset: 0 0 auto; display: flex; align-items: center; gap: 28px; padding: 0 30px; border-bottom: 1px solid #ffffff25; background: #05131dd9; }
+.wordmark { font-size: 27px; font-weight: 600; white-space: nowrap; }
+.wordmark span { display: inline-block; color: #c4ed7b; }
+.masthead-label { font-size: 10px; color: #c6d5d6; }
+.masthead-label span { color: #82989d; padding: 0 12px; }
+.header-controls { margin-left: auto; display: flex; align-items: center; gap: 26px; }
+.quality-label { font-size: 11px; color: #a5b9be; display: flex; align-items: center; gap: 8px; }
+select { padding: 6px 22px 6px 10px; border: 1px solid #ffffff33; background: #132c37; border-radius: 3px; font-size: 11px; }
+.backend { font-size: 10px; color: #c3ddc5; }
+.backend::before { content: ''; display: inline-block; width: 5px; height: 5px; background: #bcf37b; border-radius: 50%; margin-right: 7px; }
+.view-switch { position: absolute; top: 86px; left: 50%; transform: translateX(-50%); }
+.view-switch [role='tablist'] { display: flex; background: #071923cf; border: 1px solid #ffffff45; padding: 4px; border-radius: 4px; }
+.view-switch button { height: 32px; min-width: 92px; border: none; background: transparent; font-size: 12px; }
+.view-switch button[aria-selected='true'] { color: #112830; background: #e1eeeb; }
+.scene-meta { position: absolute; left: 31px; top: 92px; display: flex; flex-direction: column; gap: 8px; font-size: 10px; text-shadow: 0 1px 5px #000; }
+#designation { font-size: 12px; color: var(--accent); }
+.scene-actions { position: absolute; right: 30px; top: 91px; display: flex; gap: 6px; }
+.scene-actions button { padding: 8px 10px; font-size: 10px; }
+.hide-toggle { position: absolute; right: 30px; top: 143px; padding: 6px 10px; font-size: 10px; background: #0a202580; }
+.world-caption { position: absolute; left: 32px; bottom: 204px; width: 410px; pointer-events: none; text-shadow: 0 2px 14px #07151adc; }
+.eyebrow { font-size: 9px; color: #d8ebe6; margin-bottom: 9px; }
+h1 { font-size: 49px; line-height: 1.08; font-weight: 500; margin: 0 0 11px; overflow-wrap: anywhere; }
+.world-caption p { font-size: 12px; line-height: 1.55; color: #d0e2e1; max-width: 340px; margin: 0; }
+.selection { position: absolute; right: 30px; bottom: 207px; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+.selection > span { font-size: 10px; color: #cbdedb; text-shadow: 0 1px 5px #000; }
+#choose { background: #dae9d8; color: #132624; font-size: 12px; padding: 11px 18px; border: 1px solid #e9f6e5; }
+#choose:hover { background: #f1ffe7; }
+#choose[aria-pressed='true'] { background: #c4e88f; }
+.archive { position: absolute; bottom: max(12px, env(safe-area-inset-bottom)); left: 30px; right: 30px; }
+.archive-top { display: flex; align-items: center; justify-content: space-between; height: 36px; font-size: 9px; color: #c4d7d6; }
+.archive-top b { font-weight: 400; color: #83a2a8; margin-left: 10px; }
+.seed-controls { display: flex; align-items: center; gap: 8px; }
+.seed-controls label { color: #aac3c6; font-size: 9px; }
+.seed-controls input { width: 102px; height: 26px; background: #0c2630d9; border: 1px solid #456066; border-radius: 2px; padding: 3px 7px; font-size: 11px; }
+.seed-controls button { height: 26px; padding: 3px 10px; font-size: 10px; }
+.planet-tabs { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 0 6px; scrollbar-width: thin; scrollbar-color: #718c9360 transparent; gap: 8px; }
+.planet-tab { flex: 0 0 230px; scroll-snap-align: start; }
+.planet-tab { position: relative; height: 88px; display: flex; align-items: center; padding: 4px 6px; gap: 0; text-align: left; overflow: hidden; background: #091d27e8; border: 1px solid #50717b70; border-radius: 3px; }
+.planet-tab::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: var(--planet-accent); opacity: 0.3; }
+.planet-tab[aria-selected='true'] { background: #1d3941ed; border-color: #c9e2d8b0; }
+.planet-tab[aria-selected='true']::after { opacity: 1; }
+.planet-tab img { width: 85px; height: 60px; object-fit: contain; flex-shrink: 0; }
+.planet-tab small { display: block; font-size: 8px; color: #9fb9bd; margin-bottom: 7px; }
+.planet-tab strong { display: block; font-size: 13px; font-weight: 500; line-height: 1.2; }
+.chosen-mark { position: absolute; right: 7px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: transparent; }
+.is-chosen .chosen-mark { background: #d7ffa0; }
+.archive-bottom { display: flex; justify-content: space-between; padding-top: 10px; color: #b2c8c8; font-size: 8px; min-height: 21px; }
+.muted { color: #71949e; }
+#performance { color: #90b2b8; }
+.loading { position: fixed; inset: 66px 0 0; background: #091d29ed; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; font-size: 13px; }
+.loading-orbit { width: 47px; height: 47px; border: 1px solid #57717d; border-top: 2px solid #d4eab0; border-radius: 50%; animation: orbit 1.2s linear infinite; }
+@keyframes orbit { to { transform: rotate(360deg); } }
+.creature-labels, .creature-switch { display: none; }
+[data-view='fauna'] .world-caption { top: 150px; bottom: auto; }
+[data-view='fauna'] .world-caption h1 { font-size: 28px; }
+[data-view='fauna'] .world-caption p, [data-view='fauna'] .eyebrow { display: none; }
+[data-view='fauna'] .creature-labels { display: grid; grid-template-columns: repeat(3, 1fr); position: absolute; bottom: 217px; left: 22%; right: 22%; text-align: center; gap: 20px; }
+.creature-labels small { display: block; color: var(--accent); font-size: 8px; margin-bottom: 7px; }
+.creature-labels strong { font-size: 15px; font-weight: 500; }
+[data-view='orbit'] .world-caption { bottom: 213px; }
+.ui-hidden .chrome, .ui-hidden .vignette { visibility: hidden; pointer-events: none; }
+.ui-hidden .hide-toggle { opacity: 0.35; }
+.ui-hidden .hide-toggle:hover { opacity: 1; }
+.boot-error { margin: 15vh auto 25px; max-width: 600px; padding: 20px; }
+.asset-inspection { position: absolute; top: 145px; left: 31px; display: flex; align-items: center; gap: 8px; font-size: 10px; text-shadow: 0 1px 5px #000; }
+.navigation-tools { position: absolute; top: 185px; left: 31px; display: flex; align-items: center; gap: 12px; font-size: 10px; }
+.navigation-tools button { padding: 7px 12px; min-height: 30px; }
+.focus-control { display: flex; align-items: center; gap: 5px; text-shadow: 0 1px 5px #000; }
+.focus-control input { accent-color: #b5e28d; width: 16px; height: 16px; }
+.walk-controls { display: none; position: absolute; left: 20px; bottom: 24px; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(2, 44px); gap: 5px; }
+.walk-controls button { font-size: 24px; touch-action: none; }
+.walk-controls button:first-child { grid-column: 2; }
+.walk-controls button:nth-child(2) { grid-column: 1; grid-row: 2; }
+.walk-controls button:nth-child(3) { grid-column: 2; grid-row: 2; }
+.walk-controls button:nth-child(4) { grid-column: 3; grid-row: 2; }
+[data-walking='true'] .walk-controls { display: grid; }
+[data-walking='true'] .archive, [data-walking='true'] .world-caption, [data-walking='true'] .selection { display: none; }
+[data-view='fauna'] .navigation-tools, #concepts:not([data-inspection='scene']) .navigation-tools { display: none; }
+#concepts:not([data-view='surface']) #walk { display: none; }
+.climate-controls { position: absolute; top: 143px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; font-size: 11px; }
+.climate-controls [role='group'] { display: flex; padding: 3px; border: 1px solid #ffffff45; background: #071923dc; border-radius: 4px; }
+.climate-controls button { border: 0; background: transparent; min-width: 74px; height: 30px; font-size: 11px; }
+.climate-controls button[aria-pressed='true'] { background: #deece7; color: #142b30; }
+[data-state='radiated'] .climate-controls button[aria-pressed='true'] { background: var(--accent); }
+.weather-control { display: flex; align-items: center; gap: 4px; white-space: nowrap; text-shadow: 0 1px 5px #000; }
+.weather-control input { accent-color: #b5e28d; width: 16px; height: 16px; }
+[data-view='fauna'] .climate-controls, #concepts:not([data-view='surface']) .weather-control, #concepts:not([data-inspection='scene']) .weather-control { display: none; }
+#concepts:not([data-view='surface']) .asset-inspection { display: none; }
+[data-assets='true'] .planet-tab:disabled { opacity: 0.32; cursor: default; }
+[data-assets='true'][data-view='fauna'] .creature-labels { display: grid; grid-template-columns: 1fr; }
+[data-assets='true'] .creature-switch { display: none !important; }
+@media (max-width: 1150px) {
+  .masthead-label { display: none; }
+  .planet-tab img { width: 65px; }
+  .planet-tab strong { font-size: 11px; }
+  .scene-meta { max-width: 180px; }
+  .scene-actions { top: 143px; }
+  .hide-toggle { top: 184px; }
+}
+@media (max-width: 699px) {
+  .masthead { height: 56px; padding: 0 16px; gap: 12px; }
+  .wordmark { font-size: 22px; }
+  .header-controls { gap: 9px; }
+  .quality-label { font-size: 0; gap: 0; }
+  select { font-size: 10px; padding: 5px 14px 5px 7px; max-width: 90px; }
+  .backend { font-size: 8px; }
+  .backend::before { display: none; }
+  .view-switch { top: 72px; }
+  .view-switch button { min-width: 82px; height: 34px; font-size: 11px; }
+  .climate-controls { top: 123px; }
+  .scene-meta { top: 179px; left: 18px; font-size: 8px; max-width: 200px; }
+  .asset-inspection { left: 18px; top: 225px; }
+  .navigation-tools { left: 18px; top: 262px; }
+  #designation { font-size: 10px; }
+  .scene-actions { right: 16px; top: 179px; flex-direction: column; gap: 4px; }
+  .scene-actions button { font-size: 9px; padding: 7px 8px; min-height: 30px; }
+  .hide-toggle { right: 16px; top: 286px; min-height: 30px; }
+  .world-caption { left: 18px; right: 18px; bottom: 255px; width: auto; max-width: 360px; }
+  h1 { font-size: 36px; margin-bottom: 8px; }
+  .eyebrow { font-size: 8px; margin-bottom: 8px; }
+  .world-caption p { font-size: 11px; max-width: 285px; }
+  .selection { bottom: 169px; left: 18px; right: 18px; flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; }
+  .selection > span { font-size: 9px; max-width: 145px; }
+  #choose { font-size: 10px; padding: 10px 11px; white-space: nowrap; min-height: 38px; }
+  .archive { left: 16px; right: 16px; bottom: max(9px, env(safe-area-inset-bottom)); }
+  .archive-top { height: 37px; font-size: 8px; }
+  .archive-top b { display: none; }
+  .seed-controls { gap: 5px; }
+  .seed-controls input { width: 87px; height: 30px; font-size: 10px; }
+  .seed-controls button { height: 30px; padding: 3px 8px; }
+  .planet-tabs { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding: 2px 0 6px; scrollbar-width: thin; scrollbar-color: #718c9360 transparent; }
+  .planet-tab { flex: 0 0 153px; height: 71px; scroll-snap-align: start; }
+  .planet-tab img { width: 62px; }
+  .planet-tab small { font-size: 7px; }
+  .planet-tab strong { font-size: 11px; }
+  .archive-bottom { font-size: 7px; gap: 10px; }
+  .archive-bottom .muted { display: none; }
+  .loading { top: 56px; }
+  [data-view='fauna'] .world-caption { top: 235px; left: 18px; max-width: 220px; }
+  [data-view='fauna'] .world-caption h1 { font-size: 24px; }
+  [data-view='fauna'] .creature-labels { display: none; }
+  [data-view='fauna'] .creature-switch { display: flex; position: absolute; left: 18px; right: 18px; bottom: 229px; gap: 5px; }
+  .creature-switch button { flex: 1; min-width: 0; padding: 8px 4px; font-size: 10px; min-height: 57px; }
+  .creature-switch button small { font-size: 7px; display: block; margin-bottom: 5px; color: var(--accent); }
+  .creature-switch button[aria-selected='true'] { background: #29424be6; }
+  [data-view='orbit'] .world-caption { bottom: 233px; }
+}
+@media (max-height: 600px) and (min-width: 700px) {
+  .masthead { height: 48px; }
+  .wordmark { font-size: 22px; }
+  .view-switch { top: 59px; }
+  .view-switch button { height: 28px; }
+  .scene-meta { top: 65px; }
+  .asset-inspection { top: 105px; }
+  .navigation-tools { top: 140px; }
+  .climate-controls { top: 105px; }
+  .climate-controls button { min-width: 65px; height: 25px; font-size: 10px; }
+  .weather-control { font-size: 10px; }
+  .scene-actions { top: 61px; }
+  .hide-toggle { top: 103px; }
+  .archive { bottom: 6px; left: 18px; right: 18px; }
+  .archive-top { height: 28px; }
+  .planet-tab { height: 59px; }
+  .planet-tab img { width: 52px; height: 48px; }
+  .planet-tab small { font-size: 6px; margin-bottom: 4px; }
+  .planet-tab strong { font-size: 10px; }
+  .archive-bottom { padding-top: 5px; min-height: 15px; }
+  .world-caption, [data-view='orbit'] .world-caption { bottom: 126px; left: 20px; width: 320px; }
+  .world-caption h1 { font-size: 29px; }
+  .world-caption p { display: none; }
+  .selection { bottom: 125px; right: 20px; }
+  .selection > span { display: none; }
+  #choose { padding: 8px 12px; font-size: 10px; }
+  [data-view='fauna'] .world-caption { top: 112px; }
+  [data-view='fauna'] .world-caption h1 { font-size: 19px; }
+  [data-view='fauna'] .creature-labels { bottom: 126px; right: 24%; }
+  .creature-labels strong { font-size: 12px; }
+  .loading { top: 48px; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; } }
+@media (max-height: 700px) and (max-width: 699px) {
+  .world-caption, [data-view='orbit'] .world-caption { bottom: 223px; max-width: 210px; }
+  .world-caption h1 { font-size: 20px; }
+  .world-caption .eyebrow, .world-caption p { display: none; }
+}

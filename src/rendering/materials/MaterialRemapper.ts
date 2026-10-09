@@ -8,6 +8,7 @@
 import * as THREE from 'three/webgpu';
 import { color, float, texture } from 'three/tsl';
 import { MeshDefaultMaterial } from './MeshDefaultMaterial';
+import { WorldGlobals } from '../WorldGlobals';
 
 export class MaterialRemapper {
   private readonly cache = new Map<THREE.Material, THREE.Material>();
@@ -48,7 +49,8 @@ export class MaterialRemapper {
       : float(standard.transparent ? Math.max(0.02, standard.opacity) : 1);
 
     const material = new MeshDefaultMaterial({
-      colorNode: baseColor,
+      colorNode: WorldGlobals.get().basePlanet ? color(WorldGlobals.get().basePlanet!.rock) : baseColor,
+      playerOcclusion: true,
       alphaNode,
       transparent: standard.transparent ?? false,
       side: standard.side ?? THREE.FrontSide,

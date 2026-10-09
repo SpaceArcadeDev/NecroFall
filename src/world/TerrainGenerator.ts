@@ -20,6 +20,13 @@ interface Belt {
   nx: number; ny: number; nz: number; w: number; p: number;
 }
 
+interface Massif {
+  direction: THREE.Vector3;
+  radiusSquared: number;
+  height: number;
+  terrace: number;
+}
+
 /** Landmark flattened for the hot loop. */
 interface Site {
   nx: number; ny: number; nz: number;
@@ -47,6 +54,7 @@ export class TerrainGenerator {
   private readonly craters: Belt[] = [];
   private readonly sinkholes: Belt[] = [];
   private readonly sites: Site[] = [];
+  private readonly massifs: Massif[] = [];
   /** Per-cave prefilters: cos(footprint radius) — the hot loop skips caves instantly. */
   private readonly caveCosReach: number[] = [];
   /** River influence is needed by the moisture field too — remember its last value per sample. */
@@ -104,6 +112,24 @@ export class TerrainGenerator {
         color: lm.color,
         moisture: lm.shape === 'BOWL' ? 0.6 * lm.strength : lm.type === 'FUNGAL_FOREST' ? 0.45 * lm.strength : 0,
         landmark: lm,
+      });
+    }
+
+    const geology = new Rand((this.seed ^ 0x69d30a71) >>> 0);
+    const anchors = this.landmarks.filter(landmark => landmark.shape === 'PEAK' || landmark.shape === 'RIDGE');
+    for (let index = 0; index < 10; index++) {
+      const azimuth = geology.range(0, Math.PI * 2);
+      const vertical = geology.range(-0.85, 0.85);
+      const horizontal = Math.sqrt(1 - vertical * vertical);
+      const direction = anchors[index]?.dir.clone() ?? new THREE.Vector3(
+        Math.cos(azimuth) * horizontal, vertical, Math.sin(azimuth) * horizontal,
+      );
+      const spread = geology.range(0.2, 0.3);
+      this.massifs.push({
+        direction,
+        radiusSquared: spread * spread,
+        height: geology.range(24, 42) * (arch.biome === 'FROZEN' ? 1.15 : 1),
+        terrace: arch.biome === 'DESERT' ? 0.75 : geology.range(0.25, 0.5),
       });
     }
 
@@ -171,6 +197,16 @@ export class TerrainGenerator {
     const basin = -Math.max(0, -cont) * 8.5;
 
     let h = cont * 5.4 + plateau + mountains + hills + detail + canyon + basin;
+
+    for (const massif of this.massifs) {
+      const chordSquared = Math.max(0, 2 - 2 * (x * massif.direction.x + y * massif.direction.y + z * massif.direction.z));
+      if (chordSquared >= massif.radiusSquared) continue;
+      const distance = Math.sqrt(chordSquared / massif.radiusSquared);
+      const warped = clamp(distance + wob * 0.12 * distance, 0, 1);
+      const dome = Math.pow(1 - warped * warped, 2);
+      const shelf = 1 - smoothstep(0.28, 1, warped);
+      h += massif.height * (dome * (1 - massif.terrace) + shelf * massif.terrace);
+    }
 
     // ---- broad valleys (deepened with the mountains so the silhouette alternates peak/valley)
     for (const v of this.valleys) {

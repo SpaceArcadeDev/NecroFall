@@ -27,7 +27,7 @@ export function planetAt(universeSeed: number, ring: number, galaxyId: number, s
   const temperature = climate.temperature;
   const moisture = climate.moisture;
   const corruption = climate.corruption;
-  const biome = classifyBiomeClass(temperature, moisture, corruption);
+  const biome = climate.biome;
   const ecology = classifyEcology(r, biome);
   const system = systemAt(universeSeed, ring, galaxyId, systemId);
   const base = system.name.split(' ')[0];

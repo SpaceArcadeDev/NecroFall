@@ -1,0 +1,8 @@
+{
+  "source": "public/environment/folio/trees/birchTreesVisual.glb",
+  "sourceSHA256": "d824fd7bdab448a96180020ded5912ecb675aa332b9bf7466aef2dd9dda8552a",
+  "license": "Existing project asset; retain its original applicable license and attribution. No new license asserted.",
+  "modifications": "Container recompressed to Meshopt; trunk and canopy markers preserved for the user-authorized reuse.",
+  "file": "original-birch.glb",
+  "canopyMarkers": 6
+}

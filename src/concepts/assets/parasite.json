@@ -1,0 +1,29 @@
+{
+  "source": "https://sketchfab.com/3d-models/insectoid-monster-rig-01323e4b2563430f9da85cd255b6e176",
+  "title": "Insectoid Monster Rig",
+  "author": "DM-913",
+  "authorURL": "https://sketchfab.com/SuperKapoo913",
+  "license": "CC-BY-4.0",
+  "licenseURL": "https://creativecommons.org/licenses/by/4.0/",
+  "sourceSHA256": "fbdc16ef8d50e32635f5689d57b8ec881fe325b74f429e068ff2ec728bb65fc9",
+  "modifications": [
+    "NECROFALL chitin and wing texture repaint",
+    "radiated crest morph variation",
+    "normalized display scale",
+    "runtime LOD and texture optimization"
+  ],
+  "variants": [
+    {
+      "file": "parasite-near.glb",
+      "triangles": 13156,
+      "bytes": 1028908,
+      "sha256": "47bb22f749fa7f0c04bb1c4a753698ad92d19c593e88009a52bc3bebcddb9406"
+    },
+    {
+      "file": "parasite-far.glb",
+      "triangles": 5918,
+      "bytes": 933436,
+      "sha256": "79c468c0592b6922a235943652f95b9d7234661c2f21eb6f1955f03688d1893c"
+    }
+  ]
+}

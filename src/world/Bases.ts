@@ -14,6 +14,8 @@
 // Everything is derived from the match seed, the tower cluster's centre direction and the match
 // clock, so every peer builds byte-identical bases with zero network traffic.
 import * as THREE from 'three';
+import { MeshLambertNodeMaterial } from 'three/webgpu';
+import { playerOcclusionNode } from '../rendering/materials/PlayerOcclusion';
 import { COLONIES, CONFIG } from '../core/Config';
 import type { Planet } from './Planet';
 import type { Player } from '../player/Player';
@@ -770,17 +772,19 @@ export class BaseManager {
     // ---- deck: hull slab whose TOP face is the walkable plane, so the physics and the mesh agree
     const deck = new THREE.Mesh(
       new THREE.CylinderGeometry(padR, padR * 1.03, 1.3, 28, 1),
-      new THREE.MeshLambertMaterial({ color: 0x1c1b26 })
+      new MeshLambertNodeMaterial({ color: 0x1c1b26, alphaTest: 0.1 })
     );
     deck.position.y = -0.65;
+    deck.material.opacityNode = playerOcclusionNode();
     group.add(deck);
 
     // ---- under-hull: an inverted frustum, so the fortress reads as built and not as a cut-out
     const belly = new THREE.Mesh(
       new THREE.CylinderGeometry(padR * 0.98, 3.4, 5.2, 14, 1),
-      new THREE.MeshLambertMaterial({ color: 0x14131c })
+      new MeshLambertNodeMaterial({ color: 0x14131c, alphaTest: 0.1 })
     );
     belly.position.y = -3.9;
+    belly.material.opacityNode = playerOcclusionNode();
     group.add(belly);
 
     // ---- hover hardware: a lit core, three thruster flares, two containment rings

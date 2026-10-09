@@ -5,7 +5,7 @@
  * baked planet data. Every environment shader receives the same packed data:
  *
  *   terrainNode(position) → vec4  R height01 · G grass · B wetness · A radiation
- *   data2Node(position)   → vec4  R rock     · G biome · B puddle  · A cave (plan §35)
+ *   data2Node(position)   → vec4  R rock     · G biome · B puddle
  */
 import * as THREE from 'three/webgpu';
 import { acos, atan, color, mix, texture, uniform, vec2 } from 'three/tsl';

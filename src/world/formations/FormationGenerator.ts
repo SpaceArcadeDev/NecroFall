@@ -4,12 +4,11 @@
 // planet gets a small number of FORMATIONS — rock families, boulder fields, stone rings, spire
 // fields, cliff lines and crystal beds — plus a handful of sci-fi sites (one crashed colony
 // ship, a landing pad, a ruined antenna, an energy relay). Each is deterministic from the seed,
-// placed by the plan's composition rules (away from spawn, off cave mouths, off landmark
-// footprints) and composed from the shared low-poly asset library.
+// placed by the plan's composition rules (away from spawn, off landmark footprints) and composed
+// from the shared low-poly asset library.
 import * as THREE from 'three/webgpu';
 import { Rand } from '../../utils/Utils';
 import type { Landmark } from '../LandmarkGenerator';
-import type { PlanetCave } from '../caves/CaveGenerator';
 
 export type FormationType = 'ROCK_CLUSTER' | 'BOULDER_FIELD' | 'STONE_RING' | 'SPIRE_FIELD' | 'CLIFF_LINE' | 'CRYSTAL_FIELD';
 
@@ -69,13 +68,12 @@ function angleBetween(a: THREE.Vector3, b: THREE.Vector3): number {
 }
 
 /**
- * Deterministic formations for a planet. `spawnDirection` keeps the arena clear, cave footprints
- * and landmark cores are respected, and every site is separated from the next.
+ * Deterministic formations for a planet. `spawnDirection` keeps the arena clear, landmark cores
+ * are respected, and every site is separated from the next.
  */
 export function generateFormations(
   seed: number,
   planetRadius: number,
-  caves: readonly PlanetCave[],
   landmarks: readonly Landmark[],
   spawnDirection?: THREE.Vector3 | null,
 ): Formation[] {
@@ -87,9 +85,6 @@ export function generateFormations(
   const blocked = (candidate: THREE.Vector3, radiusMetres: number): boolean => {
     if (spawnDirection && angleBetween(candidate, spawnDirection) < spawnClear + radiusMetres / planetRadius) return true;
     const reach = radiusMetres / planetRadius;
-    for (const cave of caves) {
-      if (angleBetween(candidate, cave.dir) < cave.radius * 1.3 + reach) return true;
-    }
     for (const lm of landmarks) {
       if (angleBetween(candidate, lm.dir) < lm.radius * 0.72 + reach * 0.4) return true;
     }

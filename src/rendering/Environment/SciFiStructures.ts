@@ -23,7 +23,6 @@ import { generateSciFiSites, type SciFiSite } from '../../world/formations/Forma
 
 const TECH_METAL = '#4c5963';
 const TECH_DARK = '#39434c';
-const TECH_LIGHT = '#bfd5dc';
 const LIGHT_CYAN = '#4fdcff';
 const LIGHT_RED = '#ff4356';
 const EMBER = '#ff8a3d';
@@ -74,11 +73,8 @@ export class SciFiStructures {
     (hullMaterial as any).flatShading = true;
     const darkMaterial = new MeshDefaultMaterial({ colorNode: color(TECH_DARK), hasLightBounce: true, hasFog: true });
     (darkMaterial as any).flatShading = true;
-    const paleMaterial = new MeshDefaultMaterial({ colorNode: color(TECH_LIGHT), hasLightBounce: true, hasFog: true });
-    (paleMaterial as any).flatShading = true;
     mat(hullMaterial);
     mat(darkMaterial);
-    mat(paleMaterial);
     const redLight = createEmissiveMaterial({ color: LIGHT_RED, intensity: 1.6, bloom: 'low', pulseSpeed: 2.2, pulseAmount: 0.4, time: timeUniform });
     const cyanLight = createEmissiveMaterial({ color: LIGHT_CYAN, edgeColor: '#bfeaff', intensity: 2.4, bloom: 'medium', pulseSpeed: 1.0, pulseAmount: 0.22, facet: true, gradient: 'y', time: timeUniform });
     const emberGlow = createEmissiveMaterial({ color: EMBER, edgeColor: '#ffd76a', intensity: 1.5, bloom: 'low', pulseSpeed: 0.7, pulseAmount: 0.35, time: timeUniform });
@@ -259,6 +255,8 @@ export class SciFiStructures {
         }
 
         case 'RUINED_ANTENNA': {
+          // No dish on the mast (user ask 2026-10-09): the leaning pylon reads as a broken
+          // antenna on its own — the wreck's fallen panels stay.
           const segments = [
             { along: 0, height: 1.7, tilt: 0.04, scale: new THREE.Vector3(0.34, 3.4, 0.34) },
             { along: 0.5, height: 4.7, tilt: 0.16, scale: new THREE.Vector3(0.26, 2.8, 0.26) },
@@ -279,9 +277,6 @@ export class SciFiStructures {
               i === 0 ? { radius: 0.5, height: 3.4, steppable: false } : undefined,
             );
           }
-          const dish = part(padGeo, paleMaterial, s, 1.5, 7.6, new THREE.Vector3(1.5, 1.4, 1.5), 0, 0.9, 0.3);
-          dish.castShadow = true;
-          part(beamGeo, redLight, s, 1.5, 8.6, new THREE.Vector3(0.12, 0.24, 0.12), 0, 0);
           for (let i = 0; i < 4; i++) {
             const dir = new THREE.Vector3().copy(s.point).addScaledVector(right, (random() - 0.5) * 12).addScaledVector(forward, (random() - 0.5) * 12).normalize();
             const spot = surface.sample(dir, sample);

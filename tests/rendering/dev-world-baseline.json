@@ -25,7 +25,8 @@
   "terrain": {
     "meshSegments": [320, 160],
     "material": "MeshDefaultMaterial",
-    "textureSize": [384, 192]
+    "textureSize": [384, 192],
+    "reliefClampMeters": [-48, 64]
   },
   "grass": {
     "subdivisions": 700,
@@ -34,21 +35,19 @@
     "rimCull": [0.78, 0.97]
   },
   "foliage": {
-    "trees": { "birch": 74, "oak": 62, "cherry": 44 },
-    "bushes": 520,
-    "rocks": 550,
-    "spikes": 74,
-    "crystals": 48
+    "trees": 152,
+    "bushes": 420,
+    "rocks": 124,
+    "spikes": 510,
+    "crystals": 234,
+    "puddles": 34,
+    "motes": 6000
   },
-  "underground": {
-    "caves": { "entrances": 6, "small": 3, "medium": 2, "large": 1, "props": 317, "motes": 258 },
-    "caveTypes": ["ROOT_CAVES", "ANCIENT_RUINS", "ROOT_CAVES", "ANCIENT_RUINS", "NECROPHAGE_NEST", "CRYSTAL_CAVES"],
-    "formations": { "sites": 11, "props": 151 },
+  "worldLayers": {
+    "formations": "off (base planet)",
     "scifi": { "sites": 4, "props": 31 },
-    "colliders": 1873,
-    "blend": { "fogNear": 14, "fogFar": 95, "coreShadowEdgeLow": 0.42, "sunMul": 0.12, "sunColorLerp": 0.5, "bounceMul": 0.85, "bounceColorLerp": 0.85, "triggerDepth": 4, "settleSecondsAt60fps": 1 },
+    "colliders": 1406,
     "safety": { "panicFloor": 68.5, "sustainedFallSeconds": 6 },
-    "carveClampMeters": [-48, 64],
     "fog": { "colorA": "#2e5560", "colorB": "#08111a", "color": "#20414c" }
   },
   "sunAzimuthRadians": 0.9198,

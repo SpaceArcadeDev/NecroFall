@@ -14,9 +14,8 @@
 | `#/world?render=unlit` etc. | material debug modes (§33) |
 | `#/world?renderBaseline=1` | prints + overlays this entire baseline |
 | `#/world?foliageDebug=1` | live foliage / terrain-query counters |
-| `#/world?visualSeed=VISUAL_001…005` | the five deterministic visual-sweep seeds (underground rework §72) |
-| `#/world?at=caveN` / `?at=caveinN` / `?at=ship` | spawn at cave N's rim / chamber floor / the crashed colony ship |
-| `#/world?cavedebug=1` | cave footprint + node overlay, live cave/underground HUD line |
+| `#/world?visualSeed=VISUAL_001…005` | the five deterministic visual-sweep seeds (visual rework §72) |
+| `#/world?at=ship` | spawn at the crashed colony ship |
 
 Deterministic spawn: the dev world scans up to 800 surface samples for a **sunlit** (up·sun > 0.45),
 **grassy** (grass > 0.3), **flat** (slope < 0.12) spot above the waterline, starting from
@@ -52,13 +51,14 @@ Deterministic spawn: the dev world scans up to 800 surface samples for a **sunli
 
 | Value | Setting |
 | --- | --- |
-| default seed / planet | `3409486584` (`0:0:0:2`, SWAMP) — the terrain test planet |
+| default seed / planet | `3409486584` (`0:0:0:2`, Aether Garden base planet) — the terrain test planet |
 | planet radius | `118 m` (`CONFIG.planetRadius`) |
 | terrain mesh | ONE lat-long sphere, 320 × 160 segments, 1 draw, DoubleSide |
 | terrain material | ONE `MeshDefaultMaterial`; albedo = height gradient × patch darkening (0.62 inside patch cores) |
 | terrain normals | finite differences of the RENDERED height field (not the base sphere) |
 | GPU data | `tex1` R height01 · G grass · B wetness · A radiation; `tex2` R rock · G biome · B puddle (384×192 RGBA8) |
 | water line | `reliefMin + (reliefMax − reliefMin) × 0.24` |
+| relief clamp | `[−48, +64]` m around the base radius — unchanged; only the mountain amplitudes were normalized |
 
 ## Frozen grass (default quality)
 
@@ -73,24 +73,21 @@ Deterministic spawn: the dev world scans up to 800 surface samples for a **sunli
 | rim | per-blade hash cull over the last 22 % of the half-extent (recycling at ~zero size) |
 | parting | 0.15–1.25 m clearing + 18-slot trample trail (0.3–1.6 s), ground-level only |
 
-## Frozen foliage counts (default quality, SWAMP)
+## Frozen foliage counts (default quality, Aether Garden)
 
-trees 180 (birch 74 / oak 62 / cherry 44) · bushes 520 · rocks 550 · spikes 74 clusters
-· crystals 48 · puddles 62 · motes 6000 · obstacles 1372. All via `PlanetSurface.sample()`
-placement + the shared `MeshDefaultMaterial` lighting/fog.
+trees 152 · bushes 420 · rocks 124 · mushrooms 35 · spikes 510 · crystals 234 · puddles 34
+· motes 6000 · colliders 1406. All via `PlanetSurface.sample()` placement + the shared
+`MeshDefaultMaterial` lighting/fog.
 
-## Underground rework additions (2026-10, frozen at the same seed)
+## World layers (2026-10, re-measured after the cave / giant-mountain removal)
 
 | System | Value |
 | --- | --- |
-| caves | 6 entrances (3 small · 2 medium · 1 large major), landmark-attracted; each wears a rock roof DOME with a wedge mouth + 14-circle collision ring; ~300 props · 258 motes |
-| cave types | ROOT CAVERN ×2 · BURIED RUINS ×2 · NECROPHAGE BURROW · CRYSTAL CAVERN (this seed) |
-| formations | 11 sites · 151 props (rock clusters, boulder fields, stone rings, spire fields, cliff lines, crystal beds) |
-| sci-fi sites | 4 · 31 props (crashed colony ship at COLONY_WRECK + landing pad, ruined antenna, energy relay) |
-| colliders | ~1870 total (new layers included) |
-| terrain relief band | `[−48, +64]` m (giant-mountain pass; peaks ~half the planet radius) |
-| underground blend | fog 34/270 → 14/95, core-shadow edge −0.2 → 0.42, sun ×0.12 (+colour lerp into the cave air), bounce ×0.85 tinted to the cave's crystal light; triggers at > 4 m carve depth, settles ≈1 s at 60 fps |
-| measured cave captures | framed mouth 26 % dark pixels; interior (terrain hidden) cave layer = 32 % of frame; surface spawn mean-luminance ~85 |
+| geology | no caves (removed, user ask 2026-10-09); geological formations build only for procedural archetypes, so this base-planet seed reports `formations off` |
+| sci-fi sites | 4 · 31 props (crashed colony ship at COLONY_WRECK + landing pad, ruined antenna mast, energy relay); the mast carries no satellite dish (removed, user ask 2026-10-09) |
+| colliders | 1406 total |
+| terrain relief | mountain amplitude/chain reinforcement back to the pre-giant calibration (12.5 m / ×3.4); basins, valleys and the `[−48, +64]` m clamp unchanged |
+| fog family | `#2e5560` / `#20414c` / `#08111a` (cyan-teal atmosphere pass) |
 | safety net | panic floor `radius − 49.5` (clamp band is `radius − 48`), sustained-fall catch at 6 s |
 
 ## Verification

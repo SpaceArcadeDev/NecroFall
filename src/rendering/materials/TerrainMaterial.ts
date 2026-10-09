@@ -45,11 +45,6 @@ export interface TerrainMaterialOptions {
   surfaceMaps?: SurfaceMaps;
 }
 
-/** Cave strata (plan §35): dark blue-teal rock the carved underground settles toward. */
-const CAVE_STRATA = '#232c33';
-const CAVE_STRATA_DEEP = '#101820';
-/** Crystal light spilled on the cave floor (plan §34/§35 — environmental, never a flashlight). */
-const CAVE_GLOW = 0.3;
 /** Warm ochre cliff tone (user ask 2026-10-06): separates mid-slope rock from the green wash. */
 const OCHRE_ROCK = '#7d6034';
 
@@ -74,8 +69,6 @@ export function createTerrainMaterial(options: TerrainMaterialOptions): TerrainM
   const wetness = terrainData.z;
   const radiation = terrainData.a;
   const rock = data2.x;
-  // Cave mask (plan §35): 0 open ground → 1 the carved underground (saturated 6 m below the rim).
-  const cave = data2.w;
 
   // ---- three noise octaves of breakup (plan §5/§62): broad biome patches, medium colour
   // breakup, fine material variation.
@@ -130,13 +123,6 @@ export function createTerrainMaterial(options: TerrainMaterialOptions): TerrainM
     // 7 — fine material breakup (plan §62) + the global muted/contrast grade (plan §2)
     result = result.mul(fineNoise.mul(0.14).add(0.93));
 
-    // 7b — CAVES (plan §35): strata darken toward the cave rock colour, the vegetation wash
-    // drops out, and the floor keeps only the fine rock breakup. The tint is the shared
-    // contaminated-teal family so every cave still reads as THIS planet.
-    const caveRock = mix(color(CAVE_STRATA), color(CAVE_STRATA_DEEP), cave);
-    result = mix(result, caveRock, cave.mul(0.78));
-    const caveStrata = smoothstep(0.15, 0.55, fineNoise.add(mediumNoise.mul(0.6)));
-    result = result.mul(float(1).sub(cave.mul(caveStrata).mul(0.22)));
     return gradeAlbedo(result, ART_DIRECTION.terrain.saturation, ART_DIRECTION.terrain.contrast) as any;
   })();
 
@@ -188,16 +174,7 @@ export function createTerrainMaterial(options: TerrainMaterialOptions): TerrainM
     glowNode: radiation
       .mul(radiation)
       .mul(ART_DIRECTION.radiation.terrainGlow)
-      .mul(mix(color(RADIOACTIVE_PALETTE.radioactive3), color(RADIOACTIVE_PALETTE.radioactive2), mediumNoise))
-      // Cave floors catch the crystal light (plan §34/§35): the glow is strongest where the
-      // carve is deep and where the noise reads as a crystal bed — environmental, not a lamp.
-      .add(
-        cave
-          .mul(cave)
-          .mul(CAVE_GLOW)
-          .mul(smoothstep(0.35, 0.8, mediumNoise))
-          .mul(mix(color(RADIOACTIVE_PALETTE.radioactive3), color(RADIOACTIVE_PALETTE.waterLight), fineNoise)),
-      ),
+      .mul(mix(color(RADIOACTIVE_PALETTE.radioactive3), color(RADIOACTIVE_PALETTE.radioactive2), mediumNoise)),
   });
 
   return { material, albedoNode: albedo };

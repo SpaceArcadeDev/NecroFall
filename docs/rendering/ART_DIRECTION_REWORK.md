@@ -206,6 +206,12 @@ direction must never silently degrade.
 
 # COMPLETE VISUAL + TERRAIN + UNDERGROUND REWORK (2026-10-06)
 
+> **SUPERSEDED IN PART (2026-10-09):** the cave/underground half of this record and the
+> giant-mountain calibration were removed by a later user ask (caves, satellite dishes and the
+> `?cavedebug`/`?at=caveN`/`?view=cave:N` dev aids no longer exist; mountains returned to the
+> earlier amplitudes). This section remains the delivery record of what was built at the time —
+> see `DEV_WORLD_BASELINE.md` for the current frozen world.
+
 Delivery record for the 80-phase *NECROFALL — COMPLETE VISUAL + TERRAIN + UNDERGROUND REWORK*
 plan. The plan's §75 order was followed: **fix the fall (step 1), then build the underground
 (steps 2/15–20), then the surface composition (steps 3–14)**, reusing every system the earlier

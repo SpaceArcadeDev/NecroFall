@@ -1716,12 +1716,6 @@ export class Game {
         if (p.isLocal || !p.alive) continue;
         this.envWalkers.push({ id, pos: p.position });
       }
-      // Underground blend (plan §33/§34): the LOCAL body's cave state drives the atmosphere.
-      const local = this.localPlayer;
-      if (local && this.envWorld) {
-        const cave = local.underground ? this.planet.caves.find((c) => c.id === local.caveId) ?? null : null;
-        this.envWorld.setUnderground(local.undergroundDepth, cave, this.ticker.delta);
-      }
       this.envWorld?.update(focus, this.cam.camera, this.envWalkers, this.ticker.delta);
     });
     // Idle power saving (plan §38): any input at all restores the full menu frame rate.
@@ -2893,14 +2887,7 @@ export class Game {
         const parsed = parsePlanetKey(planetKey);
         if (parsed) {
           const descriptor = planetAt(universeSeed, parsed.ring, parsed.galaxyId, parsed.systemId, parsed.planetId);
-          const biases = Array.from(
-            new Set([
-              ...this.planet.landmarks.map((l) => l.bias),
-              // Plan §35/§70: cave characters join the planet's ecology — the underground
-              // borrows the same bias vocabulary, so descending changes WHO hunts you.
-              ...this.planet.caves.map((c) => c.bias),
-            ]),
-          );
+          const biases = Array.from(new Set(this.planet.landmarks.map((l) => l.bias)));
           return this.enemies.generateEcology(seed, factsFromDescriptor(seed, parsed.ring, descriptor, biases));
         }
       }

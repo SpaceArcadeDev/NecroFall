@@ -34,7 +34,6 @@ export class Formations {
     const formations = generateFormations(
       generator.seed,
       generator.radius,
-      generator.terrain.caves,
       generator.terrain.landmarks,
       spawnClear?.direction ?? null,
     );

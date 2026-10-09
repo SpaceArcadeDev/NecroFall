@@ -14,10 +14,8 @@
  *   ?outlines=0             selective object outlines off
  *   ?sky=0                  sci-fi sky dome off
  *   ?landmarks=0            landmark prop compositions + hero formation off
- *   ?caves=0                cave prop compositions off (the carve stays walkable)
  *   ?formations=0           geological formation compositions off
  *   ?scifi=0                sci-fi structures (crashed ship etc.) off
- *   ?cavedebug=1            cave footprint/node overlay + underground HUD (dev world)
  *   ?spatialhash=0          enemy candidate lookup -> linear scan (A/B)
  *   ?enemytiers=0           enemy simulation tiers off (A/B)
  *   ?precompile=0           skip async pipeline precompilation (r186 plan §15)

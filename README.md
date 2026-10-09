@@ -24,8 +24,8 @@ an existing match preserves its seed.
 The system sun stays fixed in world space. Crossing the planet's terminator blends
 through warm twilight into the dark hemisphere; the sun does not follow the player.
 Water is limited to shallow basins (at most 0.35 m), with grounded walking wakes.
-Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes,
-crystals and cave rock meshes provide shape-based capsule collisions and top support;
+Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes and
+crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.
 Only the Mega Necrophage uses the imported enemy model. Towers, bases, shields,
 pads and the other enemy rigs retain their gameplay.
@@ -502,38 +502,29 @@ status, captures, deviations). In short:
   deterministically for the visual-regression captures; the `?stats` overlay now reports quality
   level, live DPR, interpolation spread and the landmark/hero identity.
 
-### Terrain + underground rework (2026-10)
+### Terrain + formations rework (2026-10)
 
 The follow-up pass — *complete visual + terrain + underground rework* — is recorded in the same
-document. It adds the vertical half of the world without a second collision model:
+document. Its cave/underground half and the giant-mountain calibration were removed by a later
+user ask (2026-10-09); the current world:
 
-* **Caves carved into the ONE terrain field** — `CaveGenerator.ts` builds 6 deterministic cave
-  graphs (3 small / 2 medium / 1 large major; crystal, radioactive, necrophage, root and ruin
-  types, landmark-attracted) and `TerrainGenerator` carves them as stepped, warped basins, so the
-  rendered ground, collision, the baked masks and every placement estimate agree by construction
-  — the fall-through class is structurally gone.
-* **Cave mouths that read** — every cave wears a rock roof DOME (a partial sphere with a wedge
-  opening facing its approach azimuth): the terrain swallows the rim, the sun never reaches the
-  floor, stalactites hang from the analytic shell and the ring blocks movement except at the
-  mouth. `?view=cave:N` frames a mouth deterministically for captures.
-* **Giant mountains** — amplitude 22 m with ×5.5 chain reinforcement and deeper basins/valleys in
-  a `[−48,+64]` m collision band, so ranges stand ~half the planet radius against a cyan-teal
-  atmosphere (fog family moved from contaminated green to `#2e5560`/`#20414c`).
+* **Normalized mountains** — the giant-mountain pass (22 m amplitude, ×5.5 chain reinforcement)
+  read as too steep in play-testing, so ridge amplitude and chain reinforcement return to the
+  earlier calibration (12.5 m / ×3.4): ranges stay readable on the horizon while the body-scale
+  faces the player crosses come back inside the plan §69 budget. Basins, valleys and the
+  `[−48,+64]` m collision band are unchanged.
 * **Fall safety net** — `Player` tracks the last valid ground position and restores it if a body
   ever leaves the generator's collision band or falls for more than six seconds; ordinary terrain
   can never collapse into an infinite fall.
-* **Underground atmosphere** — once more than 4 m below a cave rim, fog pulls in (34/270 → 14/95)
-  and takes the cave's tint, the core-shadow edge rises, the sun fades to 12 % into the cave air
-  and the bounce ambient shifts to the cave's crystal light. `?cavedebug=1` overlays the cave
-  footprint/nodes and prints the underground state.
 * **Geological formations** — `FormationGenerator.ts` + `Formations.ts` compose 12 authored sites
   per planet (rock clusters, boulder fields, stone rings with an altar shard, spire fields, cliff
   lines, crystal beds) from the shared `PropGeometry` asset library.
 * **Sci-fi structures** — `SciFiStructures.ts` places the crashed colony ship (hull segments,
   fins, wing, debris field, running lights, torn reactor glow, ember motes, selective outline) at
-  the planet's colony-wreck landmark, plus a landing pad, ruined antenna and energy relay.
+  the planet's colony-wreck landmark, plus a landing pad, ruined antenna mast and energy relay.
+  The satellite dish that once crowned the mast is gone (user ask 2026-10-09).
 * **Visual sweep seeds** — `?visualSeed=VISUAL_001…005` pins the five deterministic captures every
-  check runs against; `?at=caveN|caveinN|ship` spawns at the interesting places.
+  check runs against; `?at=ship` spawns at the crashed colony ship.
 
 ## Architecture
 

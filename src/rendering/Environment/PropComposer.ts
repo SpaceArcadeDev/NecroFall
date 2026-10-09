@@ -1,6 +1,6 @@
 // NECROFALL — shared prop composer (complete rework §57/§58/§60).
 //
-// ONE way to build terrain-contoured instanced compositions: geological formations, cave
+// ONE way to build terrain-contoured instanced compositions: geological formations, landmark
 // dressing and sci-fi structures all push props through this composer, so ground contact
 // (`sampleTerrainSurface` semantics — point/normal from the shared surface), the plan §58
 // imperfection jitter, shadow flags and obstacle registration behave identically everywhere.

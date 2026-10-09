@@ -406,13 +406,7 @@ export class Player {
   alive = true;
   frozen = false; // level-up / pickup / results
 
-  // ------------------------------------------------------------ underground (plan §24/§25/§33)
-  /** True while the body walks inside a carved cave footprint (depth > plan §33 threshold). */
-  underground = false;
-  /** Metres below the local surface at the body's direction (0 = open ground). */
-  undergroundDepth = 0;
-  /** Id of the cave the body is inside, or -1. */
-  caveId = -1;
+  // ------------------------------------------------------------ terrain support
   /** Safety net (plan §25/§39): the last position the body stood on real terrain. */
   private readonly lastValidGroundPosition = new THREE.Vector3();
   private hasValidGround = false;
@@ -2082,15 +2076,6 @@ export class Player {
     } else {
       this.grounded = false;
       this.airTime += dt;
-    }
-
-    // ---- underground state (plan §24/§33): read from the ONE analytic cave carve the terrain,
-    // collision and shader masks all share. Local body only — proxies do not drive the camera.
-    if (this.isLocal) {
-      const depth = g.planet.caveDepthAtDir(_up.x, _up.y, _up.z);
-      this.undergroundDepth = depth;
-      this.underground = depth > 2.4;
-      this.caveId = this.underground ? g.planet.caveAtDir(_up.x, _up.y, _up.z)?.id ?? -1 : -1;
     }
   }
 

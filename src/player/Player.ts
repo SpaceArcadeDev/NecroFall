@@ -1,6 +1,7 @@
 // NECROFALL — player: spherical movement with momentum, dash i-frames, auto-attacks,
 // health + delayed regeneration, Necromutation levels, Necrotech state and netcode.
 import * as THREE from 'three';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import type { Game } from '../core/Game';
 import { ADDITIVE_MODS, COLONIES, CONFIG, Mods, PALETTE, defaultMods, mergeMods } from '../core/Config';
 import { createShieldMaterial } from '../towers/ShieldMaterial';
@@ -11,9 +12,10 @@ import type { Perk } from '../necromutation/Perks';
 import type { Enemy } from '../enemies/Enemies';
 import { ORBIT_AXIS } from '../world/Bases';
 import { clamp, nowSec, orientToSurface, rotateTowards, tangentBasis } from '../utils/Utils';
-import { AvatarAccessories } from '../customization/AvatarAccessories';
+import { AvatarAccessories, disposeObject } from '../customization/AvatarAccessories';
 import { AccessorySelection, EMPTY_SELECTION } from '../customization/AccessoryTypes';
 import { selectionFromWire, selectionToWire } from '../customization/CustomizationStore';
+import { PlayerRig } from './PlayerRig';
 
 const _f = new THREE.Vector3();
 const _r = new THREE.Vector3();
@@ -95,12 +97,16 @@ export interface PlayerNet {
   shm?: number;
   inv?: number;
   dsh?: number;
+  gnd?: number;
+  vsp?: number;
 }
 
 /** A pose a remote player reported: where it is and where it looks. */
 interface NetPose {
   x: number; y: number; z: number;
   fx: number; fy: number; fz: number;
+  gnd?: number;
+  vsp?: number;
 }
 
 interface NetSample extends NetPose {
@@ -195,18 +201,19 @@ function describeMod(key: keyof Mods, mul: number): string {
 
 export interface ModelParts {
   group: THREE.Group;
-  legL: THREE.Mesh;
-  legR: THREE.Mesh;
-  armL: THREE.Group;
-  armR: THREE.Group;
+  rig: PlayerRig;
+  legL: THREE.Bone;
+  legR: THREE.Bone;
+  armL: THREE.Bone;
+  armR: THREE.Bone;
   /** Right-hand socket: the player's Necrotech weapon is mounted here (see refreshWeaponModel). */
   weaponMount: THREE.Group;
-  torso: THREE.Mesh;
-  /** The factory backpack box — hidden while a customizable backpack is worn. */
+  torso: THREE.Bone;
+  /** The factory backpack, hidden while a customizable backpack is worn. */
   pack: THREE.Mesh;
-  /** Head socket: hats are centred on the head box (y 1.68). */
+  /** Head socket: hats follow the helmet's centre (rest y 1.68). */
   headMount: THREE.Group;
-  /** Back socket: backpacks are centred on the pack box (y 1.15, z −0.28). */
+  /** Back socket: backpacks follow the chest (rest y 1.15, z −0.28). */
   backMount: THREE.Group;
   invuln: THREE.Mesh;
   ringFx: THREE.Mesh;
@@ -226,60 +233,12 @@ export interface ModelParts {
 
 export function buildPlayerModel(color: number): ModelParts {
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x2a1f42, flatShading: true });
-  const darkMat = new THREE.MeshLambertMaterial({ color: 0x171126, flatShading: true });
-  const accentMat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.45, flatShading: true });
-
-  const legGeo = new THREE.BoxGeometry(0.26, 0.72, 0.28);
-  const legL = new THREE.Mesh(legGeo, darkMat);
-  legL.position.set(-0.19, 0.36, 0);
-  const legR = new THREE.Mesh(legGeo, darkMat);
-  legR.position.set(0.19, 0.36, 0);
-
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.72, 0.42), bodyMat);
-  torso.position.y = 1.08;
-  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.1), accentMat);
-  chest.position.set(0, 1.16, 0.22);
-
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.42, 0.44), bodyMat);
-  head.position.y = 1.68;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.14, 0.08), accentMat);
-  visor.position.set(0, 1.7, 0.22);
-
-  const armGeo = new THREE.BoxGeometry(0.18, 0.62, 0.2);
-  const shoulderGeo = new THREE.BoxGeometry(0.22, 0.22, 0.3);
-
-  const armL = new THREE.Group();
-  armL.position.set(-0.45, 1.35, 0);
-  const armMeshL = new THREE.Mesh(armGeo, darkMat);
-  armMeshL.position.y = -0.28;
-  const shoulderL = new THREE.Mesh(shoulderGeo, accentMat);
-  armL.add(armMeshL, shoulderL);
-
-  const armR = new THREE.Group();
-  armR.position.set(0.45, 1.35, 0);
-  const armMeshR = new THREE.Mesh(armGeo, darkMat);
-  armMeshR.position.y = -0.28;
-  const shoulderR = new THREE.Mesh(shoulderGeo, accentMat);
-  // the weapon SOCKET: whatever Necrotech this player carries is mounted here (the model itself
-  // comes from necrotech/WeaponModels, the same one the selection screen shows off)
-  const weaponMount = new THREE.Group();
-  weaponMount.position.set(0, -0.52, 0.22);
-  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), accentMat);
+  const rig = new PlayerRig(color);
+  const { legL, legR, armL, armR, weaponMount, pack, headMount, backMount } = rig;
+  const torso = rig.chest;
+  const muzzle = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), rig.accent);
   muzzle.visible = false;
-  armR.add(armMeshR, shoulderR, weaponMount, muzzle);
-
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.44, 0.2), darkMat);
-  pack.position.set(0, 1.15, -0.28);
-
-  // ---- accessory sockets. Both are empty groups at the centres of the parts they dress, so a hat
-  // is built as if the head were a ball at the origin and a backpack as if the back were a wall.
-  const headMount = new THREE.Group();
-  headMount.name = 'headMount';
-  headMount.position.y = 1.68;
-  const backMount = new THREE.Group();
-  backMount.name = 'backMount';
-  backMount.position.set(0, 1.15, -0.28);
+  rig.handR.add(muzzle);
 
   const invulnMat = new THREE.MeshBasicMaterial({
     color,
@@ -386,8 +345,8 @@ export function buildPlayerModel(color: number): ModelParts {
   whipSpin.visible = false;
   group.add(whipSpin);
 
-  group.add(legL, legR, torso, chest, head, visor, armL, armR, pack, headMount, backMount, invuln, ringFx, shieldBubble, auraGlow, auraCrown);
-  return { group, legL, legR, armL, armR, weaponMount, torso, pack, headMount, backMount, invuln, ringFx, muzzle, shieldBubble, auraGlow, auraGlowMat, auraCrown, auraCrownMat, whipSpin, whipMat };
+  group.add(rig.root, invuln, ringFx, shieldBubble, auraGlow, auraCrown);
+  return { group, rig, legL, legR, armL, armR, weaponMount, torso, pack, headMount, backMount, invuln, ringFx, muzzle, shieldBubble, auraGlow, auraGlowMat, auraCrown, auraCrownMat, whipSpin, whipMat };
 }
 
 export class Player {
@@ -507,7 +466,7 @@ export class Player {
     return CONFIG.player.baseJumps + this.mods.jumps;
   }
   private airTime = 0;
-  private animPhase = 0;
+  private remoteAnimVertical = 0;
 
   /** Necrotic Ward: absorbs damage before health and recharges while out of combat. */
   shield = 0;
@@ -655,6 +614,9 @@ export class Player {
     this.game.scene.remove(this.model);
     // the old builds are children of the OLD body — they go with it
     this.accessories.dispose();
+    this.clearGhosts();
+    disposeObject(this.model);
+    this.weaponModel = null;
     this.parts = buildPlayerModel(COLONIES[idx].color);
     this.model = this.parts.group;
     this.game.scene.add(this.model);
@@ -1533,7 +1495,7 @@ export class Player {
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      const obj = this.model.clone(true);
+      const obj = cloneSkeleton(this.model);
       obj.traverse(o => {
         const mesh = o as THREE.Mesh;
         if (mesh.isMesh) mesh.material = mat;
@@ -1554,6 +1516,13 @@ export class Player {
     ghost.obj.position.copy(this.position);
     ghost.obj.quaternion.copy(this.model.quaternion);
     ghost.obj.scale.copy(this.model.scale);
+    ghost.obj.traverse(object => {
+      if (!(object instanceof THREE.Bone)) return;
+      const source = this.model.getObjectByName(object.name);
+      if (!source) return;
+      object.position.copy(source.position);
+      object.quaternion.copy(source.quaternion);
+    });
     ghost.obj.visible = true;
     ghost.life = life;
     ghost.max = life;
@@ -2438,6 +2407,8 @@ export class Player {
       pt: forwarded ? this.netLatestT : now,
       x: r2(src.x), y: r2(src.y), z: r2(src.z),
       fx: r2(src.fx), fy: r2(src.fy), fz: r2(src.fz),
+      gnd: src.gnd,
+      vsp: src.vsp === undefined ? undefined : r2(src.vsp),
       hp: Math.round(this.hp),
       col: this.colony,
       alive: this.alive ? 1 : 0,
@@ -2463,6 +2434,8 @@ export class Player {
     return {
       x: this.position.x, y: this.position.y, z: this.position.z,
       fx: this.facing.x, fy: this.facing.y, fz: this.facing.z,
+      gnd: this.grounded ? 1 : 0,
+      vsp: this.velocity.dot(this.up),
     };
   }
 
@@ -2490,7 +2463,7 @@ export class Player {
     // in a snapshot is allowed to touch its samples or its velocity.
     if (!this.isLocal) {
       const arrival = nowSec();
-      const pose: NetSample = { t: poseTime, x: n.x, y: n.y, z: n.z, fx: n.fx, fy: n.fy, fz: n.fz };
+      const pose: NetSample = { t: poseTime, x: n.x, y: n.y, z: n.z, fx: n.fx, fy: n.fy, fz: n.fz, gnd: n.gnd, vsp: n.vsp };
       const samples = this.netSamples;
       const newest = samples.length > 0 ? samples[samples.length - 1] : null;
       // The stream restarted — a sender whose tab was frozen, or a host migration that swapped the
@@ -2526,7 +2499,7 @@ export class Player {
       const oldest = arrival - (CONFIG.net.maxDelay + 0.35);
       while (samples.length > 3 && samples[0].t < oldest) samples.shift();
       if (pose.t >= this.netLatestT) {
-        this.netLatest = { x: pose.x, y: pose.y, z: pose.z, fx: pose.fx, fy: pose.fy, fz: pose.fz };
+        this.netLatest = { x: pose.x, y: pose.y, z: pose.z, fx: pose.fx, fy: pose.fy, fz: pose.fz, gnd: pose.gnd, vsp: pose.vsp };
         this.netLatestT = pose.t;
       }
     }
@@ -2555,7 +2528,8 @@ export class Player {
         if (typeof n.dsh === 'number') this.dashTimer = n.dsh;
       }
     }
-    this.colony = n.col;
+    if (!this.isLocal && n.col !== this.colony && COLONIES[n.col]) this.setColony(n.col);
+    else this.colony = n.col;
     // The LOCAL player's growth is owned LOCALLY. A snapshot computed a moment earlier must never
     // roll it back: a rollback re-crosses the XP threshold and fires ANOTHER level-up, which
     // reopened the (Necro)mutation picker and toggled the mutation headline in a loop — the
@@ -2642,6 +2616,11 @@ export class Player {
       }
     }
     this.velocity.copy(this.netVel);
+    const motion = a ?? last;
+    this.grounded = motion.gnd === undefined
+      ? this.position.length() - this.game.planet.heightAt(this.up) < 0.12
+      : motion.gnd === 1;
+    this.remoteAnimVertical = motion.vsp ?? this.velocity.dot(this.up);
 
     // ---- adapt the playout buffer: it has to be at least the base delay plus however unevenly
     // this stream arrives. A dry buffer is an emergency (grow now), otherwise creep back toward
@@ -2702,15 +2681,15 @@ export class Player {
     this.model.visible = true;
 
     const hSpeed = Math.sqrt(Math.max(0, this.velocity.lengthSq() - Math.pow(this.velocity.dot(this.up), 2)));
-    const moving = this.grounded && hSpeed > 0.6;
-    if (moving) this.animPhase += dt * hSpeed * 2.2;
-    const swing = moving ? Math.sin(this.animPhase) * clamp(hSpeed / 8, 0, 1) * 0.8 : this.grounded ? 0 : 0.3;
-    p.legL.rotation.x = swing;
-    p.legR.rotation.x = -swing;
-    p.armL.rotation.x = -swing * 0.7;
-    p.armR.rotation.x = swing * 0.7;
-    const bob = moving ? Math.abs(Math.sin(this.animPhase)) * 0.07 : 0;
-    this.model.position.addScaledVector(this.up, bob);
+    _r.crossVectors(this.up, this.facing).normalize();
+    p.rig.update(dt, {
+      speed: hSpeed,
+      verticalSpeed: this.isLocal ? this.velocity.dot(this.up) : this.remoteAnimVertical,
+      grounded: this.grounded,
+      forward: hSpeed > 0.1 ? clamp(this.velocity.dot(this.facing) / hSpeed, -1, 1) : 1,
+      strafe: hSpeed > 0.1 ? clamp(this.velocity.dot(_r) / hSpeed, -1, 1) : 0,
+      frozen: this.frozen || this.recallHold,
+    });
 
     const inv = this.isInvulnerable();
     p.invuln.visible = inv && !this.blitzing;
@@ -2900,10 +2879,19 @@ export class Player {
     this.alive = false;
     this.accessories.dispose();
     this.game.scene.remove(this.model);
+    disposeObject(this.model);
+    this.clearGhosts();
+  }
+
+  private clearGhosts(): void {
     for (const ghost of this.ghostPool) {
       this.game.scene.remove(ghost.obj);
+      ghost.obj.traverse(object => {
+        if (object instanceof THREE.SkinnedMesh) object.skeleton.dispose();
+      });
       ghost.mat.dispose();
     }
     this.ghostPool.length = 0;
+    this.ghostIdx = 0;
   }
 }

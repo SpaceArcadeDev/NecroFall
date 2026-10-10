@@ -1,9 +1,8 @@
 // NECROFALL — the selection screens' live 3D preview.
 //
 // Two jobs, one little scene:
-//  - COLONY select: the player figure, once per colony, each in ITS colony's colours doing its own
-//    pose and idle animation (HELIOS surges, AEGIS braces behind crossed arms, VANTA coils to
-//    spring), so the choice is a choice between silhouettes and not between three paragraphs.
+//  - COLONY select: the shared skeletal avatar in each colony's colours, with procedural idle
+//    movement and a focused champion treatment.
 //  - NECROTECH select: a weapon model for the highlighted class, built to match what that class
 //    actually does (the rifle fires bolts, VOLT's coil discharges, PYRE's lance sprays, REAPER's
 //    scythe is what carves the 240° arc, ...).
@@ -16,6 +15,7 @@ import { COLONIES, IS_TOUCH } from '../core/Config';
 import { NecrotechDef } from '../necrotech/NecrotechData';
 import { buildWeaponModel } from '../necrotech/WeaponModels';
 import { buildPlayerModel, ModelParts } from '../player/Player';
+import { PlayerRig } from '../player/PlayerRig';
 import { AvatarAccessories, disposeObject } from '../customization/AvatarAccessories';
 import { AccessoryCategory, AccessorySelection, EffectCategory, EMPTY_SELECTION } from '../customization/AccessoryTypes';
 import { selectionFromWire } from '../customization/CustomizationStore';
@@ -74,25 +74,12 @@ function lightPoolTexture(): THREE.CanvasTexture {
 
 interface FigureParts {
   group: THREE.Group;
-  torso: THREE.Group;
-  armL: THREE.Group;
-  armR: THREE.Group;
-  /** Forearms rotate inside the shoulder groups, so a guard or a punch has a real elbow bend. */
-  elbowL: THREE.Group;
-  elbowR: THREE.Group;
-  legL: THREE.Group;
-  legR: THREE.Group;
-  /** Knees bend inside the hip groups — the difference between footwork and a stiff mannequin. */
-  kneeL: THREE.Group;
-  kneeR: THREE.Group;
-  handR: THREE.Group;
-  accentMats: THREE.MeshLambertMaterial[];
+  rig: PlayerRig;
   ringMat: THREE.MeshBasicMaterial;
   /** Eased focus (0..1): how much this champion is currently in the spotlight. */
   focusAmt: number;
 }
 
-const TAU = Math.PI * 2;
 /** The customize screen's floor is radius zero, and the avatar stands on the origin. */
 const ORIGIN = new THREE.Vector3(0, 0, 0);
 const UP_AXIS = new THREE.Vector3(0, 1, 0);
@@ -126,106 +113,10 @@ const COLONY_SLOT = 3.4;
 const MENU_PET_ROAM = { min: 0.55, max: 0.75 };
 /** Below this stage height (px) a TOUCH device is a phone-style strip, not a desktop stage. */
 const COLONY_SHALLOW = 160;
-/** A calm breath: one full inhale/exhale every ~3.4 s. The base layer of every champion's idle. */
-function breath(t: number, phase: number, period = 3.4): number {
-  return Math.sin((t / period) * TAU + phase);
-}
-
-/**
- * Smooth 0..1 bump centred on phase `at` of a 0..1 cycle, with half-width `w`. Accent beats (a
- * punch, a brace, a spring) ride on the continuous motion with these, so a beat ARRIVES and eases
- * away instead of snapping — the whole difference between "alive" and "flailing".
- */
-function bump(c: number, at: number, w: number): number {
-  const x = Math.abs(c - at) / w;
-  if (x >= 1) return 0;
-  const s = 1 - x;
-  return s * s * (3 - 2 * s);
-}
-
-/** Builds one player-shaped figure in a colony's colours. Bodies are near-black so the accent reads. */
 function buildFigure(color: number): FigureParts {
   const group = new THREE.Group();
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x241d3a, flatShading: true });
-  const darkMat = new THREE.MeshLambertMaterial({ color: 0x151024, flatShading: true });
-  const accentMats: THREE.MeshLambertMaterial[] = [];
-  const accent = (emissive: number): THREE.MeshLambertMaterial => {
-    const m = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: emissive, flatShading: true });
-    accentMats.push(m);
-    return m;
-  };
-  const visorMat = accent(0.7);
-  const trimMat = accent(0.4);
-
-  // ---- legs (pivot at the hip so a pose can swing them); every joint is a SPHERE, which closes the
-  // gap that opens between two boxes the moment a limb swings — the single biggest reason a rig
-  // reads as janky instead of jointed
-  const legGeo = new THREE.BoxGeometry(0.24, 0.46, 0.26);
-  const shinGeo = new THREE.BoxGeometry(0.22, 0.44, 0.24);
-  const jointMat = new THREE.MeshLambertMaterial({ color: 0x2c2348, flatShading: true });
-  const mkLeg = (x: number): { hip: THREE.Group; knee: THREE.Group } => {
-    const hip = new THREE.Group();
-    hip.position.set(x, 0.94, 0);
-    const hipBall = new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), jointMat);
-    const thigh = new THREE.Mesh(legGeo, bodyMat);
-    thigh.position.y = -0.24;
-    hip.add(hipBall, thigh);
-    const knee = new THREE.Group();
-    knee.position.y = -0.48;
-    const shin = new THREE.Mesh(shinGeo, darkMat);
-    shin.position.y = -0.22;
-    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.1, 0.36), darkMat);
-    foot.position.set(0, -0.46, 0.06);
-    const kneeBall = new THREE.Mesh(new THREE.SphereGeometry(0.125, 10, 8), jointMat);
-    knee.add(kneeBall, shin, foot);
-    hip.add(knee);
-    group.add(hip);
-    return { hip, knee };
-  };
-  const legR = mkLeg(0.17);
-  const legL = mkLeg(-0.17);
-
-  // ---- torso: everything above the hips, so the whole upper body can lean as one
-  const torso = new THREE.Group();
-  torso.position.y = 0.94;
-  const chest = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.5, 0.34), bodyMat);
-  chest.position.y = 0.25;
-  const belt = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.38), trimMat);
-  belt.position.y = 0.02;
-  const chestPlate = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.08), visorMat);
-  chestPlate.position.set(0, 0.3, 0.18);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.34, 0.36), bodyMat);
-  head.position.y = 0.68;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.11, 0.06), visorMat);
-  visor.position.set(0, 0.7, 0.19);
-  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.4, 0.16), darkMat);
-  pack.position.set(0, 0.28, -0.24);
-  torso.add(chest, belt, chestPlate, head, visor, pack);
-
-  // ---- arms (pivot at the shoulder, elbow inside it); the right hand is a weapon attach point
-  const armGeo = new THREE.BoxGeometry(0.16, 0.42, 0.18);
-  const mkArm = (x: number): { shoulder: THREE.Group; elbow: THREE.Group; hand: THREE.Group } => {
-    const shoulder = new THREE.Group();
-    shoulder.position.set(x, 0.42, 0);
-    const shoulderPad = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.26), trimMat);
-    const upper = new THREE.Mesh(armGeo, bodyMat);
-    upper.position.y = -0.22;
-    const elbow = new THREE.Group();
-    elbow.position.y = -0.44;
-    const elbowBall = new THREE.Mesh(new THREE.SphereGeometry(0.105, 9, 7), jointMat);
-    const fore = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.16), darkMat);
-    fore.position.y = -0.2;
-    const hand = new THREE.Group();
-    hand.position.y = -0.42;
-    hand.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.18), trimMat));
-    elbow.add(elbowBall, fore, hand);
-    shoulder.add(shoulderPad, upper, elbow);
-    torso.add(shoulder);
-    return { shoulder, elbow, hand };
-  };
-  const armR = mkArm(0.38);
-  const armL = mkArm(-0.38);
-  group.add(torso);
+  const rig = new PlayerRig(color);
+  group.add(rig.root);
 
   // ---- a flat ring of colony light under the feet: which champion is in focus is read from here
   const ringMat = new THREE.MeshBasicMaterial({
@@ -237,124 +128,14 @@ function buildFigure(color: number): FigureParts {
   ring.position.y = 0.02;
   group.add(ring);
 
-  return {
-    group, torso,
-    armL: armL.shoulder, armR: armR.shoulder,
-    elbowL: armL.elbow, elbowR: armR.elbow,
-    legL: legL.hip, legR: legR.hip,
-    kneeL: legL.knee, kneeR: legR.knee,
-    handR: armR.hand, accentMats, ringMat,
-    focusAmt: 0,
-  };
-}
-
-/**
- * HELIOS — the brawler at rest. A boxer's guard: lead fist up, weight forward, springing just
- * enough on the balls of the feet to read as ready. Every ~7 s he snaps off a smooth one-two and
- * settles back into the guard; the rest of the time he only breathes.
- */
-function animateHelios(f: FigureParts, t: number, phase: number): void {
-  const br = breath(t, phase);
-  const spring = Math.sin((t / 2.3) * TAU + phase);      // light footwork, low amplitude
-  const c = (t / 7.2 + phase * 0.17) % 1;
-  const jab = Math.max(bump(c, 0.10, 0.06) * 0.8, bump(c, 0.28, 0.07));
-  const reset = bump(c, 0.55, 0.22);
-
-  f.torso.rotation.x = 0.24 + br * 0.012 + jab * 0.1;
-  f.torso.rotation.y = -jab * 0.22;
-  f.torso.rotation.z = spring * 0.012 + reset * 0.02;
-  f.armR.rotation.x = -1.02 - br * 0.015 - jab * 0.72;
-  f.armR.rotation.z = -0.42;
-  f.elbowR.rotation.x = -1.35 + br * 0.03 + jab * 0.95;
-  f.armL.rotation.x = 0.32 + br * 0.02 + jab * 0.22;
-  f.armL.rotation.z = 0.46;
-  f.elbowL.rotation.x = -1.15 + br * 0.03;
-  f.legR.rotation.x = 0.42 + spring * 0.015;
-  f.legL.rotation.x = -0.5 - spring * 0.015 - reset * 0.03;
-  f.kneeR.rotation.x = -0.3 - spring * 0.04 - jab * 0.12;
-  f.kneeL.rotation.x = -0.12 + spring * 0.03;
-  f.group.position.y = 0.06 + br * 0.008 + Math.abs(spring) * 0.006 + jab * 0.015;
-  // three-quarter stance, turning slowly: a showcase sway, never a twitch
-  f.group.rotation.y = -0.85 + Math.sin((t / 9) * TAU + phase) * 0.07 - jab * 0.06;
-}
-
-/**
- * AEGIS — the wall. A LIVING guard, not a statue: the weight rolls from foot to foot under a
- * breathing guard, the helm sweeps the field, and every few seconds he either presses the guard
- * out at whatever is in front of him or settles heavily in behind it — two different accents, so
- * the loop never reads as a single repeated twitch.
- */
-function animateAegis(f: FigureParts, t: number, phase: number): void {
-  const br = breath(t, phase, 3.1);
-  const roll = Math.sin((t / 5) * TAU + phase);            // weight rocking foot to foot
-  const scan = Math.sin((t / 9.5) * TAU + phase * 0.6);    // slow sweep of the field
-  const c = (t / 5.6 + phase * 0.19) % 1;
-  const press = bump(c, 0.2, 0.22);                        // shove the guard forward
-  const settle = bump(c, 0.68, 0.24);                      // drop in behind it
-
-  // hips ride the roll and the knees answer it, so he looks PLANTED rather than glued in place
-  f.torso.position.x = roll * 0.035;
-  f.torso.rotation.x = 0.12 + br * 0.02 + press * 0.09 + settle * 0.05;
-  f.torso.rotation.y = scan * 0.11 + press * 0.05;
-  f.torso.rotation.z = roll * 0.05;
-  // the crossed guard: compresses on the breath, drives OUT on the press, tucks in on the settle
-  const guardX = -1.28 - br * 0.05 - press * 0.28 + settle * 0.1;
-  const guardZ = 0.58 + press * 0.16 - settle * 0.06;
-  f.armR.rotation.x = guardX;
-  f.armR.rotation.z = -guardZ;
-  f.elbowR.rotation.x = -1.6 + br * 0.07 + press * 0.52 - settle * 0.14;
-  f.armL.rotation.x = guardX - 0.08;
-  f.armL.rotation.z = guardZ;
-  f.elbowL.rotation.x = -1.6 + br * 0.07 + press * 0.52 - settle * 0.14;
-  // the loaded knee takes the weight as the body rolls on to it
-  f.legR.rotation.x = 0.3 + roll * 0.05;
-  f.legL.rotation.x = -0.34 - roll * 0.05;
-  f.kneeR.rotation.x = -0.5 - br * 0.04 - press * 0.16 - settle * 0.26 - Math.max(0, roll) * 0.14;
-  f.kneeL.rotation.x = -0.48 - br * 0.04 - press * 0.16 - settle * 0.26 - Math.max(0, -roll) * 0.14;
-  f.group.position.y = 0.06 + br * 0.012 - press * 0.02 - settle * 0.05;
-  f.group.rotation.y = roll * 0.06 + scan * 0.05;
-}
-
-/**
- * VANTA — the runner, never quite still. A light, springy footwork cycle under the coiled stance
- * with the arms counter-swinging, and every few seconds a gather-then-spring: the half-step before
- * a sprint. Amplitudes stay small and slow ON PURPOSE — an avatar sprinting on the spot reads as
- * jank; a runner shifting his weight from foot to foot reads as ready to go.
- */
-function animateVanta(f: FigureParts, t: number, phase: number): void {
-  const c = (t / 5.2 + phase * 0.19) % 1;
-  const gather = bump(c, 0.3, 0.22);                       // sinks, arms drawn back
-  const spring = bump(c, 0.66, 0.16);                      // rises, lead arm drives out
-  const br = breath(t, phase, 4.4);
-  // the footwork fades out while he gathers and comes back as he springs — anticipation, then burst
-  const step = Math.sin((t / 1.35) * TAU + phase) * (1 - 0.75 * gather);
-  const bounce = Math.abs(step);
-
-  f.torso.position.x = step * 0.012;
-  f.torso.rotation.x = 0.45 + br * 0.02 + gather * 0.14 - spring * 0.12;
-  f.torso.rotation.z = step * 0.035 + (gather - spring) * 0.02;
-  // trailing and lead arms pump in counter-phase, then both load up for the spring
-  f.armR.rotation.x = 0.3 - step * 0.22 + gather * 0.22 - spring * 0.18;
-  f.armR.rotation.z = -0.28;
-  f.elbowR.rotation.x = -0.5 - gather * 0.35 + spring * 0.15;
-  f.armL.rotation.x = -0.62 + step * 0.24 + gather * 0.18 - spring * 0.42;
-  f.armL.rotation.z = 0.3;
-  f.elbowL.rotation.x = -0.95 + spring * 0.25;
-  // the legs pedal just enough to read as footwork; the gather sinks him, the spring lifts him
-  f.legR.rotation.x = 0.58 + step * 0.2 - gather * 0.3 + spring * 0.12;
-  f.legL.rotation.x = -0.3 - step * 0.2 + gather * 0.18 - spring * 0.08;
-  f.kneeR.rotation.x = -0.5 - bounce * 0.12 - gather * 0.5 + spring * 0.2;
-  f.kneeL.rotation.x = -0.28 - bounce * 0.1 - gather * 0.35 + spring * 0.15;
-  f.group.position.y = 0.05 + bounce * 0.018 + br * 0.006 - gather * 0.06 + spring * 0.03;
-  f.group.rotation.y = 0.95 + Math.sin((t / 7.5) * TAU + phase) * 0.05 + (spring - gather) * 0.06;
+  return { group, rig, ringMat, focusAmt: 0 };
 }
 
 /** Runs the colony's own animation, eases the focus and paints the spotlight treatment. */
 function poseFigure(parts: FigureParts, colony: number, t: number, focus: number, dt: number, baseScale = 1): void {
-  const phase = colony * 2.1;
-  if (colony === 0) animateHelios(parts, t, phase);
-  else if (colony === 1) animateAegis(parts, t, phase);
-  else animateVanta(parts, t, phase);
+  parts.rig.update(dt, { speed: 0, verticalSpeed: 0, grounded: true });
+  parts.group.position.y = 0.02;
+  parts.group.rotation.y = (colony - 1) * 0.35 + Math.sin(t * 0.45 + colony * 2.1) * 0.08;
 
   // focus EASES in and out: popping a champion to a new scale in one frame was half of why the
   // line-up read as janky. `baseScale` is the frame-filling factor the preview solved for the box.
@@ -362,9 +143,7 @@ function poseFigure(parts: FigureParts, colony: number, t: number, focus: number
   const f = parts.focusAmt;
   parts.group.scale.setScalar(baseScale * (1 + f * 0.12));
   parts.ringMat.opacity = 0.2 + f * 0.55 + 0.04 * Math.sin(t * 1.4 + colony);
-  for (const m of parts.accentMats) {
-    m.emissiveIntensity = 0.3 + f * 0.45 + 0.05 * Math.sin(t * 1.1 + colony * 1.3);
-  }
+  parts.rig.accent.emissiveIntensity = 0.65 + f * 0.4 + 0.05 * Math.sin(t * 1.1 + colony * 1.3);
 }
 
 // The weapon models themselves live in necrotech/WeaponModels.ts: the same builders dress this
@@ -652,6 +431,8 @@ export class SelectionPreview {
       if (child instanceof THREE.Light) continue;
       this.scene.remove(child);
     }
+    for (const figure of this.figures) disposeObject(figure.group);
+    if (this.avatarParts) disposeObject(this.avatarParts.group);
     this.figures.length = 0;
     this.weapons.clear();
     this.weaponPivot = new THREE.Group();
@@ -900,8 +681,8 @@ export class SelectionPreview {
 
     if (this.mode === 'colony') {
       // Frame the champions to fill the box: solve the scale from the measured height against the
-      // visible world height at the figures' plane, clamp it (never shrink below the authored size,
-      // never blow the line-up up past the cap), then re-aim the camera on the scaled body so the
+      // visible world height at the figures' plane, reserve room for focus scaling and perspective,
+      // then re-aim the camera on the scaled body so the
       // leftover space is split evenly above the head and below the feet instead of pooling at the
       // bottom of the frame (the "extra space at the bottom" report).
       // A phone's stage is a SHALLOW strip (it shares the screen with three colony cards), so it
@@ -910,7 +691,7 @@ export class SelectionPreview {
       const fill = touchStage ? COLONY_FILL_TOUCH : COLONY_FILL;
       const cap = touchStage ? COLONY_SCALE_MAX_TOUCH : COLONY_SCALE_MAX;
       const visH = 2 * COLONY_CAM_DIST * Math.tan((this.camera.fov * Math.PI) / 360);
-      const scale = Math.min(cap, Math.max(1, (fill * visH) / this.colonyTop));
+      const scale = Math.min(cap, (fill * visH) / (this.colonyTop * 1.2), visH * this.camera.aspect / 5.8);
       if (Math.abs(scale - this.colonyScale) > 0.001) this.colonyScale = scale;
       const mid = (this.colonyScale * this.colonyTop) * 0.5;
       this.camera.position.set(0, mid + 0.38, COLONY_CAM_DIST);
@@ -919,8 +700,8 @@ export class SelectionPreview {
       // window is the one case where the authored slot can exceed the frame, so measure the room
       // the visible world width actually has at the figures' plane and shrink the slot to fit.
       const spread = Math.max(1, this.colonyScale / COLONY_SCALE_MAX);
-      const reach = 0.78 * this.colonyScale + 0.45; // ring radius + pose-swing headroom
-      const room = Math.max(1.6, (visH * this.camera.aspect) * 0.5 - reach);
+      const reach = 0.94 * this.colonyScale;
+      const room = Math.max(0, (visH * this.camera.aspect) * 0.44 - reach);
       const slot = Math.min(COLONY_SLOT * spread, room);
       this.figures.forEach((fig, idx) => {
         // the pointer's champion takes the spotlight; the picked colony keeps a base glow.
@@ -956,12 +737,9 @@ export class SelectionPreview {
         }
         this.avatarYaw += (this.avatarYawTarget - this.avatarYaw) * Math.min(1, dt * 12);
         const idle = this.dragging ? 0 : Math.min(1, Math.max(0, (t - this.lastDragAt - 1.2) / 1.6));
-        const breathe = Math.sin(t * 1.35);
-        parts.group.position.y = 0.02 + breathe * 0.012;
+        parts.group.position.y = 0.02;
         parts.group.rotation.y = this.avatarYaw + Math.sin(t * 0.32) * 0.1 * idle;
-        parts.torso.rotation.x = breathe * 0.014;
-        parts.armL.rotation.x = Math.sin(t * 0.9) * 0.05 - breathe * 0.01;
-        parts.armR.rotation.x = -Math.sin(t * 0.9) * 0.05 - breathe * 0.01;
+        parts.rig.update(dt, { speed: 0, verticalSpeed: 0, grounded: true });
         this.avatarAcc?.tick(t, dt, 0);
         const pet = this.avatarAcc?.petCtl;
         if (pet) {
@@ -1281,12 +1059,9 @@ export class SelectionPreview {
       const fig = this.lobbyAvatars[i];
       const ph = i * 1.37;
       const parts = fig.parts;
-      const breathe = Math.sin(t * 1.2 + ph);
-      parts.group.position.y = 0.02 + breathe * 0.012;
+      parts.group.position.y = 0.02;
       parts.group.rotation.y = this.lobbyYaw - 0.22 + Math.sin(t * 0.31 + ph * 0.7) * 0.26 * idle;
-      parts.torso.rotation.x = breathe * 0.014;
-      parts.armL.rotation.x = Math.sin(t * 0.8 + ph) * 0.06 - breathe * 0.012;
-      parts.armR.rotation.x = -Math.sin(t * 0.86 + ph) * 0.06 - breathe * 0.012;
+      parts.rig.update(dt, { speed: 0, verticalSpeed: 0, grounded: true });
       fig.acc.tick(t, dt, 0);
       const pet = fig.acc.petCtl;
       if (pet) {
@@ -1320,6 +1095,7 @@ export class SelectionPreview {
 
   dispose(): void {
     this.stop();
+    if (this.avatarParts) disposeObject(this.avatarParts.group);
     if (this.avatarAcc) {
       this.avatarAcc.dispose();
       this.avatarAcc = null;

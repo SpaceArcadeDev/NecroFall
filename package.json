@@ -18,6 +18,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test:player-avatar": "node scripts/check-player-avatar.mjs",
     "test:main-planets": "node scripts/check-main-planets.mjs",
     "test:enemy-models": "node scripts/check-enemy-base-models.mjs",
     "test:enemy-rigs": "node scripts/check-enemy-rigs.mjs",

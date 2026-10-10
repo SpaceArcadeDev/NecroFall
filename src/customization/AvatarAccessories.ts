@@ -8,13 +8,16 @@ import { PetController } from './PetSystem';
 
 /** Disposes every geometry/material under `root` (each builder owns its own — never shared). */
 export function disposeObject(root: THREE.Object3D): void {
+  const skeletons = new Set<THREE.Skeleton>();
   root.traverse(o => {
     const mesh = o as THREE.Mesh;
+    if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((mesh as THREE.SkinnedMesh).skeleton);
     if (mesh.geometry) mesh.geometry.dispose();
     const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mat)) for (const one of mat) one.dispose();
     else if (mat) mat.dispose();
   });
+  for (const skeleton of skeletons) skeleton.dispose();
 }
 
 function dropBuild(build: AccessoryBuild | null): void {

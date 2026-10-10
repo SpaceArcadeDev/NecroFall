@@ -13,6 +13,7 @@
 // Authority: only the HOST runs the swarm, so only the host's decoys matter for the taunt; but every
 // peer spawns its own ghost from the same cast event, so the double is visible everywhere.
 import * as THREE from 'three';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import { orientToSurface } from '../utils/Utils';
 import type { Player } from './Player';
 import type { Game } from '../core/Game';
@@ -65,7 +66,7 @@ export class Decoy {
   readonly blast: number;
   readonly blastDmg: number;
   readonly color: number;
-  private ghost: THREE.Group | null = null;
+  private ghost: THREE.Object3D | null = null;
   private ghostMat: THREE.MeshBasicMaterial | null = null;
   private bob = Math.random() * Math.PI * 2;
   private flash = 0;
@@ -92,7 +93,7 @@ export class Decoy {
       blending: THREE.AdditiveBlending,
     });
     this.ghostMat = mat;
-    const ghost = owner.model.clone(true);
+    const ghost = cloneSkeleton(owner.model);
     ghost.traverse(o => {
       const mesh = o as THREE.Mesh;
       if ((mesh as unknown as { isMesh?: boolean }).isMesh) {
@@ -136,6 +137,9 @@ export class Decoy {
 
   dispose(scene: THREE.Scene): void {
     if (this.ghost) scene.remove(this.ghost);
+    this.ghost?.traverse(object => {
+      if (object instanceof THREE.SkinnedMesh) object.skeleton.dispose();
+    });
     this.ghost = null;
     this.ghostMat?.dispose();
     this.ghostMat = null;

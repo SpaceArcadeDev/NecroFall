@@ -1,19 +1,3 @@
-// NECROFALL — imported enemy base models (plan §31's "base model" slot, now shared).
-//
-// Two bodies in the bestiary are not built from `EnemyModels` primitives but imported:
-//
-//   parasite  the DM-913 insectoid rig — the Nexus Overseer's Mega Necrophage. It arrives
-//             WITH a skeleton and a baked walk clip ('Prowl'), so this visual plays it through
-//             an AnimationMixer and keeps the body planted on its own pelvis.
-//   crawler   the cell-shaded crawler base model (`src/enemies/base_models/crawler.glb`).
-//             The source is a static Tripo mesh, so the rig is DERIVED from its geometry
-//             (`AutoRig.ts`) and driven procedurally — the same vocabulary `animateEnemyRig`
-//             uses for every generated creature.
-//
-// Both go through ONE visual, so gameplay code never branches on where a body came from:
-// materials are rebuilt cell-shaded (`ImportedMaterials`), hit flash / cryo frost / aggro veins
-// / boss state wash ride the same uniforms, and the simulator keeps owning movement, targeting
-// and damage for either body.
 import * as THREE from 'three/webgpu';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
@@ -21,24 +5,17 @@ import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import { autoRig, CRAWLER_RIG, type AutoRigSpec } from './AutoRig';
 import { importedMaterial, type ImportedMaterial } from './ImportedMaterials';
 import { readSwitches } from '../../rendering/DebugSwitches';
+import { TerrainRig, type RigMotion } from './TerrainRig';
+import { applyModelModules, moduleSocket, selectMeshModule, type MeshModule } from './ModelModules';
+import type { BaseGenome, EnemyAnatomy } from './EnemyAnatomy';
+import { normalizeAnatomy } from './EnemyAnatomy';
 
-export type ImportedModelId = 'parasite' | 'crawler';
+export type ImportedModelId = BaseGenome;
 
-/**
- * Which imported base model (if any) stands in for a genome's procedural body:
- *
- *   nexus      the Nexus Overseer is ALWAYS the Mega Necrophage;
- *   boss       the four Beacon Guardians alternate between the two imported bodies (their genome
- *              indices are consecutive), so every match fields two of each — and a guardian still
- *              reads as one of the big imported monsters while it guards its Beacon;
- *   crawler    crawler-species Necrophages wear the cell-shaded crawler base model.
- *
- * Every other genome keeps its generated rig, and `?basemodels=0` disables the whole layer.
- */
-export function importedModelFor(genome: { species: string; tier: string; idx: number }): ImportedModelId | null {
+export function importedModelFor(genome: { species: string; tier: string; idx: number; anatomy?: EnemyAnatomy }): ImportedModelId | null {
   if (!importedBaseModelsEnabled()) return null;
-  if (genome.tier === 'nexus') return 'parasite';
-  if (genome.tier === 'boss') return genome.idx % 2 === 0 ? 'parasite' : 'crawler';
+  if (genome.anatomy) return genome.anatomy.base;
+  if (genome.tier === 'nexus' || genome.tier === 'boss') return (['parasite', 'crawler', 'behemoth'] as const)[genome.idx % 3];
   if (genome.species === 'crawler') return 'crawler';
   return null;
 }
@@ -61,7 +38,7 @@ export function importedBaseModelsEnabled(): boolean {
   return importedBaseModelsCache;
 }
 
-export interface ImportedVisualState {
+export interface ImportedVisualState extends RigMotion {
   flash: number;
   frost: number;
   stunned: boolean;
@@ -72,10 +49,7 @@ interface ImportedModelDefinition {
   url: string;
   /** Provenance shown on the root's userData (mirrors `src/enemies/base_models/crawler.json`). */
   source: string;
-  /** Looping clip for skinned sources ('Prowl' on the insectoid rig). */
   clip?: RegExp;
-  /** Bone the body is kept planted by (the insectoid rig's pelvis). */
-  anchor?: string;
   /** Static sources get a geometry-derived rig from this table. */
   rig?: AutoRigSpec;
 }
@@ -87,12 +61,15 @@ const MODELS: Record<ImportedModelId, ImportedModelDefinition> = {
     url: new URL('../../concepts/assets/parasite-near.glb', import.meta.url).href,
     source: 'DM-913 Insectoid Monster Rig (CC BY 4.0)',
     clip: /prowl/i,
-    anchor: 'Pelvis_72',
   },
   crawler: {
     url: new URL('../base_models/crawler.glb', import.meta.url).href,
     source: 'Tripo fantasy dragon, adapted for NECROFALL (see crawler.json)',
     rig: CRAWLER_RIG,
+  },
+  behemoth: {
+    url: new URL('../base_models/behemoth.glb', import.meta.url).href,
+    source: 'User-provided Tripo Behemoth, adapted for NECROFALL (see behemoth.json)',
   },
 };
 
@@ -117,7 +94,17 @@ function measurePose(root: THREE.Object3D, animations: THREE.AnimationClip[], de
   root.updateMatrixWorld(true);
   root.traverse((object) => { if (object instanceof THREE.SkinnedMesh) object.skeleton.update(); });
   const bounds = new THREE.Box3().setFromObject(root, true);
-  if (probe) { probe.stopAllAction(); probe.uncacheRoot(root); }
+  if (probe) {
+    const pose: { object: THREE.Object3D; position: THREE.Vector3; rotation: THREE.Quaternion; scale: THREE.Vector3 }[] = [];
+    root.traverse(object => pose.push({ object, position: object.position.clone(), rotation: object.quaternion.clone(), scale: object.scale.clone() }));
+    probe.stopAllAction(); probe.uncacheRoot(root);
+    for (const part of pose) {
+      part.object.position.copy(part.position);
+      part.object.quaternion.copy(part.rotation);
+      part.object.scale.copy(part.scale);
+    }
+    root.updateMatrixWorld(true);
+  }
   return { height: Math.max(0.001, bounds.max.y - bounds.min.y), center: bounds.getCenter(new THREE.Vector3()), floor: bounds.min.y };
 }
 
@@ -205,17 +192,6 @@ function bakeSurfaceGeometry(source: THREE.BufferGeometry, matrix: THREE.Matrix4
   return geometry;
 }
 
-interface CrawlerJoints {
-  spine: THREE.Bone;
-  chest: THREE.Bone;
-  neck: THREE.Bone;
-  head: THREE.Bone;
-  spineRestY: number;
-  tail: THREE.Bone[];
-  legs: { upper: THREE.Bone; lower: THREE.Bone; phase: number }[];
-}
-
-/** The enemy visual for an imported body — Mega Necrophage or crawler. */
 export class ImportedVisual {
   readonly root = new THREE.Group();
   /** Chitin: the opaque surface carrying aggro veins, frost and hit flash. */
@@ -230,25 +206,26 @@ export class ImportedVisual {
   private readonly normalizer = new THREE.Group();
   private readonly materials: ImportedMaterial[] = [];
   private readonly offset = new THREE.Vector3();
-  private readonly anchorPoint = new THREE.Vector3();
-  private readonly current = new THREE.Vector3();
-  private readonly anchor: THREE.Object3D | null = null;
-  private readonly mixer: THREE.AnimationMixer | null = null;
-  private readonly joints: CrawlerJoints | null = null;
-  private gaitClock = 0;
+  readonly locomotion: TerrainRig;
+  private readonly moduleGeometries: THREE.BufferGeometry[];
 
-  private constructor(private readonly model: THREE.Object3D, template: ImportedTemplate, height: number, id: ImportedModelId) {
+  private constructor(private readonly model: THREE.Object3D, template: ImportedTemplate, height: number, id: ImportedModelId, anatomy?: EnemyAnatomy) {
     this.root.name = `${id}-imported`;
     this.root.userData.source = MODELS[id].source;
     this.root.scale.setScalar(height / template.height);
     this.normalizer.position.copy(this.offset.set(-template.center.x, -template.floor, -template.center.z));
     this.normalizer.add(model);
     this.root.add(this.normalizer);
+    this.moduleGeometries = anatomy ? applyModelModules(model, anatomy) : [];
 
     // ONE opaque surface per imported model (`{id}:chitin`) plus, on the insectoid rig, the
     // translucent wings (`parasite:membrane`) — mapped onto the same carapace/energy pair the
     // procedural creatures expose, so every gameplay system writes the same uniforms.
     this.carapace = importedMaterial(surfaceMaterials(model, false)[0], false);
+    if (anatomy) {
+      this.carapace.uTint.value.setHex(anatomy.color).lerp(new THREE.Color(0xffffff), 0.65);
+      this.carapace.uAccent.value.setHex(anatomy.accent);
+    }
     this.textured = Boolean(surfaceMaterials(model, false)[0].map);
     const membrane = surfaceMaterials(model, true)[0] ?? null;
     this.energy = membrane ? importedMaterial(membrane, true) : this.carapace;
@@ -256,11 +233,24 @@ export class ImportedVisual {
     if (this.energy !== this.carapace) this.materials.push(this.energy);
     this.flashMats = this.materials;
 
+    const graftMaterials = new Map<string, ImportedMaterial>();
     model.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       const sources = Array.isArray(object.material) ? object.material : [object.material];
-      const converted = sources.map((source) => ((source as THREE.Material).name.endsWith(':membrane') ? this.energy : this.carapace));
+      const converted = sources.map(source => {
+        if (source.name.startsWith(`${id}:`)) return source.name.endsWith(':membrane') ? this.energy : this.carapace;
+        let material = graftMaterials.get(source.uuid);
+        if (!material) {
+          material = importedMaterial(source as THREE.MeshStandardMaterial, source.name.endsWith(':membrane'));
+          material.uTint.value.copy(this.carapace.uTint.value);
+          material.uAccent.value.copy(this.carapace.uAccent.value);
+          graftMaterials.set(source.uuid, material);
+          this.materials.push(material);
+        }
+        return material;
+      });
       object.material = Array.isArray(object.material) ? converted : converted[0];
+      if (object.geometry.index?.count === 0) object.visible = false;
       object.castShadow = true;
       object.receiveShadow = true;
       // The body is a single skinned shell whose rest bounds lag the animated pose, and the
@@ -268,30 +258,41 @@ export class ImportedVisual {
       object.frustumCulled = false;
     });
 
-    if (template.animations.length > 0) {
-      this.mixer = new THREE.AnimationMixer(model);
-      const animation = template.animations.find((clip) => MODELS[id].clip?.test(clip.name)) ?? template.animations[0];
-      if (animation) this.mixer.clipAction(animation).play();
-      this.mixer.setTime(0);
-    }
-    if (MODELS[id].anchor) {
-      const anchor = model.getObjectByName(MODELS[id].anchor!);
-      if (!anchor) throw new Error(`Imported model '${id}' is missing its ${MODELS[id].anchor} anchor`);
-      this.anchor = anchor;
-      this.root.updateMatrixWorld(true);
-      this.normalizer.worldToLocal(anchor.getWorldPosition(this.anchorPoint));
-    }
-    if (MODELS[id].rig) this.joints = collectCrawlerJoints(model);
+    this.locomotion = new TerrainRig(this.root, model, id, height);
   }
 
-  static async create(id: ImportedModelId, height: number): Promise<ImportedVisual> {
+  static async create(id: ImportedModelId, height: number, anatomy?: EnemyAnatomy): Promise<ImportedVisual> {
+    if (anatomy) anatomy = normalizeAnatomy({ ...anatomy, base: id });
     const template = await loadTemplate(id);
-    return new ImportedVisual(clone(template.root), template, height, id);
+    const model = clone(template.root);
+    model.traverse(object => { if (object instanceof THREE.SkinnedMesh) object.userData.primaryRig = true; });
+    if (anatomy) {
+      const parts: [MeshModule, ImportedModelId | undefined][] = [['head', anatomy.headBase], ['tail', anatomy.tail > 0 ? anatomy.tailBase : id]];
+      for (const [kind, donorId] of parts) {
+        if (!donorId || donorId === id) continue;
+        const donorTemplate = await loadTemplate(donorId);
+        const donor = clone(donorTemplate.root);
+        model.updateMatrixWorld(true); donor.updateMatrixWorld(true);
+        const target = moduleSocket(model, kind), origin = moduleSocket(donor, kind);
+        const targetPoint = target.getWorldPosition(new THREE.Vector3());
+        const originPoint = origin.getWorldPosition(new THREE.Vector3());
+        const ratio = template.height / donorTemplate.height;
+        const transform = new THREE.Matrix4().copy(target.matrixWorld).invert()
+          .multiply(new THREE.Matrix4().makeTranslation(targetPoint))
+          .multiply(new THREE.Matrix4().makeScale(ratio, ratio, ratio))
+          .multiply(new THREE.Matrix4().makeTranslation(originPoint.negate()));
+        selectMeshModule(model, kind, false);
+        selectMeshModule(donor, kind, true);
+        const socket = new THREE.Group();
+        socket.name = `${kind}-module:${donorId}`;
+        socket.applyMatrix4(transform); socket.add(donor); target.add(socket);
+      }
+    }
+    return new ImportedVisual(model, template, height, id, anatomy);
   }
 
-  /** Animation clock: mixer time on skinned sources, the gait clock on driven rigs. */
   get clock(): number {
-    return this.mixer ? this.mixer.time : this.gaitClock;
+    return this.locomotion.clock;
   }
 
   /**
@@ -300,19 +301,7 @@ export class ImportedVisual {
    * pushes harder, and every state rides the material uniforms for hit flash and cryo.
    */
   update(dt: number, moving: number, state: ImportedVisualState): void {
-    if (this.mixer) this.mixer.update(dt * (state.stunned ? 0 : 0.25 + moving * 1.1));
-    if (this.joints) this.driveCrawler(dt, moving, state);
-
-    if (this.anchor) {
-      // Keep the walk cycle planted: the pelvis drives the body, the anchor pins it in place.
-      this.root.updateWorldMatrix(true, true);
-      this.normalizer.worldToLocal(this.anchor.getWorldPosition(this.current));
-      this.normalizer.position.set(
-        this.offset.x + this.anchorPoint.x - this.current.x,
-        this.offset.y,
-        this.offset.z + this.anchorPoint.z - this.current.z,
-      );
-    }
+    this.locomotion.update(dt, state.stunned, state);
 
     const broken = state.stunned;
     this.carapace.uState.value.set(broken ? '#ffdf45' : '#ff3028');
@@ -322,54 +311,16 @@ export class ImportedVisual {
       this.energy.uStateAmount.value = this.carapace.uStateAmount.value;
     }
     for (const material of this.flashMats) {
+      material.uState.value.copy(this.carapace.uState.value);
+      material.uStateAmount.value = this.carapace.uStateAmount.value;
+      material.uAggro.value = this.carapace.uAggro.value;
       material.uFlash.value = state.flash;
       material.uFreeze.value = state.frost;
     }
   }
 
-  /**
-   * The crawler gait. The model's rest pose is already mid-stride, so the solver rides the pose
-   * it was given: legs swing in diagonal pairs from the hip, the spine bobs and rolls, the neck
-   * pumps, and a travelling wave runs down the curled tail. Nothing is baked — idling, charging,
-   * a stunned body and an enraged one all read differently off the same inputs.
-   */
-  private driveCrawler(dt: number, moving: number, state: ImportedVisualState): void {
-    const joints = this.joints!;
-    const effort = state.stunned ? 0 : 0.35 + moving * 1.15;
-    this.gaitClock += dt * effort;
-    const p = this.gaitClock * 2.4;
-    const amp = (0.25 + moving * 0.75) * (state.enraged ? 1.25 : 1) * (state.stunned ? 0.15 : 1);
-
-    for (const leg of joints.legs) {
-      const phase = p + leg.phase;
-      leg.upper.rotation.x = Math.sin(phase) * 0.3 * amp;
-      leg.upper.rotation.z = Math.sin(phase + 0.4) * 0.05 * amp;
-      leg.lower.rotation.x = Math.max(0, -Math.sin(phase + 0.75)) * 0.38 * amp;
-    }
-
-    joints.spine.position.y = joints.spineRestY + Math.sin(p * 2) * 0.016 * amp;
-    joints.spine.rotation.x = Math.sin(p * 2 + 0.6) * 0.02 * amp + (state.stunned ? 0.1 : 0);
-    joints.spine.rotation.y = Math.sin(p) * 0.05 * amp;
-    // Enraged bodies tremble; a stunned one goes slack instead.
-    joints.spine.rotation.z = Math.sin(p + 0.8) * 0.045 * amp + (state.enraged ? Math.sin(this.gaitClock * 26) * 0.012 : 0);
-    joints.chest.rotation.y = -Math.sin(p) * 0.045 * amp;
-    joints.chest.rotation.x = Math.sin(p * 2 + 1.4) * 0.02 * amp;
-    joints.neck.rotation.x = Math.sin(p * 2 + 1.1) * 0.05 * amp + Math.sin(this.gaitClock * 0.9) * 0.02;
-    joints.neck.rotation.y = Math.sin(p * 0.5) * 0.05;
-    joints.head.rotation.x = Math.sin(p * 2 + 1.9) * 0.045 * amp;
-    joints.head.rotation.y = Math.sin(p * 0.5 + 0.9) * 0.07;
-
-    for (let index = 0; index < joints.tail.length; index++) {
-      const tail = joints.tail[index];
-      const wave = p * 1.15 - index * 0.55;
-      tail.rotation.x = Math.sin(wave) * (0.05 + index * 0.012) * (0.4 + moving) * 2;
-      tail.rotation.y = Math.sin(wave * 0.8 - 0.4) * (0.06 + index * 0.02) * (0.5 + moving) * 2;
-    }
-  }
-
   dispose(): void {
-    this.mixer?.stopAllAction();
-    if (this.mixer) this.mixer.uncacheRoot(this.model);
+    this.moduleGeometries.forEach(geometry => geometry.dispose());
     this.materials.forEach((material) => material.dispose());
     const skeletons = new Set<THREE.Skeleton>();
     this.model.traverse((object) => { if (object instanceof THREE.SkinnedMesh) skeletons.add(object.skeleton); });
@@ -390,27 +341,4 @@ function surfaceMaterials(root: THREE.Object3D, membrane: boolean): THREE.MeshSt
   });
   if (found.length === 0 && !membrane) throw new Error('Imported model has no surfaces');
   return found;
-}
-
-/**
- * Pulls the gait bones out of a cloned crawler. Leg phases make a diagonal trot: the lifted
- * left-rear leg pairs with the planted right-front one, exactly how the source pose reads.
- */
-function collectCrawlerJoints(root: THREE.Object3D): CrawlerJoints {
-  const bone = (name: string): THREE.Bone => {
-    const found = root.getObjectByName(name);
-    if (!(found instanceof THREE.Bone)) throw new Error(`Crawler rig is missing its ${name} bone`);
-    return found;
-  };
-  const leg = (suffix: string, phase: number) => ({ upper: bone(`Leg${suffix}`), lower: bone(`Shin${suffix}`), phase });
-  const spine = bone('Spine');
-  return {
-    spine,
-    chest: bone('Chest'),
-    neck: bone('Neck'),
-    head: bone('Head'),
-    spineRestY: spine.position.y,
-    tail: [bone('Tail1'), bone('Tail2'), bone('Tail3'), bone('Tail4'), bone('Tail5'), bone('Tail6')],
-    legs: [leg('FL', Math.PI), leg('FR', 0), leg('BL', 0), leg('BR', Math.PI)],
-  };
 }

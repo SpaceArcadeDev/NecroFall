@@ -20,6 +20,8 @@
     "typecheck": "tsc --noEmit",
     "test:main-planets": "node scripts/check-main-planets.mjs",
     "test:enemy-models": "node scripts/check-enemy-base-models.mjs",
+    "test:enemy-rigs": "node scripts/check-enemy-rigs.mjs",
+    "prepare:behemoth": "node scripts/prepare-behemoth-base-model.mjs",
     "test:planet-physics": "node scripts/check-planet-physics.mjs",
     "test:universe": "node scripts/ring-parity.mjs"
   },

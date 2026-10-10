@@ -4,6 +4,7 @@
 // Species are original designs inspired only by broad creature archetypes
 // (jelly blobs, burrowing worms, web spiders, fast crawlers, heavy brutes).
 import { Rand, clamp } from '../utils/Utils';
+import type { EnemyAnatomy } from './imported/EnemyAnatomy';
 import type { AttackPattern, BossHeavyId, EcoRole, GaitProfile, LocomotionId, ProcAttack, ProcRelationship, SwarmProfile, TargetPreference } from './procedural/EnemyGenome';
 
 export type SpeciesId = 'slime' | 'worm' | 'spider' | 'crawler' | 'brute' | 'hunter';
@@ -248,6 +249,7 @@ export interface GenomeVisual {
 }
 
 export interface EnemyGenome {
+  anatomy?: EnemyAnatomy;
   idx: number;
   species: SpeciesId;
   tier: Tier;

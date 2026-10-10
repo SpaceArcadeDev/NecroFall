@@ -4018,6 +4018,10 @@ export class Game {
         const lead = Number(msg.lead) || 0;
         const width = Number(msg.w) || 0;
         const accent = e ? e.genome.accent : 0xff2d2d;
+        if (kind.startsWith('anatomy-')) {
+          e?.playAnatomicalAttack(kind.slice(8), lead > 0 ? lead + 0.4 : undefined);
+          return;
+        }
         switch (kind) {
           case 'hunttl': {
             // A hunter has committed its pounce: the same terrain-conforming disc the host drew, at

@@ -17,6 +17,7 @@ import { buildAttacks, huntFromAttack } from './AttackGrammar';
 import { behaviorFor } from './BehaviorGrammar';
 import { rollTargetPreference } from './TargetGrammar';
 import { rollSwarm } from './SwarmGrammar';
+import { applyAnatomy } from '../imported/EnemyAnatomy';
 
 // ------------------------------------------------------------ planet facts
 
@@ -307,6 +308,7 @@ export function generateEcology(seed: number, facts: PlanetFacts): EcologyBestia
       const leap = kit.attacks.find((a) => a.ability === 'leap') ?? kit.attacks[0];
       genome.hunt = huntFromAttack(leap, forced.hunter);
     }
+    applyAnatomy(genome, seed);
     genomes.push(genome);
     roleOf[genome.idx] = role;
     return genome;

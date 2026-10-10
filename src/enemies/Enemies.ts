@@ -13,6 +13,7 @@ import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } 
 import { buildCreature, CreatureRig } from './EnemyModels';
 import { SwarmDirector } from './SwarmDirector';
 import { ImportedVisual, importedModelFor, type ImportedModelId } from './imported/ImportedVisual';
+import { capabilities, type AnatomicalAttack } from './imported/EnemyAnatomy';
 import {
   ABILITY_META,
   AbilityId,
@@ -123,7 +124,7 @@ const ENRAGED_MECHANICS: BossMechanicId[] = ['ragechain', 'rageleap'];
 export function pickBossMechanics(g: EnemyGenome): BossMechanicId[] {
   // A stored rotation wins outright: the generator chose these heavies FOR this body. The four
   // Beacon Guardians each carry their own set, so no two wardens cycle the same fight.
-  if (g.bossHeavy && g.bossHeavy.length > 0) return [...g.bossHeavy];
+  if (g.bossHeavy && g.bossHeavy.length > 0) return g.bossHeavy.filter(attack => attack !== 'rageleap' || !g.anatomy || capabilities(g.anatomy, true).canLeap);
   const has = (id: AbilityId): boolean => g.abilities.indexOf(id) >= 0;
   const out: BossMechanicId[] = [];
   const add = (id: BossMechanicId): void => { if (out.indexOf(id) < 0) out.push(id); };
@@ -441,6 +442,21 @@ export class Enemy {
   /** The rig's own shader colours, so the enraged wash can be applied and lifted cleanly. */
   private rigBaseGlow: THREE.Color | null = null;
   private rigBaseAccent: THREE.Color | null = null;
+  private anatomicalAttack: AnatomicalAttack | undefined;
+  private anatomicalAttackT = 0;
+  private anatomicalAttackDuration = 1;
+  private readonly footDirection = new THREE.Vector3();
+  private readonly footGround = (point: THREE.Vector3, up: THREE.Vector3, reach: number, out: THREE.Vector3): boolean => {
+    const game = this.fxGame;
+    if (!game) return false;
+    this.footDirection.copy(point).normalize();
+    const terrain = game.planet.meshHeightAtDir(this.footDirection.x, this.footDirection.y, this.footDirection.z);
+    const support = game.envWorld?.obstacles.supportRadius(point, reach) ?? -Infinity;
+    const height = Math.max(terrain, support);
+    if (Math.abs(height - this.position.length()) > reach * 1.5) return false;
+    out.copy(this.footDirection).multiplyScalar(height);
+    return true;
+  };
 
   /** Give the creature a Game handle so its debuff tells can reach the effect pools. */
   bindGame(game: Game): void {
@@ -454,10 +470,12 @@ export class Enemy {
     this.imported?.dispose(); this.imported = null;
     this.genomeIdx = genome.idx;
     this.genome = genome;
+    this.anatomicalAttackT = 0;
+    this.anatomicalAttack = undefined;
     this.isBoss = genome.tier === 'boss' || genome.tier === 'nexus';
     this.small = genome.small;
     // A FLYER cruises: the class's whole read is the altitude.
-    this.flyAlt = genome.locomotion === 'FLYER' ? clamp(1.7 * genome.scale, 1.4, 5) : 0;
+    this.flyAlt = genome.locomotion === 'FLYER' && (!genome.anatomy || capabilities(genome.anatomy, this.isBoss).canFly) ? clamp(1.7 * genome.scale, 1.4, 5) : 0;
     this.airH = this.flyAlt;
     this.radius = genome.radius;
     this.xpValue = genome.xp;
@@ -510,7 +528,7 @@ export class Enemy {
     if (!model || this.imported || this.importedLoading === this.group) return;
     const group = this.group;
     this.importedLoading = group;
-    void ImportedVisual.create(model, importedHeight(model, this.radius, this.genome.tier)).then(visual => {
+    void ImportedVisual.create(model, importedHeight(model, this.radius, this.genome.tier), this.genome.anatomy).then(visual => {
       if (!this.alive || group !== this.group) { visual.dispose(); return; }
       for (const child of group.children) if (child !== this.fxToxin) child.visible = false;
       group.add(visual.root); this.imported = visual;
@@ -661,6 +679,7 @@ export class Enemy {
   /** Host-authoritative AI + movement. dt is scaled by the simulation LOD step. */
   update(dt: number, game: Game): void {
     if (!this.alive) return;
+    if (this.stunnedT <= 0) this.anatomicalAttackT = Math.max(0, this.anatomicalAttackT - dt);
     const g = this.genome;
     if (!g) return;
 
@@ -933,7 +952,7 @@ export class Enemy {
           game.planet.projectToSurface(this.position);
           this.up.copy(this.position).normalize();
           game.effects.ring(this.position, this.up, 1.2, this.genome.accent, 0.4, 2, 0.8);
-        } else if (this.has('leap') && this.cd('leap') <= 0) {
+        } else if (this.has('leap') && this.cd('leap') <= 0 && (!g.anatomy || capabilities(g.anatomy, this.isBoss).canLeap)) {
           this.setCd('leap', ABILITY_META.leap.cd);
           _v.copy(target.position).sub(this.position).normalize();
           if (this.flyAlt > 0) {
@@ -1636,7 +1655,10 @@ export class Enemy {
     // The enraged phase UNLOCKS two heavies the boss did not have before — a marching chain of
     // eruptions and a leap on to the marked ground — each with its own marker and its own pattern.
     // The point is a new fight, not the same attacks with bigger numbers.
-    for (const id of ENRAGED_MECHANICS) if (this.bossMechanics.indexOf(id) < 0) this.bossMechanics.push(id);
+    for (const id of ENRAGED_MECHANICS) {
+      if (id === 'rageleap' && this.genome.anatomy && !capabilities(this.genome.anatomy, true).canLeap) continue;
+      if (this.bossMechanics.indexOf(id) < 0) this.bossMechanics.push(id);
+    }
     this.mechCd = this.bossMechanics.map(() => 3.5);
 
     const r = B.enrageWaveRadius;
@@ -1687,6 +1709,13 @@ export class Enemy {
   private startMechanic(game: Game, idx: number, target: Player): void {
     const id = this.bossMechanics[idx];
     const spec = BOSS_MECHANICS[id];
+    if (this.genome.anatomy) {
+      const body = capabilities(this.genome.anatomy, this.isBoss);
+      if (id === 'rageleap' && !body.canLeap) return;
+      const pose: AnatomicalAttack = id === 'impact' && body.canSpit ? 'spit' : id === 'dash' ? 'claw' : 'stomp';
+      this.playAnatomicalAttack(pose, spec.lead + 0.4);
+      game.broadcastEnemyEvent(this.id, `anatomy-${pose}`, this.position, this.up, this.radius, spec.lead);
+    }
     this.mechCd[idx] = spec.cd * (this.enraged ? CONFIG.boss.enragedCadence : 1);
     this.mechFrom.copy(this.position);
     this.mechAt.copy(this.position);
@@ -2049,7 +2078,9 @@ export class Enemy {
       // body off the surface
       this.velocity.addScaledVector(_v, -radial);
     }
-    this.position.addScaledVector(this.velocity, dt);
+    const stepHeight = this.genome.anatomy ? capabilities(this.genome.anatomy, this.isBoss).maxStep : 1.5;
+    if (game.envWorld && this.genome.anatomy) game.envWorld.obstacles.move(this.position, this.velocity, dt, this.radius * 0.65, this.airH <= 0, stepHeight);
+    else this.position.addScaledVector(this.velocity, dt);
     _v.copy(this.position).normalize();
     this.up.copy(_v);
     // Stand on the surface the player can SEE. The drawn terrain mesh interpolates between its
@@ -2059,14 +2090,60 @@ export class Enemy {
     // "enemies get stuck at slopes / do not travel over the terrain" looks like. The cached
     // triangle makes the common case a single intersection test; the analytic height is only
     // evaluated by the lookup itself if the direction somehow misses every triangle.
-    const surf = game.planet.meshHeightAtDir(_v.x, _v.y, _v.z, undefined, this.meshHint);
+    const terrain = game.planet.meshHeightAtDir(_v.x, _v.y, _v.z, undefined, this.meshHint);
+    const support = this.genome.anatomy ? game.envWorld?.obstacles.supportRadius(this.position, this.airH <= 0 ? stepHeight : 0.05) : null;
+    const surf = Math.max(terrain, support ?? -Infinity);
     this.meshHint = game.planet.meshTriHint;
     this.position.copy(_v).multiplyScalar(surf + this.airH);
   }
 
   // ------------------------------------------------------------ attacks
 
+  private queueAnatomicalAttack(game: Game, target: Player, kind: AnatomicalAttack, hit: () => void): void {
+    if (this.anatomicalAttackT > 0) return;
+    const lead = this.isBoss || this.genome.anatomy?.base === 'behemoth' ? 0.65 : 0.28;
+    this.playAnatomicalAttack(kind);
+    const group = this.group;
+    if (kind === 'tail') this.facing.copy(this.position).sub(target.position).normalize();
+    game.effects.ring(this.position, this.up, this.genome.attackRange, this.genome.accent, lead, 0.5, 0.6);
+    this.netEvent(game, `anatomy-${kind}`);
+    game.scheduleHost(lead, () => {
+      if (!this.alive || group !== this.group || this.stunnedT > 0 || !target.alive) return;
+      hit();
+    });
+  }
+
+  playAnatomicalAttack(kind: string, duration?: number): void {
+    if (!['bite', 'claw', 'tail', 'stomp', 'spit'].includes(kind)) return;
+    this.anatomicalAttack = kind as AnatomicalAttack;
+    this.anatomicalAttackDuration = duration ?? (this.isBoss || this.genome.anatomy?.base === 'behemoth' ? 0.65 : 0.28) + 0.4;
+    this.anatomicalAttackT = this.anatomicalAttackDuration;
+  }
+
   private melee(game: Game, target: Player): void {
+    if (this.genome.anatomy) {
+      const kind = this.genome.anatomy.attack === 'spit' ? 'bite' : this.genome.anatomy.attack;
+      this.queueAnatomicalAttack(game, target, kind, () => {
+        const reach = this.genome.attackRange + 0.8;
+        if (kind === 'stomp' || kind === 'tail' || kind === 'claw') {
+          for (const player of game.players.values()) {
+            if (!player.alive || player.position.distanceTo(this.position) > reach) continue;
+            _v.copy(player.position).sub(this.position).normalize();
+            const dot = _v.dot(this.facing);
+            if (kind === 'claw' && dot < -0.15 || kind === 'tail' && dot > 0.5) continue;
+            this.applyMelee(game, player);
+          }
+        } else if (target.position.distanceTo(this.position) <= reach) {
+          _v.copy(target.position).sub(this.position).normalize();
+          if (_v.dot(this.facing) > 0.35) this.applyMelee(game, target);
+        }
+      });
+      return;
+    }
+    this.applyMelee(game, target);
+  }
+
+  private applyMelee(game: Game, target: Player): void {
     if (target.isInvulnerable()) return;
     const g = this.genome;
     const status: HitStatus | undefined = this.has('venomCloud')
@@ -2096,7 +2173,11 @@ export class Enemy {
     });
   }
 
-  private slam(game: Game, target: Player, radius: number, mult: number): void {
+  private slam(game: Game, target: Player, radius: number, mult: number, immediate = false): void {
+    if (this.genome.anatomy && !immediate) {
+      this.queueAnatomicalAttack(game, target, 'stomp', () => this.slam(game, target, radius, mult, true));
+      return;
+    }
     game.effects.ring(this.position, this.up, 1.5, this.genome.accent, 0.5, 3, 0.9);
     game.effects.disk(this.position, this.up, radius, this.genome.color, 0.45, 1.2, 0.35);
     game.effects.burst(this.position, this.genome.accent, { count: 24, speed: 14, life: 0.6, size: 0.8, gravity: 16 });
@@ -2113,7 +2194,12 @@ export class Enemy {
     }
   }
 
-  private rangedAttack(game: Game, target: Player): void {
+  private rangedAttack(game: Game, target: Player, immediate = false): void {
+    if (this.genome.anatomy && !immediate) {
+      if (!capabilities(this.genome.anatomy, this.isBoss).canSpit) return;
+      this.queueAnatomicalAttack(game, target, 'spit', () => this.rangedAttack(game, target, true));
+      return;
+    }
     const g = this.genome;
     const kind = g.projKind === 'none' ? 'spit' : g.projKind;
     // ---- ATTACK PATTERN (plan §19): the pattern is EXECUTED, not labelled. Same ability,
@@ -2198,6 +2284,7 @@ export class Enemy {
   // ------------------------------------------------------------ client mirror
 
   netUpdate(dt: number): void {
+    if (this.stunnedT <= 0) this.anatomicalAttackT = Math.max(0, this.anatomicalAttackT - dt);
     if (!this.netTarget) return;
     // DEAD RECKONING (2026-10-03, “enemies teleporting” fix): between snapshots the body keeps
     // moving along the velocity its successive targets imply, capped to a short horizon. The
@@ -2273,6 +2360,7 @@ export class Enemy {
   }
 
   private faceMotion(): void {
+    if (this.anatomicalAttackT > 0) return;
     _v3.copy(this.velocity).addScaledVector(this.up, -this.velocity.dot(this.up));
     if (_v3.lengthSq() > 0.35) {
       this.facing.lerp(_v3.normalize(), 0.18);
@@ -2358,7 +2446,11 @@ export class Enemy {
     }
 
     this.updateStatusFx(dt);
-    this.imported?.update(dt, moving, { flash: this.flashAmt, frost: this.iceAmt, stunned: this.stunnedT > 0, enraged: this.enraged || this.bossState === 'enrage_transition' });
+    this.imported?.update(dt, moving, { flash: this.flashAmt, frost: this.iceAmt, stunned: this.stunnedT > 0,
+      enraged: this.enraged || this.bossState === 'enrage_transition', up: this.up, ground: this.footGround,
+      airborne: this.airH > 0.15, attack: this.anatomicalAttack,
+      attackPhase: this.anatomicalAttackT > 0 ? 1 - this.anatomicalAttackT / this.anatomicalAttackDuration : 0,
+    });
     this.emitRageTells(dt);
   }
 

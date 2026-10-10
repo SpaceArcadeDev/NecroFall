@@ -19,6 +19,7 @@ import { NECRO_UNIFORMS, nfFog } from '../../rendering/materials/NecroChunks';
 
 /** The uniform surface `Enemy.place()` animates — the twin of `CarapaceUniforms`. */
 export interface ImportedUniforms {
+  uTint: { value: THREE.Color };
   /** Venom/energy tint: chitin veins, and the emissive wash on membrane surfaces. */
   uAccent: { value: THREE.Color };
   uAggro: { value: number };
@@ -42,6 +43,7 @@ const iceCol = (): any => vec3(0.6, 0.9, 1.0);
  * instead of lit cloth.
  */
 export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: boolean): ImportedMaterial {
+  const uTint = uniform(new THREE.Color(0xffffff));
   const uAccent = uniform(new THREE.Color(membrane ? 0x8fe3c8 : 0xb6ff5a));
   const uAggro = uniform(0);
   const uFlash = uniform(0);
@@ -62,7 +64,7 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
 
   const map = source.map;
   const albedoUniform = color(source.color);
-  const base = map ? texture(map).rgb.mul(albedoUniform) : albedoUniform;
+  const base = (map ? texture(map).rgb.mul(albedoUniform) : albedoUniform.rgb).mul(uTint.rgb);
   const alpha = map ? texture(map).a : 1;
 
   material.colorNode = Fn(() => {
@@ -117,6 +119,7 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
   })();
 
   const attached = material as unknown as ImportedMaterial;
+  attached.uTint = uTint;
   attached.uAccent = uAccent;
   attached.uAggro = uAggro;
   attached.uFlash = uFlash;

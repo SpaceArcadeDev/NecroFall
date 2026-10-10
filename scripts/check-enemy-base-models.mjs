@@ -215,7 +215,11 @@ try {
     const start = sample();
     let foot = 0, tail = 0, head = 0;
     for (let step = 0; step < 8; step++) {
-      for (let frame = 0; frame < 15; frame++) visual.update(1 / 60, 1, { flash: 0, frost: 0, stunned: false, enraged: false });
+      for (let frame = 0; frame < 15; frame++) {
+        enemy.position.addScaledVector(enemy.facing, 0.025);
+        game.planet.projectToSurface(enemy.position);
+        enemy.place(1 / 60, game);
+      }
       const now = sample();
       foot = Math.max(foot, start.foot.distanceTo(now.foot));
       tail = Math.max(tail, start.tail.distanceTo(now.tail));
@@ -305,8 +309,48 @@ try {
     return { id, model: enemy.imported.root.name, radius: +enemy.radius.toFixed(2), tier: enemy.genome.tier, bones: enemy.imported.root.getObjectByProperty('isSkinnedMesh', true)?.skeleton.bones.length ?? 0 };
   }), guardians.map(guardian => guardian.id));
   const models = new Set(guardianModels.map(guardian => guardian.model));
-  assert.ok(models.has('parasite-imported') && models.has('crawler-imported'), `both imported bodies must guard beacons: ${JSON.stringify(guardianModels)}`);
+  assert.ok(['parasite-imported', 'crawler-imported', 'behemoth-imported'].every(model => models.has(model)), `all three imported bodies must guard beacons: ${JSON.stringify(guardianModels)}`);
   assert.ok(guardianModels.every(guardian => guardian.bones > 15), JSON.stringify(guardianModels));
+
+  const anatomicalCombat = await page.evaluate(() => {
+    const game = window.necrofall, player = game.localPlayer;
+    const enemy = game.enemies.enemies.find(candidate => candidate.name?.startsWith('guardian-') && candidate.genome.anatomy.base === 'behemoth');
+    const schedule = game.scheduleHost, hit = game.hitPlayer, invulnerable = player.isInvulnerable;
+    const genome = enemy.genome, position = player.position.clone();
+    let hits = 0;
+    const pending = [];
+    try {
+      game.scheduleHost = (delay, callback) => pending.push({ delay, callback });
+      game.hitPlayer = () => { hits++; };
+      player.isInvulnerable = () => false;
+      enemy.genome = { ...genome, anatomy: { ...genome.anatomy, attack: 'claw' } };
+      enemy.anatomicalAttackT = 0;
+      player.position.copy(enemy.position).addScaledVector(enemy.facing, 1);
+      enemy.melee(game, player);
+      const delayed = hits === 0 && pending.length === 1 && pending[0].delay >= 0.5;
+      player.position.copy(enemy.position).addScaledVector(enemy.facing, 100);
+      pending.shift().callback();
+      const dodge = hits === 0;
+      enemy.anatomicalAttackT = 0;
+      player.position.copy(enemy.position).addScaledVector(enemy.facing, 1);
+      enemy.melee(game, player);
+      pending.shift().callback();
+      const landed = hits > 0;
+      enemy.group.visible = false;
+      enemy.anatomicalAttackT = 0.01;
+      enemy.update(0.02, game);
+      const recoveredOffscreen = enemy.anatomicalAttackT === 0;
+      enemy.group.visible = true;
+      enemy.enterEnrage(game);
+      return { delayed, dodge, landed, recoveredOffscreen, heavyLeap: enemy.bossMechanics.includes('rageleap'), altitude: enemy.flyAlt };
+    } finally {
+      game.scheduleHost = schedule; game.hitPlayer = hit; player.isInvulnerable = invulnerable;
+      enemy.genome = genome; player.position.copy(position);
+    }
+  });
+  assert.ok(anatomicalCombat.delayed && anatomicalCombat.dodge && anatomicalCombat.landed && anatomicalCombat.recoveredOffscreen, JSON.stringify(anatomicalCombat));
+  assert.equal(anatomicalCombat.heavyLeap, false);
+  assert.equal(anatomicalCombat.altitude, 0);
 
   const guardianShot = await focus(page, `game => game.enemies.enemies.find(enemy => enemy.name === 'guardian-0') ?? null`, { padding: 2.5 });
   assert.ok(guardianShot.ok, JSON.stringify(guardianShot));
@@ -397,7 +441,7 @@ try {
 
   assert.deepEqual(errors, [], 'runtime errors');
   console.log(JSON.stringify({ crawler, rig: { ...rig, bones: rig.bones.length }, animation, combat, damage, megaState }, null, 2));
-  console.log('PASS: crawler + Mega Necrophage base models rigged, animated and fighting in the main game');
+  console.log('PASS: three enemy bases, anatomical attacks, guardian pools, damage, frost and death in the main game');
 } finally {
   await browser.close();
   await server.close();

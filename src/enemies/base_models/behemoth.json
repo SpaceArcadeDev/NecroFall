@@ -1,0 +1,22 @@
+{
+  "source": ".asset-sources/behemoth/source.glb",
+  "sourceSHA256": "1dc012b6e84d098b7735ebe455dc279f59e560ab33f113365c3dc18aa98760c2",
+  "vertices": 26185,
+  "joints": 24,
+  "clips": 0,
+  "animation": "runtime terrain-contact IK, no baked movement",
+  "worstWeightError": 2.220446049250313e-16,
+  "bytes": 939852,
+  "bounds": {
+    "min": [
+      -0.7696462904751732,
+      -0.5139927365947448,
+      -1
+    ],
+    "max": [
+      0.7696462904751732,
+      0.5139927365947448,
+      1
+    ]
+  }
+}

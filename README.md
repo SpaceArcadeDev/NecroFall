@@ -12,6 +12,25 @@ npm run dev      # http://localhost:5173
 Open a second browser tab/window (or send the invite link / lobby code to another device on
 your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v3 match.
 
+## Player Avatar
+
+The rounded armored avatar uses one skinned model and a 19-bone rig (including two
+foot targets) in gameplay, home, customization, colony selection and lobbies.
+Procedural animation blends breathing and head movement, speed-driven running
+with knee/foot IK, airborne jump poses, alternating panic kicks during descent,
+and landing compression. Chest and shoulder pads glow in the colony color.
+Hats, backpacks and weapons follow head, chest and hand sockets; pets and cosmetic
+effects retain their existing controllers. Dash trails and decoys own separate
+skeletons so their captured poses do not follow the live player.
+
+`npm run test:player-avatar` checks skin binding, joint motion, all 93 catalog
+items/effects, five weapons, keyboard running/jumping, remote motion snapshots,
+colony swaps and clone isolation. It captures desktop, portrait and landscape
+menus with body-framing and visible-pixel assertions, plus WebGL and glowing-pad
+comparisons, under `.test-shots/player-avatar/`. Run `npm run build` for the
+production check. These tests do not certify physical phones or live multiplayer
+services; remote animation is verified with locally replayed snapshots.
+
 ## Base Planets
 
 The main spherical game draws from ten approved profiles: Cinderbloom, Glass Tide,

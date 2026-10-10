@@ -103,7 +103,7 @@ async function surfaceTrails(page) {
       total += delta;
     }
     const mean = total / original.length;
-    assert.ok(channels > 200 && mean > (effect === 'water' ? 0.001 : 0.005), `${effect}: trail not visible (${channels} channels, mean ${mean})`);
+    assert.ok(channels > 200 && mean > 0.005, `${effect}: trail not visible (${channels} channels, mean ${mean})`);
     await page.evaluate(() => {
       const { owner } = window.surfaceTrailTest;
       for (let index = 3; index < owner.trailData.length; index += 4) owner.trailData[index] = -1000;
@@ -159,7 +159,34 @@ async function coastalWater(page, name) {
   assert.ok(state.coverage < (name === 'saffron-waste' ? 0.035 : 0.11), JSON.stringify(state));
   assert.ok(state.samples >= 4, 'Coastal review needs a moving wake');
   const before = await sharp(await capture(page, `${name}-coast-calm`)).removeAlpha().raw().toBuffer();
+  await page.evaluate(() => { window.necrofall.envWorld.puddles.waveStrength.value = 0; });
+  const wavesOff = await sharp(await capture(page, `${name}-wave-lines-off`)).removeAlpha().raw().toBuffer();
+  await page.evaluate(() => { window.necrofall.envWorld.puddles.shoreStrength.value = 0; });
+  const shoreOff = await sharp(await capture(page, `${name}-shore-foam-off`)).removeAlpha().raw().toBuffer();
+  const foamMask = (enabled, disabled) => {
+    const mask = new Uint8Array(enabled.length / 3);
+    for (let pixel = 0; pixel < mask.length; pixel++) {
+      const offset = pixel * 3;
+      mask[pixel] = Math.max(enabled[offset] - disabled[offset], enabled[offset + 1] - disabled[offset + 1], enabled[offset + 2] - disabled[offset + 2]) > 4 ? 1 : 0;
+    }
+    return mask;
+  };
+  const waveMask = foamMask(before, wavesOff), shorelineMask = foamMask(wavesOff, shoreOff);
+  const wavePixels = waveMask.reduce((sum, value) => sum + value, 0), shorePixels = shorelineMask.reduce((sum, value) => sum + value, 0);
+  assert.ok(wavePixels > 300 && wavePixels < waveMask.length * 0.15, `${name}: short foam lines are missing or cover the water (${wavePixels})`);
+  assert.ok(shorePixels > 150, `${name}: shoreline foam is not visible (${shorePixels})`);
   await page.evaluate(() => {
+    const world = window.necrofall.envWorld;
+    world.puddles.shoreStrength.value = 1; world.deps.time.value = 102.9;
+  });
+  const laterOff = await sharp(await capture(page, `${name}-wave-motion-off`)).removeAlpha().raw().toBuffer();
+  await page.evaluate(() => { window.necrofall.envWorld.puddles.waveStrength.value = 1; });
+  const laterOn = await sharp(await capture(page, `${name}-wave-motion-on`)).removeAlpha().raw().toBuffer();
+  const movedMask = foamMask(laterOn, laterOff);
+  const movedPixels = movedMask.reduce((sum, value, index) => sum + (value !== waveMask[index] ? 1 : 0), 0);
+  assert.ok(movedPixels > wavePixels * 0.25, `${name}: foam wave lines do not move`);
+  await page.evaluate(() => {
+    window.necrofall.envWorld.deps.time.value = 100.9;
     const water = window.necrofall.envWorld.puddles;
     water.trailData.set(window.coastalState.fresh); water.trailTexture.needsUpdate = true;
   });
@@ -170,7 +197,7 @@ async function coastalWater(page, name) {
     if (delta > 2) changedPixels++;
     peakChange = Math.max(peakChange, delta);
   }
-  assert.ok(changedPixels > 30 && peakChange < 55, `Wake must be visible but restrained: ${changedPixels} pixels, peak ${peakChange}`);
+  assert.ok(changedPixels > 400 && peakChange < 180, `Foam wake must remain distinct without clipping: ${changedPixels} pixels, peak ${peakChange}`);
   for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
     await page.setViewportSize(viewport); await capture(page, `${name}-coast-${viewport.width}`);
   }
@@ -183,8 +210,8 @@ async function coastalWater(page, name) {
     for (let index = 3; index < water.trailData.length; index += 4) water.trailData[index] = -1000;
     water.trailTexture.needsUpdate = true;
   });
-  console.log(`${name}: ${(state.coverage * 100).toFixed(1)}% coastal area, ${changedPixels} wake pixels, peak change ${peakChange}/255`);
-  return { ...state, changedPixels, peakChange };
+  console.log(`${name}: ${(state.coverage * 100).toFixed(1)}% coastal area, ${changedPixels} wake pixels, ${shorePixels} shoreline pixels, ${wavePixels} wave-line pixels (${movedPixels} moved)`);
+  return { ...state, changedPixels, peakChange, wavePixels, shorePixels, movedPixels };
 }
 
 async function nightStars(page, name) {

@@ -71,7 +71,7 @@ async function verifyAvatar() {
       check(bounds.getSize(new THREE.Vector3()).distanceTo(new THREE.Vector3(...size)) < 0.0001, `Original part ${index} resized`);
       check(bounds.getCenter(new THREE.Vector3()).distanceTo(new THREE.Vector3(...center)) < 0.0001, `Original part ${index} moved`);
       check(group.materialIndex === material, `Original part ${index} recolored`);
-      if (index === 0 || index >= 6) check(group.count === 36, `Original block ${index} remodeled`);
+      if (index >= 6) check(group.count === 36, `Original block ${index} remodeled`);
       else check(group.count > 100, `Part ${index} not rounded`);
     });
     check(rig.mesh.material[0].color.getHex() === 0x2a1f42 && rig.mesh.material[1].color.getHex() === 0x171126, 'Original dark colors changed');

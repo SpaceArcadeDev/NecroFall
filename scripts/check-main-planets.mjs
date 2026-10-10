@@ -214,14 +214,55 @@ async function coastalWater(page, name) {
   return { ...state, changedPixels, peakChange, wavePixels, shorePixels, movedPixels };
 }
 
+async function mushroomBounce(page) {
+  const result = await page.evaluate(async () => {
+    const { Matrix4, Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const game = window.necrofall, player = game.localPlayer;
+    const meshes = game.envWorld.ecology.group.children.filter(object => object.name === 'painted-mushrooms');
+    if (!meshes.length) throw new Error('No mushroom models');
+    const saved = { position: player.position.clone(), velocity: player.velocity.clone(), up: player.up.clone(),
+      grounded: player.grounded, jumpLock: player.jumpLock, airTime: player.airTime };
+    const launches = [], matrix = new Matrix4(), point = new Vector3();
+    try {
+      for (const instance of [0, 5, 13]) {
+        const top = new Vector3();
+        for (const mesh of meshes) {
+          mesh.getMatrixAt(instance, matrix); matrix.premultiply(mesh.matrixWorld);
+          const positions = mesh.geometry.attributes.position;
+          for (let vertex = 0; vertex < positions.count; vertex++) {
+            point.fromBufferAttribute(positions, vertex).applyMatrix4(matrix);
+            if (point.lengthSq() > top.lengthSq()) top.copy(point);
+          }
+        }
+        const up = top.clone().normalize();
+        player.position.copy(top).addScaledVector(up, 0.8);
+        player.velocity.copy(up).multiplyScalar(-18); player.up.copy(up);
+        player.grounded = false; player.jumpLock = 0; player.airTime = 0.6;
+        for (let frame = 0; frame < 60 && player.velocity.dot(up) <= 0; frame++) player.integrate(1 / 60);
+        const speed = player.velocity.dot(up);
+        if (speed <= 18 || player.grounded || player.jumpLock <= 0) throw new Error(`Mushroom ${instance}: landing cancelled bounce (${speed})`);
+        launches.push({ instance, speed, airborne: !player.grounded });
+      }
+    } finally {
+      player.position.copy(saved.position); player.velocity.copy(saved.velocity); player.up.copy(saved.up);
+      player.grounded = saved.grounded; player.jumpLock = saved.jumpLock; player.airTime = saved.airTime;
+    }
+    return launches;
+  });
+  console.log(`Mushrooms: actual cap landings launch the player ${JSON.stringify(result)}`);
+  return result;
+}
+
 async function atmosphereVolumes(page, name) {
   const results = [];
-  for (const kind of name.startsWith('emberwake') ? ['smoke', 'fog'] : ['fog']) {
+  for (const kind of name.startsWith('emberwake') ? ['smoke', 'surface-smoke', 'fog'] : ['fog']) {
     const state = await page.evaluate(async kind => {
       const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
       const game = window.necrofall, world = game.envWorld, camera = game.cam.camera;
       const mistIds = world.ecology.features.filter(feature => feature.kind === 'mist').map(feature => feature.id);
-      const clouds = world.ecology.group.children.filter(object => kind === 'smoke' ? object.name.endsWith(':smoke') : mistIds.includes(object.name));
+      const clouds = world.ecology.group.children.filter(object => kind === 'smoke' ? object.name.endsWith(':smoke')
+        : kind === 'surface-smoke' ? object.name === 'ground-lava-smoke' : mistIds.includes(object.name));
+      if (kind === 'surface-smoke' && clouds.some(cloud => !world.puddles.touchesLava(new Vector3(...cloud.userData.source)))) throw new Error('Ground smoke source is not lava');
       clouds.sort((first, second) => new Vector3().setFromMatrixPosition(second.matrix).normalize().dot(world.deps.system.sunDirection)
         - new Vector3().setFromMatrixPosition(first.matrix).normalize().dot(world.deps.system.sunDirection));
       if (!clouds.length) throw new Error(`Missing ${kind} volumes`);
@@ -230,21 +271,22 @@ async function atmosphereVolumes(page, name) {
       window.volumeState = { cloud, update: game.update, tick: game.ticker.update, time: world.deps.time.value,
         position: camera.position.clone(), rotation: camera.quaternion.clone(), up: camera.up.clone() };
       game.update = () => {}; game.ticker.update = () => game.rendering.render(0); world.deps.time.value = 120;
-      camera.position.copy(center).addScaledVector(across, kind === 'smoke' ? 46 : 48).addScaledVector(up, 7);
-      camera.position.setLength(Math.max(camera.position.length(), world.deps.surface.radiusAt(camera.position.clone().normalize()) + 10));
+      camera.position.copy(center).addScaledVector(across, kind === 'surface-smoke' ? 7 : kind === 'smoke' ? 46 : 48).addScaledVector(up, kind === 'surface-smoke' ? 1.5 : 7);
+      camera.position.setLength(Math.max(camera.position.length(), world.deps.surface.radiusAt(camera.position.clone().normalize()) + (kind === 'surface-smoke' ? 2 : 10)));
       camera.up.copy(up); camera.lookAt(center); camera.updateMatrixWorld(true);
       world.update(center, camera); game.lighting.update(center);
       cloud.visible = false;
       return { count: clouds.length, scale: scale.toArray(), vents: world.ecology.group.children.filter(object => object.name.endsWith(':lava')).length };
     }, kind);
     if (kind === 'smoke') assert.equal(state.count, state.vents);
+    else if (kind === 'surface-smoke') assert.ok(state.count <= 48 && state.scale[1] <= 1.3, JSON.stringify(state));
     else assert.ok(state.scale[0] > 20 && state.scale[2] > 14, JSON.stringify(state));
     const off = await sharp(await capture(page, `${name}-${kind}-off`)).removeAlpha().raw().toBuffer();
     await page.evaluate(() => { window.volumeState.cloud.visible = true; });
     const on = await sharp(await capture(page, `${name}-${kind}-1280`)).removeAlpha().raw().toBuffer();
     const visible = on.reduce((sum, value, index) => sum + (Math.abs(value - off[index]) > 5 ? 1 : 0), 0);
     assert.ok(visible > 800, `${name}: ${kind} not visible (${visible} channels)`);
-    await page.evaluate(kind => { window.necrofall.envWorld.deps.time.value += kind === 'smoke' ? 2 : 8; window.volumeState.cloud.visible = false; }, kind);
+    await page.evaluate(kind => { window.necrofall.envWorld.deps.time.value += kind === 'fog' ? 8 : 2; window.volumeState.cloud.visible = false; }, kind);
     const laterOff = await sharp(await capture(page, `${name}-${kind}-later-off`)).removeAlpha().raw().toBuffer();
     await page.evaluate(() => { window.volumeState.cloud.visible = true; });
     const laterOn = await sharp(await capture(page, `${name}-${kind}-later-on`)).removeAlpha().raw().toBuffer();
@@ -499,10 +541,13 @@ try {
         return { seed: game.planet.seed, base: game.planet.archetype.basePlanetId, phase: game.phase,
           features: world.ecology.features, stats: world.stats, system: world.sky.mesh.userData.system,
           enemies: game.enemies.enemies.length, frameErrors: game.frameErrors, water: world.puddles.mesh.userData,
+          groundSmoke: world.ecology.group.children.filter(object => object.name === 'ground-lava-smoke').length,
+          lavaSurface: world.deps.generator.archetype.art.waterSurface === 'lava',
           sun: world.deps.system.sunDirection.toArray(), direction: game.lighting.directionUniform.value.toArray(),
           player: game.localPlayer.position.toArray(), radius: game.planet.radius };
       });
       assert.equal(data.base, id);
+      assert.equal(data.groundSmoke > 0, data.lavaSurface, `${id}: ground smoke must be lava-only`);
       assert.equal(data.enemies, 0);
       assert.equal(data.frameErrors, 0);
       assert.equal(data.features.length, id === 'saffron-waste' ? 4 : 3);
@@ -531,10 +576,11 @@ try {
       const starPixels = await nightStars(page, id);
       const volumes = ['emberwake', 'cinderbloom'].includes(id) ? await atmosphereVolumes(page, id) : undefined;
       const lava = id === 'emberwake' ? await lavaContact(page) : undefined;
+      const mushrooms = ['mycelial-night', 'cinderbloom'].includes(id) ? await mushroomBounce(page) : undefined;
       const hazards = id === 'saffron-waste' ? await hazardInteractions(page) : undefined;
       const coast = ['saffron-waste', 'glass-tide', 'cinderbloom'].includes(id) ? await coastalWater(page, id) : undefined;
       const trails = id === 'cinderbloom' ? await surfaceTrails(page) : undefined;
-      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast, lava, volumes });
+      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast, lava, volumes, mushrooms });
       console.log(`${id}: freeroam, movement, base recipes, fixed sun and twilight passed`);
       assert.deepEqual(errors, [], `${id}: runtime errors`);
     } catch (error) {

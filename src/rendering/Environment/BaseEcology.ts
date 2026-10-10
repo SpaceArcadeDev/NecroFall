@@ -65,6 +65,7 @@ export class BaseEcology {
     }
     result.mushroomCount = placements.length;
     result.phenomena(deps, rocks, water);
+    result.surfaceSmoke(deps, water);
     result.group.userData.features = result.features;
     return result;
   }
@@ -174,6 +175,31 @@ export class BaseEcology {
           }
         }
       }
+    }
+  }
+
+  private surfaceSmoke(deps: PlanetWorldDependencies, water: Puddles): void {
+    const art = deps.generator.archetype.art!;
+    if (art.waterSurface !== 'lava') return;
+    const { position, aDepth, aRing } = water.mesh.geometry.attributes;
+    const random = deps.generator.rand(19173), sources: Vector3[] = [];
+    const transform = new Object3D(), up = new Vector3(), source = new Vector3();
+    for (let attempt = 0; attempt < 4096 && sources.length < 48; attempt++) {
+      const vertex = Math.floor(random() * position.count);
+      if (aDepth.getX(vertex) < 0.06 || aRing.getX(vertex) > 0.7) continue;
+      source.fromBufferAttribute(position, vertex);
+      if (!water.touchesLava(source) || sources.some(point => point.distanceToSquared(source) < 25)) continue;
+      sources.push(source.clone());
+      up.copy(source).normalize();
+      const size = new Vector3(2.4, 0.9 + random() * 0.4, 2.4);
+      transform.position.copy(source).addScaledVector(up, size.y);
+      transform.quaternion.setFromUnitVectors(Object3D.DEFAULT_UP, up);
+      transform.scale.copy(size); transform.updateMatrix();
+      const smoke = new Mesh(new SphereGeometry(1, 16, 10),
+        volumeMaterial(art, new Vector3(), size, deps.time, transform.matrix.clone().invert(), 'surface'));
+      smoke.matrix.copy(transform.matrix); smoke.matrixAutoUpdate = false;
+      smoke.name = 'ground-lava-smoke'; smoke.renderOrder = 27; smoke.userData.source = source.toArray();
+      this.group.add(smoke);
     }
   }
 

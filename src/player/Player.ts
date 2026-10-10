@@ -1987,8 +1987,10 @@ export class Player {
 
   private integrate(dt: number): void {
     const g = this.game;
-    if (g.envWorld) g.envWorld.obstacles.move(this.position, this.velocity, dt, CONFIG.player.radius, this.grounded && this.jumpLock <= 0 && this.velocity.dot(this.up) <= 2);
-    else this.position.addScaledVector(this.velocity, dt);
+    const bounced = g.envWorld?.obstacles.move(this.position, this.velocity, dt, CONFIG.player.radius,
+      this.grounded && this.jumpLock <= 0 && this.velocity.dot(this.up) <= 2, 1.5, CONFIG.shieldPush) ?? false;
+    if (!g.envWorld) this.position.addScaledVector(this.velocity, dt);
+    if (bounced) { this.grounded = false; this.jumpLock = Math.max(this.jumpLock, 0.12); }
     _up.copy(this.position).normalize();
     // Safety net (plan §25/§39): a body that escaped the terrain field snaps back to the last
     // real ground BEFORE any support maths reads the corrupted position.
@@ -2014,7 +2016,7 @@ export class Player {
     const onDeck = deck !== null && overDeck > -1.6;
     const near = onDeck ? overDeck : dist - h;
     const wasGrounded = this.grounded;
-    const canStand = near <= 0.02 && near > -1.6 && (!onDeck || this.velocity.dot(_up) <= 2);
+    const canStand = !bounced && near <= 0.02 && near > -1.6 && (!onDeck || this.velocity.dot(_up) <= 2);
 
     if (canStand) {
       if (onDeck && deck) this.position.multiplyScalar(deck.deckRadius / Math.max(1, this.position.dot(deck.up)));

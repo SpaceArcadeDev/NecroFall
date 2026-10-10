@@ -97,7 +97,7 @@ export class PlayerRig {
       geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
       surfaces.push(geometry); materialIndices.push(material);
     };
-    part(new THREE.BoxGeometry(0.66, 0.72, 0.42), [0, 1.08, 0], 0, [this.chest]);
+    part(new RoundedBoxGeometry(0.66, 0.72, 0.42, 4, 0.12), [0, 1.08, 0], 0, [this.chest]);
     part(new RoundedBoxGeometry(0.44, 0.42, 0.44, 5, 0.17), [0, 1.68, 0], 0, [this.head]);
     for (const [thigh, shin, foot, side] of [[this.legL, this.kneeL, this.footL, -1], [this.legR, this.kneeR, this.footR, 1]] as const) {
       part(new THREE.CapsuleGeometry(0.13, 0.46, 8, 16, 12).scale(1, 1, 0.28 / 0.26), [side * 0.19, 0.36, 0], 1, [thigh, shin, foot]);

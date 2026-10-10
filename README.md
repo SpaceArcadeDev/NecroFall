@@ -14,8 +14,8 @@ your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v
 
 ## Player Avatar
 
-The original dark blocky avatar keeps its torso, visor, chest panel, shoulder
-blocks, backpack, colors and proportions. Only the head and limbs are rounded.
+The dark avatar keeps its original visor, chest panel, shoulder blocks, backpack,
+colors and proportions. The torso, head and limbs are rounded.
 Its 19-bone rig (including two foot targets) is shared by gameplay, home,
 customization, colony selection and lobbies. Each avatar owns its geometry,
 materials and skeleton. Accessory sockets retain their original positions and scale.
@@ -59,6 +59,8 @@ and occupy approximately 2% of desert planets, 3.5% of most profiles and 8% of o
 profiles. Continuous directional wave normals provide gentle refraction and sheen;
 thin walking ripples fade without accumulating into bright trails. Frozen and volcanic profiles retain
 their ice and lava surfaces. Grass trails persist behind walkers and recover.
+Ground lava emits shallow, low-opacity volumetric smoke, capped at 48 patches
+with eight depth-clipped ray samples. Ordinary water and ice emit none.
 Saffron Waste has 18 m-wide quicksand patches that reduce grounded movement to 30%
 at their centers; jumping or leaving restores normal movement. Quicksand stays
 separate from tornadoes, which have no quicksand-style ground patch. Dust devils
@@ -69,6 +71,11 @@ Gyres and blizzard pockets also slow grounded movement.
 Terrain, authored rocks, spikes and
 crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.
+Mushroom cap contacts bounce players with the shield reflection and lift response;
+stems and undersides remain solid without launching. Mushroom models are unchanged.
+A Rapier 0.21 prototype was faster for isolated queries and capsule movement, but
+its movement differed at 20 of 128 sampled placements (up to 1.81 m). The existing
+shared triangle BVH remains in use rather than changing terrain-contact behavior.
 Two enemy bodies are imported base models rather than generated rigs: the insectoid-rig
 **Mega Necrophage** (the Nexus Overseer, with its baked walk clip) and the **crawler**
 (`src/enemies/base_models/crawler.glb`). The crawler ships as a static mesh, so the engine

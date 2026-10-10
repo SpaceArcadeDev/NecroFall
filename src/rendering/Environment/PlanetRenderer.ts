@@ -316,7 +316,7 @@ export class PlanetRenderer {
     for (const tree of this.trees) if (tree.trunkMesh) this.obstacles.addMesh(tree.trunkMesh);
     if (this.spikes.mesh) this.obstacles.addMesh(this.spikes.mesh);
     if (this.crystals.mesh) this.obstacles.addMesh(this.crystals.mesh);
-    this.ecology.group.traverse(object => { if (object instanceof THREE.Mesh && (object.name === 'painted-mushrooms' || object.name === 'lava-vents')) this.obstacles.addMesh(object); });
+    this.ecology.group.traverse(object => { if (object instanceof THREE.Mesh && (object.name === 'painted-mushrooms' || object.name === 'lava-vents')) this.obstacles.addMesh(object, object.name === 'painted-mushrooms'); });
     this.obstacles.build();
     this.group.matrixAutoUpdate = false;
     this.group.traverse((object) => {

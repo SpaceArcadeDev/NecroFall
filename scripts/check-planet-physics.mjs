@@ -64,6 +64,38 @@ try {
   assert.ok(feet.x < -0.45, `Tunneled through wall: ${feet.toArray()}`);
   assert.ok(feet.y >= 99.99);
   console.log('Mesh collisions: roof support, capsule contact and thin-wall dash passed');
+  const { CONFIG: physicsConfig } = await server.ssrLoadModule('/src/core/Config.ts');
+  for (const up of [new Vector3(0, 1, 0), new Vector3(1, 0, 0), new Vector3(0, 0, -1)]) {
+    const rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), up);
+    const caps = new PlanetObstacles(100);
+    const cap = new Mesh(new BoxGeometry(4, 0.4, 4).translate(0, 104.8, 0), new MeshBasicMaterial());
+    cap.quaternion.copy(rotation);
+    const originalPositions = cap.geometry.attributes.position.array.slice();
+    caps.addMesh(cap, true); caps.build();
+    assert.deepEqual(cap.geometry.attributes.position.array, originalPositions, 'Mushroom model changed during collider registration');
+    for (const rate of [30, 60, 120]) {
+      const falling = new Vector3(0, 106, 0).applyQuaternion(rotation);
+      const fallingVelocity = up.clone().multiplyScalar(-20);
+      let bounced = false;
+      for (let frame = 0; frame < rate && !bounced; frame++) bounced = caps.move(falling, fallingVelocity, 1 / rate, 0.4, false, 0.05, physicsConfig.shieldPush);
+      assert.ok(bounced && fallingVelocity.dot(up) > 20, `Cap did not launch at ${rate} Hz / ${up.toArray()}`);
+      assert.equal(caps.move(falling, fallingVelocity, 1 / rate, 0.4, false, 0.05, physicsConfig.shieldPush), false, 'Outgoing player bounced twice');
+    }
+    for (const [start, speed] of [[[-3, 103.8, 0], [20, 0, 0]], [[0, 102.7, 0], [0, 20, 0]]]) {
+      const position = new Vector3(...start).applyQuaternion(rotation);
+      const velocity = new Vector3(...speed).applyQuaternion(rotation);
+      assert.equal(caps.move(position, velocity, 0.12, 0.4, false, 0.05, physicsConfig.shieldPush), false, 'Side or underside launched player');
+      assert.ok(velocity.length() < 1, 'Side or underside stopped being solid');
+    }
+    const stepPosition = up.clone().multiplyScalar(104.98), stepVelocity = up.clone().negate();
+    assert.ok(caps.move(stepPosition, stepVelocity, 1 / 60, 0.4, true, 0.1, physicsConfig.shieldPush), 'Step support cancelled cap bounce');
+    const walker = up.clone().multiplyScalar(106), walkerVelocity = up.clone().multiplyScalar(-20);
+    assert.equal(caps.move(walker, walkerVelocity, 0.1, 0.4, false), false, 'Default scenery movement unexpectedly bounces');
+    caps.dispose(); cap.geometry.dispose(); cap.material.dispose();
+  }
+  feet.set(-3, 100.1, 0); velocity.set(0, -10, 0);
+  assert.equal(obstacles.move(feet, velocity, 0.05, 0.4, false, 0.05, physicsConfig.shieldPush), false, 'Ordinary terrain became bouncy');
+  console.log('Mushroom caps: top-only shield bounce at 30/60/120 Hz and three orientations; step support, sides, undersides and outgoing guards');
   obstacles.dispose(); geometry.dispose(); floor.geometry.dispose(); wall.geometry.dispose();
 
   const climbing = new PlanetObstacles(100);

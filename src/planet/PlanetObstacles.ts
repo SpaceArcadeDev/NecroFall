@@ -29,10 +29,19 @@ interface Obstacle {
 const STEP_HEIGHT = 1.5;
 const MIN_SUPPORT_DOT = 0.12;
 
+interface SurfaceBounce {
+  mirror: number;
+  kick: number;
+  lift: number;
+}
+
 export class PlanetObstacles {
   private meshTree: MeshBVH | null = null;
-  private readonly meshes: THREE.Mesh[] = [];
+  private readonly meshes: { mesh: THREE.Mesh; bouncy: boolean }[] = [];
   private meshCount = 0;
+  private moveBounced = false;
+  private supportBouncy = false;
+  private readonly surfaceNormal = new THREE.Vector3();
   private readonly capsule = new THREE.Line3();
   private readonly capsuleBounds = new THREE.Box3();
   private readonly trianglePoint = new THREE.Vector3();
@@ -51,14 +60,14 @@ export class PlanetObstacles {
     return this.list.length + this.meshCount;
   }
 
-  addMesh(mesh: THREE.Mesh): void { this.meshes.push(mesh); }
+  addMesh(mesh: THREE.Mesh, bouncy = false): void { this.meshes.push({ mesh, bouncy }); }
 
   build(): void {
     this.meshTree?.geometry.dispose();
     const pieces: THREE.BufferGeometry[] = [];
     const matrix = new THREE.Matrix4(), instance = new THREE.Matrix4();
     this.meshCount = 0;
-    for (const mesh of this.meshes) {
+    for (const { mesh, bouncy } of this.meshes) {
       mesh.updateWorldMatrix(true, false);
       const count = mesh instanceof THREE.InstancedMesh ? mesh.count : 1;
       for (let index = 0; index < count; index++) {
@@ -66,6 +75,7 @@ export class PlanetObstacles {
         if (mesh instanceof THREE.InstancedMesh) { mesh.getMatrixAt(index, instance); matrix.multiply(instance); }
         const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
         for (const name of Object.keys(geometry.attributes)) if (name !== 'position') geometry.deleteAttribute(name);
+        geometry.setAttribute('bouncy', new THREE.Uint8BufferAttribute(new Uint8Array(geometry.attributes.position.count).fill(bouncy ? 1 : 0), 1));
         geometry.clearGroups(); geometry.applyMatrix4(matrix); pieces.push(geometry);
       }
       this.meshCount += count;
@@ -76,6 +86,7 @@ export class PlanetObstacles {
   }
 
   supportRadius(position: THREE.Vector3, stepHeight = STEP_HEIGHT, bodyRadius = 0): number | null {
+    this.supportBouncy = false;
     if (!this.meshTree) return null;
     this.collisionUp.copy(position).normalize();
     this.supportRay.origin.copy(position).addScaledVector(this.collisionUp, stepHeight);
@@ -88,23 +99,38 @@ export class PlanetObstacles {
       if (alignment < MIN_SUPPORT_DOT) continue;
       distance = hit.distance;
       radius = hit.point.length() + bodyRadius * (1 / alignment - 1);
+      this.supportBouncy = alignment > 0.45 && this.meshTree.geometry.attributes.bouncy.getX(hit.face.a) === 1;
+      this.surfaceNormal.copy(hit.face.normal);
     }
     return radius;
   }
 
-  move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean, stepHeight = STEP_HEIGHT): void {
-    const steps = Math.max(1, Math.min(48, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5))));
+  move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean, stepHeight = STEP_HEIGHT, bounce?: SurfaceBounce): boolean {
+    this.moveBounced = false;
+    const steps = Math.max(1, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5)));
     for (let step = 0; step < steps; step++) {
       position.addScaledVector(velocity, delta / steps);
-      if (stepUp) {
+      if (stepUp && !this.moveBounced) {
         const support = this.supportRadius(position, stepHeight, bodyRadius);
-        if (support !== null && support > position.length()) position.setLength(support);
+        if (support !== null && support > position.length()) {
+          position.setLength(support);
+          if (bounce && this.supportBouncy) this.bounce(velocity, bounce);
+        }
       }
-      this.resolve(position, bodyRadius, velocity);
+      this.resolve(position, bodyRadius, velocity, bounce);
     }
+    return this.moveBounced;
   }
 
-  private resolveMesh(position: THREE.Vector3, bodyRadius: number, velocity?: THREE.Vector3): boolean {
+  private bounce(velocity: THREE.Vector3, response: SurfaceBounce): void {
+    const inward = velocity.dot(this.surfaceNormal);
+    if (this.moveBounced || inward >= 0) return;
+    velocity.addScaledVector(this.surfaceNormal, -inward * response.mirror + response.kick);
+    velocity.addScaledVector(this.collisionUp, response.kick * response.lift);
+    this.moveBounced = true;
+  }
+
+  private resolveMesh(position: THREE.Vector3, bodyRadius: number, velocity?: THREE.Vector3, bounce?: SurfaceBounce): boolean {
     if (!this.meshTree) return false;
     let moved = false;
     for (let iteration = 0; iteration < 4; iteration++) {
@@ -115,7 +141,7 @@ export class PlanetObstacles {
       let corrected = false;
       this.meshTree.shapecast({
         intersectsBounds: bounds => bounds.intersectsBox(this.capsuleBounds),
-        intersectsTriangle: triangle => {
+        intersectsTriangle: (triangle, triangleIndex) => {
           const distance = triangle.closestPointToSegment(this.capsule, this.trianglePoint, this.capsulePoint);
           if (distance >= bodyRadius - 0.0001) return false;
           this.collisionNormal.subVectors(this.capsulePoint, this.trianglePoint);
@@ -124,6 +150,11 @@ export class PlanetObstacles {
           const depth = bodyRadius - distance + 0.0001;
           position.addScaledVector(this.collisionNormal, depth);
           this.capsule.start.addScaledVector(this.collisionNormal, depth); this.capsule.end.addScaledVector(this.collisionNormal, depth);
+          if (velocity && bounce && !this.moveBounced && this.collisionNormal.dot(this.collisionUp) > 0.45
+            && this.meshTree!.geometry.attributes.bouncy.getX(this.meshTree!.geometry.index!.getX(triangleIndex * 3)) === 1) {
+            triangle.getNormal(this.surfaceNormal);
+            if (this.surfaceNormal.dot(this.collisionUp) > 0.45) this.bounce(velocity, bounce);
+          }
           if (velocity) { const inward = velocity.dot(this.collisionNormal); if (inward < 0) velocity.addScaledVector(this.collisionNormal, -inward); }
           corrected = true; moved = true; return false;
         },
@@ -157,7 +188,7 @@ export class PlanetObstacles {
    * component of `velocity` when supplied so the body slides around instead of
    * grinding. Returns true when anything was adjusted.
    */
-  resolve(position: THREE.Vector3, bodyRadius: number, velocity?: THREE.Vector3): boolean {
+  resolve(position: THREE.Vector3, bodyRadius: number, velocity?: THREE.Vector3, bounce?: SurfaceBounce): boolean {
     const up = this.scratchUp.copy(position).normalize();
     let adjusted = false;
 
@@ -226,6 +257,6 @@ export class PlanetObstacles {
       adjusted = true;
     }
 
-    return this.resolveMesh(position, bodyRadius, velocity) || adjusted;
+    return this.resolveMesh(position, bodyRadius, velocity, bounce) || adjusted;
   }
 }

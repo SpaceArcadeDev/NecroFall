@@ -84,7 +84,8 @@ export function floraGeometry(spec: BaseFeature): { body: BufferGeometry; accent
   return { body: combine(leaves), accent: combine(petals) };
 }
 
-export function volumeMaterial(study: PlanetStudy, center: Vector3, size: Vector3, clock: any, inverseFrame?: Matrix4, smoke = false): MeshBasicNodeMaterial {
+export function volumeMaterial(study: PlanetStudy, center: Vector3, size: Vector3, clock: any, inverseFrame?: Matrix4, smoke: boolean | 'surface' = false): MeshBasicNodeMaterial {
+  const surfaceSmoke = smoke === 'surface';
   const material = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, depthTest: false, side: BackSide, fog: false, toneMapped: false });
   material.outputNode = Fn(() => {
     const direction = positionWorld.sub(cameraPosition).normalize();
@@ -96,7 +97,7 @@ export function volumeMaterial(study: PlanetStudy, center: Vector3, size: Vector
     const viewDepth = perspectiveDepthToViewZ(viewportDepthTexture(screenUV), cameraNear, cameraFar);
     const sceneDistance = viewDepth.div(cameraViewMatrix.mul(vec4(direction, 0)).z);
     const end = min(projection.negate().add(root).div(coefficient), sceneDistance);
-    const samples = smoke ? 18 : 8;
+    const samples = smoke === true ? 18 : 8;
     const stride = max(end.sub(start), 0).div(samples);
     const density = float(0).toVar();
     const scattering = vec3(0).toVar();
@@ -106,11 +107,11 @@ export function volumeMaterial(study: PlanetStudy, center: Vector3, size: Vector
       if (smoke) {
         const height = point.y.mul(0.5).add(0.5);
         const drift = vec2(height.pow(2).mul(0.28), sin(height.mul(7).add(clock.mul(0.18))).mul(height).mul(0.09));
-        const width = mix(0.13, 0.8, smoothstep(0, 0.85, height));
+        const width = mix(surfaceSmoke ? 0.48 : 0.13, 0.8, smoothstep(0, 0.85, height));
         const plume = smoothstep(0.55, 1, point.xz.sub(drift).length().div(width)).oneMinus()
           .mul(smoothstep(0, 0.04, height)).mul(smoothstep(0.65, 1, height).oneMinus());
-        const noise = mx_noise_float(point.mul(vec3(6, 10, 6)).sub(vec3(clock.mul(0.12), clock.mul(0.85), 0))).mul(0.5).add(0.5);
-        const opacity = plume.mul(smoothstep(0.15, 0.8, noise)).mul(stride).mul(-0.36).exp().oneMinus();
+        const noise = mx_noise_float(point.mul(vec3(6, 10, 6)).sub(vec3(clock.mul(0.12), clock.mul(surfaceSmoke ? 0.3 : 0.85), 0))).mul(0.5).add(0.5);
+        const opacity = plume.mul(smoothstep(0.15, 0.8, noise)).mul(stride).mul(surfaceSmoke ? -0.12 : -0.36).exp().oneMinus();
         const shade = mix(color('#282b30'), color('#a0a1a3'), noise.mul(0.65).add(height.mul(0.25)));
         scattering.addAssign(shade.mul(opacity).mul(transmission));
         transmission.mulAssign(opacity.oneMinus());
@@ -119,7 +120,7 @@ export function volumeMaterial(study: PlanetStudy, center: Vector3, size: Vector
         density.addAssign(max(float(1).sub(point.dot(point)), 0).mul(noise).mul(stride));
       }
     });
-    if (smoke) return vec4(scattering.div(max(transmission.oneMinus(), 0.0001)), transmission.oneMinus());
+    if (smoke) return vec4(scattering.div(max(transmission.oneMinus(), 0.0001)), surfaceSmoke ? min(transmission.oneMinus(), 0.18) : transmission.oneMinus());
     const alpha = min(float(1).sub(density.mul(-0.018).exp()), 0.14);
     return vec4(mix(color(study.horizon), color(study.foliageLight), 0.12), alpha);
   })();

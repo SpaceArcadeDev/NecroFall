@@ -3,6 +3,8 @@ import type { EnemyGenome } from '../EnemyGenomes';
 
 export type BaseGenome = 'crawler' | 'parasite' | 'behemoth';
 export type AnatomicalAttack = 'bite' | 'claw' | 'tail' | 'stomp' | 'spit';
+export type BodyForm = 'original' | 'stalker' | 'bulwark' | 'spire';
+export type GlowPattern = 'veins' | 'bands' | 'cells';
 
 export interface EnemyAnatomy {
   base: BaseGenome;
@@ -18,6 +20,21 @@ export interface EnemyAnatomy {
   color: number;
   accent: number;
   attack: AnatomicalAttack;
+  form?: BodyForm;
+  length?: number;
+  glow?: number;
+  pattern?: GlowPattern;
+}
+
+export function bodyForm(form: BodyForm): Pick<EnemyAnatomy, 'form' | 'body' | 'head' | 'limbs' | 'length' | 'tail'> {
+  const shapes = {
+    original: [1, 1, 1, 1, 1],
+    stalker: [0.65, 0.7, 1.4, 1.7, 1.65],
+    bulwark: [1.65, 1.55, 0.75, 0.72, 0.8],
+    spire: [0.8, 1.65, 1.25, 0.85, 1.85],
+  };
+  const [body, head, limbs, length, tail] = shapes[form];
+  return { form, body, head, limbs, length, tail };
 }
 
 export function capabilities(anatomy: EnemyAnatomy, giant = false) {
@@ -50,8 +67,12 @@ export function normalizeAnatomy(input: EnemyAnatomy, giant = false): EnemyAnato
     headBase: validBase(input.headBase),
     armBase: input.base,
     tailBase: validBase(input.tailBase),
-    body: finite(input.body, 1, 0.8, 1.25), head: finite(input.head, 1, 0.75, 1.3),
-    limbs: finite(input.limbs, 1, 0.8, 1.25), tail: input.tail === 0 ? 0 : finite(input.tail, 1, 0.75, 1.3),
+    body: finite(input.body, 1, 0.6, 1.8), head: finite(input.head, 1, 0.6, 1.8),
+    limbs: finite(input.limbs, 1, 0.7, 1.5), tail: input.tail === 0 ? 0 : finite(input.tail, 1, 0.75, 2),
+    length: finite(input.length!, 1, 0.65, 1.8),
+    form: (['original', 'stalker', 'bulwark', 'spire'].includes(input.form ?? '') ? input.form : 'original') as BodyForm,
+    glow: finite(input.glow!, 0.9, 0, 2.5),
+    pattern: (['veins', 'bands', 'cells'].includes(input.pattern ?? '') ? input.pattern : 'veins') as GlowPattern,
     size: finite(input.size, 1, 0.5, 8),
     wings: input.base === 'parasite' && input.wings,
   };
@@ -67,14 +88,17 @@ export function generateAnatomy(genome: EnemyGenome, seed: number): EnemyAnatomy
     : genome.tier === 'nexus' ? rng.pick(bases)
       : genome.species === 'crawler' || genome.hunter ? 'crawler'
         : genome.species === 'brute' ? 'behemoth' : 'parasite';
+  const shape = bodyForm(rng.pick<BodyForm>(['stalker', 'bulwark', 'spire']));
   const anatomy: EnemyAnatomy = {
-    base, body: rng.range(0.88, 1.16), head: rng.range(0.82, 1.22), limbs: rng.range(0.9, 1.2),
-    tail: rng.next() < 0.22 ? 0 : rng.range(0.8, 1.2), wings: base === 'parasite' && rng.next() < 0.55,
+    ...shape,
+    base, body: shape.body * rng.range(0.94, 1.06), head: shape.head * rng.range(0.94, 1.06), limbs: shape.limbs * rng.range(0.96, 1.04),
+    tail: rng.next() < 0.18 ? 0 : shape.tail, wings: base === 'parasite' && shape.form !== 'bulwark' && rng.next() < 0.65,
     size: genome.scale, color: genome.color, accent: genome.accent, attack: 'bite',
+    glow: rng.range(0.85, 1.65), pattern: rng.pick<GlowPattern>(['veins', 'bands', 'cells']),
   };
-  anatomy.headBase = rng.next() < 0.3 ? rng.pick(bases) : base;
+  anatomy.headBase = rng.next() < 0.8 ? rng.pick(bases.filter(candidate => candidate !== base)) : base;
   anatomy.armBase = base;
-  anatomy.tailBase = rng.next() < 0.25 ? rng.pick(bases) : base;
+  anatomy.tailBase = rng.next() < 0.7 ? rng.pick(bases.filter(candidate => candidate !== base)) : base;
   anatomy.attack = rng.pick(legalAttacks(anatomy, genome.tier === 'boss' || genome.tier === 'nexus'));
   return normalizeAnatomy(anatomy, genome.tier === 'boss' || genome.tier === 'nexus');
 }

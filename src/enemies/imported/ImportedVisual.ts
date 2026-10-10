@@ -6,7 +6,7 @@ import { autoRig, CRAWLER_RIG, type AutoRigSpec } from './AutoRig';
 import { importedMaterial, type ImportedMaterial } from './ImportedMaterials';
 import { readSwitches } from '../../rendering/DebugSwitches';
 import { TerrainRig, type RigMotion } from './TerrainRig';
-import { applyModelModules, moduleSocket, selectMeshModule, type MeshModule } from './ModelModules';
+import { applyModelModules, moduleSocket, selectMeshModule, ModuleJoin, type MeshModule } from './ModelModules';
 import type { BaseGenome, EnemyAnatomy } from './EnemyAnatomy';
 import { normalizeAnatomy } from './EnemyAnatomy';
 
@@ -209,25 +209,26 @@ export class ImportedVisual {
   readonly locomotion: TerrainRig;
   private readonly moduleGeometries: THREE.BufferGeometry[];
 
-  private constructor(private readonly model: THREE.Object3D, template: ImportedTemplate, height: number, id: ImportedModelId, anatomy?: EnemyAnatomy) {
+  private constructor(private readonly model: THREE.Object3D, template: ImportedTemplate, height: number, id: ImportedModelId, anatomy?: EnemyAnatomy, private readonly joins: ModuleJoin[] = [], geometries: THREE.BufferGeometry[] = []) {
     this.root.name = `${id}-imported`;
     this.root.userData.source = MODELS[id].source;
     this.root.scale.setScalar(height / template.height);
     this.normalizer.position.copy(this.offset.set(-template.center.x, -template.floor, -template.center.z));
     this.normalizer.add(model);
     this.root.add(this.normalizer);
-    this.moduleGeometries = anatomy ? applyModelModules(model, anatomy) : [];
+    this.moduleGeometries = geometries;
 
     // ONE opaque surface per imported model (`{id}:chitin`) plus, on the insectoid rig, the
     // translucent wings (`parasite:membrane`) — mapped onto the same carapace/energy pair the
     // procedural creatures expose, so every gameplay system writes the same uniforms.
-    this.carapace = importedMaterial(surfaceMaterials(model, false)[0], false);
+    const carapaceSource = surfaceMaterials(model, false, true)[0];
+    this.carapace = importedMaterial(carapaceSource, false);
     if (anatomy) {
-      this.carapace.uTint.value.setHex(anatomy.color).lerp(new THREE.Color(0xffffff), 0.65);
+      this.carapace.uTint.value.setHex(anatomy.color);
       this.carapace.uAccent.value.setHex(anatomy.accent);
     }
-    this.textured = Boolean(surfaceMaterials(model, false)[0].map);
-    const membrane = surfaceMaterials(model, true)[0] ?? null;
+    this.textured = Boolean(carapaceSource.map);
+    const membrane = surfaceMaterials(model, true, true)[0] ?? null;
     this.energy = membrane ? importedMaterial(membrane, true) : this.carapace;
     this.materials.push(this.carapace);
     if (this.energy !== this.carapace) this.materials.push(this.energy);
@@ -258,7 +259,19 @@ export class ImportedVisual {
       object.frustumCulled = false;
     });
 
+    this.root.updateMatrixWorld(true);
+    this.joins.forEach(join => join.update());
     this.locomotion = new TerrainRig(this.root, model, id, height);
+    for (const material of this.materials) {
+      material.uPatternScale.value = 5 / template.height;
+      if (!anatomy) continue;
+      material.uTint.value.setHex(anatomy.color);
+      material.uTintAmount.value = 0.9;
+      material.uAccent.value.setHex(anatomy.accent);
+      material.uGlow.value = anatomy.glow ?? 0.9;
+      material.uPattern.value = ['veins', 'bands', 'cells'].indexOf(anatomy.pattern ?? 'veins');
+      material.uPhase.value = anatomy.accent % 101 / 16;
+    }
   }
 
   static async create(id: ImportedModelId, height: number, anatomy?: EnemyAnatomy): Promise<ImportedVisual> {
@@ -266,6 +279,8 @@ export class ImportedVisual {
     const template = await loadTemplate(id);
     const model = clone(template.root);
     model.traverse(object => { if (object instanceof THREE.SkinnedMesh) object.userData.primaryRig = true; });
+    const geometries = anatomy ? applyModelModules(model, anatomy) : [];
+    const joins: ModuleJoin[] = [];
     if (anatomy) {
       const parts: [MeshModule, ImportedModelId | undefined][] = [['head', anatomy.headBase], ['tail', anatomy.tail > 0 ? anatomy.tailBase : id]];
       for (const [kind, donorId] of parts) {
@@ -274,26 +289,33 @@ export class ImportedVisual {
         const donor = clone(donorTemplate.root);
         model.updateMatrixWorld(true); donor.updateMatrixWorld(true);
         const target = moduleSocket(model, kind), origin = moduleSocket(donor, kind);
-        const targetPoint = target.getWorldPosition(new THREE.Vector3());
-        const originPoint = origin.getWorldPosition(new THREE.Vector3());
-        const ratio = template.height / donorTemplate.height;
+        const hostBoundary = selectMeshModule(model, kind, false);
+        const donorBoundary = selectMeshModule(donor, kind, true);
+        const targetPoint = hostBoundary.radius > 0 ? hostBoundary.centre : target.getWorldPosition(new THREE.Vector3());
+        const originPoint = donorBoundary.radius > 0 ? donorBoundary.centre : origin.getWorldPosition(new THREE.Vector3());
+        const ratio = template.height / donorTemplate.height * (kind === 'head' ? anatomy.head : anatomy.tail);
         const transform = new THREE.Matrix4().copy(target.matrixWorld).invert()
           .multiply(new THREE.Matrix4().makeTranslation(targetPoint))
           .multiply(new THREE.Matrix4().makeScale(ratio, ratio, ratio))
           .multiply(new THREE.Matrix4().makeTranslation(originPoint.negate()));
-        selectMeshModule(model, kind, false);
-        selectMeshModule(donor, kind, true);
         const socket = new THREE.Group();
         socket.name = `${kind}-module:${donorId}`;
+        donor.userData.moduleDonor = true;
         socket.applyMatrix4(transform); socket.add(donor); target.add(socket);
+        model.updateMatrixWorld(true);
+        const join = new ModuleJoin(hostBoundary, donorBoundary, surfaceMaterials(model, false, true)[0], kind);
+        model.add(join.mesh);
+        joins.push(join);
       }
     }
-    return new ImportedVisual(model, template, height, id, anatomy);
+    return new ImportedVisual(model, template, height, id, anatomy, joins, geometries);
   }
 
   get clock(): number {
     return this.locomotion.clock;
   }
+
+  moduleDiagnostics() { return this.joins.map(join => join.diagnostics()); }
 
   /**
    * One frame of locomotion + status. `moving` is the 0..1 speed blend the simulator already
@@ -302,6 +324,10 @@ export class ImportedVisual {
    */
   update(dt: number, moving: number, state: ImportedVisualState): void {
     this.locomotion.update(dt, state.stunned, state);
+    if (this.joins.length) {
+      this.root.updateMatrixWorld(true);
+      this.joins.forEach(join => join.update());
+    }
 
     const broken = state.stunned;
     this.carapace.uState.value.set(broken ? '#ffdf45' : '#ff3028');
@@ -311,6 +337,7 @@ export class ImportedVisual {
       this.energy.uStateAmount.value = this.carapace.uStateAmount.value;
     }
     for (const material of this.flashMats) {
+      material.uSurfaceFrame.value.copy(this.root.matrixWorld).invert();
       material.uState.value.copy(this.carapace.uState.value);
       material.uStateAmount.value = this.carapace.uStateAmount.value;
       material.uAggro.value = this.carapace.uAggro.value;
@@ -320,6 +347,7 @@ export class ImportedVisual {
   }
 
   dispose(): void {
+    this.joins.forEach(join => join.dispose());
     this.moduleGeometries.forEach(geometry => geometry.dispose());
     this.materials.forEach((material) => material.dispose());
     const skeletons = new Set<THREE.Skeleton>();
@@ -330,10 +358,11 @@ export class ImportedVisual {
 }
 
 /** The template's surface materials of one family (membrane when `true`, chitin otherwise). */
-function surfaceMaterials(root: THREE.Object3D, membrane: boolean): THREE.MeshStandardMaterial[] {
+function surfaceMaterials(root: THREE.Object3D, membrane: boolean, primaryOnly = false): THREE.MeshStandardMaterial[] {
   const found: THREE.MeshStandardMaterial[] = [];
   root.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
+    if (primaryOnly && !object.userData.primaryRig) return;
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
       const typed = material as THREE.MeshStandardMaterial;
       if (typed.name.endsWith(':membrane') === membrane) found.push(typed);

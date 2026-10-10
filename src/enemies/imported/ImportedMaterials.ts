@@ -14,12 +14,19 @@
 //     the same names as `CarapaceMaterial`/`EnergyMaterial`, so `Enemy.place()` drives an
 //     imported body through ONE code path.
 import * as THREE from 'three/webgpu';
-import { Fn, If, color, mix, normalWorld, positionWorld, texture, uniform, vec3, vec4 } from 'three/tsl';import { celQuantize } from '../../rendering/materials/CelShading';
+import { Fn, If, color, mix, normalWorld, positionWorld, texture, uniform, vec3, vec4 } from 'three/tsl';
+import { celQuantize } from '../../rendering/materials/CelShading';
 import { NECRO_UNIFORMS, nfFog } from '../../rendering/materials/NecroChunks';
 
 /** The uniform surface `Enemy.place()` animates — the twin of `CarapaceUniforms`. */
 export interface ImportedUniforms {
   uTint: { value: THREE.Color };
+  uTintAmount: { value: number };
+  uGlow: { value: number };
+  uPattern: { value: number };
+  uPhase: { value: number };
+  uSurfaceFrame: { value: THREE.Matrix4 };
+  uPatternScale: { value: number };
   /** Venom/energy tint: chitin veins, and the emissive wash on membrane surfaces. */
   uAccent: { value: THREE.Color };
   uAggro: { value: number };
@@ -44,6 +51,12 @@ const iceCol = (): any => vec3(0.6, 0.9, 1.0);
  */
 export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: boolean): ImportedMaterial {
   const uTint = uniform(new THREE.Color(0xffffff));
+  const uTintAmount = uniform(0);
+  const uGlow = uniform(0.9);
+  const uPattern = uniform(0);
+  const uPhase = uniform(0);
+  const uSurfaceFrame = uniform(new THREE.Matrix4());
+  const uPatternScale = uniform(5);
   const uAccent = uniform(new THREE.Color(membrane ? 0x8fe3c8 : 0xb6ff5a));
   const uAggro = uniform(0);
   const uFlash = uniform(0);
@@ -64,7 +77,9 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
 
   const map = source.map;
   const albedoUniform = color(source.color);
-  const base = (map ? texture(map).rgb.mul(albedoUniform) : albedoUniform.rgb).mul(uTint.rgb);
+  const painted = map ? texture(map).rgb.mul(albedoUniform) : albedoUniform.rgb;
+  const detail = painted.dot(vec3(0.32, 0.56, 0.12)).mul(0.85).add(0.12);
+  const base = mix(painted, uTint.rgb.mul(detail), uTintAmount);
   const alpha = map ? texture(map).a : 1;
 
   material.colorNode = Fn(() => {
@@ -92,15 +107,17 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
     if (membrane) {
       // Thin glowing tissue: the fresnel IS the light, and the accent tint carries the colour.
       const inner = n.dot(viewDir).abs().clamp(0, 1).oneMinus().pow(1.5);
-      lit.assign(tinted.mul(uAccent).mul(inner.mul(1.15).add(0.5)));
+      const pulse = NECRO_UNIFORMS.uTime.mul(2).add(uPhase).sin().mul(0.2).add(0.8);
+      lit.assign(tinted.add(uAccent.mul(inner.mul(1.15).add(0.5)).mul(uGlow).mul(pulse)));
     } else {
-      // Chitin: only the genuinely bright texture patches (the venom glands) glow with the
-      // accent, and the base add stays small — under a dim sunset sky a constant wash would
-      // tint the whole body green instead of reading as glands. Aggro deepens the glow, so an
-      // imported body reads its state exactly like a procedural one.
-      const luma = tinted.x.mul(0.32).add(tinted.y.mul(0.56)).add(tinted.z.mul(0.12));
-      const vein = luma.smoothstep(0.6, 0.95);
-      lit.assign(lit.add(uAccent.mul(vein).mul(uAggro.mul(0.5).add(0.06))));
+      const tissue = uSurfaceFrame.mul(vec4(wp, 1)).xyz.mul(uPatternScale);
+      const clock = NECRO_UNIFORMS.uTime.add(uPhase);
+      const wave = tissue.x.mul(1.7).sin().mul(tissue.y.mul(1.35).add(clock.mul(0.6)).sin()).mul(tissue.z.mul(1.55).sin());
+      const veins = wave.mul(0.5).add(0.5).smoothstep(0.55, 0.9);
+      const bands = tissue.y.mul(2.8).add(tissue.x.mul(2.2).sin()).sub(clock.mul(1.8)).sin().smoothstep(0.55, 0.85);
+      const cells = wave.abs().smoothstep(0.025, 0.15).oneMinus();
+      const pattern = uPattern.lessThan(0.5).select(veins, uPattern.lessThan(1.5).select(bands, cells));
+      lit.assign(lit.add(uAccent.mul(pattern).mul(detail.mul(0.65).add(0.25)).mul(uGlow).mul(uAggro.mul(0.8).add(0.65))));
     }
 
     // FROST: the whole body crusts over in pale blue, throbbing off the shared shader clock.
@@ -120,6 +137,12 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
 
   const attached = material as unknown as ImportedMaterial;
   attached.uTint = uTint;
+  attached.uTintAmount = uTintAmount;
+  attached.uGlow = uGlow;
+  attached.uPattern = uPattern;
+  attached.uPhase = uPhase;
+  attached.uSurfaceFrame = uSurfaceFrame;
+  attached.uPatternScale = uPatternScale;
   attached.uAccent = uAccent;
   attached.uAggro = uAggro;
   attached.uFlash = uFlash;

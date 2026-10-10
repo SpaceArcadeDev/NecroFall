@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { ImportedVisual } from './ImportedVisual';
-import { capabilities, legalAttacks, normalizeAnatomy, type BaseGenome, type EnemyAnatomy } from './EnemyAnatomy';
+import { bodyForm, capabilities, legalAttacks, normalizeAnatomy, type BaseGenome, type BodyForm, type EnemyAnatomy, type GlowPattern } from './EnemyAnatomy';
 import { generateEcology, factsFromSeed } from '../procedural/EcologyGenerator';
 import { NECRO_UNIFORMS } from '../../rendering/materials/NecroChunks';
 
@@ -40,17 +40,21 @@ export async function startEnemyLab(): Promise<void> {
         <input id="el-file" type="file" accept="application/json" hidden>
       </fieldset>
       <fieldset><legend>Anatomy</legend>
-        <label>Torso<input id="el-body" type="range" min="0.8" max="1.25" step="0.01"></label>
-        <label>Head<input id="el-head" type="range" min="0.75" max="1.3" step="0.01"></label>
+        <label>Form<select id="el-form"><option value="original">Original</option><option value="stalker">Stalker</option><option value="bulwark">Bulwark</option><option value="spire">Spire</option></select></label>
+        <label>Torso<input id="el-body" type="range" min="0.6" max="1.8" step="0.01"></label>
+        <label>Length<input id="el-length" type="range" min="0.65" max="1.8" step="0.01"></label>
+        <label>Head<input id="el-head" type="range" min="0.6" max="1.8" step="0.01"></label>
         <label>Head Model<select id="el-headBase"><option>crawler</option><option>parasite</option><option>behemoth</option></select></label>
-        <label>Limbs<input id="el-limbs" type="range" min="0.8" max="1.25" step="0.01"></label>
+        <label>Limbs<input id="el-limbs" type="range" min="0.7" max="1.5" step="0.01"></label>
         <label>Tail<input id="el-tail-on" type="checkbox"></label>
-        <label>Tail Length<input id="el-tail" type="range" min="0.75" max="1.3" step="0.01"></label>
+        <label>Tail Length<input id="el-tail" type="range" min="0.75" max="2" step="0.01"></label>
         <label>Tail Model<select id="el-tailBase"><option>crawler</option><option>parasite</option><option>behemoth</option></select></label>
         <label>Wings<input id="el-wings" type="checkbox"></label>
         <label>Size<input id="el-size" type="range" min="0.5" max="6" step="0.1"></label>
         <label>Chitin<input id="el-color" type="color"></label>
         <label>Accent<input id="el-accent" type="color"></label>
+        <label>Glow<input id="el-glow" type="range" min="0" max="2.5" step="0.05"></label>
+        <label>Pattern<select id="el-pattern"><option value="veins">Veins</option><option value="bands">Bands</option><option value="cells">Cells</option></select></label>
       </fieldset>
       <fieldset><legend>Motion</legend>
         <label>Terrain<select id="el-terrain"><option value="hills">Hills</option><option value="boulders">Boulders</option><option value="flat">Flat</option></select></label>
@@ -132,7 +136,9 @@ export async function startEnemyLab(): Promise<void> {
   function syncControls() {
     select('base').value = anatomy.base;
     for (const key of ['headBase', 'tailBase'] as const) select(key).value = anatomy[key] ?? anatomy.base;
-    for (const key of ['body', 'head', 'limbs', 'size'] as const) input(key).value = String(anatomy[key]);
+    for (const key of ['body', 'head', 'limbs', 'size', 'length', 'glow'] as const) input(key).value = String(anatomy[key]);
+    select('form').value = anatomy.form ?? 'original';
+    select('pattern').value = anatomy.pattern ?? 'veins';
     input('tail').value = String(anatomy.tail || 1);
     input('tail-on').checked = anatomy.tail > 0;
     input('tail').disabled = anatomy.tail === 0;
@@ -150,8 +156,13 @@ export async function startEnemyLab(): Promise<void> {
     const centre = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3()).length();
     const mobile = innerWidth < 700;
-    controls.target.copy(centre).add(new THREE.Vector3(mobile ? 0 : -size * 0.17, mobile ? -size * 0.15 : 0, 0));
-    const distance = size / Math.max(0.25, Math.min(1, camera.aspect)) * (mobile ? 1.6 : 1.25);
+    const panel = host.querySelector('aside')!.getBoundingClientRect();
+    const availableWidth = mobile ? innerWidth : innerWidth - panel.right - 24;
+    const availableHeight = mobile ? panel.top - 70 : innerHeight - 130;
+    const field = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(availableHeight / innerHeight, availableWidth / innerHeight));
+    const distance = size * 0.55 / Math.sin(field);
+    camera.setViewOffset(innerWidth, innerHeight, mobile ? 0 : -(panel.right + 24) / 2, mobile ? (innerHeight - panel.top - 60) / 2 : 0, innerWidth, innerHeight);
+    controls.target.copy(centre);
     camera.position.copy(centre).add(new THREE.Vector3(0.8, 0.45, 1).normalize().multiplyScalar(distance));
     controls.update();
   }
@@ -180,7 +191,9 @@ export async function startEnemyLab(): Promise<void> {
     anatomy = { ...roster.genomes[selected].anatomy! };
     void rebuild();
   }
-  for (const key of ['body', 'head', 'limbs', 'size'] as const) input(key).addEventListener('change', () => { anatomy[key] = Number(input(key).value); void rebuild(); });
+  for (const key of ['body', 'head', 'limbs', 'size', 'length', 'glow'] as const) input(key).addEventListener('change', () => { anatomy[key] = Number(input(key).value); void rebuild(); });
+  select('form').addEventListener('change', () => { anatomy = { ...anatomy, ...bodyForm(select('form').value as BodyForm) }; void rebuild(); });
+  select('pattern').addEventListener('change', () => { anatomy.pattern = select('pattern').value as GlowPattern; void rebuild(); });
   for (const key of ['headBase', 'tailBase'] as const) select(key).addEventListener('change', () => { anatomy[key] = select(key).value as BaseGenome; void rebuild(); });
   for (const key of ['color', 'accent'] as const) input(key).addEventListener('change', () => { anatomy[key] = Number.parseInt(input(key).value.slice(1), 16); void rebuild(); });
   input('tail').addEventListener('change', () => { anatomy.tail = Number(input('tail').value); void rebuild(); });

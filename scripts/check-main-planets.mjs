@@ -41,6 +41,103 @@ async function capture(page, name, checkScene = true) {
   } finally { await style.evaluate(node => node.remove()); }
 }
 
+async function mountainMovement(page) {
+  const result = await page.evaluate(async () => {
+    const { Raycaster, Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const { CONFIG } = await import('/src/core/Config.ts');
+    const { NECROTECHS } = await import('/src/necrotech/NecrotechData.ts');
+    const game = window.necrofall, world = game.envWorld, player = game.localPlayer;
+    const mountains = world.rocks.group.children.filter(mesh => mesh.name === 'base-mountain');
+    const ray = new Raycaster();
+    let contact;
+    for (const footprint of world.rocks.mountainFootprints) {
+      const up = footprint.direction, tangent = new Vector3().crossVectors(up, new Vector3(0, 1, 0)).normalize();
+      for (const height of [6, 10, 3]) {
+        const center = up.clone().multiplyScalar(world.deps.surface.radiusAt(up) + height);
+        ray.set(center.addScaledVector(tangent, footprint.angle * world.deps.surface.radius + 12), tangent.clone().negate());
+        const hit = ray.intersectObjects(mountains, false)[0];
+        if (!hit || Math.abs(hit.face.normal.dot(up)) > 0.7) continue;
+        const start = hit.point.clone().addScaledVector(tangent, 4).addScaledVector(up, -0.85);
+        if (start.length() < world.deps.surface.radiusAt(start.clone().normalize()) + 0.5) continue;
+        contact = { start, up: start.clone().normalize(), aim: tangent.clone().negate(), hit: hit.point };
+        break;
+      }
+      if (contact) break;
+    }
+    if (!contact) throw new Error('No exposed mountain face for movement regression');
+    const { start, up, aim, hit } = contact;
+    const saved = { position: player.position.clone(), up: player.up.clone(), velocity: player.velocity.clone(), grounded: player.grounded,
+      necrotech: player.necrotech, autoRange: player.autoRange, addBuff: player.addBuff, invulnUntil: player.invulnUntil, snap: game.cam.snap };
+    const boundary = hit.clone().sub(start).dot(aim);
+    const outside = position => position.clone().sub(start).dot(aim) < boundary;
+    try {
+      const dash = start.clone();
+      world.obstacles.move(dash, aim.clone().multiplyScalar(1000), 0.1, CONFIG.player.radius, false);
+      if (!outside(dash)) throw new Error(`Dash entered imported mountain: ${dash.toArray()}`);
+      player.position.copy(start); player.up.copy(up); player.velocity.set(0, 0, 0); player.grounded = false;
+      player.necrotech = NECROTECHS.find(definition => definition.skill.id === 'blink'); player.autoRange = 30;
+      player.addBuff = () => {}; game.cam.snap = () => {};
+      game.abilities.run('blink', player, aim, 'caster');
+      if (!outside(player.position)) throw new Error(`Blink entered imported mountain: ${player.position.toArray()}`);
+      return { dashTravel: dash.distanceTo(start), blinkTravel: player.position.distanceTo(start), boundary };
+    } finally {
+      player.position.copy(saved.position); player.up.copy(saved.up); player.velocity.copy(saved.velocity); player.grounded = saved.grounded;
+      player.necrotech = saved.necrotech; player.autoRange = saved.autoRange; player.addBuff = saved.addBuff; player.invulnUntil = saved.invulnUntil;
+      game.cam.snap = saved.snap;
+    }
+  });
+  console.log(`Imported mountain: dash and Blink Strike stay outside the face (${JSON.stringify(result)})`);
+  return result;
+}
+
+async function sunVisibility(page, name) {
+  const results = [];
+  for (const mode of ['day', 'twilight']) {
+    await inspect(page, mode);
+    await page.evaluate(() => {
+      const game = window.necrofall, world = game.envWorld, camera = game.cam.camera;
+      window.sunTest = { update: game.update, tick: game.ticker.update, position: camera.position.clone(), rotation: camera.quaternion.clone(), up: camera.up.clone() };
+      game.update = () => {}; game.ticker.update = () => game.rendering.render(0);
+      const up = game.localPlayer.position.clone().normalize();
+      camera.position.copy(game.localPlayer.position).addScaledVector(up, 3);
+      world.update(game.localPlayer.position, camera);
+      const sun = world.sky.mesh.getObjectByName('system-sun');
+      camera.up.copy(up);
+      if (Math.abs(up.dot(world.deps.system.sunDirection)) > 0.9) camera.up.copy(up).cross({ x: 1, y: 0, z: 0 }).normalize();
+      camera.lookAt(sun.position); camera.updateMatrixWorld(true);
+    });
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport);
+      const image = await capture(page, `${name}-sun-${mode}-${viewport.width}`, false);
+      const { data, info } = await sharp(image).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      await page.evaluate(() => { window.necrofall.envWorld.sky.mesh.getObjectByName('system-sun').visible = false; });
+      const without = await sharp(await capture(page, `${name}-sun-${mode}-${viewport.width}-off`, false)).removeAlpha().raw().toBuffer();
+      await page.evaluate(() => { window.necrofall.envWorld.sky.mesh.getObjectByName('system-sun').visible = true; });
+      let visiblePixels = 0, coloredPixels = 0;
+      for (let pixel = 0; pixel < data.length; pixel += 3) {
+        if (Math.max(data[pixel] - without[pixel], data[pixel + 1] - without[pixel + 1], data[pixel + 2] - without[pixel + 2]) <= 20) continue;
+        visiblePixels++;
+        const column = pixel / 3 % info.width, row = Math.floor(pixel / 3 / info.width);
+        if (Math.abs(column - info.width / 2) > info.width * 0.2 || Math.abs(row - info.height / 2) > info.height * 0.2) continue;
+        const [red, green, blue] = data.subarray(pixel, pixel + 3);
+        if (mode === 'day' ? Math.min(red, green, blue) >= 240 && Math.max(red, green, blue) - Math.min(red, green, blue) < 12
+          : red > 220 && green > 160 && red - blue > 35) coloredPixels++;
+      }
+      assert.ok(visiblePixels > 20, `${mode}: sun disc is not visible (${visiblePixels} pixels)`);
+      assert.ok(coloredPixels > 20, `${mode}: sun disc has no bright ${mode === 'day' ? 'white' : 'yellow'} pixels (${coloredPixels})`);
+      results.push({ mode, width: viewport.width, coloredPixels, visiblePixels });
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(() => {
+      const game = window.necrofall, saved = window.sunTest, camera = game.cam.camera;
+      game.update = saved.update; game.ticker.update = saved.tick;
+      camera.position.copy(saved.position); camera.quaternion.copy(saved.rotation); camera.up.copy(saved.up); camera.updateMatrixWorld(true);
+    });
+  }
+  console.log(`${name}: sun disc pixels ${JSON.stringify(results)}`);
+  return results;
+}
+
 async function surfaceTrails(page) {
   const results = [];
   for (const effect of ['grass', 'water']) {
@@ -387,6 +484,24 @@ try {
       assert.ok(data.sun.every((value, index) => Math.abs(value - data.direction[index]) < 1e-10));
       assert.ok(data.system.neighbours.length > 0);
       await capture(page, `${id}-freeroam`);
+      const mountainCollision = id === 'cinderbloom' || selected ? await mountainMovement(page) : undefined;
+      const sunPixels = id === 'cinderbloom' || selected ? await sunVisibility(page, id) : undefined;
+      const exclusions = await page.evaluate(() => {
+        const world = window.necrofall.envWorld;
+        const counts = {};
+        const inspectPositions = (name, positions, stride = 1) => {
+          let buried = 0;
+          for (let vertex = 0; vertex < positions.count; vertex += stride) {
+            if (world.rocks.mountainBlocked(positions.getX(vertex), positions.getY(vertex), positions.getZ(vertex))) buried++;
+          }
+          counts[name] = (counts[name] ?? 0) + buried;
+        };
+        world.rocks.group.traverse(object => { if (object.name === 'base-boulder') inspectPositions('boulders', object.geometry.attributes.position); });
+        inspectPositions('water', world.puddles.mesh.geometry.attributes.position);
+        inspectPositions('particles', world.particles.mesh.geometry.attributes.aCenter, 6);
+        return counts;
+      });
+      assert.ok(Object.values(exclusions).every(count => count === 0), `Buried assets: ${JSON.stringify(exclusions)}`);
       await page.keyboard.down('w');
       await page.waitForFunction(previous => window.necrofall.localPlayer.position.distanceTo({ x: previous[0], y: previous[1], z: previous[2] }) > 1, data.player, { timeout: 15000 });
       await page.keyboard.up('w');
@@ -408,7 +523,7 @@ try {
       const hazards = id === 'saffron-waste' ? await hazardInteractions(page) : undefined;
       const coast = ['saffron-waste', 'glass-tide', 'cinderbloom'].includes(id) ? await coastalWater(page, id) : undefined;
       const trails = id === 'cinderbloom' ? await surfaceTrails(page) : undefined;
-      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast });
+      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast, sunPixels, exclusions, mountainCollision });
       console.log(`${id}: freeroam, movement, base recipes, fixed sun and twilight passed`);
       assert.deepEqual(errors, [], `${id}: runtime errors`);
     } catch (error) {

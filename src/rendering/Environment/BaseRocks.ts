@@ -94,16 +94,17 @@ export class BaseRocks {
   count = 0;
   readonly mountainCount: number;
   private readonly excluded = new Uint8Array(128 * 256);
+  private readonly mountainFootprints: { direction: Vector3; angle: number }[] = [];
   private constructor(private readonly deps: PlanetWorldDependencies, mountains: number) { this.mountainCount = mountains; this.group.name = 'base-planet-geology'; }
 
   static async create(deps: PlanetWorldDependencies): Promise<BaseRocks> {
     const plans = [
-      { kind: 'boulder', url: BASE_ASSETS.boulder, count: 110, minimum: 0.6, maximum: 3.2, salt: 5101 },
       { kind: 'mountain', url: BASE_ASSETS.mountain, count: 14, minimum: 13, maximum: 25, salt: 5119 },
+      { kind: 'boulder', url: BASE_ASSETS.boulder, count: 110, minimum: 0.6, maximum: 3.2, salt: 5101 },
     ];
-    const result = new BaseRocks(deps, plans[1].count);
+    const result = new BaseRocks(deps, plans[0].count);
     const radiusAt = createRenderedRadiusAt(deps.generator);
-    const footprints: { direction: Vector3; cosine: number }[] = [];
+    const footprints: { direction: Vector3; cosine: number; angle: number }[] = [];
     for (const plan of plans) {
       const asset = await deps.loader.loadGLTF(plan.url);
       const parts = normalisedAsset(asset.scene, plan.kind === 'mountain');
@@ -111,10 +112,14 @@ export class BaseRocks {
       const extent = Math.hypot(Math.max(Math.abs(bounds.min.x), Math.abs(bounds.max.x)), Math.max(Math.abs(bounds.min.z), Math.abs(bounds.max.z)));
       const placements = scatterPlacements(deps.surface, deps.generator, { count: plan.count, salt: plan.salt,
         scaleMin: plan.minimum, scaleMax: plan.maximum, maxSlope: plan.kind === 'mountain' ? 0.5 : 0.6,
-        aboveWater: -0.1, attemptsPerInstance: 30, excludeDirection: deps.spawnDirection, excludeRadius: 12 + plan.maximum * extent });
+        aboveWater: -0.1, attemptsPerInstance: 30, excludeDirection: deps.spawnDirection, excludeRadius: 12 + plan.maximum * extent,
+        accept: sample => !footprints.some(footprint => sample.up.dot(footprint.direction)
+          > Math.cos(footprint.angle + plan.maximum * extent / deps.surface.radius)) });
       for (const placement of placements) {
         const footprint = placement.scale * extent;
-        footprints.push({ direction: placement.position.clone().normalize(), cosine: Math.cos((footprint + 2) / deps.surface.radius) });
+        const angle = (footprint + 2) / deps.surface.radius;
+        footprints.push({ direction: placement.position.clone().normalize(), cosine: Math.cos(angle), angle });
+        if (plan.kind === 'mountain') result.mountainFootprints.push({ direction: placement.position.clone().normalize(), angle });
       }
       for (const part of parts) {
         const material = new SurfaceMaterial({ colorNode: color(deps.generator.archetype.art!.rock), playerOcclusion: true, hasLightBounce: false });
@@ -148,6 +153,12 @@ export class BaseRocks {
     const latitude = Math.min(127, Math.floor(Math.acos(Math.max(-1, Math.min(1, positionY / length))) / Math.PI * 128));
     const longitude = Math.min(255, Math.floor((Math.atan2(positionZ, positionX) + Math.PI) / (Math.PI * 2) * 256));
     return this.excluded[latitude * 256 + longitude] !== 0;
+  }
+  mountainBlocked(positionX: number, positionY: number, positionZ: number, clearance = 0): boolean {
+    const length = Math.hypot(positionX, positionY, positionZ) || 1;
+    return this.mountainFootprints.some(footprint =>
+      (positionX * footprint.direction.x + positionY * footprint.direction.y + positionZ * footprint.direction.z) / length
+      > Math.cos(footprint.angle + clearance / this.deps.surface.radius));
   }
   setVisible(visible: boolean): void { this.group.visible = visible; }
   dispose(): void {

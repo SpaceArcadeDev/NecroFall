@@ -40,12 +40,13 @@ export class FloatingParticles {
     quality: Quality,
     wind: Wind,
     spawnDirection: THREE.Vector3,
+    blocked?: (positionX: number, positionY: number, positionZ: number) => boolean,
   ) {
     this.uTime = timeUniform;
     const random = generator.rand(133);
     // sparse drifting spores, present EVERYWHERE — never a fog of orbs
     const count = Math.max(800, Math.round(6000 * quality.particleMultiplier()));
-    this.count = count;
+    let placed = 0;
 
     const centers = new Float32Array(count * 6 * 3);
     const corners = new Float32Array(count * 6 * 2);
@@ -67,26 +68,29 @@ export class FloatingParticles {
       const pz = direction.z * radius;
       const seed = random();
       const size = 0.09 + random() * 0.16;
+      if (blocked?.(px, py, pz)) continue;
 
       for (let v = 0; v < 6; v++) {
-        const index = (i * 6 + v) * 3;
+        const index = (placed * 6 + v) * 3;
         centers[index] = px;
         centers[index + 1] = py;
         centers[index + 2] = pz;
         positions[index] = px;
         positions[index + 1] = py;
         positions[index + 2] = pz;
-        corners[(i * 6 + v) * 2] = CORNERS[v][0];
-        corners[(i * 6 + v) * 2 + 1] = CORNERS[v][1];
-        seeds[i * 6 + v] = seed + size * 7; // pack size variance into the seed channel
+        corners[(placed * 6 + v) * 2] = CORNERS[v][0];
+        corners[(placed * 6 + v) * 2 + 1] = CORNERS[v][1];
+        seeds[placed * 6 + v] = seed + size * 7; // pack size variance into the seed channel
       }
+      placed++;
     }
 
+    this.count = placed;
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('aCenter', new THREE.BufferAttribute(centers, 3));
-    geometry.setAttribute('aCorner', new THREE.BufferAttribute(corners, 2));
-    geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions.subarray(0, placed * 18), 3));
+    geometry.setAttribute('aCenter', new THREE.BufferAttribute(centers.subarray(0, placed * 18), 3));
+    geometry.setAttribute('aCorner', new THREE.BufferAttribute(corners.subarray(0, placed * 12), 2));
+    geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds.subarray(0, placed * 6), 1));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 2000);
 
     const material = new THREE.MeshBasicNodeMaterial();

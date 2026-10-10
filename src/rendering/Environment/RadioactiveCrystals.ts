@@ -17,7 +17,8 @@ export class RadioactiveCrystals {
   readonly mesh: THREE.InstancedMesh | null;
   readonly shardCount: number;
 
-  constructor(surface: PlanetSurface, generator: PlanetGenerator, timeUniform: any, clusterTarget = 48, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles) {
+  constructor(surface: PlanetSurface, generator: PlanetGenerator, timeUniform: any, clusterTarget = 48, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles,
+    blocked?: (positionX: number, positionY: number, positionZ: number) => boolean) {
     const clusters = scatterPlacements(surface, generator, {
       count: clusterTarget,
       salt: 55,
@@ -30,6 +31,7 @@ export class RadioactiveCrystals {
       attemptsPerInstance: 16,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
+      accept: sample => !blocked?.(sample.up.x, sample.up.y, sample.up.z),
     });
 
     const random = generator.rand(56);
@@ -81,6 +83,7 @@ export class RadioactiveCrystals {
     if (matrices.length === 0) {
       this.mesh = null;
       this.shardCount = 0;
+      geometry.dispose(); material.dispose();
       return;
     }
 

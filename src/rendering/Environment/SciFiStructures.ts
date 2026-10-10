@@ -41,8 +41,10 @@ export class SciFiStructures {
     timeUniform: any,
     spawnClear?: { direction: THREE.Vector3; radius: number },
     obstacles?: PlanetObstacles,
+    blocked?: (positionX: number, positionY: number, positionZ: number, clearance?: number) => boolean,
   ) {
-    const sites = generateSciFiSites(generator.seed, generator.radius, generator.terrain.landmarks, spawnClear?.direction ?? null);
+    const sites = generateSciFiSites(generator.seed, generator.radius, generator.terrain.landmarks, spawnClear?.direction ?? null)
+      .filter(site => !blocked?.(site.dir.x, site.dir.y, site.dir.z, Math.max(28, site.radius + 8)));
     this.siteCount = sites.length;
 
     // ONE geometry/material per module type — shared by the instanced buckets (debris) and the

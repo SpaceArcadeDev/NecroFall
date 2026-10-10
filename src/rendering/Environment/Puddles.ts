@@ -108,9 +108,10 @@ export class Puddles {
     private readonly noises: Noises,
     private readonly timeUniform: any,
     spawnClear?: { direction: THREE.Vector3; radius: number },
+    private readonly blocked?: (positionX: number, positionY: number, positionZ: number, clearance?: number) => boolean,
   ) {
     this.renderedRadiusAt = createRenderedRadiusAt(generator);
-    const sites = this.findBasins(spawnClear);
+    const sites = this.findBasins(spawnClear).filter(site => !blocked?.(site.direction.x, site.direction.y, site.direction.z, site.radius));
     this.sites = sites;
     this.count = sites.length;
 
@@ -185,13 +186,16 @@ export class Puddles {
     }
 
     const networkBase = vertexBase;
+    const networkVertices = new Int32Array(TERRAIN_RES_X * (TERRAIN_RES_Y + 1)).fill(-1);
     let riverVertices = 0, seaVertices = 0;
     for (let row = 0; row <= TERRAIN_RES_Y; row++) for (let column = 0; column < TERRAIN_RES_X; column++) {
       const vertical = Math.cos(row / TERRAIN_RES_Y * Math.PI), radial = Math.sqrt(Math.max(0, 1 - vertical * vertical));
       const angle = (column / TERRAIN_RES_X - 0.5) * Math.PI * 2;
       direction.set(radial * Math.cos(angle), vertical, radial * Math.sin(angle));
+      if (blocked?.(direction.x, direction.y, direction.z)) continue;
       const floor = this.renderedRadiusAt(direction), depth = this.networkDepthAt(direction, floor);
       const surfaceRadius = floor + Math.max(0.035, depth);
+      networkVertices[row * TERRAIN_RES_X + column] = positions.length / 3;
       positions.push(direction.x * surfaceRadius, direction.y * surfaceRadius, direction.z * surfaceRadius);
       depths.push(depth); rings.push(0); seeds.push(0);
       if (depth > 0.02) {
@@ -201,8 +205,8 @@ export class Puddles {
     }
     const networkIndices = createTerrainIndices(TERRAIN_RES_X, TERRAIN_RES_Y);
     for (let triangle = 0; triangle < networkIndices.length; triangle += 3) {
-      const first = networkBase + networkIndices[triangle], second = networkBase + networkIndices[triangle + 1], third = networkBase + networkIndices[triangle + 2];
-      if (Math.max(depths[first], depths[second], depths[third]) > -0.06) indices.push(first, second, third);
+      const first = networkVertices[networkIndices[triangle]], second = networkVertices[networkIndices[triangle + 1]], third = networkVertices[networkIndices[triangle + 2]];
+      if (first >= 0 && second >= 0 && third >= 0 && Math.max(depths[first], depths[second], depths[third]) > -0.06) indices.push(first, second, third);
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -318,6 +322,7 @@ export class Puddles {
     this.mesh.userData.palette = `#${waterColor.getHexString()}`;
     this.mesh.userData.riverVertices = riverVertices;
     this.mesh.userData.seaVertices = seaVertices;
+    this.mesh.userData.networkVertexStart = networkBase;
   }
 
   /**
@@ -429,6 +434,7 @@ export class Puddles {
   }
 
   waterDepthAt(direction: THREE.Vector3): number {
+    if (this.blocked?.(direction.x, direction.y, direction.z)) return 0;
     const floor = this.renderedRadiusAt(direction);
     const networkDepth = this.networkDepthAt(direction, floor);
     let best: BasinSite | null = null;

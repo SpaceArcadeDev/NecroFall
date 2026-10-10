@@ -93,7 +93,7 @@ export class PlanetObstacles {
   }
 
   move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean, stepHeight = STEP_HEIGHT): void {
-    const steps = Math.max(1, Math.min(48, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5))));
+    const steps = Math.max(1, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5)));
     for (let step = 0; step < steps; step++) {
       position.addScaledVector(velocity, delta / steps);
       if (stepUp) {

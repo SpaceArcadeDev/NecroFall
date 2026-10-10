@@ -18,6 +18,21 @@ try {
   assert.equal(daylightAt(-0.38), 0); assert.equal(daylightAt(0.48), 1);
   assert.ok(daylightAt(0) > 0.3 && daylightAt(0) < 0.5 && twilightAt(0) > 0.95);
   console.log('Daylight: 2001 monotonic samples with broad warm twilight and continuous transitions');
+  const { SystemSky } = await server.ssrLoadModule('/src/rendering/Environment/SystemSky.ts');
+  const active = { position: new Vector3() };
+  const sky = new SystemSky({ descriptor: { seed: 23, name: 'Test' }, active: { ...active, descriptor: { seed: 23 } },
+    bodies: [], sunDirection: new Vector3(0, 1, 0), sunPosition: new Vector3(0, 10000, 0), sunRadius: 200, sunColor: '#ffb020' },
+    { horizon: '#91b9ce', sky: '#4087a1', rock: '#737b80' }, 118);
+  sky.update(new Vector3(0, 118, 0));
+  assert.equal(sky.sunTint.value.getHexString(), 'ffffff', 'Daytime sun inherits a yellow star tint');
+  const noonTint = sky.sunTint.value.clone();
+  sky.update(new Vector3(118, 0, 0));
+  assert.ok(sky.sunTint.value.r > 0.95 && sky.sunTint.value.g > 0.5 && sky.sunTint.value.b < 0.2, 'Horizon sun is not yellow');
+  sky.update(new Vector3(0, 1180, 0));
+  assert.ok(sky.sunTint.value.equals(noonTint), 'Atmospheric sun tint persists in orbit');
+  assert.equal(sky.mesh.getObjectByName('system-sun').material.toneMapped, false);
+  sky.dispose();
+  console.log('Sun: bright white daytime disc, yellow horizon disc, white outside the atmosphere');
   const { classicPlanetSeed, rollClassicMatchSeed, basePlanetIndex } = await server.ssrLoadModule('/src/planet/BasePlanetProfile.ts');
   let randomState = 317, previousSeed;
   const profiles = new Set();
@@ -63,7 +78,30 @@ try {
   obstacles.move(feet, velocity, 0.1, 0.4, false);
   assert.ok(feet.x < -0.45, `Tunneled through wall: ${feet.toArray()}`);
   assert.ok(feet.y >= 99.99);
+  for (const travel of [22, 100]) for (const grounded of [false, true]) {
+    feet.set(-4, 100, 0); velocity.set(travel, 0, 0);
+    obstacles.move(feet, velocity, 1, 0.4, grounded);
+    assert.ok(feet.x < -0.45, `Long dash/blink tunneled through wall: ${travel}, ${grounded}, ${feet.toArray()}`);
+  }
   console.log('Mesh collisions: roof support, capsule contact and thin-wall dash passed');
+  const { AbilitySystem } = await server.ssrLoadModule('/src/necrotech/AbilitySystem.ts');
+  const { NECROTECHS } = await server.ssrLoadModule('/src/necrotech/NecrotechData.ts');
+  const caster = { position: new Vector3(-4, 100, 0), velocity: new Vector3(), up: new Vector3(0, 1, 0), grounded: true,
+    necrotech: NECROTECHS.find(definition => definition.skill.id === 'blink'), autoRange: 30, invulnUntil: 0,
+    necrotechColor: 0xffffff, addBuff() {} };
+  const abilities = new AbilitySystem({ envWorld: { obstacles }, isHost: true, now: 0,
+    effects: { ring() {}, burst() {}, beam() {} } });
+  let laneDistance = 0, arrival;
+  abilities.slash = () => {};
+  abilities.line = (_caster, _start, _aim, distance) => { laneDistance = distance; };
+  abilities.aoe = (_caster, position) => { arrival = position.clone(); };
+  for (const mode of ['caster', 'host', 'remote']) {
+    caster.position.set(-4, 100, 0);
+    abilities.run('blink', caster, new Vector3(1, 0, 0), mode);
+    assert.ok(arrival.x < -0.45 && laneDistance < 4, `${mode}: blink damage crossed a wall`);
+    assert.ok(mode === 'caster' ? caster.position.equals(arrival) : caster.position.x === -4);
+  }
+  console.log('Blink Strike: caster, host and remote paths stop arrival and damage before solid scenery');
   obstacles.dispose(); geometry.dispose(); floor.geometry.dispose(); wall.geometry.dispose();
 
   const climbing = new PlanetObstacles(100);
@@ -142,7 +180,7 @@ try {
   assert.ok(water.waterDepthAt(site.direction) <= MAX_WATER_DEPTH);
   console.log(`Shallow basins: ${water.sites.length}, depth <= ${MAX_WATER_DEPTH} m, grounded wake sample passed`);
   const waterPositions = water.mesh.geometry.attributes.position;
-  const networkStart = waterPositions.count - width * (height + 1);
+  const networkStart = water.mesh.userData.networkVertexStart;
   for (let vertex = networkStart; vertex < waterPositions.count; vertex++) {
     const waterPoint = new Vector3().fromBufferAttribute(waterPositions, vertex), direction = waterPoint.clone().normalize();
     const floor = water.renderedRadiusAt(direction);
@@ -165,6 +203,31 @@ try {
   }
   assert.ok(riverWake && seaWake);
   console.log(`Connected water: ${water.mesh.userData.riverVertices} river vertices, ${water.mesh.userData.seaVertices} sea vertices, both support grounded wakes`);
+
+  const { FloatingParticles } = await server.ssrLoadModule('/src/rendering/Environment/FloatingParticles.ts');
+  const { RadioactiveCrystals } = await server.ssrLoadModule('/src/rendering/Environment/RadioactiveCrystals.ts');
+  const { SciFiStructures } = await server.ssrLoadModule('/src/rendering/Environment/SciFiStructures.ts');
+  const mountainMask = (axisX, axisY, axisZ, clearance = 0) => axisY / Math.hypot(axisX, axisY, axisZ) > Math.cos(0.6 + clearance / 118);
+  const filteredWater = new Puddles(surface, planet, noises, clock, undefined, mountainMask);
+  const filteredPositions = filteredWater.mesh.geometry.attributes.position;
+  assert.ok(filteredPositions.count < waterPositions.count, 'Buried water vertices were still generated');
+  for (let vertex = 0; vertex < filteredPositions.count; vertex++) {
+    assert.equal(mountainMask(filteredPositions.getX(vertex), filteredPositions.getY(vertex), filteredPositions.getZ(vertex)), false, 'Water generated beneath a mountain');
+  }
+  assert.equal(filteredWater.waterDepthAt(new Vector3(0, 1, 0)), 0);
+  filteredWater.dispose();
+  const blockedCrystals = new RadioactiveCrystals(surface, planet, clock, 48, undefined, undefined, () => true);
+  assert.equal(blockedCrystals.shardCount, 0); assert.equal(blockedCrystals.mesh, null); blockedCrystals.dispose();
+  const blockedStructures = new SciFiStructures(surface, planet, clock, undefined, undefined, () => true);
+  assert.equal(blockedStructures.siteCount, 0); assert.equal(blockedStructures.group.children.length, 0); blockedStructures.dispose();
+  const filteredParticles = new FloatingParticles(surface, planet, clock, { particleMultiplier: () => 1 },
+    { offsetNode: () => vec2(0) }, new Vector3(0, 1, 0), mountainMask);
+  assert.ok(filteredParticles.count > 0 && filteredParticles.count < 6000);
+  const centers = filteredParticles.mesh.geometry.attributes.aCenter;
+  assert.equal(centers.count, filteredParticles.count * 6);
+  for (let vertex = 0; vertex < centers.count; vertex += 6) assert.equal(mountainMask(centers.getX(vertex), centers.getY(vertex), centers.getZ(vertex)), false);
+  filteredParticles.dispose();
+  console.log('Mountain exclusions: no buried water vertices, crystals, sci-fi sites or particle centers');
 
   const quality = { level: 0, grassSubdivisions: () => 4, events: { on() {} } };
   const nodes = { terrainNode: () => vec4(0.5, 0.8, 0.2, 0.6), colorNode: () => color('#739c52') };

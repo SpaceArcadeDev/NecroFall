@@ -46,6 +46,8 @@ export class SystemSky {
   private readonly atmosphere: Mesh;
   private readonly stars: Points<BufferGeometry, PointsMaterial>;
   private readonly twilight = uniform(0);
+  private readonly sunTint = uniform(new Color('#ffffff'));
+  private readonly horizonSun = new Color('#ffd15c');
   private readonly bodies: { mesh: Mesh; position: Vector3; radius: number }[] = [];
   private readonly relative = new Vector3();
 
@@ -72,7 +74,7 @@ export class SystemSky {
     const sky = mix(mix(color('#02040c'), daySky, this.day), horizonColor, sunset.mul(0.82));
     const cloudColor = mix(mix(color(art.rock).mul(0.025), color(art.horizon).mul(0.95), this.day),
       mix(color('#bd7893'), color('#ffd19a'), towardSun), this.twilight.mul(0.8));
-    const sunTint = mix(color(system.sunColor), color(TWILIGHT_COLOR), this.twilight.mul(0.9));
+    const sunTint = this.sunTint;
     air.colorNode = mix(sky, cloudColor, cloud.mul(0.58))
       .add(sunTint.mul(towardSun.pow(12)).mul(this.twilight).mul(0.28));
     this.atmosphere = new Mesh(new SphereGeometry(1450, 32, 16), air);
@@ -102,7 +104,7 @@ export class SystemSky {
       globe.name = `system-planet:${body.descriptor.key}`;
       this.mesh.add(globe); this.bodies.push({ mesh: globe, position: body.position, radius: body.radius });
     }
-    const sunMaterial = new MeshBasicNodeMaterial({ color: system.sunColor, fog: false, toneMapped: false, depthWrite: true });
+    const sunMaterial = new MeshBasicNodeMaterial({ color: '#ffffff', fog: false, toneMapped: false, depthWrite: true });
     sunMaterial.colorNode = sunTint.mul(mix(2.5, 1.15, this.twilight));
     const sun = new Mesh(new SphereGeometry(1, 40, 24), sunMaterial); sun.name = 'system-sun'; this.mesh.add(sun);
     this.bodies.push({ mesh: sun, position: system.sunPosition, radius: system.sunRadius });
@@ -124,6 +126,7 @@ export class SystemSky {
     const atmosphere = 1 - MathUtils.smoothstep(observer.length(), this.radius * 1.35, this.radius * 3);
     this.day.value = daylightAt(elevation) * atmosphere;
     this.twilight.value = twilightAt(elevation) * atmosphere;
+    this.sunTint.value.set('#ffffff').lerp(this.horizonSun, this.twilight.value);
     this.stars.material.opacity = 1 - MathUtils.smoothstep(this.day.value, 0.02, 0.48);
     this.stars.position.copy(observer); this.stars.scale.setScalar(skyDistance * 1.1); this.stars.updateMatrix();
     this.atmosphere.position.copy(observer); this.atmosphere.scale.setScalar(Math.min(1400, far * 0.95) / 1450); this.atmosphere.updateMatrix();

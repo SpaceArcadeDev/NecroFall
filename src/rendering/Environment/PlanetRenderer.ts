@@ -180,10 +180,12 @@ export class PlanetRenderer {
 
     // 2 — water films FIRST: the basin list feeds the grass suppression slots
     onProgress?.(0.32, 'flooding puddles');
-    this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 });
-    this.group.add(this.puddles.mesh);
     this.rocks = await BaseRocks.create({ ...deps, obstacles: this.obstacles });
     this.group.add(this.rocks.group);
+    const mountainBlocked = (positionX: number, positionY: number, positionZ: number, clearance = 0) =>
+      this.rocks.mountainBlocked(positionX, positionY, positionZ, clearance);
+    this.puddles = new Puddles(deps.surface, deps.generator, deps.noises, deps.time, { direction: deps.spawnDirection, radius: 6 }, mountainBlocked);
+    this.group.add(this.puddles.mesh);
     this.ecology = await BaseEcology.create({ ...deps, obstacles: this.obstacles }, this.rocks, this.puddles);
     this.group.add(this.ecology.group);
     await nextLoop();
@@ -243,7 +245,7 @@ export class PlanetRenderer {
     await nextLoop();
 
     onProgress?.(0.82, 'growing crystals');
-    this.crystals = new RadioactiveCrystals(deps.surface, deps.generator, deps.time, 48, spawnClear, this.obstacles);
+    this.crystals = new RadioactiveCrystals(deps.surface, deps.generator, deps.time, 48, spawnClear, this.obstacles, blocked);
     if (this.crystals.mesh) this.group.add(this.crystals.mesh);
     await nextLoop();
 
@@ -256,6 +258,7 @@ export class PlanetRenderer {
       deps.quality,
       deps.wind,
       deps.spawnDirection,
+      mountainBlocked,
     );
     this.group.add(this.particles.group);
     const weatherSample = createSurfaceSample();
@@ -264,6 +267,7 @@ export class PlanetRenderer {
         radiation: deps.nodes.terrainNode(positionWorld).a,
         anchor: (random, dry) => {
           deps.surface.randomSample(random, weatherSample);
+          if (mountainBlocked(weatherSample.up.x, weatherSample.up.y, weatherSample.up.z)) return null;
           if (dry && (weatherSample.radius < deps.surface.waterLevel + 0.8 || blocked(weatherSample.up.x, weatherSample.up.y, weatherSample.up.z))) return null;
           return weatherSample.up.clone().multiplyScalar(Math.max(weatherSample.radius + 0.06, deps.surface.waterLevel + 0.06));
         },
@@ -301,7 +305,7 @@ export class PlanetRenderer {
     // antenna and energy relay. `?scifi=0` removes the layer for A/B.
     if (this.switches.enabled('scifi')) {
       onProgress?.(0.955, 'recovering wreckage');
-      this.scifi = new SciFiStructures(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles);
+      this.scifi = new SciFiStructures(deps.surface, deps.generator, deps.time, spawnClear, this.obstacles, mountainBlocked);
       this.group.add(this.scifi.group);
       await nextLoop();
     }

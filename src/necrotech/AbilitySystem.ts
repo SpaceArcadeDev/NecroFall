@@ -1028,10 +1028,16 @@ export class AbilitySystem {
         const arrivalR = Math.max(1.6, rad(a) || R * 0.22);
         const travel = Math.max(2, range - arrivalR);
         const start = this.s1.copy(caster.position);
-        const end = this.s2.copy(start).addScaledVector(aim, travel);
-        g.planet.projectToSurface(end);
+        const end = this.s2.copy(start);
+        if (g.envWorld) {
+          g.envWorld.obstacles.move(end, this.s3.copy(aim).multiplyScalar(travel), 1, CONFIG.player.radius, caster.grounded);
+        } else {
+          end.addScaledVector(aim, travel);
+          g.planet.projectToSurface(end);
+        }
+        const distance = end.distanceTo(start);
         // the corridor is cut from the ORIGINAL position, before the caster moves
-        if (applyDmg) this.line(caster, start, aim, travel, laneW(a), 2.2);
+        if (applyDmg && distance > 0.001) this.line(caster, start, this.s3.subVectors(end, start).normalize(), distance, laneW(a), 2.2);
         if (fx) {
           for (let i = 1; i <= 6; i++) {
             const from = start.clone();

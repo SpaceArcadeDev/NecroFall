@@ -14,30 +14,22 @@ your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v
 
 ## Player Avatar
 
-The rounded white avatar follows the supplied Chameleon style with one continuous
-skinned surface and a 19-bone rig
-(including two foot targets) in gameplay, home, customization, colony selection
-and lobbies. Its geometry is loaded once before player/menu construction; each
-avatar owns its geometry, materials and skeleton. Rest joints and accessory
-scales follow the imported anatomy, normalized to a 1.9 m neutral height.
+The original dark blocky avatar keeps its torso, visor, chest panel, shoulder
+blocks, backpack, colors and proportions. Only the head and limbs are rounded.
+Its 19-bone rig (including two foot targets) is shared by gameplay, home,
+customization, colony selection and lobbies. Each avatar owns its geometry,
+materials and skeleton. Accessory sockets retain their original positions and scale.
 Procedural animation blends breathing and head movement, speed-driven running
 with knee/foot IK, airborne jump poses, alternating panic kicks during descent,
-and landing compression. The remodeled head, neck and shoulders have smooth
-transitions. Chest and shoulder glow follows the skin instead of using separate
-floating pads.
+and landing compression. Chest, visor and shoulder blocks glow in the colony color.
 Hats, backpacks and weapons follow head, chest and hand sockets; pets and cosmetic
 effects retain their existing controllers. Dash trails and decoys own separate
 skeletons so their captured poses do not follow the live player.
 
-The source was unrigged, with one arm overhead. Preparation now sculpts a smooth
-rounded head and limbs with blended neck and shoulder joins, retains the original
-white material, and adds topology-aware blended skin weights.
-The generated GLB and provenance/joint metadata live in `src/player/assets/`.
-To regenerate, run `npm run prepare:avatar -- "path/to/source/avatar.glb"`;
-subsequent runs can use the ignored pristine `.asset-sources/player-avatar/`
-backup without an argument. The original download is not modified.
+The earlier imported-avatar assets and offline preparation tooling are retained
+but are not loaded by the player.
 
-`npm run test:player-avatar` checks source identity, normalized skin weights,
+`npm run test:player-avatar` checks original part bounds, colors and sockets, normalized skin weights,
 deformation limits, joint motion, all 93 catalog
 items/effects, five weapons, keyboard running/jumping, remote motion snapshots,
 colony swaps and clone isolation. It captures desktop, portrait and landscape

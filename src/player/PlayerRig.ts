@@ -1,40 +1,16 @@
 import * as THREE from 'three';
-import { MeshStandardNodeMaterial } from 'three/webgpu';
-import { attribute, color as nodeColor, materialColor, materialEmissive, mix, smoothstep } from 'three/tsl';
 import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import avatarUrl from './assets/chameleon.glb?url';
-import anatomy from './assets/chameleon.json';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const asset = await new GLTFLoader().loadAsync(avatarUrl);
-const sourceMesh = asset.scene.getObjectByName('ChameleonAvatar') as THREE.SkinnedMesh;
-if (!sourceMesh?.isSkinnedMesh) throw new Error('Chameleon avatar skin is missing');
-const bodyGeometry = sourceMesh.geometry.clone();
-const regions: number[][] = [[], []];
-const positions = bodyGeometry.attributes.position;
-const normals = bodyGeometry.attributes.normal;
-const triangles = bodyGeometry.index!;
-const chestOrigin = anatomy.joints.find(joint => joint.name === 'Chest')!.position;
-const shoulderOrigin = anatomy.joints.find(joint => joint.name === 'UpperArm_R')!.position;
-const center = new THREE.Vector3();
-const normal = new THREE.Vector3();
-for (let offset = 0; offset < triangles.count; offset += 3) {
-  const vertices = [triangles.getX(offset), triangles.getX(offset + 1), triangles.getX(offset + 2)];
-  center.set(0, 0, 0); normal.set(0, 0, 0);
-  for (const vertex of vertices) {
-    center.x += positions.getX(vertex) / 3; center.y += positions.getY(vertex) / 3; center.z += positions.getZ(vertex) / 3;
-    normal.x += normals.getX(vertex); normal.y += normals.getY(vertex); normal.z += normals.getZ(vertex);
-  }
-  normal.normalize();
-  const chest = (center.x / 0.15) ** 2 + ((center.y - chestOrigin[1] - 0.015) / 0.085) ** 2 < 1 && center.z > 0.07;
-  const shoulder = Math.abs(Math.abs(center.x) - shoulderOrigin[0]) < 0.105
-    && center.y > shoulderOrigin[1] && normal.y > 0;
-  regions[chest || shoulder ? 1 : 0].push(...vertices);
-}
-bodyGeometry.setIndex(regions.flat());
-bodyGeometry.clearGroups();
-bodyGeometry.addGroup(0, regions[0].length, 0);
-bodyGeometry.addGroup(regions[0].length, regions[1].length, 1);
+const restPose: Record<string, [number, number, number]> = {
+  Hips: [0, 0.72, 0], Spine: [0, 0.9, 0], Chest: [0, 1.08, 0], Neck: [0, 1.47, 0], Head: [0, 1.68, 0],
+  UpperArm_L: [-0.45, 1.35, 0], Forearm_L: [-0.45, 1.07, 0], Hand_L: [-0.45, 0.83, 0],
+  UpperArm_R: [0.45, 1.35, 0], Forearm_R: [0.45, 1.07, 0], Hand_R: [0.45, 0.83, 0],
+  Thigh_L: [-0.19, 0.72, 0], Shin_L: [-0.19, 0.36, 0], Foot_L: [-0.19, 0.08, 0],
+  Thigh_R: [0.19, 0.72, 0], Shin_R: [0.19, 0.36, 0], Foot_R: [0.19, 0.08, 0],
+  FootTarget_L: [-0.19, 0.08, 0], FootTarget_R: [0.19, 0.08, 0],
+};
 
 export interface PlayerMotion {
   speed: number;
@@ -70,7 +46,7 @@ export class PlayerRig {
   readonly pack: THREE.Mesh;
   readonly mesh: THREE.SkinnedMesh;
   readonly skeleton: THREE.Skeleton;
-  readonly accent: MeshStandardNodeMaterial;
+  readonly accent: THREE.MeshLambertMaterial;
   state: 'idle' | 'run' | 'jump' | 'fall' = 'idle';
   private readonly targetL = this.joint('FootTarget_L', this.root);
   private readonly targetR = this.joint('FootTarget_R', this.root);
@@ -90,29 +66,54 @@ export class PlayerRig {
 
   constructor(color: number) {
     this.root.name = 'PlayerRig';
-    this.root.userData.avatarRevision = 'chameleon-rig-v1';
-    this.root.userData.sourceSHA256 = anatomy.sourceSHA256;
-    const sourceMaterial = sourceMesh.material as THREE.MeshStandardMaterial;
-    this.accent = new MeshStandardNodeMaterial({ color, emissive: color, emissiveIntensity: 0.8,
-      roughness: sourceMaterial.roughness, metalness: sourceMaterial.metalness });
-    const rest = attribute('position', 'vec3');
-    const chestGlow = smoothstep(0.85, 1, rest.x.div(0.115).pow(2)
-      .add(rest.y.sub(chestOrigin[1] + 0.015).div(0.048).pow(2))).oneMinus().mul(smoothstep(0.085, 0.105, rest.z));
-    const shoulderGlow = smoothstep(0.06, 0.074, rest.x.abs().sub(shoulderOrigin[0]).abs()).oneMinus()
-      .mul(smoothstep(shoulderOrigin[1] + 0.025, shoulderOrigin[1] + 0.045, rest.y))
-      .mul(smoothstep(0.25, 0.45, attribute('normal', 'vec3').y));
-    const glow = chestGlow.max(shoulderGlow);
-    this.accent.colorNode = mix(nodeColor(sourceMaterial.color), materialColor.rgb, glow);
-    this.accent.emissiveNode = materialEmissive.mul(glow);
+    this.root.userData.avatarRevision = 'classic-rounded-rig-v1';
+    this.accent = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.45, flatShading: true });
     const materials = [
-      sourceMaterial.clone(),
+      new THREE.MeshLambertMaterial({ color: 0x2a1f42 }),
+      new THREE.MeshLambertMaterial({ color: 0x171126 }),
       this.accent,
     ];
     this.root.updateMatrixWorld(true);
-    const bones = anatomy.joints.map(joint => this.root.getObjectByName(joint.name) as THREE.Bone);
+    const bones = Object.keys(restPose).map(name => this.root.getObjectByName(name) as THREE.Bone);
     this.skeleton = new THREE.Skeleton(bones);
-    this.mesh = new THREE.SkinnedMesh(bodyGeometry.clone(), materials);
-    this.mesh.name = 'ChameleonAvatar';
+    const surfaces: THREE.BufferGeometry[] = [], materialIndices: number[] = [];
+    const part = (source: THREE.BufferGeometry, position: [number, number, number], material: number, joints: THREE.Bone[]) => {
+      const geometry = source.index ? source : mergeVertices(source);
+      if (geometry !== source) source.dispose();
+      geometry.translate(...position);
+      const count = geometry.attributes.position.count;
+      const indices = new Uint16Array(count * 4), weights = new Float32Array(count * 4);
+      for (let vertex = 0; vertex < count; vertex++) {
+        const height = geometry.attributes.position.getY(vertex);
+        const upper = joints.length === 1 ? 1 : THREE.MathUtils.smoothstep(height, restPose[joints[1].name][1] - 0.08, restPose[joints[1].name][1] + 0.08);
+        const lower = joints.length < 3 ? 1 : THREE.MathUtils.smoothstep(height, restPose[joints[2].name][1], restPose[joints[2].name][1] + 0.12);
+        const shares = [upper, (1 - upper) * lower, (1 - upper) * (1 - lower)];
+        joints.forEach((joint, influence) => {
+          indices[vertex * 4 + influence] = bones.indexOf(joint);
+          weights[vertex * 4 + influence] = shares[influence];
+        });
+      }
+      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(indices, 4));
+      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
+      surfaces.push(geometry); materialIndices.push(material);
+    };
+    part(new THREE.BoxGeometry(0.66, 0.72, 0.42), [0, 1.08, 0], 0, [this.chest]);
+    part(new RoundedBoxGeometry(0.44, 0.42, 0.44, 5, 0.17), [0, 1.68, 0], 0, [this.head]);
+    for (const [thigh, shin, foot, side] of [[this.legL, this.kneeL, this.footL, -1], [this.legR, this.kneeR, this.footR, 1]] as const) {
+      part(new THREE.CapsuleGeometry(0.13, 0.46, 8, 16, 12).scale(1, 1, 0.28 / 0.26), [side * 0.19, 0.36, 0], 1, [thigh, shin, foot]);
+    }
+    for (const [arm, elbow, hand, side] of [[this.armL, this.elbowL, this.handL, -1], [this.armR, this.elbowR, this.handR, 1]] as const) {
+      part(new THREE.CapsuleGeometry(0.09, 0.44, 8, 16, 12).scale(1, 1, 0.2 / 0.18), [side * 0.45, 1.07, 0], 1, [arm, elbow, hand]);
+    }
+    part(new THREE.BoxGeometry(0.5, 0.3, 0.1), [0, 1.16, 0.22], 2, [this.chest]);
+    part(new THREE.BoxGeometry(0.36, 0.14, 0.08), [0, 1.7, 0.22], 2, [this.head]);
+    part(new THREE.BoxGeometry(0.22, 0.22, 0.3), [-0.45, 1.35, 0], 2, [this.armL]);
+    part(new THREE.BoxGeometry(0.22, 0.22, 0.3), [0.45, 1.35, 0], 2, [this.armR]);
+    const geometry = mergeGeometries(surfaces, true)!;
+    geometry.groups.forEach((group, index) => { group.materialIndex = materialIndices[index]; });
+    for (const surface of surfaces) surface.dispose();
+    this.mesh = new THREE.SkinnedMesh(geometry, materials);
+    this.mesh.name = 'ClassicPlayerBody';
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -121,15 +122,12 @@ export class PlayerRig {
     this.headMount.name = 'headMount';
     this.backMount.name = 'backMount';
     this.weaponMount.name = 'weaponMount';
-    this.headMount.scale.setScalar(anatomy.headRadius / 0.244);
     this.head.add(this.headMount);
-    this.backMount.position.set(0, -0.06, anatomy.backDepth);
-    this.backMount.scale.setScalar(0.82);
+    this.backMount.position.set(0, 0.07, -0.28);
     this.chest.add(this.backMount);
-    this.weaponMount.position.set(0, -0.015, 0.10);
+    this.weaponMount.position.set(0, 0, 0.22);
     this.handR.add(this.weaponMount);
-    this.pack = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.15, 4, 12), new THREE.MeshLambertMaterial({ color: 0x34434b }));
-    this.pack.scale.set(1.25, 1, 0.6);
+    this.pack = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.44, 0.2), materials[1]);
     this.pack.name = 'DefaultPack';
     this.backMount.add(this.pack);
     this.solver = new CCDIKSolver(this.mesh, [
@@ -147,9 +145,8 @@ export class PlayerRig {
   private joint(name: string, parent: THREE.Object3D): THREE.Bone {
     const bone = new THREE.Bone();
     bone.name = name;
-    const joint = anatomy.joints.find(joint => joint.name === name)!;
-    const origin = anatomy.joints.find(joint => joint.name === parent.name)?.position ?? [0, 0, 0];
-    bone.position.fromArray(joint.position).sub(new THREE.Vector3().fromArray(origin));
+    const origin = restPose[parent.name] ?? [0, 0, 0];
+    bone.position.fromArray(restPose[name]).sub(new THREE.Vector3().fromArray(origin));
     parent.add(bone);
     return bone;
   }
@@ -207,7 +204,6 @@ export class PlayerRig {
       this.footL.rotation.x = 0.2 + frantic * 0.2 * this.panic;
       this.footR.rotation.x = 0.2 - frantic * 0.2 * this.panic;
     }
-    this.accent.emissiveIntensity = 0.78 + breathe * 0.08;
   }
 
   dispose(): void {

@@ -32,12 +32,11 @@ async function verifyAvatar() {
     if (/THREE\.|WebGPU|shader|GPUValidation/i.test(message.text())) errors.push(message.text());
     else (report.consoleMessages ??= []).push(message.text());
   });
-  await page.goto(server.resolvedUrls.local[0]);
+  await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => Boolean(window.necrofallShell), {}, { timeout: 60000 });
   report.rig = await page.evaluate(async () => {
     const THREE = await import('/avatar-test-three.js');
     const { PlayerRig } = await import('/src/player/PlayerRig.ts');
-    const anatomy = await fetch('/src/player/assets/chameleon.json').then(response => response.json());
     const { buildPlayerModel } = await import('/src/player/Player.ts');
     const { AvatarAccessories, disposeObject } = await import('/src/customization/AvatarAccessories.ts');
     const { defsOf } = await import('/src/customization/AccessoryCatalog.ts');
@@ -48,10 +47,39 @@ async function verifyAvatar() {
     const check = (condition, message) => { if (!condition) throw new Error(message); };
     const rig = new PlayerRig(COLONIES[0].color);
     check(rig.skeleton.bones.length === 19, 'Missing player bones');
-    check(rig.root.userData.avatarRevision === 'chameleon-rig-v1' && rig.root.userData.sourceSHA256 === 'f716aa4e404d26b2baaf612386d0c7cc9730d039b0d9b9eeea8e824ae1b142d1', 'Incorrect source avatar');
+    check(rig.root.userData.avatarRevision === 'classic-rounded-rig-v1', 'Incorrect classic avatar');
     const attributes = rig.mesh.geometry.attributes;
-    check(attributes.position.count === anatomy.vertices, 'Separate geometry added to the skin surface');
-    check(rig.mesh.geometry.groups[1].count > 0, 'Missing skin-following glow regions');
+    const originalParts = [
+      [[0.66, 0.72, 0.42], [0, 1.08, 0], 0],
+      [[0.44, 0.42, 0.44], [0, 1.68, 0], 0],
+      [[0.26, 0.72, 0.28], [-0.19, 0.36, 0], 1],
+      [[0.26, 0.72, 0.28], [0.19, 0.36, 0], 1],
+      [[0.18, 0.62, 0.2], [-0.45, 1.07, 0], 1],
+      [[0.18, 0.62, 0.2], [0.45, 1.07, 0], 1],
+      [[0.5, 0.3, 0.1], [0, 1.16, 0.22], 2],
+      [[0.36, 0.14, 0.08], [0, 1.7, 0.22], 2],
+      [[0.22, 0.22, 0.3], [-0.45, 1.35, 0], 2],
+      [[0.22, 0.22, 0.3], [0.45, 1.35, 0], 2],
+    ];
+    check(rig.mesh.geometry.groups.length === originalParts.length, 'Original body parts changed');
+    rig.mesh.geometry.groups.forEach((group, index) => {
+      const bounds = new THREE.Box3();
+      for (let offset = group.start; offset < group.start + group.count; offset++) {
+        bounds.expandByPoint(new THREE.Vector3().fromBufferAttribute(attributes.position, rig.mesh.geometry.index.getX(offset)));
+      }
+      const [size, center, material] = originalParts[index];
+      check(bounds.getSize(new THREE.Vector3()).distanceTo(new THREE.Vector3(...size)) < 0.0001, `Original part ${index} resized`);
+      check(bounds.getCenter(new THREE.Vector3()).distanceTo(new THREE.Vector3(...center)) < 0.0001, `Original part ${index} moved`);
+      check(group.materialIndex === material, `Original part ${index} recolored`);
+      if (index === 0 || index >= 6) check(group.count === 36, `Original block ${index} remodeled`);
+      else check(group.count > 100, `Part ${index} not rounded`);
+    });
+    check(rig.mesh.material[0].color.getHex() === 0x2a1f42 && rig.mesh.material[1].color.getHex() === 0x171126, 'Original dark colors changed');
+    check(rig.accent.color.getHex() === COLONIES[0].color && rig.accent.emissiveIntensity === 0.45, 'Original accent changed');
+    check(rig.pack.geometry.type === 'BoxGeometry' && rig.pack.geometry.parameters.width === 0.4 && rig.pack.geometry.parameters.height === 0.44 && rig.pack.geometry.parameters.depth === 0.2, 'Original backpack remodeled');
+    for (const [socket, center] of [[rig.headMount, [0, 1.68, 0]], [rig.backMount, [0, 1.15, -0.28]], [rig.weaponMount, [0.45, 0.83, 0.22]]]) {
+      check(socket.getWorldPosition(new THREE.Vector3()).distanceTo(new THREE.Vector3(...center)) < 0.0001 && socket.scale.equals(new THREE.Vector3(1, 1, 1)), 'Original accessory fit changed');
+    }
     let blendedVertices = 0;
     for (let vertex = 0; vertex < attributes.position.count; vertex++) {
       let sum = 0;
@@ -63,9 +91,9 @@ async function verifyAvatar() {
       check(Math.abs(sum - 1) < 0.0001, 'Unnormalized skin weights');
       if (attributes.skinWeight.getY(vertex) > 0) blendedVertices++;
     }
-    check(blendedVertices > 1000, 'Avatar has no smooth joint weights');
+    check(blendedVertices > 100, 'Avatar has no smooth joint weights');
     const triangles = rig.mesh.geometry.index.array;
-    const bodyIndices = rig.mesh.geometry.groups[0].count;
+    const bodyIndices = triangles.length;
     const restPoints = Array.from({ length: attributes.position.count }, (_, vertex) => new THREE.Vector3().fromBufferAttribute(attributes.position, vertex));
     const posedPoints = restPoints.map(point => point.clone());
     const motion = { speed: 0, grounded: true, verticalSpeed: 0 };
@@ -86,7 +114,7 @@ async function verifyAvatar() {
         knees.push(rig.kneeL.rotation.x);
         thighs.push(rig.legL.rotation.x);
         if (frame % 30 === 0) {
-          points.push(rig.mesh.getVertexPosition(2000, new THREE.Vector3()).toArray());
+          points.push(rig.mesh.getVertexPosition(Math.floor(attributes.position.count / 2), new THREE.Vector3()).toArray());
           posedPoints.forEach((point, vertex) => rig.mesh.getVertexPosition(vertex, point));
           for (let offset = 0; offset < bodyIndices; offset += 3) for (let corner = 0; corner < 3; corner++) {
             const first = triangles[offset + corner], second = triangles[offset + (corner + 1) % 3];
@@ -217,7 +245,7 @@ async function verifyAvatar() {
     const pixels = await difference(glowing, await page.screenshot());
     assert.ok(pixels > 200, `Colony ${colony}: emissive pads not visible`);
     report.colors.push({ colony, pixels });
-    await page.evaluate(() => { window.avatarTest.avatar.rig.accent.emissiveIntensity = 0.8; });
+    await page.evaluate(() => { window.avatarTest.avatar.rig.accent.emissiveIntensity = 0.45; });
   }
   await page.evaluate(async () => {
     const test = window.avatarTest;
@@ -269,7 +297,7 @@ async function verifyAvatar() {
         preview.scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
         let extent = 0;
         preview.scene.traverse(object => {
-          if (object.name !== 'ChameleonAvatar') return;
+          if (object.name !== 'ClassicPlayerBody') return;
           const point = object.position.clone();
           for (let vertex = 0; vertex < object.geometry.attributes.position.count; vertex++) {
             object.getVertexPosition(vertex, point).applyMatrix4(object.matrixWorld).project(camera);
@@ -279,7 +307,7 @@ async function verifyAvatar() {
         return { rigs, extent, width: preview.canvas.width, height: preview.canvas.height };
       });
       assert.equal(result.rigs.length, ['colony', 'lobby'].includes(mode) ? 3 : 1, `${mode}: missing shared avatars`);
-      assert.ok(result.rigs.every(revision => revision === 'chameleon-rig-v1'));
+      assert.ok(result.rigs.every(revision => revision === 'classic-rounded-rig-v1'));
       assert.ok(result.extent < 1, `${mode}/${viewport.width}: clipped body (${result.extent})`);
       const canvas = page.locator('.sel-preview-canvas');
       const visible = await canvas.screenshot();
@@ -344,12 +372,12 @@ async function verifyAvatar() {
     check(Number.isFinite(remote.parts.rig.legL.rotation.x), 'Legacy snapshot broke rig');
     const rig = player.parts.rig;
     player.spawnGhost(0.3, 0.3);
-    const ghost = player.ghostPool[0].obj.getObjectByName('ChameleonAvatar');
+    const ghost = player.ghostPool[0].obj.getObjectByName('ClassicPlayerBody');
     check(ghost.skeleton !== rig.skeleton && ghost.skeleton.bones[0] !== rig.skeleton.bones[0], 'Dash ghost shares live bones');
     const frozenGhost = ghost.skeleton.bones.map(bone => bone.quaternion.toArray());
     const decoy = new Decoy('avatar-decoy', player, 1, player.position, player.up, player.facing);
     decoy.attach(game.scene, player.facing);
-    const echo = decoy.ghost.getObjectByName('ChameleonAvatar');
+    const echo = decoy.ghost.getObjectByName('ClassicPlayerBody');
     check(echo.skeleton !== rig.skeleton, 'Decoy shares skeleton');
     rig.update(1 / 60, { speed: 8, grounded: false, verticalSpeed: -14 });
     check(JSON.stringify(frozenGhost) === JSON.stringify(ghost.skeleton.bones.map(bone => bone.quaternion.toArray())), 'Dash pose follows live animation');

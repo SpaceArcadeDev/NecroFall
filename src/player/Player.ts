@@ -136,6 +136,7 @@ interface PlayerDot {
   max: number;
   stacks: number;
   label: string;
+  stackable?: boolean;
 }
 
 /** One status icon for the head plate above the player. */
@@ -544,6 +545,7 @@ export class Player {
   buffs: Buff[] = [];
   /** Stacking burn / toxin effects taken from Necrophages. */
   dots: PlayerDot[] = [];
+  private burnVisualT = 0;
   private dotNumT = 0;
   private dotAccum = 0;
   /** Acquisition order for the status row, so icons keep the order they were picked up in. */
@@ -826,19 +828,19 @@ export class Player {
    * Adds a stacking burn / toxin. Re-applying the same kind refreshes the duration and adds a
    * stack (max 5) worth 45% of the new effect — the same rule the Necrophages use.
    */
-  addDot(kind: 'burn' | 'toxin', dps: number, dur: number, label = ''): void {
+  addDot(kind: 'burn' | 'toxin', dps: number, dur: number, label = '', stack = true): void {
     const total = kind === 'burn' ? 3.2 : 4.6;
     const life = Math.max(dur, total * 0.6);
     const name = label || (kind === 'burn' ? 'Burning' : 'Toxin');
-    const existing = this.dots.find(d => d.kind === kind);
-    if (existing && this.dots.length < 5) {
-      existing.dps = Math.max(existing.dps, dps) + dps * 0.45;
+    const existing = this.dots.find(d => d.kind === kind && (stack ? d.stackable !== false : d.label === name));
+    if (existing && (!stack || this.dots.length < 5)) {
+      existing.dps = Math.max(existing.dps, dps) + (stack ? dps * 0.45 : 0);
       existing.t = Math.max(existing.t, life);
       existing.max = Math.max(existing.max, life);
-      existing.stacks = Math.min(5, existing.stacks + 1);
+      existing.stacks = Math.min(5, existing.stacks + (stack ? 1 : 0));
       return;
     }
-    this.dots.push({ kind, dps, t: life, max: life, stacks: 1, label: name });
+    this.dots.push({ kind, dps, t: life, max: life, stacks: 1, label: name, stackable: stack });
     if (this.dots.length > 5) this.dots.shift();
   }
 
@@ -1642,6 +1644,7 @@ export class Player {
     if (wishLen > 0.001) _wish.multiplyScalar(1 / wishLen);
 
     const environmentSpeed = g.envWorld?.ecology.hazards.apply(this, dt) ?? 1;
+    if (!this.isInvulnerable() && g.envWorld?.ecology.touchesLava(this.position)) this.addDot('burn', 12, 2.5, 'Lava burn', false);
     const slope = planet.slopeAt(this.position);
     const slopeMul = 1 / (1 + Math.max(0, slope - 0.3) * 1.1);
     // dash momentum raises the target speed itself, so the body is driven to hold the extra pace
@@ -1866,6 +1869,11 @@ export class Player {
       total += d.dps;
     }
     if (total <= 0 || !this.alive) return;
+    this.burnVisualT = Math.max(0, this.burnVisualT - dt);
+    if (this.burnVisualT === 0 && this.dots.some(effect => effect.label === 'Lava burn')) {
+      this.burnVisualT = 0.12;
+      this.game.effects.flameBody(this.position, this.up, 0.65, 0xff7024, { count: 5, size: 0.22, speed: 1.4, life: 0.55 });
+    }
     this.applyDotDamage(total * dt, dt);
   }
 

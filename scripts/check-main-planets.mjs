@@ -214,6 +214,114 @@ async function coastalWater(page, name) {
   return { ...state, changedPixels, peakChange, wavePixels, shorePixels, movedPixels };
 }
 
+async function atmosphereVolumes(page, name) {
+  const results = [];
+  for (const kind of name.startsWith('emberwake') ? ['smoke', 'fog'] : ['fog']) {
+    const state = await page.evaluate(async kind => {
+      const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+      const game = window.necrofall, world = game.envWorld, camera = game.cam.camera;
+      const mistIds = world.ecology.features.filter(feature => feature.kind === 'mist').map(feature => feature.id);
+      const clouds = world.ecology.group.children.filter(object => kind === 'smoke' ? object.name.endsWith(':smoke') : mistIds.includes(object.name));
+      clouds.sort((first, second) => new Vector3().setFromMatrixPosition(second.matrix).normalize().dot(world.deps.system.sunDirection)
+        - new Vector3().setFromMatrixPosition(first.matrix).normalize().dot(world.deps.system.sunDirection));
+      if (!clouds.length) throw new Error(`Missing ${kind} volumes`);
+      const cloud = clouds[0], center = new Vector3().setFromMatrixPosition(cloud.matrix), up = center.clone().normalize();
+      const across = up.clone().cross(new Vector3(0, 1, 0)).normalize(), scale = new Vector3().setFromMatrixScale(cloud.matrix);
+      window.volumeState = { cloud, update: game.update, tick: game.ticker.update, time: world.deps.time.value,
+        position: camera.position.clone(), rotation: camera.quaternion.clone(), up: camera.up.clone() };
+      game.update = () => {}; game.ticker.update = () => game.rendering.render(0); world.deps.time.value = 120;
+      camera.position.copy(center).addScaledVector(across, kind === 'smoke' ? 46 : 48).addScaledVector(up, 7);
+      camera.position.setLength(Math.max(camera.position.length(), world.deps.surface.radiusAt(camera.position.clone().normalize()) + 10));
+      camera.up.copy(up); camera.lookAt(center); camera.updateMatrixWorld(true);
+      world.update(center, camera); game.lighting.update(center);
+      cloud.visible = false;
+      return { count: clouds.length, scale: scale.toArray(), vents: world.ecology.group.children.filter(object => object.name.endsWith(':lava')).length };
+    }, kind);
+    if (kind === 'smoke') assert.equal(state.count, state.vents);
+    else assert.ok(state.scale[0] > 20 && state.scale[2] > 14, JSON.stringify(state));
+    const off = await sharp(await capture(page, `${name}-${kind}-off`)).removeAlpha().raw().toBuffer();
+    await page.evaluate(() => { window.volumeState.cloud.visible = true; });
+    const on = await sharp(await capture(page, `${name}-${kind}-1280`)).removeAlpha().raw().toBuffer();
+    const visible = on.reduce((sum, value, index) => sum + (Math.abs(value - off[index]) > 5 ? 1 : 0), 0);
+    assert.ok(visible > 800, `${name}: ${kind} not visible (${visible} channels)`);
+    await page.evaluate(kind => { window.necrofall.envWorld.deps.time.value += kind === 'smoke' ? 2 : 8; window.volumeState.cloud.visible = false; }, kind);
+    const laterOff = await sharp(await capture(page, `${name}-${kind}-later-off`)).removeAlpha().raw().toBuffer();
+    await page.evaluate(() => { window.volumeState.cloud.visible = true; });
+    const laterOn = await sharp(await capture(page, `${name}-${kind}-later-on`)).removeAlpha().raw().toBuffer();
+    const moved = on.reduce((sum, value, index) => sum + (Math.abs(laterOn[index] - laterOff[index] - value + off[index]) > 2 ? 1 : 0), 0);
+    assert.ok(moved > 100, `${name}: ${kind} is not moving (${moved} channels)`);
+    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport); await capture(page, `${name}-${kind}-${viewport.width}`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(() => {
+      const saved = window.volumeState, game = window.necrofall, camera = game.cam.camera;
+      game.update = saved.update; game.ticker.update = saved.tick; game.envWorld.deps.time.value = saved.time;
+      camera.position.copy(saved.position); camera.quaternion.copy(saved.rotation); camera.up.copy(saved.up); camera.updateMatrixWorld(true);
+    });
+    results.push({ kind, ...state, visible, moved });
+  }
+  console.log(`${name}: volumetric effects ${JSON.stringify(results)}`);
+  return results;
+}
+
+async function lavaContact(page) {
+  const result = await page.evaluate(async () => {
+    const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const game = window.necrofall, world = game.envWorld, player = game.localPlayer;
+    const saved = { update: game.update, tick: game.ticker.update, position: player.position.clone(), hp: player.hp, shield: player.shield,
+      invuln: player.invulnUntil, taken: player.mods.takenMul, flame: game.effects.flameBody, lastDamage: player.lastDamageAt, shieldRegen: player.shieldRegenT };
+    game.update = () => {}; game.ticker.update = () => game.rendering.render(0);
+    let foot = null, flameCalls = 0;
+    for (let sample = 0; sample < 4096; sample++) {
+      const vertical = 1 - 2 * (sample + 0.5) / 4096, radial = Math.sqrt(1 - vertical * vertical), angle = sample * 2.399963229728653;
+      const point = new Vector3(radial * Math.cos(angle), vertical, radial * Math.sin(angle));
+      point.multiplyScalar(world.deps.surface.radiusAt(point));
+      if (world.puddles.touchesLava(point)) {
+        player.position.copy(point); player.up.copy(point).normalize();
+        if (!game.bases.healPad(player)) { foot = point; break; }
+      }
+    }
+    if (!foot) throw new Error('No reachable surface lava');
+    game.effects.flameBody = function (...args) { flameCalls++; return saved.flame.apply(this, args); };
+    player.cleanseDebuffs(); player.hp = 100; player.shield = 0; player.invulnUntil = 0; player.dashTimer = 0;
+    player.lastDamageAt = game.now; player.shieldRegenT = 100;
+    player.frozen = false; player.mods.takenMul = 1; game.input.moveX = 0; game.input.moveY = 0;
+    const run = (point, frames, grounded = true) => {
+      for (let frame = 0; frame < frames; frame++) {
+        player.position.copy(point); player.up.copy(point).normalize(); player.velocity.set(0, 0, 0); player.grounded = grounded;
+        player.updateLocal(1 / 60);
+      }
+    };
+    run(foot, 60);
+    const damage = 100 - player.hp, burns = player.dots.filter(effect => effect.label === 'Lava burn').map(effect => ({ ...effect }));
+    player.addDot('burn', 3, 0.5, 'Other fire');
+    const separateBurn = player.dots.length === 2 && player.dots.find(effect => effect.label === 'Lava burn').dps === 12;
+    const airborne = foot.clone().addScaledVector(foot.clone().normalize(), 12);
+    run(airborne, 180, false);
+    const expired = player.dots.length === 0, afterExpiry = player.hp;
+    run(airborne, 30, false);
+    const airborneSafe = player.hp === afterExpiry;
+    const vent = world.ecology.group.children.find(object => object.name === 'lava-vents:lava');
+    if (!vent) throw new Error('No volcano lava');
+    const ventPoint = new Vector3(0, 2.5, 0).applyMatrix4(vent.matrix);
+    const ventContact = world.ecology.touchesLava(ventPoint);
+    const rimSafe = !world.ecology.touchesLava(new Vector3(2.4, 2.9, 0).applyMatrix4(vent.matrix));
+    run(ventPoint, 1);
+    const ventBurn = player.dots.some(effect => effect.label === 'Lava burn');
+    player.cleanseDebuffs(); player.hp = saved.hp; player.shield = saved.shield; player.invulnUntil = saved.invuln; player.mods.takenMul = saved.taken;
+    player.lastDamageAt = saved.lastDamage; player.shieldRegenT = saved.shieldRegen;
+    player.position.copy(saved.position); player.up.copy(saved.position).normalize(); player.velocity.set(0, 0, 0);
+    game.effects.flameBody = saved.flame; game.update = saved.update; game.ticker.update = saved.tick;
+    return { damage, burns, expired, airborneSafe, ventContact, rimSafe, ventBurn, flameCalls, separateBurn };
+  });
+  assert.ok(result.damage > 11.5 && result.damage < 12.5, JSON.stringify(result));
+  assert.equal(result.burns.length, 1); assert.equal(result.burns[0].dps, 12); assert.equal(result.burns[0].stacks, 1);
+  assert.ok(result.expired && result.airborneSafe && result.ventContact && result.rimSafe && result.ventBurn && result.flameCalls > 0 && result.separateBurn, JSON.stringify(result));
+  console.log(`Lava: pool/crater burns, fixed 12 DPS, visible flames, expiry and airborne/rim guards passed`);
+  return result;
+}
+
 async function nightStars(page, name) {
   await inspect(page, 'night');
   await page.evaluate(() => {
@@ -421,10 +529,12 @@ try {
       assert.ok(night.day < 0.1 && night.sun < 0.1);
       await capture(page, `${id}-night`);
       const starPixels = await nightStars(page, id);
+      const volumes = ['emberwake', 'cinderbloom'].includes(id) ? await atmosphereVolumes(page, id) : undefined;
+      const lava = id === 'emberwake' ? await lavaContact(page) : undefined;
       const hazards = id === 'saffron-waste' ? await hazardInteractions(page) : undefined;
       const coast = ['saffron-waste', 'glass-tide', 'cinderbloom'].includes(id) ? await coastalWater(page, id) : undefined;
       const trails = id === 'cinderbloom' ? await surfaceTrails(page) : undefined;
-      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast });
+      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast, lava, volumes });
       console.log(`${id}: freeroam, movement, base recipes, fixed sun and twilight passed`);
       assert.deepEqual(errors, [], `${id}: runtime errors`);
     } catch (error) {
@@ -564,7 +674,7 @@ try {
   if (!selected && !classicOnly) {
     for (const variant of [
       { name: 'mobile', id: 'mycelial-night', viewport: { width: 390, height: 844 }, query: '', hasTouch: true },
-      { name: 'webgl', id: 'frostwound', viewport: { width: 1280, height: 800 }, query: '?backend=webgl', hasTouch: false },
+      { name: 'webgl', id: 'emberwake', viewport: { width: 1280, height: 800 }, query: '?backend=webgl', hasTouch: false },
     ]) {
       const page = await browser.newPage({ viewport: variant.viewport, hasTouch: variant.hasTouch });
       const errors = [];
@@ -580,7 +690,10 @@ try {
         await inspect(page, 'day'); await capture(page, 'mobile-landscape');
       }
       const backend = await page.evaluate(() => window.necrofall.rendering.backend);
-      if (variant.name === 'webgl') assert.equal(backend, 'webgl');
+      if (variant.name === 'webgl') {
+        assert.equal(backend, 'webgl');
+        await atmosphereVolumes(page, 'emberwake-webgl'); await lavaContact(page);
+      }
       assert.deepEqual(errors, [], variant.name);
       reports.push({ variant: variant.name, base: variant.id, backend });
       console.log(`${variant.name}: nonblank surface and whole-planet views passed`);

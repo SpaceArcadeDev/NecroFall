@@ -15,13 +15,15 @@ export class BaseEcology {
   readonly features: { id: string; name: string; kind: string; count: number; sites: number[][] }[] = [];
   mushroomCount = 0;
   readonly hazards: PlanetHazards;
+  private readonly lavaVents: Matrix4[] = [];
+  private readonly lavaPoint = new Vector3();
 
-  private constructor(radiusAt: (direction: Vector3) => number, time: () => number) {
+  private constructor(radiusAt: (direction: Vector3) => number, time: () => number, private readonly water: Puddles) {
     this.hazards = new PlanetHazards(radiusAt, time);
   }
 
   static async create(deps: PlanetWorldDependencies, rocks: BaseRocks, water: Puddles): Promise<BaseEcology> {
-    const result = new BaseEcology(createRenderedRadiusAt(deps.generator), () => deps.time.value);
+    const result = new BaseEcology(createRenderedRadiusAt(deps.generator), () => deps.time.value, water);
     const art = deps.generator.archetype.art!;
     result.group.name = 'base-ecology';
     for (const [index, spec] of BASE_FEATURES[art.id].entries()) {
@@ -126,6 +128,12 @@ export class BaseEcology {
           const lava = new Mesh(new CircleGeometry(1.7, 32).rotateX(-Math.PI / 2).translate(0, 2.52, 0),
             new SurfaceMaterial({ colorNode: mix(color('#992b2c'), color('#ffbf46'), sin(positionWorld.x.mul(2).add(deps.time)).mul(0.5).add(0.5)), glowNode: color('#ff832b').mul(0.5), hasLightBounce: false }));
           lava.matrix.copy(frame); lava.matrixAutoUpdate = false; lava.name = `${spec.id}:lava`; this.group.add(lava);
+          this.lavaVents.push(frame.clone().invert());
+          const smokeSize = new Vector3(5.5, 11, 5.5);
+          const smokeFrame = frame.clone().multiply(new Matrix4().makeTranslation(0, 2.52 + smokeSize.y, 0)).scale(smokeSize);
+          const smoke = new Mesh(new SphereGeometry(1, 24, 16), volumeMaterial(art, new Vector3(), smokeSize, deps.time, smokeFrame.clone().invert(), true));
+          smoke.matrix.copy(smokeFrame); smoke.matrixAutoUpdate = false; smoke.name = `${spec.id}:smoke`; smoke.renderOrder = 27;
+          this.group.add(smoke);
         } else if (aquatic) {
           const profile = [[5, 0.04], [3, 0.025], [1.5, 0.01], [0.4, 0], [0, 0]].map(([radius, height]) => new Vector2(radius, height));
           const material = new SurfaceMaterial({ colorNode: mix(color(art.water).mul(0.55), color(art.horizon), smoothstep(0.7, 0.98, sin(positionLocal.x.atan(positionLocal.z).mul(4).add(positionLocal.xz.length().mul(3)).sub(deps.time.mul(1.7))))), hasLightBounce: false });
@@ -144,7 +152,7 @@ export class BaseEcology {
           material.positionNode = positionLocal.add(vec3(sin(height.mul(VORTEX.bend).add(deps.time.mul(VORTEX.frequency))).mul(height).mul(VORTEX.sway), 0, 0));
           const mesh = new Mesh(new LatheGeometry(profile, 36), material); mesh.matrix.copy(frame); mesh.matrixAutoUpdate = false; mesh.name = spec.id; this.group.add(mesh);
         } else {
-          const size = new Vector3(13, spec.id === 'fumaroles' ? 6 : 2.8, 9);
+          const size = spec.kind === 'mist' ? new Vector3(22, spec.id === 'fumaroles' ? 8 : 4.2, 15) : new Vector3(13, 2.8, 9);
           const volumeFrame = frame.clone().multiply(new Matrix4().makeTranslation(0, size.y * 0.7, 0)).scale(size);
           const material = volumeMaterial(art, new Vector3(), size, deps.time, volumeFrame.clone().invert());
           const cloud = new Mesh(new SphereGeometry(1, 24, 12), material);
@@ -170,6 +178,15 @@ export class BaseEcology {
   }
 
   setVisible(visible: boolean): void { this.group.visible = visible; }
+
+  touchesLava(position: Vector3): boolean {
+    if (this.water.touchesLava(position)) return true;
+    return this.lavaVents.some(inverse => {
+      const point = this.lavaPoint.copy(position).applyMatrix4(inverse);
+      return point.y >= 1.35 && point.y <= 2.57 && point.x * point.x + point.z * point.z < 1.7 * 1.7;
+    });
+  }
+
   dispose(): void {
     this.group.traverse(object => {
       if (!(object instanceof Mesh)) return;

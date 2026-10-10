@@ -12,14 +12,12 @@
  * depth/shore values follow the visible mesh — the waterline always sits where
  * the camera's ground meets the water, never buried inside unseen geometry.
  *
- * The surface itself ports folio's technique 1:1 — the water is a BLURRED
- * SCREEN MIRROR (viewportSharedTexture + hashBlur) with white foam details
- * (shore line + wind ripple rings), blended in only where the ground sits
- * under the water level (deep → pure mirror, shore → foam).
+ * Liquid water blends a cool tint with lightly refracted scene color and
+ * pale shoreline foam, short wind crests and walking ripple rings.
  *
  * TRAIL RIPPLES: folio's Trails system feeds a position data-texture into the
  * shader — the same pattern drives the walking wake here. While the player
- * wades, a ripple centre is dropped into a 16-slot data texture every 0.45 m;
+ * wades, a ripple centre is dropped into a 16-slot data texture every 0.65 m;
  * the shader expands each into a travelling foam ring (radius = age × speed,
  * width grows, fades with age and reach).
  */
@@ -35,9 +33,9 @@ import {
   max,
   min,
   mix,
+  mx_noise_float,
   positionWorld,
   screenUV,
-  sin,
   smoothstep,
   texture,
   uniform,
@@ -254,9 +252,9 @@ export class Puddles {
     const waveNormal = up.sub(slope.sub(up.mul(slope.dot(up)))).normalize();
     const viewDirection = cameraPosition.sub(positionWorld).normalize();
     const fresnel = waveNormal.dot(viewDirection).abs().oneMinus().pow(4);
-    const alongCrest = positionWorld.dot(waveDirectionB).mul(1.25).add(phaseA.mul(0.5).sin().mul(1.4));
+    const crestBreaks = mx_noise_float(positionWorld.mul(0.6).sub(waveDirectionA.mul(timeUniform.mul(0.08))));
     const waveDetail = smoothstep(0.91, 0.99, phaseA.sin())
-      .mul(smoothstep(0.15, 0.65, alongCrest.sin())).mul(smoothstep(0.035, 0.16, depth))
+      .mul(smoothstep(-0.05, 0.25, crestBreaks)).mul(smoothstep(0.035, 0.16, depth))
       .mul(0.48).mul(this.waveStrength);
     const shoreline = smoothstep(0.008, 0.07, depth).oneMinus()
       .mul(smoothstep(-0.035, 0.008, depth)).mul(0.8).mul(this.shoreStrength);
@@ -450,6 +448,13 @@ export class Puddles {
 
   surfaceRadiusAt(direction: THREE.Vector3): number {
     return this.renderedRadiusAt(direction) + Math.max(0, this.waterDepthAt(direction));
+  }
+
+  touchesLava(position: THREE.Vector3): boolean {
+    if (this.generator.archetype.art!.waterSurface !== 'lava') return false;
+    const direction = this.trailScratch.copy(position).normalize();
+    const depth = this.waterDepthAt(direction), height = position.length() - this.renderedRadiusAt(direction);
+    return depth > 0.025 && height >= -0.35 && height <= depth + 0.05;
   }
 
   /**

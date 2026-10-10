@@ -12,7 +12,7 @@ import { readSwitches } from '../rendering/DebugSwitches';
 import { Rand, clamp, nowSec, orientToSurface, randomUnitVector, tangentBasis } from '../utils/Utils';
 import { buildCreature, CreatureRig } from './EnemyModels';
 import { SwarmDirector } from './SwarmDirector';
-import { MegaVisual } from './MegaVisual';
+import { ImportedVisual, importedModelFor, type ImportedModelId } from './imported/ImportedVisual';
 import {
   ABILITY_META,
   AbilityId,
@@ -230,6 +230,16 @@ export function enemyPowerScale(elapsed: number): { hp: number; dmg: number } {
 /** Hunters never ride the curve below this many seconds — they START at their 5:00 stats. */
 const HUNTER_CURVE_FLOOR = 300;
 
+/**
+ * How tall an imported base model stands for a body of this radius (world units, before the
+ * enemy group's own mitosis/elite scale). The parasite towers — it IS the Nexus Overseer's
+ * megafauna silhouette — while the crawler matches the procedural crawler's proportions (its
+ * 1.65 : 1 length-to-height gives it roughly the same footprint the generated rig occupies).
+ */
+export function importedHeight(model: ImportedModelId, radius: number): number {
+  return model === 'parasite' ? Math.max(5, radius * 1.7) : Math.max(0.8, radius * 2.5);
+}
+
 interface Dot {
   kind: StatusKind;
   dps: number;
@@ -307,8 +317,13 @@ export class Enemy {
   readonly netVel = new THREE.Vector3();
   group = new THREE.Group();
   rig: CreatureRig | null = null;
-  megaVisual: MegaVisual | null = null;
-  private megaLoading: THREE.Group | null = null;
+  /**
+   * The IMPORTED base model standing in for this body's procedural rig (the Nexus Overseer's
+   * Mega Necrophage, crawler-species Necrophages), once its asset has loaded. `rig` keeps
+   * existing underneath as the pooled fallback and owns the group the body is placed by.
+   */
+  imported: ImportedVisual | null = null;
+  private importedLoading: THREE.Group | null = null;
   /** White hit-flash amount, decayed every frame. */
   flashAmt = 0;
   /**
@@ -434,7 +449,7 @@ export class Enemy {
 
   setGenome(genome: EnemyGenome): void {
     if (this.rig && this.genome === genome) return; // pooled instance already built
-    this.megaVisual?.dispose(); this.megaVisual = null;
+    this.imported?.dispose(); this.imported = null;
     this.genomeIdx = genome.idx;
     this.genome = genome;
     this.isBoss = genome.tier === 'boss' || genome.tier === 'nexus';
@@ -483,16 +498,22 @@ export class Enemy {
     this.ensureStatusFx();
   }
 
-  ensureMegaVisual(): void {
-    if (this.genome.tier !== 'nexus' || this.megaVisual || this.megaLoading === this.group) return;
+  /**
+   * Swap the procedural body for this genome's imported base model, when it owns one. The load
+   * is async, so the procedural rig keeps drawing until the asset is ready (and forever, if the
+   * import fails); a recycled body simply never swaps because `group` no longer matches.
+   */
+  ensureImportedVisual(): void {
+    const model = importedModelFor(this.genome);
+    if (!model || this.imported || this.importedLoading === this.group) return;
     const group = this.group;
-    this.megaLoading = group;
-    void MegaVisual.create(Math.max(5, this.radius * 1.7)).then(visual => {
+    this.importedLoading = group;
+    void ImportedVisual.create(model, importedHeight(model, this.radius)).then(visual => {
       if (!this.alive || group !== this.group) { visual.dispose(); return; }
       for (const child of group.children) if (child !== this.fxToxin) child.visible = false;
-      group.add(visual.root); this.megaVisual = visual;
-    }).catch(error => console.error('[Mega Necrophage] Imported visual failed', error)).finally(() => {
-      if (this.megaLoading === group) this.megaLoading = null;
+      group.add(visual.root); this.imported = visual;
+    }).catch(error => console.error(`[Imported base model] '${model}' visual failed`, error)).finally(() => {
+      if (this.importedLoading === group) this.importedLoading = null;
     });
   }
 
@@ -2284,7 +2305,7 @@ export class Enemy {
     // The gait solver owns the whole walk cycle (plan §20/§21): the locomotion class picks the
     // style, the behaviour profile still scales it, and secondary motion (breathing, sac pulse,
     // tail sway, head bearing) rides on top. Zero per-species animation data.
-    if (!this.megaVisual) animateEnemyRig(rig, this.genome, this.animPhase, moving, dt);
+    if (!this.imported) animateEnemyRig(rig, this.genome, this.animPhase, moving, dt);
 
     const targetAggro = this.targetId ? 1 : 0;
     this.aggro += (targetAggro - this.aggro) * 0.08;
@@ -2295,6 +2316,9 @@ export class Enemy {
     // STUNNED outranks it. A stunned boss is a window the player has to ACT on, so the body turns
     // the same YELLOW as its plate for exactly as long as it cannot fight back — that is
     // the whole point of the state, and it must beat the enraged red on a boss that is both.
+    //
+    // The IMPORTED bodies (Mega Necrophage, crawler) carry the same states through `uState` —
+    // see `ImportedVisual.update` — so this procedural wash only drives the generated rig.
     if (this.isBoss && this.rigBaseGlow && this.rigBaseAccent) {
       const broken = this.stunnedT > 0;
       const k = broken ? 0.9 : this.enraged ? 0.85 : this.bossState === 'enrage_transition' ? 0.6 : 0;
@@ -2312,7 +2336,10 @@ export class Enemy {
     // A stunned boss droops the whole body: the punish window has to be legible in the world,
     // not only on the health plate. Enraged bosses burn hotter than anything else on the field.
     const stunSag = this.stunnedT > 0 ? 1 : 0;
-    rig.carapace.uAggro.value = this.aggro + (this.guardT > 0 ? 1.2 : 0) + stunSag * 0.6 + (this.enraged ? 1.6 : 0);
+    const aggro = this.aggro + (this.guardT > 0 ? 1.2 : 0) + stunSag * 0.6 + (this.enraged ? 1.6 : 0);
+    rig.carapace.uAggro.value = aggro;
+    // Imported chitin reads aggro the same way: its venom veins brighten as the body locks on.
+    if (this.imported) this.imported.carapace.uAggro.value = aggro;
     this.corePulse += 0.06;
     if (rig.core) {
       const pulse = 1 + Math.sin(this.corePulse) * 0.12 + this.aggro * 0.25 + (this.enraged ? 0.25 : 0);
@@ -2329,7 +2356,7 @@ export class Enemy {
     }
 
     this.updateStatusFx(dt);
-    this.megaVisual?.update(dt, moving, { flash: this.flashAmt, frost: this.iceAmt, stunned: this.stunnedT > 0, enraged: this.enraged || this.bossState === 'enrage_transition' });
+    this.imported?.update(dt, moving, { flash: this.flashAmt, frost: this.iceAmt, stunned: this.stunnedT > 0, enraged: this.enraged || this.bossState === 'enrage_transition' });
     this.emitRageTells(dt);
   }
 
@@ -2663,7 +2690,7 @@ export class EnemyManager {
     e.hp = genome.hp * hpScale * shrink;
     e.maxHp = e.hp;
     e.alive = true;
-    e.ensureMegaVisual();
+    e.ensureImportedVisual();
     e.dots.length = 0;
     e.slowMul = 1;
     e.slowT = 0;

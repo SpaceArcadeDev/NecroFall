@@ -271,22 +271,24 @@ try {
       const mega = game.enemies.spawnBoss(4, 'nexus', position);
       return { mega: mega.id, radius: mega.radius, hp: mega.hp, freeroam: game.freeroamMode,
         towers: game.towers.towers.map(tower => ({ kind: tower.kind, state: tower.state })),
-        otherImported: game.enemies.enemies.filter(enemy => enemy.genome.tier !== 'nexus' && enemy.megaVisual).length };
+        // Only the Nexus Overseer wears the parasite; crawler-species bodies wear their own
+        // imported model, and no other body may pick up an imported visual at all.
+        otherImported: game.enemies.enemies.filter(enemy => enemy.genome.tier !== 'nexus' && enemy.imported && enemy.imported.root.name !== 'crawler-imported').length };
     });
     assert.equal(state.freeroam, false);
     assert.equal(state.towers.length, 5);
     assert.equal(state.otherImported, 0);
-    await page.waitForFunction(id => Boolean(window.necrofall.enemies.byId(id)?.megaVisual), state.mega, { timeout: 60000 });
+    await page.waitForFunction(id => Boolean(window.necrofall.enemies.byId(id)?.imported), state.mega, { timeout: 60000 });
     const animation = await page.evaluate(async id => {
       const { Box3, Vector3, Ray, DoubleSide } = await import('/node_modules/three/build/three.webgpu.js');
-      const game = window.necrofall, enemy = game.enemies.byId(id), visual = enemy.megaVisual;
+      const game = window.necrofall, enemy = game.enemies.byId(id), visual = enemy.imported;
       game.enemies.update = () => {};
       const sample = () => {
         visual.root.updateWorldMatrix(true, true);
         visual.root.traverse(object => { if (object.isSkinnedMesh) object.skeleton.update(); });
         return visual.root.worldToLocal(visual.root.getObjectByName('Pelvis_72').getWorldPosition(new Vector3()));
       };
-      const before = sample(), clock = visual.mixer.time;
+      const before = sample(), clock = visual.clock;
       for (let frame = 0; frame < 120; frame++) visual.update(1 / 60, 1, { flash: 0, frost: 0, stunned: false, enraged: false });
       const after = sample(), bounds = new Box3().setFromObject(visual.root, true), size = bounds.getSize(new Vector3());
       const up = enemy.position.clone().normalize(), across = up.clone().cross({ x: 0, y: 1, z: 0 }).normalize();
@@ -305,7 +307,7 @@ try {
         if (clearView) break;
       }
       camera.up.copy(up); camera.lookAt(target); camera.updateMatrixWorld(true);
-      return { moved: visual.mixer.time > clock, rootDrift: Math.hypot(after.x - before.x, after.z - before.z), size: size.toArray(), radius: enemy.radius, clearView };
+      return { moved: visual.clock > clock, rootDrift: Math.hypot(after.x - before.x, after.z - before.z), size: size.toArray(), radius: enemy.radius, clearView };
     }, state.mega);
     assert.ok(animation.moved && animation.rootDrift < 1e-4, JSON.stringify(animation));
     assert.ok(animation.clearView, 'Mega capture must have a clear line of sight');
@@ -313,31 +315,31 @@ try {
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     await capture(page, 'classic-mega');
     const pooled = await page.evaluate(id => {
-      const game = window.necrofall, enemy = game.enemies.byId(id), visual = enemy.megaVisual, position = enemy.position.clone();
+      const game = window.necrofall, enemy = game.enemies.byId(id), visual = enemy.imported, position = enemy.position.clone();
       game.enemies.removeVisual(id);
       const next = game.enemies.spawnBoss(4, 'nexus', position);
-      return next.megaVisual === visual && next.alive && next.group.visible && next.hp > 0;
+      return next.imported === visual && next.alive && next.group.visible && next.hp > 0;
     }, state.mega);
     assert.ok(pooled);
     const replacement = await page.evaluate(async () => {
-      const { MegaVisual } = await import('/src/enemies/MegaVisual.ts');
+      const { ImportedVisual } = await import('/src/enemies/imported/ImportedVisual.ts');
       const { Group } = await import('/node_modules/three/build/three.webgpu.js');
       const game = window.necrofall, enemy = game.enemies.enemies.find(enemy => enemy.genome.tier === 'nexus' && enemy.alive);
       game.update = () => {};
-      const original = MegaVisual.create, pending = [];
+      const original = ImportedVisual.create, pending = [];
       let staleDisposed = false;
-      MegaVisual.create = () => new Promise(resolve => pending.push(resolve));
+      ImportedVisual.create = () => new Promise(resolve => pending.push(resolve));
       try {
-        enemy.setGenome({ ...enemy.genome }); enemy.ensureMegaVisual();
-        enemy.setGenome({ ...enemy.genome }); enemy.ensureMegaVisual();
+        enemy.setGenome({ ...enemy.genome }); enemy.ensureImportedVisual();
+        enemy.setGenome({ ...enemy.genome }); enemy.ensureImportedVisual();
         const fresh = { root: new Group(), dispose() {} };
         pending[0]({ root: new Group(), dispose() { staleDisposed = true; } });
         for (let turn = 0; turn < 4; turn++) await Promise.resolve();
-        const stillLoading = enemy.megaLoading === enemy.group;
+        const stillLoading = enemy.importedLoading === enemy.group;
         pending[1]?.(fresh);
         for (let turn = 0; turn < 4; turn++) await Promise.resolve();
-        return { requests: pending.length, staleDisposed, stillLoading, attached: enemy.megaVisual === fresh && fresh.root.parent === enemy.group, cleared: enemy.megaLoading === null };
-      } finally { MegaVisual.create = original; }
+        return { requests: pending.length, staleDisposed, stillLoading, attached: enemy.imported === fresh && fresh.root.parent === enemy.group, cleared: enemy.importedLoading === null };
+      } finally { ImportedVisual.create = original; }
     });
     assert.equal(replacement.requests, 2);
     assert.ok(replacement.staleDisposed && replacement.stillLoading && replacement.attached && replacement.cleared, JSON.stringify(replacement));

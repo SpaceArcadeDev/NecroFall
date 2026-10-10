@@ -27,7 +27,12 @@ Water is limited to shallow basins (at most 0.35 m), with grounded walking wakes
 Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes and
 crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.
-Only the Mega Necrophage uses the imported enemy model. Towers, bases, shields,
+Two enemy bodies are imported base models rather than generated rigs: the Nexus Overseer's
+**Mega Necrophage** (the insectoid rig, with its baked walk clip) and the **crawler**
+(`src/enemies/base_models/crawler.glb`). The crawler ships as a static mesh, so the engine
+derives its skeleton and skin weights from the geometry on load (`src/enemies/imported/`) and
+drives a procedural prowl gait; both surfaces are rebuilt as cell-shaded node materials that
+share the world's sun, ambient, fog and the `?cel=0` A/B switch. Towers, bases, shields,
 pads and the other enemy rigs retain their gameplay.
 
 The preserved gallery is at [/base-planets.html](base-planets.html), with
@@ -42,6 +47,7 @@ npm run test:main-planets
 npm run test:main-planets -- --planet=cinderbloom
 npm run test:main-planets -- --classic
 npm run test:main-planets -- --variants
+npm run test:enemy-models
 npm run test:base-planets
 npm run test:base-planets -- --visibility
 ```
@@ -50,6 +56,13 @@ The main browser suite uses installed Edge (`BROWSER_CHANNEL` overrides it), sta
 its own local server, and writes captures to `.test-shots/main-planets/`. It covers
 all ten profiles, day/twilight/night, classic structures and Mega animation,
 mobile rotation, WebGL fallback, and fixed-clock grass/water trail pixel comparisons.
+`npm run test:enemy-models` boots a real solo match and checks both imported enemy base
+models end to end: the derived crawler rig (bones, normalized skin weights, advancing
+gait), the cell-shaded creature materials and their uniforms, and gameplay — the bodies
+hunt the player, flash, frost over and die. It also captures an imported-vs-procedural
+A/B of the same genome in `.test-shots/enemy-base-models/`; the frame cost of the
+imported bodies can be measured with `node scripts/measure-base-models.mjs` and the
+`?basemodels=0` A/B switch.
 The physics suite covers exact rendered terrain sampling, collision support,
 75-degree climbing, shallow water, trail lifetimes, twilight and classic seed rolls.
 These local tests do not certify physical-phone performance or live multiplayer/auth
@@ -471,7 +484,8 @@ verification runs, and the deviations with their reasons). In short:
 * **Async precompilation** — world pipelines compile behind the loading screen (`?precompile=0`),
   with per-step timeouts and lazy-compilation fallback.
 * **Benchmarks + flags** — `?bench=empty|swarm50|swarm100|colonies|boss|vfx|vegetation|full`
-  (plan TEST A–H) and `?backend=webgl|webgpu`, `?spatialhash=0`, `?enemytiers=0` A/B switches;
+  (plan TEST A–H) and `?backend=webgl|webgpu`, `?spatialhash=0`, `?enemytiers=0`,
+  `?basemodels=0` A/B switches;
   `?perfcheck` now also reports 1 % low, peak frame, heap delta and the telemetry line.
 
 ### Art-direction / visual rework (2026-10)
@@ -534,8 +548,9 @@ src/
   networking/ Networking.ts (P2P host/client, lobby codes, session lifecycle)
   world/      Planet.ts (terrain + shaders + decorations), ShaderGlobals.ts
   player/     Player.ts (movement, dash, health, perks, netcode, model)
-  enemies/    EnemyGenomes.ts (procedural bestiary), EnemyModels.ts (creature rigs), Enemies.ts
-              (AI, abilities, spawner, LOD, damage/boss plates data)
+  enemies/    EnemyGenomes.ts (procedural bestiary), EnemyModels.ts (creature rigs),
+              imported/ (imported base models: auto-rig + cell-shaded materials + gait),
+              Enemies.ts (AI, abilities, spawner, LOD, damage/boss plates data)
   necrotech/  NecrotechData.ts (10 classes + fusion rules), AbilitySystem.ts (abilities + burst),
               AbilityIcons.ts (per-ability SVG glyphs)
   necromutation/ Perks.ts

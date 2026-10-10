@@ -1,0 +1,36 @@
+{
+  "file": "crawler.glb",
+  "role": "crawler enemy base model (cell-shaded, auto-rigged at runtime)",
+  "sourceFile": ".asset-sources/crawler/source.glb",
+  "sourceGenerator": "Tripo",
+  "sourceSHA256": "db53cee40f099217fa422fded9484495544984468beb5aa73e3800365702b75b",
+  "sourceTriangles": 286732,
+  "triangles": 16000,
+  "bytes": 540928,
+  "sha256": "5a5b04721c5ae336da7c07320c5af6383bcf69546b8e981ac41b5602bde19c35",
+  "bounds": {
+    "min": [
+      -0.36032852899290785,
+      -0.000017913947060410607,
+      -0.8265146613121033
+    ],
+    "max": [
+      0.36032852899290785,
+      1.0000179139470604,
+      0.825606644153595
+    ]
+  },
+  "conventions": [
+    "faces +Z",
+    "height 1.0",
+    "feet on y = 0",
+    "centered on x/z",
+    "material crawler:chitin"
+  ],
+  "modifications": [
+    "welded, simplified to the mobile budget",
+    "textures resized to WebP",
+    "yaw/scale normalization baked in",
+    "meshopt compression"
+  ]
+}

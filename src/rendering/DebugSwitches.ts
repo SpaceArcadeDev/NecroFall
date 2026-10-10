@@ -18,6 +18,7 @@
  *   ?scifi=0                sci-fi structures (crashed ship etc.) off
  *   ?spatialhash=0          enemy candidate lookup -> linear scan (A/B)
  *   ?enemytiers=0           enemy simulation tiers off (A/B)
+ *   ?basemodels=0           imported enemy base models -> procedural rigs only (A/B)
  *   ?precompile=0           skip async pipeline precompilation (r186 plan §15)
  *   ?seed=<n>               planet seed override
  *   ?visualSeed=VISUAL_001..005   deterministic visual-quality sweep seeds (plan §72)

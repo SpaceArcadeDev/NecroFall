@@ -20,12 +20,12 @@ function planetMap(body: SystemBody): DataTexture {
     directions.push(direction); radii[row * width + column] = value;
     low = Math.min(low, value); high = Math.max(high, value);
   }
-  const waterLevel = low + (high - low) * 0.24;
+  const waterLevel = generator.terrain.seaLevel;
   const pixels = new Uint8Array(width * height * 4);
   const shade = new Color(), ground = new Color(art.ground), peak = new Color(art.highland), water = new Color(art.water), foliage = new Color(art.foliage);
   for (let index = 0; index < radii.length; index++) {
     const direction = directions[index], radius = radii[index];
-    if (radius < waterLevel && fbm(direction.x * 28, direction.y * 28, direction.z * 28, 2, generator.seed + 88) > 0.72) shade.copy(water).lerp(new Color('#e0f1f3'), art.waterSurface === 'ice' ? 0.65 : 0);
+    if (radius < waterLevel) shade.copy(water).lerp(new Color('#e0f1f3'), art.waterSurface === 'ice' ? 0.65 : 0);
     else shade.copy(ground).lerp(peak, MathUtils.clamp((radius - waterLevel) / Math.max(1, high - waterLevel), 0, 1) * 0.7)
       .lerp(foliage, Math.max(0, fbm(direction.x * 7, direction.y * 7, direction.z * 7, 2, generator.seed) - 0.5));
     const cloud = Math.max(0, fbm(direction.x * 9, direction.y * 9, direction.z * 9, 2, generator.seed + 37) - 0.64) * 3;

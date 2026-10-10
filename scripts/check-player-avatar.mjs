@@ -19,7 +19,7 @@ async function difference(before, after) {
   }
   return pixels;
 }
-try {
+async function verifyAvatar() {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.stack));
@@ -38,10 +38,24 @@ try {
     const check = (condition, message) => { if (!condition) throw new Error(message); };
     const rig = new PlayerRig(COLONIES[0].color);
     check(rig.skeleton.bones.length === 19, 'Missing player bones');
+    check(rig.root.userData.avatarRevision === 'chameleon-rig-v1' && rig.root.userData.sourceSHA256 === 'f716aa4e404d26b2baaf612386d0c7cc9730d039b0d9b9eeea8e824ae1b142d1', 'Incorrect source avatar');
     const attributes = rig.mesh.geometry.attributes;
+    let blendedVertices = 0;
     for (let vertex = 0; vertex < attributes.position.count; vertex++) {
-      check(attributes.skinIndex.getX(vertex) < 19 && attributes.skinWeight.getX(vertex) === 1, 'Invalid armor binding');
+      let sum = 0;
+      for (let influence = 0; influence < 4; influence++) {
+        const weight = attributes.skinWeight.getComponent(vertex, influence);
+        check(attributes.skinIndex.getComponent(vertex, influence) < 19 && weight >= 0 && Number.isFinite(weight), 'Invalid skin binding');
+        sum += weight;
+      }
+      check(Math.abs(sum - 1) < 0.0001, 'Unnormalized skin weights');
+      if (attributes.skinWeight.getY(vertex) > 0) blendedVertices++;
     }
+    check(blendedVertices > 1000, 'Avatar has no smooth joint weights');
+    const triangles = rig.mesh.geometry.index.array;
+    const bodyIndices = rig.mesh.geometry.groups[0].count;
+    const restPoints = Array.from({ length: attributes.position.count }, (_, vertex) => new THREE.Vector3().fromBufferAttribute(attributes.position, vertex));
+    const posedPoints = restPoints.map(point => point.clone());
     const motion = { speed: 0, grounded: true, verticalSpeed: 0 };
     for (let frame = 0; frame < 90; frame++) rig.update(1 / 60, motion);
     rig.root.updateMatrixWorld(true);
@@ -53,16 +67,26 @@ try {
     const poses = {};
     for (const [state, sample] of Object.entries({ idle: motion, run: { ...motion, speed: 8 }, jump: { speed: 5, grounded: false, verticalSpeed: 8 }, fall: { speed: 5, grounded: false, verticalSpeed: -12 } })) {
       const knees = [], thighs = [], points = [];
+      let maxStretch = 0;
       for (let frame = 0; frame < 120; frame++) {
         rig.update(1 / 60, sample);
         rig.root.updateMatrixWorld(true);
         knees.push(rig.kneeL.rotation.x);
         thighs.push(rig.legL.rotation.x);
-        if (frame % 30 === 0) points.push(rig.mesh.getVertexPosition(2000, new THREE.Vector3()).toArray());
+        if (frame % 30 === 0) {
+          points.push(rig.mesh.getVertexPosition(2000, new THREE.Vector3()).toArray());
+          posedPoints.forEach((point, vertex) => rig.mesh.getVertexPosition(vertex, point));
+          for (let offset = 0; offset < bodyIndices; offset += 3) for (let corner = 0; corner < 3; corner++) {
+            const first = triangles[offset + corner], second = triangles[offset + (corner + 1) % 3];
+            const rest = restPoints[first].distanceTo(restPoints[second]);
+            if (rest > 0.003) maxStretch = Math.max(maxStretch, posedPoints[first].distanceTo(posedPoints[second]) / rest);
+          }
+        }
         check(rig.skeleton.bones.every(bone => bone.matrixWorld.elements.every(Number.isFinite)), `${state}: non-finite pose`);
       }
       check(rig.state === state, `Incorrect state ${state}`);
-      poses[state] = { kneeRange: Math.max(...knees) - Math.min(...knees), thighRange: Math.max(...thighs) - Math.min(...thighs), points };
+      check(maxStretch < 5, `${state}: stretched skin triangles (${maxStretch})`);
+      poses[state] = { kneeRange: Math.max(...knees) - Math.min(...knees), thighRange: Math.max(...thighs) - Math.min(...thighs), maxStretch, points };
     }
     check(poses.run.kneeRange > 0.4, 'Run has no knee articulation');
     check(poses.fall.thighRange > 1, 'Fall has no panicking kicks');
@@ -124,7 +148,7 @@ try {
     stage.add(avatar.group);
     const outfit = new AvatarAccessories(avatar.headMount, avatar.backMount, avatar.pack, stage);
     window.avatarTest = { THREE, renderer, stage, camera, avatar, outfit, defsOf, COLONIES, disposeObject };
-    return { bones: 19, vertices: attributes.position.count, idleDrift, poses, catalog, weapons: NECROTECHS.length };
+    return { bones: 19, vertices: attributes.position.count, blendedVertices, idleDrift, poses, catalog, weapons: NECROTECHS.length };
   });
   for (const state of ['idle', 'run', 'jump', 'fall']) {
     await page.evaluate(state => {
@@ -143,6 +167,12 @@ try {
       test.renderer.render(test.stage, test.camera);
     }, state);
     assert.ok(await difference(visible, await page.screenshot()) > 30, `${state}: animation not visible`);
+  }
+  if (process.argv.includes('--rig-only')) {
+    assert.deepEqual(errors, [], 'Browser runtime errors');
+    await writeFile(`${directory}/rig-report.json`, JSON.stringify(report.rig, null, 2));
+    console.log(JSON.stringify({ bones: report.rig.bones, vertices: report.rig.vertices, blendedVertices: report.rig.blendedVertices, poses: report.rig.poses }, null, 2));
+    return;
   }
   for (const category of ['hat', 'backpack', 'pet']) {
     for (let index = 0; index < report.rig.catalog[category].length; index++) {
@@ -227,7 +257,7 @@ try {
         preview.scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
         let extent = 0;
         preview.scene.traverse(object => {
-          if (object.name !== 'RoundedPlayerArmor') return;
+          if (object.name !== 'ChameleonAvatar') return;
           const point = object.position.clone();
           for (let vertex = 0; vertex < object.geometry.attributes.position.count; vertex++) {
             object.getVertexPosition(vertex, point).applyMatrix4(object.matrixWorld).project(camera);
@@ -237,7 +267,7 @@ try {
         return { rigs, extent, width: preview.canvas.width, height: preview.canvas.height };
       });
       assert.equal(result.rigs.length, ['colony', 'lobby'].includes(mode) ? 3 : 1, `${mode}: missing shared avatars`);
-      assert.ok(result.rigs.every(revision => revision === 'rounded-rig-v1'));
+      assert.ok(result.rigs.every(revision => revision === 'chameleon-rig-v1'));
       assert.ok(result.extent < 1, `${mode}/${viewport.width}: clipped body (${result.extent})`);
       const canvas = page.locator('.sel-preview-canvas');
       const visible = await canvas.screenshot();
@@ -302,12 +332,12 @@ try {
     check(Number.isFinite(remote.parts.rig.legL.rotation.x), 'Legacy snapshot broke rig');
     const rig = player.parts.rig;
     player.spawnGhost(0.3, 0.3);
-    const ghost = player.ghostPool[0].obj.getObjectByName('RoundedPlayerArmor');
+    const ghost = player.ghostPool[0].obj.getObjectByName('ChameleonAvatar');
     check(ghost.skeleton !== rig.skeleton && ghost.skeleton.bones[0] !== rig.skeleton.bones[0], 'Dash ghost shares live bones');
     const frozenGhost = ghost.skeleton.bones.map(bone => bone.quaternion.toArray());
     const decoy = new Decoy('avatar-decoy', player, 1, player.position, player.up, player.facing);
     decoy.attach(game.scene, player.facing);
-    const echo = decoy.ghost.getObjectByName('RoundedPlayerArmor');
+    const echo = decoy.ghost.getObjectByName('ChameleonAvatar');
     check(echo.skeleton !== rig.skeleton, 'Decoy shares skeleton');
     rig.update(1 / 60, { speed: 8, grounded: false, verticalSpeed: -14 });
     check(JSON.stringify(frozenGhost) === JSON.stringify(ghost.skeleton.bones.map(bone => bone.quaternion.toArray())), 'Dash pose follows live animation');
@@ -326,6 +356,9 @@ try {
   assert.deepEqual(errors, [], 'Browser runtime errors');
   await writeFile(`${directory}/report.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ bones: report.rig.bones, catalog: Object.fromEntries(Object.entries(report.rig.catalog).map(([key, value]) => [key, value.length])), weapons: report.rig.weapons, menus: report.menus.length, gameplay: report.gameplay, webglPixels: report.webglPixels }, null, 2));
+}
+try {
+  await verifyAvatar();
 } finally {
   await browser.close();
   await server.close();

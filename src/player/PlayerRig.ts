@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import { attribute, color as nodeColor, materialColor, materialEmissive, mix, smoothstep } from 'three/tsl';
 import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import avatarUrl from './assets/chameleon.glb?url';
 import anatomy from './assets/chameleon.json';
@@ -9,6 +9,32 @@ import anatomy from './assets/chameleon.json';
 const asset = await new GLTFLoader().loadAsync(avatarUrl);
 const sourceMesh = asset.scene.getObjectByName('ChameleonAvatar') as THREE.SkinnedMesh;
 if (!sourceMesh?.isSkinnedMesh) throw new Error('Chameleon avatar skin is missing');
+const bodyGeometry = sourceMesh.geometry.clone();
+const regions: number[][] = [[], []];
+const positions = bodyGeometry.attributes.position;
+const normals = bodyGeometry.attributes.normal;
+const triangles = bodyGeometry.index!;
+const chestOrigin = anatomy.joints.find(joint => joint.name === 'Chest')!.position;
+const shoulderOrigin = anatomy.joints.find(joint => joint.name === 'UpperArm_R')!.position;
+const center = new THREE.Vector3();
+const normal = new THREE.Vector3();
+for (let offset = 0; offset < triangles.count; offset += 3) {
+  const vertices = [triangles.getX(offset), triangles.getX(offset + 1), triangles.getX(offset + 2)];
+  center.set(0, 0, 0); normal.set(0, 0, 0);
+  for (const vertex of vertices) {
+    center.x += positions.getX(vertex) / 3; center.y += positions.getY(vertex) / 3; center.z += positions.getZ(vertex) / 3;
+    normal.x += normals.getX(vertex); normal.y += normals.getY(vertex); normal.z += normals.getZ(vertex);
+  }
+  normal.normalize();
+  const chest = (center.x / 0.15) ** 2 + ((center.y - chestOrigin[1] - 0.015) / 0.085) ** 2 < 1 && center.z > 0.07;
+  const shoulder = Math.abs(Math.abs(center.x) - shoulderOrigin[0]) < 0.105
+    && center.y > shoulderOrigin[1] && normal.y > 0;
+  regions[chest || shoulder ? 1 : 0].push(...vertices);
+}
+bodyGeometry.setIndex(regions.flat());
+bodyGeometry.clearGroups();
+bodyGeometry.addGroup(0, regions[0].length, 0);
+bodyGeometry.addGroup(regions[0].length, regions[1].length, 1);
 
 export interface PlayerMotion {
   speed: number;
@@ -44,7 +70,7 @@ export class PlayerRig {
   readonly pack: THREE.Mesh;
   readonly mesh: THREE.SkinnedMesh;
   readonly skeleton: THREE.Skeleton;
-  readonly accent: THREE.MeshLambertMaterial;
+  readonly accent: MeshStandardNodeMaterial;
   state: 'idle' | 'run' | 'jump' | 'fall' = 'idle';
   private readonly targetL = this.joint('FootTarget_L', this.root);
   private readonly targetR = this.joint('FootTarget_R', this.root);
@@ -66,40 +92,26 @@ export class PlayerRig {
     this.root.name = 'PlayerRig';
     this.root.userData.avatarRevision = 'chameleon-rig-v1';
     this.root.userData.sourceSHA256 = anatomy.sourceSHA256;
-    this.accent = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.8 });
+    const sourceMaterial = sourceMesh.material as THREE.MeshStandardMaterial;
+    this.accent = new MeshStandardNodeMaterial({ color, emissive: color, emissiveIntensity: 0.8,
+      roughness: sourceMaterial.roughness, metalness: sourceMaterial.metalness });
+    const rest = attribute('position', 'vec3');
+    const chestGlow = smoothstep(0.85, 1, rest.x.div(0.115).pow(2)
+      .add(rest.y.sub(chestOrigin[1] + 0.015).div(0.048).pow(2))).oneMinus().mul(smoothstep(0.085, 0.105, rest.z));
+    const shoulderGlow = smoothstep(0.06, 0.074, rest.x.abs().sub(shoulderOrigin[0]).abs()).oneMinus()
+      .mul(smoothstep(shoulderOrigin[1] + 0.025, shoulderOrigin[1] + 0.045, rest.y))
+      .mul(smoothstep(0.25, 0.45, attribute('normal', 'vec3').y));
+    const glow = chestGlow.max(shoulderGlow);
+    this.accent.colorNode = mix(nodeColor(sourceMaterial.color), materialColor.rgb, glow);
+    this.accent.emissiveNode = materialEmissive.mul(glow);
     const materials = [
-      (sourceMesh.material as THREE.MeshStandardMaterial).clone(),
+      sourceMaterial.clone(),
       this.accent,
     ];
     this.root.updateMatrixWorld(true);
     const bones = anatomy.joints.map(joint => this.root.getObjectByName(joint.name) as THREE.Bone);
     this.skeleton = new THREE.Skeleton(bones);
-    const surfaces: THREE.BufferGeometry[][] = [[sourceMesh.geometry.clone()], []];
-    const shell = (bone: THREE.Bone, material: number, size: [number, number, number], offset: [number, number, number], shape?: THREE.BufferGeometry) => {
-      const source = shape ?? new THREE.SphereGeometry(1, 16, 12);
-      const geometry = source.index ? source : mergeVertices(source);
-      if (geometry !== source) source.dispose();
-      geometry.deleteAttribute('uv');
-      geometry.scale(...size).translate(...offset).applyMatrix4(bone.matrixWorld);
-      const count = geometry.attributes.position.count;
-      const indices = new Uint16Array(count * 4);
-      const weights = new Float32Array(count * 4);
-      for (let vertex = 0; vertex < count; vertex++) {
-        indices[vertex * 4] = bones.indexOf(bone);
-        weights[vertex * 4] = 1;
-      }
-      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(indices, 4));
-      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
-      surfaces[material].push(geometry);
-    };
-    shell(this.chest, 1, [0.11, 0.044, 0.012], [0, -0.015, 0.16], new RoundedBoxGeometry(2, 2, 2, 3, 0.55));
-    for (const [arm, side] of [[this.armL, -1], [this.armR, 1]] as const) {
-      shell(arm, 1, [0.086, 0.033, 0.105], [side * 0.005, 0.08, 0]);
-    }
-    const merged = surfaces.map(surface => mergeGeometries(surface)!);
-    const geometry = mergeGeometries(merged, true)!;
-    for (const surface of [...surfaces.flat(), ...merged]) surface.dispose();
-    this.mesh = new THREE.SkinnedMesh(geometry, materials);
+    this.mesh = new THREE.SkinnedMesh(bodyGeometry.clone(), materials);
     this.mesh.name = 'ChameleonAvatar';
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;

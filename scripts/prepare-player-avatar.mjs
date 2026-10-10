@@ -17,38 +17,53 @@ assert.ok(existsSync(source), 'Pass the original avatar.glb path as the first ar
 await MeshoptSimplifier.ready;
 const library = await manifold();
 library.setup();
-const { Manifold, Mesh } = library;
+const { Manifold } = library;
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
 const document = await io.read(source);
 const root = document.getRoot(), buffer = root.listBuffers()[0];
 assert.equal(root.listSkins().length, 0);
-const original = getBounds(root.listScenes()[0]);
-const scale = 1.9 / (original.max[1] - original.min[1]);
-const normalize = new Matrix4().makeScale(scale, scale, scale);
-normalize.setPosition(-(original.min[0] + original.max[0]) * scale / 2,
-  -original.min[1] * scale, -(original.min[2] + original.max[2]) * scale / 2);
 const accessor = (type, array) => document.createAccessor().setType(type).setArray(array).setBuffer(buffer);
+const shapes = [];
+const ellipsoid = (center, radii) => shapes.push(point =>
+  (Math.hypot(...point.map((value, axis) => (value - center[axis]) / radii[axis])) - 1) * Math.min(...radii));
+const capsule = (start, end, radius) => {
+  const direction = end.map((value, axis) => value - start[axis]);
+  const lengthSquared = direction.reduce((sum, value) => sum + value * value, 0);
+  shapes.push(point => {
+    const offset = point.map((value, axis) => value - start[axis]);
+    const along = MathUtils.clamp(offset.reduce((sum, value, axis) => sum + value * direction[axis], 0) / lengthSquared, 0, 1);
+    return Math.hypot(...offset.map((value, axis) => value - direction[axis] * along)) - radius;
+  });
+};
+ellipsoid([0, 0.70, 0], [0.183, 0.15, 0.118]);
+ellipsoid([0, 0.89, 0], [0.158, 0.24, 0.112]);
+ellipsoid([0, 1.09, 0], [0.188, 0.17, 0.12]);
+capsule([0, 1.235, 0], [0, 1.335, 0], 0.069);
+ellipsoid([0, 1.47, 0], [0.195, 0.193, 0.185]);
+for (const side of [-1, 1]) {
+  capsule([side * 0.15, 1.17, 0], [side * 0.267, 1.18, 0], 0.073);
+  capsule([side * 0.267, 1.18, 0], [side * 0.30, 0.92, 0], 0.065);
+  capsule([side * 0.30, 0.92, 0], [side * 0.316, 0.68, 0], 0.055);
+  ellipsoid([side * 0.318, 0.616, 0.01], [0.062, 0.083, 0.062]);
+  capsule([side * 0.132, 0.68, 0], [side * 0.13, 0.35, 0], 0.084);
+  capsule([side * 0.13, 0.35, 0], [side * 0.118, 0.11, 0], 0.069);
+  ellipsoid([side * 0.118, 0.066, 0.043], [0.080, 0.066, 0.111]);
+}
+const sculpt = Manifold.levelSet(point => {
+  let distance = Infinity;
+  for (const shape of shapes) {
+    const next = shape(point), blend = Math.max(0.035 - Math.abs(distance - next), 0) / 0.035;
+    distance = Math.min(distance, next) - blend * blend * 0.035 * 0.25;
+  }
+  return -distance;
+}, { min: [-0.5, -0.05, -0.26], max: [0.5, 1.75, 0.26] }, 0.0095);
+assert.equal(sculpt.status(), 'NoError');
+assert.equal(sculpt.decompose().length, 1, 'Remodeled avatar must be one connected solid');
+const surface = sculpt.calculateNormals().getMesh();
 for (const node of root.listNodes()) {
   const mesh = node.getMesh();
   if (!mesh) continue;
-  const transform = normalize.clone().multiply(new Matrix4().fromArray(node.getWorldMatrix()));
   for (const primitive of mesh.listPrimitives()) {
-    transformPrimitive(primitive, transform.elements);
-    const input = new Mesh({ numProp: 3, vertProperties: primitive.getAttribute('POSITION').getArray(), triVerts: primitive.getIndices().getArray() });
-    input.merge();
-    const solid = new Manifold(input);
-    assert.equal(solid.status(), 'NoError');
-    const cleanSide = solid.warp(position => {
-      position[0] += 0.032 * (1 - MathUtils.smoothstep(position[1], 0.60, 0.78)) * (1 - MathUtils.smoothstep(position[0], 0.12, 0.18));
-    });
-    const half = cleanSide.trimByPlane([1, 0, 0], -0.078).trimByPlane([0, -1, 0], -1.36).translate([0.078, 0, 0]);
-    const upper = solid.trimByPlane([0, 1, 0], 1.4).decompose();
-    const head = upper.filter(part => part.boundingBox().max[1] < 1.85).sort((first, second) => second.volume() - first.volume())[0];
-    assert.ok(head, 'Unable to separate source head from the overhead arm');
-    const neutral = half.add(half.mirror([1, 0, 0])).add(head.translate([-0.072, -0.09, 0]));
-    assert.equal(neutral.status(), 'NoError');
-    assert.equal(neutral.decompose().length, 1, 'Neutral avatar must be one connected solid');
-    const surface = neutral.calculateNormals().getMesh();
     const positions = new Float32Array(surface.numVert * 3), normals = new Float32Array(surface.numVert * 3);
     for (let vertex = 0; vertex < surface.numVert; vertex++) {
       positions.set(surface.vertProperties.slice(vertex * surface.numProp, vertex * surface.numProp + 3), vertex * 3);
@@ -56,25 +71,24 @@ for (const node of root.listNodes()) {
     }
     primitive.setAttribute('POSITION', accessor('VEC3', positions)).setAttribute('NORMAL', accessor('VEC3', normals));
     primitive.setAttribute('TEXCOORD_0', null).setIndices(accessor('SCALAR', surface.triVerts));
-    for (const part of upper) part.delete();
-    solid.delete(); cleanSide.delete(); half.delete(); neutral.delete();
   }
   node.setTranslation([0, 0, 0]).setRotation([0, 0, 0, 1]).setScale([1, 1, 1]);
   node.setName('ChameleonAvatar'); mesh.setName('ChameleonAvatar');
 }
+sculpt.delete();
 await document.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 0.18, error: 0.0008 }));
 const definitions = [
   ['Hips', null, [0, 0.70, 0]],
   ['Spine', 'Hips', [0, 0.94, 0]],
-  ['Chest', 'Spine', [0, 1.19, 0]],
-  ['Neck', 'Chest', [0, 1.32, 0]],
-  ['Head', 'Neck', [0, 1.50, 0]],
-  ['UpperArm_L', 'Chest', [-0.292, 1.19, 0]],
-  ['Forearm_L', 'UpperArm_L', [-0.313, 0.91, 0]],
-  ['Hand_L', 'Forearm_L', [-0.313, 0.62, 0]],
-  ['UpperArm_R', 'Chest', [0.292, 1.19, 0]],
-  ['Forearm_R', 'UpperArm_R', [0.313, 0.91, 0]],
-  ['Hand_R', 'Forearm_R', [0.313, 0.62, 0]],
+  ['Chest', 'Spine', [0, 1.11, 0]],
+  ['Neck', 'Chest', [0, 1.28, 0]],
+  ['Head', 'Neck', [0, 1.47, 0]],
+  ['UpperArm_L', 'Chest', [-0.267, 1.18, 0]],
+  ['Forearm_L', 'UpperArm_L', [-0.30, 0.92, 0]],
+  ['Hand_L', 'Forearm_L', [-0.316, 0.67, 0]],
+  ['UpperArm_R', 'Chest', [0.267, 1.18, 0]],
+  ['Forearm_R', 'UpperArm_R', [0.30, 0.92, 0]],
+  ['Hand_R', 'Forearm_R', [0.316, 0.67, 0]],
   ['Thigh_L', 'Hips', [-0.132, 0.70, 0]],
   ['Shin_L', 'Thigh_L', [-0.130, 0.35, 0]],
   ['Foot_L', 'Shin_L', [-0.118, 0.062, 0]],
@@ -187,9 +201,9 @@ assert.ok(weightError < 0.0001 && blendedVertices > 1000);
 const report = {
   sourceSHA256: createHash('sha256').update(readFileSync(source)).digest('hex'),
   sourceName: 'meccha-chameleon-white-character/source/avatar.glb',
-  preparation: 'Closed neutral body from the source clean side; original head and material retained; overhead arm repaired by symmetry.',
+  preparation: 'Remodeled smooth rounded head, neck, shoulders and limbs inspired by the supplied character; original white material retained.',
   height: 1.9, bounds, bytes: readFileSync(output).length, vertices, weightError, blendedVertices, joints,
-  headRadius: 0.178 * neutralScale, backDepth: -0.14 * neutralScale,
+  headRadius: 0.195 * neutralScale, backDepth: -0.12 * neutralScale,
 };
 writeFileSync('src/player/assets/chameleon.json', JSON.stringify(report, null, 2));
 console.log(JSON.stringify({ ...report, joints: joints.length }, null, 2));

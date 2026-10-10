@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-import { BoxGeometry, BufferAttribute, BufferGeometry, DataTexture, DoubleSide, Mesh, MeshBasicMaterial, PlaneGeometry, Ray, Vector3 } from 'three/webgpu';
+import { BoxGeometry, BufferAttribute, BufferGeometry, DataTexture, DoubleSide, Matrix4, Mesh, MeshBasicMaterial, PlaneGeometry, Quaternion, Ray, Vector3 } from 'three/webgpu';
 import { color, uniform, vec2, vec4 } from 'three/tsl';
 import { MeshBVH } from 'three-mesh-bvh';
 
@@ -181,7 +181,7 @@ try {
   assert.ok(grass.trailMin.value.x > grass.trailMax.value.x);
   grass.dispose(); water.dispose(); map.dispose();
   console.log('Grass trails: persist behind walker, reject airborne samples, recover after expiry');
-  const { PlanetHazards } = await server.ssrLoadModule('/src/planet/PlanetHazards.ts');
+  const { PlanetHazards, VORTEX, vortexRadiusAt, vortexSwayAt } = await server.ssrLoadModule('/src/planet/PlanetHazards.ts');
   const hazards = new PlanetHazards(() => 118);
   const body = {
     alive: true, grounded: true, position: new Vector3(0, 118, 0), velocity: new Vector3(12, 2, 0),
@@ -206,6 +206,32 @@ try {
   hazards.apply(body, 1 / 60); assert.ok(body.velocity.equals(launched), 'Vortex impulse stacks every frame');
   body.position.y = 160; hazards.apply(body, 2); assert.ok(body.velocity.equals(launched));
   body.alive = false; body.position.y = 118; hazards.apply(body, 2); assert.ok(body.velocity.equals(launched));
+  let vortexTime = 0;
+  const funnel = new PlanetHazards(() => 118, () => vortexTime);
+  const frame = new Matrix4().compose(new Vector3(118, 0, 0),
+    new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(1, 0, 0)), new Vector3(1.8, 1.8, 1.8));
+  funnel.add('vortex', new Vector3(118, 0, 0), 11.52, VORTEX.height * 1.8, frame);
+  const place = (horizontal, height, depth = 0) => {
+    body.alive = true; body.grounded = height === 0;
+    body.position.set(horizontal, height, depth).applyMatrix4(frame); body.velocity.set(0, 0, 0);
+    funnel.apply(body, 2);
+  };
+  place(3, 0);
+  assert.ok(body.grounded && body.velocity.length() === 0, 'Empty ground beside tornado launches the player');
+  assert.equal(funnel.blocksVegetation(...body.position.toArray()), false, 'Tornado clears a broad bare ground patch');
+  place(0.5, 0);
+  assert.ok(!body.grounded && body.velocity.dot(body.position.clone().normalize()) > 31, 'Contact with rotated funnel does not launch');
+  assert.equal(funnel.blocksVegetation(...body.position.toArray()), true, 'Vegetation obscures the funnel tip');
+  for (const time of [0, 5, 13]) {
+    vortexTime = time;
+    const height = 10, center = vortexSwayAt(height, time), radius = vortexRadiusAt(height);
+    place(center, height);
+    assert.ok(body.velocity.length() > 40, 'Airborne contact misses the visible funnel');
+    place(center, height, radius + 1);
+    assert.equal(body.velocity.length(), 0, 'Tornado launches outside its tapered surface');
+  }
+  place(0, VORTEX.height + 2); assert.equal(body.velocity.length(), 0, 'Tornado launches above its top');
+  console.log('Tornado: empty-ground pass-by, rotated/scaled frame, tapered airborne contact and animated sway agree with the visible funnel');
   console.log('Hazards: grounded quicksand drag, jump/exit recovery, radial vortex lift and outward throw, cooldown, altitude and death guards');
   console.log('PASS: planet physics and interaction regressions');
 } finally { await server.close(); }

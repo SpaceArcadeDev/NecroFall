@@ -42,6 +42,7 @@ export class TerrainGenerator {
   readonly archetype: PlanetArchetype;
   readonly landmarks: Landmark[];
   readonly radius: number;
+  readonly seaLevel: number = -Infinity;
 
   private readonly seed: number;
   private readonly chains: Belt[] = [];
@@ -121,6 +122,16 @@ export class TerrainGenerator {
         height: geology.range(17, 28) * (arch.biome === 'FROZEN' ? 1.1 : 1),
       });
     }
+    const elevations: number[] = [];
+    for (let sample = 0; sample < 2048; sample++) {
+      const vertical = 1 - 2 * (sample + 0.5) / 2048;
+      const radial = Math.sqrt(1 - vertical * vertical), angle = sample * 2.399963229728653;
+      elevations.push(this.sample(radial * Math.cos(angle), vertical, radial * Math.sin(angle)));
+    }
+    elevations.sort((first, second) => first - second);
+    const coverage = arch.biome === 'DESERT' ? 0.018 : arch.biome === 'OCEAN' ? 0.08 : 0.035;
+    this.seaLevel = elevations[Math.floor(elevations.length * coverage)];
+    this.lastRiverT = 0; this.lastSiteT = 0; this.lastSiteIdx = -1;
   }
 
   /** A deterministic great-circle normal, biased toward the XZ plane so belts read as bands. */
@@ -254,9 +265,12 @@ export class TerrainGenerator {
     this.lastSiteIdx = siteIdx;
 
     const out = this.radius + h;
+    const seabed = this.seaLevel - 0.29;
+    const shoreBlend = Math.max(0, 0.12 - Math.abs(out - seabed));
+    const shelf = Math.max(out, seabed) + shoreBlend * shoreBlend / 0.48;
     // Safety clamp: procedural QA (plan §69) requires the field inside the collision band;
     // `Player.safetyNet` reads the SAME constants.
-    return clamp(out, this.radius - 48, this.radius + 64);
+    return clamp(shelf, this.radius - 48, this.radius + 64);
   }
 
   /** Aggregated crater/sinkhole contribution; `rim` adds the raised ring (slope-limited). */

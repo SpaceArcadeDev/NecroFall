@@ -89,6 +89,22 @@ try {
   const { Puddles, MAX_WATER_DEPTH } = await server.ssrLoadModule('/src/rendering/Environment/Puddles.ts');
   const { Grass } = await server.ssrLoadModule('/src/rendering/Environment/Grass.ts');
   const globals = new WorldGlobals(); WorldGlobals.current = globals;
+  const seaCoverage = [];
+  for (let seed = 1; seed <= 32; seed++) {
+    const coastal = new PlanetGenerator(makePlanetSpec(seed, 0, 118));
+    let submerged = 0;
+    for (let sample = 0; sample < 4096; sample++) {
+      const vertical = 1 - 2 * (sample + 0.5) / 4096, radial = Math.sqrt(1 - vertical * vertical), angle = sample * 2.399963229728653;
+      const floor = coastal.radiusAt(radial * Math.cos(angle), vertical, radial * Math.sin(angle));
+      if (floor < coastal.terrain.seaLevel) submerged++;
+      assert.ok(coastal.terrain.seaLevel - floor <= 0.291, 'Shallow sea has a deep or uneven floor');
+    }
+    const coverage = submerged / 4096;
+    const limit = coastal.archetype.biome === 'DESERT' ? 0.035 : coastal.archetype.biome === 'OCEAN' ? 0.1 : 0.055;
+    assert.ok(coverage > 0.005 && coverage < limit, `${seed}: sea covers ${(coverage * 100).toFixed(1)}%`);
+    seaCoverage.push({ seed, coverage });
+  }
+  console.log(`Sea area: 32 seeds remain within biome-specific limits (maximum ${(Math.max(...seaCoverage.map(sample => sample.coverage)) * 100).toFixed(1)}%)`);
   const planet = new PlanetGenerator(makePlanetSpec(23, 0, 118)); globals.basePlanet = planet.archetype.art;
   const massifs = [...planet.terrain.massifs];
   let steepestMountain = 0;
@@ -110,7 +126,7 @@ try {
   planet.terrain.massifs.splice(0, planet.terrain.massifs.length, ...massifs);
   assert.ok(steepestMountain < 1.3, `Abrupt mountain flank: ${steepestMountain}`);
   console.log(`Mountain foothills: 10 profiles blend to zero, maximum rise/run ${steepestMountain.toFixed(3)}`);
-  const surface = new PlanetSurface(planet, { waterLevel: 117, reliefMin: 90, reliefMax: 165 });
+  const surface = new PlanetSurface(planet, { waterLevel: planet.terrain.seaLevel, reliefMin: 90, reliefMax: 165 });
   const clock = uniform(1), map = new DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
   const noises = { perlin: map, samplePatch: () => 0.9, sample: () => 0.5 };
   const water = new Puddles(surface, planet, noises, clock);
@@ -126,11 +142,19 @@ try {
   assert.ok(water.waterDepthAt(site.direction) <= MAX_WATER_DEPTH);
   console.log(`Shallow basins: ${water.sites.length}, depth <= ${MAX_WATER_DEPTH} m, grounded wake sample passed`);
   const waterPositions = water.mesh.geometry.attributes.position;
+  const networkStart = waterPositions.count - width * (height + 1);
+  for (let vertex = networkStart; vertex < waterPositions.count; vertex++) {
+    const waterPoint = new Vector3().fromBufferAttribute(waterPositions, vertex), direction = waterPoint.clone().normalize();
+    const floor = water.renderedRadiusAt(direction);
+    if (floor < planet.terrain.seaLevel - 0.04) {
+      assert.ok(Math.abs(waterPoint.length() - planet.terrain.seaLevel) < 0.015, 'Sea surface follows the hills');
+    }
+  }
   let riverWake = false, seaWake = false;
   for (let vertex = waterPositions.count - 1; vertex >= 0 && !(riverWake && seaWake); vertex--) {
     const wetPoint = new Vector3().fromBufferAttribute(waterPositions, vertex), direction = wetPoint.clone().normalize();
     if (water.waterDepthAt(direction) < 0.1) continue;
-    const sea = water.renderedRadiusAt(direction) < surface.waterLevel + 0.65;
+    const sea = water.renderedRadiusAt(direction) < planet.terrain.seaLevel;
     if (sea ? seaWake : riverWake) continue;
     const previous = water.trailCursor;
     water.trackWalkerTrail(sea ? 'sea-walker' : 'river-walker', wetPoint);

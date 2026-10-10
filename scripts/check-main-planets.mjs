@@ -103,7 +103,7 @@ async function surfaceTrails(page) {
       total += delta;
     }
     const mean = total / original.length;
-    assert.ok(channels > 200 && mean > 0.005, `${effect}: trail not visible (${channels} channels, mean ${mean})`);
+    assert.ok(channels > 200 && mean > (effect === 'water' ? 0.001 : 0.005), `${effect}: trail not visible (${channels} channels, mean ${mean})`);
     await page.evaluate(() => {
       const { owner } = window.surfaceTrailTest;
       for (let index = 3; index < owner.trailData.length; index += 4) owner.trailData[index] = -1000;
@@ -117,6 +117,74 @@ async function surfaceTrails(page) {
     console.log(`${effect}: live-world trail changes ${channels} pixel channels and restores when expired`);
   }
   return results;
+}
+
+async function coastalWater(page, name) {
+  const state = await page.evaluate(async () => {
+    const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const game = window.necrofall, world = game.envWorld, water = world.puddles, camera = game.cam.camera;
+    const surface = world.deps.surface, seaLevel = world.deps.generator.terrain.seaLevel;
+    const points = [];
+    let seaSamples = 0;
+    for (let sample = 0; sample < 4096; sample++) {
+      const vertical = 1 - 2 * (sample + 0.5) / 4096, radial = Math.sqrt(1 - vertical * vertical), angle = sample * 2.399963229728653;
+      const direction = new Vector3(radial * Math.cos(angle), vertical, radial * Math.sin(angle));
+      const floor = surface.radiusAt(direction);
+      if (floor < seaLevel) seaSamples++;
+      if (seaLevel - floor > 0.2 && !world.rocks.blocked(direction.x, direction.y, direction.z)) points.push(direction);
+    }
+    points.sort((first, second) => second.dot(world.deps.system.sunDirection) - first.dot(world.deps.system.sunDirection));
+    if (!points.length) throw new Error('No clear shallow sea');
+    const up = points[0], point = up.clone().multiplyScalar(seaLevel), tangent = up.clone().cross(new Vector3(0, 1, 0)).normalize();
+    window.coastalState = { update: game.update, tick: game.ticker.update, time: world.deps.time.value, position: camera.position.clone(), rotation: camera.quaternion.clone(), up: camera.up.clone() };
+    game.update = () => {};
+    game.ticker.update = () => game.rendering.render(0);
+    camera.position.copy(point).addScaledVector(up, 12).addScaledVector(tangent, 16);
+    camera.position.setLength(Math.max(camera.position.length(), surface.radiusAt(camera.position.clone().normalize()) + 7));
+    camera.up.copy(up); camera.lookAt(point); camera.updateMatrixWorld(true);
+    for (let index = 3; index < water.trailData.length; index += 4) water.trailData[index] = -1000;
+    const before = water.trailCursor;
+    for (let step = 0; step < 9; step++) {
+      const foot = point.clone().addScaledVector(tangent, step * 0.85 - 3.4).normalize();
+      foot.multiplyScalar(surface.radiusAt(foot));
+      world.deps.time.value = 100 + step * 0.08; water.trackWalkerTrail('coastal-review', foot);
+    }
+    world.deps.time.value = 100.9;
+    world.update(point.clone().addScaledVector(up, 8), camera); game.lighting.update(point);
+    window.coastalState.fresh = Array.from(water.trailData);
+    for (let index = 3; index < water.trailData.length; index += 4) water.trailData[index] = -1000;
+    water.trailTexture.needsUpdate = true;
+    return { coverage: seaSamples / 4096, samples: water.trailCursor - before, seaLevel };
+  });
+  assert.ok(state.coverage < (name === 'saffron-waste' ? 0.035 : 0.11), JSON.stringify(state));
+  assert.ok(state.samples >= 4, 'Coastal review needs a moving wake');
+  const before = await sharp(await capture(page, `${name}-coast-calm`)).removeAlpha().raw().toBuffer();
+  await page.evaluate(() => {
+    const water = window.necrofall.envWorld.puddles;
+    water.trailData.set(window.coastalState.fresh); water.trailTexture.needsUpdate = true;
+  });
+  const after = await sharp(await capture(page, `${name}-coast-walking`)).removeAlpha().raw().toBuffer();
+  let changedPixels = 0, peakChange = 0;
+  for (let index = 0; index < before.length; index += 3) {
+    const delta = Math.max(Math.abs(after[index] - before[index]), Math.abs(after[index + 1] - before[index + 1]), Math.abs(after[index + 2] - before[index + 2]));
+    if (delta > 2) changedPixels++;
+    peakChange = Math.max(peakChange, delta);
+  }
+  assert.ok(changedPixels > 30 && peakChange < 55, `Wake must be visible but restrained: ${changedPixels} pixels, peak ${peakChange}`);
+  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport); await capture(page, `${name}-coast-${viewport.width}`);
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.evaluate(() => {
+    const game = window.necrofall, saved = window.coastalState, camera = game.cam.camera;
+    game.update = saved.update; game.ticker.update = saved.tick; game.envWorld.deps.time.value = saved.time;
+    camera.position.copy(saved.position); camera.quaternion.copy(saved.rotation); camera.up.copy(saved.up); camera.updateMatrixWorld(true);
+    const water = game.envWorld.puddles;
+    for (let index = 3; index < water.trailData.length; index += 4) water.trailData[index] = -1000;
+    water.trailTexture.needsUpdate = true;
+  });
+  console.log(`${name}: ${(state.coverage * 100).toFixed(1)}% coastal area, ${changedPixels} wake pixels, peak change ${peakChange}/255`);
+  return { ...state, changedPixels, peakChange };
 }
 
 async function nightStars(page, name) {
@@ -311,8 +379,9 @@ try {
       await capture(page, `${id}-night`);
       const starPixels = await nightStars(page, id);
       const hazards = id === 'saffron-waste' ? await hazardInteractions(page) : undefined;
+      const coast = ['saffron-waste', 'glass-tide', 'cinderbloom'].includes(id) ? await coastalWater(page, id) : undefined;
       const trails = id === 'cinderbloom' ? await surfaceTrails(page) : undefined;
-      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards });
+      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards, coast });
       console.log(`${id}: freeroam, movement, base recipes, fixed sun and twilight passed`);
       assert.deepEqual(errors, [], `${id}: runtime errors`);
     } catch (error) {

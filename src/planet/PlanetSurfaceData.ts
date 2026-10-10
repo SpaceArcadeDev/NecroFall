@@ -108,7 +108,7 @@ export class PlanetSurfaceData {
 
     this.reliefMin = reliefMin;
     this.reliefMax = reliefMax;
-    this.waterLevel = reliefMin + (reliefMax - reliefMin) * 0.24;
+    this.waterLevel = generator.terrain.seaLevel;
   }
 
   private async bakeChannels(onProgress?: BakeProgress): Promise<void> {

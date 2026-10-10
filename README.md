@@ -27,7 +27,10 @@ Sun and halo tint, sky, clouds and fog warm together at sunrise and sunset, whil
 stars fade into view at night. Mountains have broad, smoothly tapered foothills;
 rock spires are capped at 8 m so they do not compete with mountain silhouettes.
 Larger puddles, connected river channels and shallow coastal water share the same
-0.35 m depth limit and grounded walking wakes. Frozen and volcanic profiles retain
+0.35 m depth limit and grounded walking wakes. Coastal shelves have a level surface
+and occupy approximately 2% of desert planets, 3.5% of most profiles and 8% of ocean
+profiles. Continuous directional wave normals provide gentle refraction and sheen;
+thin walking ripples fade without accumulating into bright trails. Frozen and volcanic profiles retain
 their ice and lava surfaces. Grass trails persist behind walkers and recover.
 Saffron Waste has 18 m-wide quicksand patches that reduce grounded movement to 30%
 at their centers; jumping or leaving restores normal movement. Enlarged dust devils
@@ -70,6 +73,8 @@ all ten profiles, day/twilight/night, classic structures and Mega animation,
 mobile rotation, WebGL fallback, fixed-clock grass/water trail pixel comparisons,
 night-star visibility comparisons, and live-player quicksand and vortex interactions.
 Hazard captures include desktop, mobile portrait and mobile landscape views.
+Coastal captures cover the same viewports with isolated moving-wake comparisons;
+32-seed physics checks bound sea coverage and verify a level shallow surface.
 `npm run test:enemy-models` boots a real solo match and checks both imported enemy base
 models end to end: the derived crawler rig (bones, normalized skin weights, advancing
 gait), the cell-shaded creature materials and their uniforms, and gameplay — the bodies

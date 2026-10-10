@@ -279,6 +279,12 @@ export class Enemy {
   private skinT = 0;
   /** Triangle of the rendered terrain mesh the body last stood on (`meshHeightAtDir` hint). */
   private meshHint = -1;
+  private navigationT = 0;
+  private navigationAngle = 0;
+  private navigationSide = 0;
+  private readonly navigationPosition = new THREE.Vector3();
+  private readonly navigationVelocity = new THREE.Vector3();
+  private readonly navigationDirection = new THREE.Vector3();
   airH = 0;
   /**
    * FLYER cruise altitude (0 for every grounded body): the wings hold the body at this height, so
@@ -466,6 +472,9 @@ export class Enemy {
   // ------------------------------------------------------------ setup
 
   setGenome(genome: EnemyGenome): void {
+    this.navigationT = 0;
+    this.navigationAngle = 0;
+    this.navigationSide = 0;
     if (this.rig && this.genome === genome) return; // pooled instance already built
     this.imported?.dispose(); this.imported = null;
     this.genomeIdx = genome.idx;
@@ -803,6 +812,7 @@ export class Enemy {
       _v2.normalize();
       const urgency = 1 - away / FLEE_R;                 // 0 at the rim, 1 right on top of them
       const speed = (this.isBoss ? 7 : 12) * (0.5 + urgency * 1.4);
+      this.steerTerrain(_v2, speed, dt, game);
       this.velocity.lerp(_v2.multiplyScalar(speed), clamp(dt * 5, 0, 1));
       this.rideTerrain(game, dt);
       this.attackCd = Math.max(this.attackCd, 0.8);
@@ -1060,6 +1070,7 @@ export class Enemy {
       _v.addScaledVector(this.up, -_v.dot(this.up)).normalize();
       const speed = g.speed * this.slowMul * speedMul * (this.stealthed ? 1.3 : 1);
       const accel = this.isBoss ? 9 : 16;
+      this.steerTerrain(_v, speed, dt, game);
       this.velocity.lerp(_v.multiplyScalar(speed), clamp(accel * dt, 0, 1));
     } else {
       this.velocity.multiplyScalar(Math.max(0, 1 - dt * 4));
@@ -1353,6 +1364,7 @@ export class Enemy {
       _bv.addScaledVector(this.up, -_bv.dot(this.up));
       if (_bv.lengthSq() < 1e-4) _bv.copy(this.facing);
       _bv.normalize();
+      this.steerTerrain(_bv, 7, dt, game);
       this.velocity.lerp(_bw.copy(_bv).multiplyScalar(7), clamp(dt * 5, 0, 1));
       this.rideTerrain(game, dt);
       return;
@@ -1414,6 +1426,7 @@ export class Enemy {
       if (_bv.length() > 3) {
         if (_bv.lengthSq() > 1e-5) _bv.normalize();
         else _bv.copy(this.facing);
+        this.steerTerrain(_bv, 5, dt, game);
         this.velocity.lerp(_bw.copy(_bv).multiplyScalar(5), clamp(dt * 4, 0, 1));
       } else {
         this.wanderT -= dt;
@@ -1426,6 +1439,7 @@ export class Enemy {
         _v2.copy(this.wanderDir).addScaledVector(this.up, -this.wanderDir.dot(this.up));
         if (_v2.lengthSq() > 1e-5) _v2.normalize();
         else _v2.copy(this.facing);
+        this.steerTerrain(_v2, 2.5, dt, game);
         this.velocity.lerp(_bw.copy(_v2).multiplyScalar(2.5), clamp(dt * 4, 0, 1));
       }
       this.rideTerrain(game, dt);
@@ -1438,6 +1452,7 @@ export class Enemy {
     if (_bv.lengthSq() > 1e-5) _bv.normalize();
     else _bv.copy(this.facing);
     const speed = Math.min(6.6, this.genome.speed * prof.chaseSpeedMul * this.slowMul);
+    this.steerTerrain(_bv, speed, dt, game);
     this.velocity.lerp(_bw.copy(_bv).multiplyScalar(speed), clamp(dt * 6, 0, 1));
 
     if (dist <= h.leapRange && this.hunterCd <= 0 && dist > 2.2) {
@@ -2039,6 +2054,48 @@ export class Enemy {
     game.broadcastEnemyEvent(this.id, kind, this.position, this.up, this.radius);
   }
 
+  private steerTerrain(direction: THREE.Vector3, speed: number, dt: number, game: Game): void {
+    const obstacles = game.envWorld?.obstacles;
+    if (!obstacles?.count || !this.genome.anatomy || this.airH > 0 || this.flyAlt > 0 || speed < 0.1) {
+      this.navigationT = 0;
+      this.navigationAngle = 0;
+      this.navigationSide = 0;
+      return;
+    }
+    this.navigationT -= dt;
+    if (this.navigationT <= 0) {
+      this.navigationT = 0.18;
+      const radius = this.radius * 0.65;
+      const distance = Math.max(0.8, radius * 2.5, speed * 0.45);
+      const stepHeight = capabilities(this.genome.anatomy, this.isBoss).maxStep;
+      const clearance = (angle: number, reach = distance): number => {
+        this.navigationDirection.copy(direction).applyAxisAngle(this.up, angle);
+        this.navigationPosition.copy(this.position);
+        this.navigationVelocity.copy(this.navigationDirection).multiplyScalar(speed);
+        obstacles.move(this.navigationPosition, this.navigationVelocity, reach / speed, radius, true, stepHeight);
+        return this.navigationPosition.sub(this.position).dot(this.navigationDirection) / reach;
+      };
+      if (clearance(0, distance * (this.navigationAngle ? 1.4 : 1)) > 0.92) {
+        this.navigationAngle = 0;
+        this.navigationSide = 0;
+      } else {
+        const side = this.navigationSide || (this.id % 2 ? -1 : 1);
+        let best = -Infinity;
+        let chosen = side * Math.PI / 2;
+        for (const turn of [1, -1, 2, -2, 3, -3]) {
+          const angle = side * turn * Math.PI / 4;
+          const free = clearance(angle);
+          const score = Math.min(1, free) - Math.abs(turn) * 0.04 - (turn < 0 ? 0.12 : 0);
+          if (score > best) { best = score; chosen = angle; }
+          if (free > 0.92 && turn > 0) break;
+        }
+        this.navigationAngle = chosen;
+        this.navigationSide = Math.sign(chosen);
+      }
+    }
+    direction.applyAxisAngle(this.up, this.navigationAngle);
+  }
+
   /**
    * Moves the body along the surface and clamps it onto the terrain.
    *
@@ -2091,10 +2148,13 @@ export class Enemy {
     // triangle makes the common case a single intersection test; the analytic height is only
     // evaluated by the lookup itself if the direction somehow misses every triangle.
     const terrain = game.planet.meshHeightAtDir(_v.x, _v.y, _v.z, undefined, this.meshHint);
-    const support = this.genome.anatomy ? game.envWorld?.obstacles.supportRadius(this.position, this.airH <= 0 ? stepHeight : 0.05) : null;
+    const support = this.genome.anatomy ? game.envWorld?.obstacles.supportRadius(this.position, this.airH <= 0 ? stepHeight : 0.05, this.radius * 0.65) : null;
     const surf = Math.max(terrain, support ?? -Infinity);
     this.meshHint = game.planet.meshTriHint;
     this.position.copy(_v).multiplyScalar(surf + this.airH);
+    if (this.genome.anatomy && game.envWorld?.obstacles.resolve(this.position, this.radius * 0.65, this.velocity)) {
+      this.up.copy(this.position).normalize();
+    }
   }
 
   // ------------------------------------------------------------ attacks

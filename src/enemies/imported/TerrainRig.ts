@@ -156,10 +156,11 @@ export class TerrainRig {
         this.nextFoot = (index + 1) % this.contacts.length;
       }
       if (foot.progress < 1) {
-        foot.progress = Math.min(1, foot.progress + dt / Math.max(0.12, Math.min(0.38, stride / Math.max(speed, 0.1))));
+        foot.progress = Math.min(1, foot.progress + dt / Math.max(0.035, Math.min(0.38, stride * 0.7 / Math.max(speed, 0.1))));
         const blend = foot.progress * foot.progress * (3 - 2 * foot.progress);
         foot.planted.lerpVectors(foot.start, foot.goal, blend);
         foot.planted.addScaledVector(this.up, Math.sin(foot.progress * Math.PI) * this.height * 0.13);
+        if (foot.progress >= 1) swinging--;
       }
       foot.target.position.copy(foot.planted);
       if (motion.attack === 'stomp' && index === 0 && !motion.airborne) foot.target.position.addScaledVector(this.up, strike * this.height * 0.07);

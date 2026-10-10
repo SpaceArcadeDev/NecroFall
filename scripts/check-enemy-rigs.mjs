@@ -21,8 +21,99 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto(`${server.resolvedUrls.local[0]}?enemyLab=1`);
+  await page.goto(`${server.resolvedUrls.local[0]}?enemyLab=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => window.enemyLab?.visual?.clock > 0.3, {}, { timeout: 60000 });
+  const slopeMovement = await page.evaluate(async () => {
+    const THREE = await import('/node_modules/three/build/three.webgpu.js');
+    const { Enemy } = await import('/src/enemies/Enemies.ts');
+    const { PlanetObstacles } = await import('/src/planet/PlanetObstacles.ts');
+    const { generateEcology, factsFromSeed } = await import('/src/enemies/procedural/EcologyGenerator.ts');
+    const obstacles = new PlanetObstacles(100);
+    const gradient = Math.tan(Math.PI / 3);
+    const slope = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2)
+      .rotateZ(Math.PI / 3).translate(0, 100, 0), new THREE.MeshBasicMaterial());
+    obstacles.addMesh(slope); obstacles.build();
+    const enemy = Object.create(Enemy.prototype);
+    Object.assign(enemy, { position: new THREE.Vector3(-2, 100 - gradient * 2, 0), velocity: new THREE.Vector3(),
+      up: new THREE.Vector3(0, 1, 0), airH: 0, flyAlt: 0, radius: 0.6, meshHint: -1,
+      genome: generateEcology(774, factsFromSeed(774, 2)).genomes[1] });
+    const game = { envWorld: { obstacles }, planet: { meshTriHint: -1,
+      meshHeightAtDir: (axisX, axisY) => 100 / (axisY - gradient * axisX) } };
+    let worstSupportGap = 0;
+    for (let frame = 0; frame < 120; frame++) {
+      enemy.velocity.set(1, 0, 0);
+      enemy.rideTerrain(game, 1 / 60);
+      const supported = obstacles.supportRadius(enemy.position, 1.5, enemy.radius * 0.65);
+      worstSupportGap = Math.max(worstSupportGap, Math.abs(supported - enemy.position.length()));
+    }
+    const result = { worstSupportGap, progress: enemy.position.x + 2, airHeight: enemy.airH };
+    obstacles.dispose(); slope.geometry.dispose(); slope.material.dispose();
+    return result;
+  });
+  assert.ok(slopeMovement.worstSupportGap < 0.02, `Enemy repeatedly loses capsule support: ${JSON.stringify(slopeMovement)}`);
+  assert.ok(slopeMovement.progress > 1.5 && slopeMovement.airHeight === 0, `Enemy stuck climbing: ${JSON.stringify(slopeMovement)}`);
+  results.push({ slopeMovement });
+  const obstacleMovement = await page.evaluate(async () => {
+    const THREE = await import('/node_modules/three/build/three.webgpu.js');
+    const { Enemy } = await import('/src/enemies/Enemies.ts');
+    const { PlanetObstacles } = await import('/src/planet/PlanetObstacles.ts');
+    const { generateEcology, factsFromSeed } = await import('/src/enemies/procedural/EcologyGenerator.ts');
+    const obstacles = new PlanetObstacles(100);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.3, 5, 6).translate(0, 102.5, 0), new THREE.MeshBasicMaterial());
+    obstacles.addMesh(wall); obstacles.build();
+    const genome = generateEcology(774, factsFromSeed(774, 2)).genomes[1];
+    const runs = [];
+    for (const hunter of [false, true]) for (const rate of [30, 60, 120]) {
+      const enemy = new Enemy();
+      enemy.genome = { ...genome, abilities: [], hunter, hunt: hunter ? { leapRange: 0 } : undefined, swarm: undefined,
+        ranged: false, projKind: 'none', attackRange: 0.5, speed: 5,
+        behavior: { ...genome.behavior, chaseSpeedMul: 1 } };
+      enemy.position.set(-7, 100, 0); enemy.up.copy(enemy.position).normalize();
+      enemy.radius = 0.6; enemy.thinkT = 1000; enemy.attackCd = 1000;
+      enemy.bTarget = { alive: true, id: 'pursuit-target', position: new THREE.Vector3(7, 100, 0) };
+      const game = { clock: 0, isHost: false, nearestFrozenPlayer: () => null,
+        nearestPlayer: () => enemy.bTarget,
+        enemies: { query: () => [], scratch: () => [] }, envWorld: { obstacles },
+        planet: { meshTriHint: -1, meshHeightAtDir: (axisX, axisY) => 100 / axisY } };
+      let maxSide = 0, maxPenetration = 0;
+      for (let frame = 0; frame < rate * 12 && enemy.position.x < 4; frame++) {
+        game.clock += 1 / rate; enemy.update(1 / rate, game);
+        maxSide = Math.max(maxSide, Math.abs(enemy.position.z));
+        const resolved = enemy.position.clone(); obstacles.resolve(resolved, enemy.radius * 0.65);
+        maxPenetration = Math.max(maxPenetration, resolved.distanceTo(enemy.position));
+      }
+      runs.push({ hunter, rate, forward: enemy.position.x, maxSide, maxPenetration });
+    }
+    obstacles.dispose(); wall.geometry.dispose(); wall.material.dispose();
+    return runs;
+  });
+  for (const run of obstacleMovement) {
+    assert.ok(run.forward > 4 && run.maxSide > 3, `Enemy stuck against obstacle: ${JSON.stringify(run)}`);
+    assert.ok(run.maxPenetration < 0.02, `Enemy clips through obstacle: ${JSON.stringify(run)}`);
+  }
+  results.push({ obstacleMovement });
+  const runningContacts = await page.evaluate(async () => {
+    const lab = window.enemyLab;
+    lab.renderer.setAnimationLoop(null);
+    const runs = [];
+    for (const base of ['crawler', 'parasite', 'behemoth']) for (const rate of [30, 60, 120]) {
+      await lab.setAnatomy({ ...lab.anatomy, base, headBase: base, armBase: base, tailBase: base,
+        body: 1, head: 1, limbs: 1, tail: 1, size: 2, wings: false });
+      const root = lab.visual.root;
+      root.position.set(0, 100, 0); root.quaternion.identity();
+      const motion = { ground: (point, up, reach, out) => { out.copy(point).setY(100); return true; } };
+      let maxError = 0;
+      for (let frame = 0; frame < rate * 3; frame++) {
+        root.position.z += 7 / rate;
+        lab.visual.locomotion.update(1 / rate, false, motion);
+        if (frame > rate / 2) maxError = Math.max(maxError, ...lab.visual.locomotion.diagnostics().feet.map(foot => foot.error));
+      }
+      runs.push({ base, rate, maxError, steps: lab.visual.locomotion.steps });
+    }
+    return runs;
+  });
+  for (const run of runningContacts) assert.ok(run.maxError < 0.6, `Running feet lag behind body: ${JSON.stringify(run)}`);
+  results.push({ runningContacts });
   const rules = await page.evaluate(async () => {
     const { generateEcology, factsFromSeed } = await import('/src/enemies/procedural/EcologyGenerator.ts');
     const { capabilities, legalAttacks } = await import('/src/enemies/imported/EnemyAnatomy.ts');
@@ -329,7 +420,82 @@ try {
       await page.evaluate(() => { const lab = window.enemyLab; lab.visual.root.visible = true; lab.renderer.render(lab.scene, lab.camera); });
     }
   }
+  await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => Boolean(window.necrofallShell));
+  await page.evaluate(() => {
+    const shell = window.necrofallShell, game = shell.ensureGame();
+    shell.soloRunActive = true; shell.lastSoloMode = 'freeroam'; shell.hideShell(true);
+    game.startSoloRun({ mode: 'freeroam', planetKey: '', ring: 0, universeSeed: 23, seed: 23, colony: 0 });
+  });
+  await page.waitForFunction(() => window.necrofall?.phase === 'playing' && window.necrofall.envWorld?.ecology, {}, { timeout: 60000 });
+  const walkers = await page.evaluate(async () => {
+    const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const game = window.necrofall, world = game.envWorld;
+    game.update = () => {}; game.ticker.update = () => game.rendering.render(0);
+    const up = world.deps.system.sunDirection.clone().normalize();
+    const across = new Vector3().crossVectors(up, new Vector3(0, 1, 0)).normalize();
+    const forward = new Vector3().crossVectors(across, up).normalize();
+    const ground = point => { point.normalize(); return point.multiplyScalar(game.planet.meshHeightAtDir(point.x, point.y, point.z)); };
+    const center = ground(up.clone().multiplyScalar(game.planet.radius));
+    const ids = [];
+    for (const [index, base] of ['crawler', 'parasite', 'behemoth'].entries()) {
+      const genome = game.enemies.bestiary.genomes.find(candidate => candidate.anatomy?.base === base);
+      if (!genome) throw new Error(`Missing gameplay body: ${base}`);
+      const start = ground(center.clone().addScaledVector(across, (index - 1) * 5));
+      const enemy = game.enemies.spawn(genome.idx, start);
+      enemy.genome = { ...enemy.genome, abilities: [], hunter: false, hunt: undefined, swarm: undefined,
+        ranged: false, projKind: 'none', attackRange: 0.5, speed: 5,
+        behavior: { ...enemy.genome.behavior, chaseSpeedMul: 1 } };
+      enemy.isBoss = false; enemy.flyAlt = 0; enemy.airH = 0; enemy.attackCd = 1000; enemy.thinkT = 1000;
+      enemy.bTarget = { alive: true, id: `walk-${base}`, position: ground(start.clone().addScaledVector(forward, 32)) };
+      enemy.walkStart = enemy.position.clone();
+      ids.push(enemy.id);
+    }
+    game.localPlayer.position.copy(center); game.localPlayer.up.copy(up);
+    window.walkingTest = { ids, up, across, forward, center };
+    return ids;
+  });
+  await page.waitForFunction(ids => ids.every(id => window.necrofall.enemies.byId(id)?.imported), walkers, { timeout: 60000 });
+  const gameplay = await page.evaluate(() => {
+    const game = window.necrofall, world = game.envWorld;
+    return window.walkingTest.ids.map(id => {
+      const enemy = game.enemies.byId(id);
+      let maxStep = 0, maxPenetration = 0;
+      for (let frame = 0; frame < 240; frame++) {
+        const before = enemy.position.clone();
+        game.clock += 1 / 60; enemy.update(1 / 60, game); enemy.place(1 / 60, game);
+        const resolved = enemy.position.clone(); world.obstacles.resolve(resolved, enemy.radius * 0.65);
+        if (frame > 5) {
+          maxStep = Math.max(maxStep, before.distanceTo(enemy.position));
+          maxPenetration = Math.max(maxPenetration, resolved.distanceTo(enemy.position));
+        }
+      }
+      return { base: enemy.genome.anatomy.base, distance: enemy.position.distanceTo(enemy.walkStart),
+        steps: enemy.imported.locomotion.steps, maxStep, maxPenetration };
+    });
+  });
+  for (const walker of gameplay) {
+    assert.ok(walker.distance > 8 && walker.steps > 8, `Gameplay walker stalled: ${JSON.stringify(walker)}`);
+    assert.ok(walker.maxStep < 0.65 && walker.maxPenetration < 0.08, `Gameplay terrain jitter: ${JSON.stringify(walker)}`);
+  }
+  results.push({ gameplay });
+  for (const [view, width, height] of [['desktop', 1440, 900], ['mobile', 390, 844]]) {
+    await page.setViewportSize({ width, height });
+    await page.evaluate(() => {
+      const game = window.necrofall, test = window.walkingTest, camera = game.cam.camera;
+      const focus = test.center.clone().setScalar(0);
+      for (const id of test.ids) focus.add(game.enemies.byId(id).position);
+      focus.divideScalar(test.ids.length);
+      camera.position.copy(focus).addScaledVector(test.up, 22).addScaledVector(test.forward, -18);
+      camera.up.copy(test.up); camera.lookAt(focus); camera.updateMatrixWorld(true);
+      game.envWorld.update(focus, camera); game.lighting.update(focus); game.rendering.render(0);
+    });
+    const visible = await page.screenshot({ path: `${directory}/gameplay-walking-${view}.png` });
+    await page.evaluate(() => { const game = window.necrofall; for (const id of window.walkingTest.ids) game.enemies.byId(id).group.visible = false; game.rendering.render(0); });
+    assert.ok(await changedPixels(visible, await page.screenshot()) > 300, `${view}: gameplay walkers not visible`);
+    await page.evaluate(() => { const game = window.necrofall; for (const id of window.walkingTest.ids) game.enemies.byId(id).group.visible = true; game.rendering.render(0); });
+  }
   assert.deepEqual(errors, []);
   await writeFile(`${directory}/report.json`, JSON.stringify(results, null, 2));
-  console.log(`PASS: ${rules.count} genomes; 9 terrain courses; 18 graft combinations; 9 moving forms; desktop/mobile pixels; 3 glow patterns; ${attacks.length} procedural attacks; texture retention at maximum glow`);
+  console.log(`PASS: slope support; 6 obstacle pursuits; 9 running gaits; 3 gameplay walkers; ${rules.count} genomes; 9 terrain courses; 18 graft combinations; 9 moving forms; desktop/mobile pixels; 3 glow patterns; ${attacks.length} procedural attacks; texture retention at maximum glow`);
 } finally { await browser.close(); await server.close(); }

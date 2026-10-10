@@ -420,10 +420,12 @@ try {
       await page.evaluate(() => { const lab = window.enemyLab; lab.visual.root.visible = true; lab.renderer.render(lab.scene, lab.camera); });
     }
   }
-  await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded' });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(server.resolvedUrls.local[0], { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => Boolean(window.necrofallShell));
   await page.evaluate(() => {
     const shell = window.necrofallShell, game = shell.ensureGame();
+    game.renderer.domElement.dataset.walkTest = 'true';
     shell.soloRunActive = true; shell.lastSoloMode = 'freeroam'; shell.hideShell(true);
     game.startSoloRun({ mode: 'freeroam', planetKey: '', ring: 0, universeSeed: 23, seed: 23, colony: 0 });
   });
@@ -481,19 +483,33 @@ try {
   results.push({ gameplay });
   for (const [view, width, height] of [['desktop', 1440, 900], ['mobile', 390, 844]]) {
     await page.setViewportSize({ width, height });
-    await page.evaluate(() => {
+    if (view === 'mobile') await page.getByRole('button', { name: 'PLAY IN PORTRAIT ANYWAY' }).click();
+    await page.waitForFunction(() => {
+      const game = window.necrofall, bounds = game.renderer.domElement.getBoundingClientRect();
+      return Math.abs(bounds.width - innerWidth) < 1 && Math.abs(bounds.height - innerHeight) < 1
+        && Math.abs(game.cam.camera.aspect - innerWidth / innerHeight) < 0.001;
+    });
+    await page.evaluate(async () => {
+      const { Box3, Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
       const game = window.necrofall, test = window.walkingTest, camera = game.cam.camera;
-      const focus = test.center.clone().setScalar(0);
-      for (const id of test.ids) focus.add(game.enemies.byId(id).position);
-      focus.divideScalar(test.ids.length);
-      camera.position.copy(focus).addScaledVector(test.up, 22).addScaledVector(test.forward, -18);
+      game.scene.updateMatrixWorld(true);
+      const bounds = new Box3();
+      for (const id of test.ids) bounds.expandByObject(game.enemies.byId(id).group, true);
+      const focus = bounds.getCenter(new Vector3());
+      const halfFov = Math.min(camera.fov * Math.PI / 360, Math.atan(Math.tan(camera.fov * Math.PI / 360) * camera.aspect));
+      const distance = bounds.getSize(new Vector3()).length() * 0.6 / Math.sin(halfFov);
+      const offset = test.up.clone().multiplyScalar(1.2).addScaledVector(test.forward, -1).normalize();
+      camera.position.copy(focus).addScaledVector(offset, distance);
       camera.up.copy(test.up); camera.lookAt(focus); camera.updateMatrixWorld(true);
       game.envWorld.update(focus, camera); game.lighting.update(focus); game.rendering.render(0);
     });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const inspection = await page.addStyleTag({ content: 'body * { visibility: hidden !important; } canvas[data-walk-test] { visibility: visible !important; }' });
     const visible = await page.screenshot({ path: `${directory}/gameplay-walking-${view}.png` });
     await page.evaluate(() => { const game = window.necrofall; for (const id of window.walkingTest.ids) game.enemies.byId(id).group.visible = false; game.rendering.render(0); });
     assert.ok(await changedPixels(visible, await page.screenshot()) > 300, `${view}: gameplay walkers not visible`);
     await page.evaluate(() => { const game = window.necrofall; for (const id of window.walkingTest.ids) game.enemies.byId(id).group.visible = true; game.rendering.render(0); });
+    await inspection.evaluate(node => node.remove());
   }
   assert.deepEqual(errors, []);
   await writeFile(`${directory}/report.json`, JSON.stringify(results, null, 2));

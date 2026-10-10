@@ -35,7 +35,9 @@ const planetWorldRoute =
   params.has('world') ||
   params.has('devworld');
 
-if (planetWorldRoute) {
+if (params.has('enemyLab')) {
+  void import('./enemies/imported/EnemyLab').then(module => module.startEnemyLab());
+} else if (planetWorldRoute) {
   void import('./dev/DevWorld').then((module) => module.startDevWorld());
 } else {
   const shell = new AppShell(app);

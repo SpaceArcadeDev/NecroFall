@@ -231,9 +231,60 @@ export const CRAWLER_RIG: AutoRigSpec = {
     { joint: 'Tail5', tip: [0, 0.380, -0.600], radius: 0.1 },
     { joint: 'Tail6', tip: [0, 0.330, -0.520], radius: 0.09 },
     // Legs: hip → foot, gated below the hip line and to their own side.
-    { joint: 'LegFL', tip: [-0.198, 0.017, 0.496], radius: 0.19, ceiling: 0.52, side: -1 },
-    { joint: 'LegFR', tip: [0.198, 0.017, 0.496], radius: 0.19, ceiling: 0.52, side: 1 },
-    { joint: 'LegBR', tip: [0.182, 0.017, -0.446], radius: 0.19, ceiling: 0.52, side: 1 },
-    { joint: 'LegBL', tip: [-0.231, 0.198, 0.099], radius: 0.17, ceiling: 0.55, side: -1 },
+    { joint: 'LegFL', tip: [-0.215, 0.264, 0.380], radius: 0.16, ceiling: 0.52, side: -1 },
+    { joint: 'ShinFL', tip: [-0.198, 0.017, 0.496], radius: 0.14, ceiling: 0.29, side: -1 },
+    { joint: 'FootFL', tip: [-0.198, 0.017, 0.57], radius: 0.12, ceiling: 0.09, side: -1 },
+    { joint: 'LegFR', tip: [0.215, 0.264, 0.380], radius: 0.16, ceiling: 0.52, side: 1 },
+    { joint: 'ShinFR', tip: [0.198, 0.017, 0.496], radius: 0.14, ceiling: 0.29, side: 1 },
+    { joint: 'FootFR', tip: [0.198, 0.017, 0.57], radius: 0.12, ceiling: 0.09, side: 1 },
+    { joint: 'LegBR', tip: [0.165, 0.264, -0.380], radius: 0.16, ceiling: 0.52, side: 1 },
+    { joint: 'ShinBR', tip: [0.182, 0.017, -0.446], radius: 0.13, ceiling: 0.29, side: 1 },
+    { joint: 'FootBR', tip: [0.182, 0.017, -0.37], radius: 0.11, ceiling: 0.09, side: 1 },
+    { joint: 'LegBL', tip: [-0.198, 0.347, -0.083], radius: 0.15, ceiling: 0.55, side: -1 },
+    { joint: 'ShinBL', tip: [-0.231, 0.198, 0.099], radius: 0.13, ceiling: 0.37, side: -1 },
+    { joint: 'FootBL', tip: [-0.231, 0.198, 0.17], radius: 0.11, ceiling: 0.25, side: -1 },
   ],
 };
+
+export const BEHEMOTH_RIG: AutoRigSpec = {
+  joints: [
+    { name: 'Root', parent: null, position: [0, 0.50, -0.12] },
+    { name: 'Spine', parent: 'Root', position: [0, 0.62, -0.04] },
+    { name: 'Chest', parent: 'Spine', position: [0, 0.73, 0.10] },
+    { name: 'Neck', parent: 'Chest', position: [0, 0.70, 0.28] },
+    { name: 'Head', parent: 'Neck', position: [0, 0.62, 0.42] },
+    { name: 'Jaw', parent: 'Head', position: [0, 0.52, 0.49] },
+    { name: 'Tail1', parent: 'Chest', position: [0, 0.80, -0.16] },
+    { name: 'Tail2', parent: 'Tail1', position: [0, 0.84, -0.32] },
+    { name: 'Tail3', parent: 'Tail2', position: [0, 0.90, -0.50] },
+    { name: 'Tail4', parent: 'Tail3', position: [0, 0.89, -0.66] },
+    { name: 'Tail5', parent: 'Tail4', position: [0, 0.82, -0.80] },
+    { name: 'Tail6', parent: 'Tail5', position: [0, 0.72, -0.94] },
+    { name: 'LegFL', parent: 'Chest', position: [-0.37, 0.64, 0.10] },
+    { name: 'ShinFL', parent: 'LegFL', position: [-0.49, 0.37, 0.32] },
+    { name: 'FootFL', parent: 'ShinFL', position: [-0.47, 0.20, 0.73] },
+    { name: 'LegFR', parent: 'Chest', position: [0.37, 0.64, 0.10] },
+    { name: 'ShinFR', parent: 'LegFR', position: [0.49, 0.37, 0.32] },
+    { name: 'FootFR', parent: 'ShinFR', position: [0.47, 0.20, 0.73] },
+    { name: 'LegBL', parent: 'Root', position: [-0.27, 0.49, -0.14] },
+    { name: 'ShinBL', parent: 'LegBL', position: [-0.35, 0.24, -0.22] },
+    { name: 'FootBL', parent: 'ShinBL', position: [-0.36, 0.03, -0.10] },
+    { name: 'LegBR', parent: 'Root', position: [0.27, 0.49, -0.14] },
+    { name: 'ShinBR', parent: 'LegBR', position: [0.35, 0.24, -0.22] },
+    { name: 'FootBR', parent: 'ShinBR', position: [0.36, 0.03, -0.10] },
+  ],
+  envelopes: [],
+};
+
+BEHEMOTH_RIG.envelopes = BEHEMOTH_RIG.joints.map(joint => {
+  const child = BEHEMOTH_RIG.joints.find(candidate => candidate.parent === joint.name);
+  const limb = /Leg|Shin|Foot/.test(joint.name);
+  const tail = joint.name.startsWith('Tail');
+  return {
+    joint: joint.name,
+    tip: child?.position ?? joint.position,
+    radius: tail ? 0.12 : limb ? 0.20 : joint.name === 'Head' || joint.name === 'Jaw' ? 0.22 : 0.32,
+    ceiling: limb ? joint.position[1] + 0.04 : undefined,
+    side: limb ? joint.position[0] < 0 ? -1 : 1 : undefined,
+  };
+});

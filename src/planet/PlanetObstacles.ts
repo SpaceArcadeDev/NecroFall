@@ -92,12 +92,12 @@ export class PlanetObstacles {
     return radius;
   }
 
-  move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean): void {
+  move(position: THREE.Vector3, velocity: THREE.Vector3, delta: number, bodyRadius: number, stepUp: boolean, stepHeight = STEP_HEIGHT): void {
     const steps = Math.max(1, Math.min(48, Math.ceil(velocity.length() * delta / Math.max(0.1, bodyRadius * 0.5))));
     for (let step = 0; step < steps; step++) {
       position.addScaledVector(velocity, delta / steps);
       if (stepUp) {
-        const support = this.supportRadius(position, STEP_HEIGHT, bodyRadius);
+        const support = this.supportRadius(position, stepHeight, bodyRadius);
         if (support !== null && support > position.length()) position.setLength(support);
       }
       this.resolve(position, bodyRadius, velocity);

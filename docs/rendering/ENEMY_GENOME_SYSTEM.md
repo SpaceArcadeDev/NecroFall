@@ -63,6 +63,8 @@ sampled once to obtain a usable rest pose, never played as a locomotion loop.
 - Texture-preserving palette remapping and animated Veins, Bands and Cells emission. Patterns
 	share the game's shader clock, stay in body-relative coordinates and respond to aggro.
 	Glow intensity is adjustable, including zero; hit flash and frost retain their existing priority.
+	The anatomy tint blends at 25%, preserving most of the painted color. Emission brightens
+	the textured, lit surface with bounded highlight headroom instead of adding a flat color wash.
 - Removable tails; removable parasite wings. Only a winged, sufficiently light parasite can fly.
 - Forelimbs and weight-bearing legs stay within their torso family. Cross-family arm cuts
 	exposed open boundaries in the monolithic source mesh during visual review, so those swaps
@@ -84,6 +86,15 @@ generated traits, projectile patterns and boss telegraphs remain active. Attack 
 are mirrored to clients. Giant bodies cannot acquire leaps through either ordinary abilities
 or the boss enrage path.
 
+Attack poses are calculated from the current attack phase and anatomy, not played from clips.
+Stomps now articulate the torso and lift one support foot before planting it again, including
+crawler Guardians; the remaining feet stay under terrain IK. Stun freezes the generated pose.
+
+Beacon Guardian base scale, radius and attack reach are 1.5 times their previous values.
+Nexus Mega Necrophages use 2.25 times their previous values, with no parasite-only height
+reduction. Health, damage and speed are unchanged. Seeded size variation remains; the lab
+accepts sizes up to 16 and expands camera distance/clipping for giant previews.
+
 ## Lab And Tests
 
 Open `/?enemyLab=1` for the live modeling lab. It shares the game loader, anatomy rules and
@@ -94,11 +105,14 @@ Exported JSON is a reusable lab preset, not a server-side content deployment.
 - `npm run test:enemy-rigs`: 1,260 seeded anatomies, nine real-model terrain courses, idle
 	contact locking, stun, 18 donor/part combinations with animated attachment checks,
 	nine moving forms with measured silhouette differences, desktop/mobile model pixels,
-	and three shader-only glow animation checks with a glow-disabled control.
+	three shader-only glow animation checks with a glow-disabled control, 11 legal procedural
+	attack poses, and source-texture contrast at maximum glow. Giant Guardian/Nexus tests check
+	terrain contact, visible pixels and framing clear of the controls on desktop and mobile.
 - The reported seed 774 crawler/Behemoth-tail combination is replayed with its original
 	proportions; its capture is `seed-774-repaired.png` in the lab screenshot directory.
 - `npm run test:enemy-models`: real match spawns, all three Guardian bases, pursuit, damage,
 	frost, death, attack delay/dodging, off-screen recovery and grounded Behemoth enrage.
+	Checks also require larger Guardian collision/visual sizes and a still-larger unclamped Nexus.
 - `npm run test:planet-physics`: triangle sampling, rock support, capsule contact, thin walls,
 	steep slopes and existing planetary interaction regressions.
 - `npm run build` and `npm run test:main-planets`: final integration gates.

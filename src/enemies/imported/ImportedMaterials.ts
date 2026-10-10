@@ -108,7 +108,8 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
       // Thin glowing tissue: the fresnel IS the light, and the accent tint carries the colour.
       const inner = n.dot(viewDir).abs().clamp(0, 1).oneMinus().pow(1.5);
       const pulse = NECRO_UNIFORMS.uTime.mul(2).add(uPhase).sin().mul(0.2).add(0.8);
-      lit.assign(tinted.add(uAccent.mul(inner.mul(1.15).add(0.5)).mul(uGlow).mul(pulse)));
+      const emission = lit.mul(uAccent.mul(0.7).add(0.3)).mul(inner.mul(0.4).add(0.15)).mul(uGlow).mul(pulse).clamp(0, 0.4);
+      lit.addAssign(vec3(1).sub(lit.clamp(0, 1)).mul(emission));
     } else {
       const tissue = uSurfaceFrame.mul(vec4(wp, 1)).xyz.mul(uPatternScale);
       const clock = NECRO_UNIFORMS.uTime.add(uPhase);
@@ -117,7 +118,9 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
       const bands = tissue.y.mul(2.8).add(tissue.x.mul(2.2).sin()).sub(clock.mul(1.8)).sin().smoothstep(0.55, 0.85);
       const cells = wave.abs().smoothstep(0.025, 0.15).oneMinus();
       const pattern = uPattern.lessThan(0.5).select(veins, uPattern.lessThan(1.5).select(bands, cells));
-      lit.assign(lit.add(uAccent.mul(pattern).mul(detail.mul(0.65).add(0.25)).mul(uGlow).mul(uAggro.mul(0.8).add(0.65))));
+      const excitation = pattern.pow(2).mul(uGlow).mul(uAggro.mul(0.4).add(0.65)).clamp(0, 0.8);
+      const emission = lit.mul(uAccent.mul(0.7).add(0.3)).mul(excitation).clamp(0, 0.4);
+      lit.addAssign(vec3(1).sub(lit.clamp(0, 1)).mul(emission));
     }
 
     // FROST: the whole body crusts over in pale blue, throbbing off the shared shader clock.

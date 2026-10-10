@@ -73,7 +73,7 @@ export function normalizeAnatomy(input: EnemyAnatomy, giant = false): EnemyAnato
     form: (['original', 'stalker', 'bulwark', 'spire'].includes(input.form ?? '') ? input.form : 'original') as BodyForm,
     glow: finite(input.glow!, 0.9, 0, 2.5),
     pattern: (['veins', 'bands', 'cells'].includes(input.pattern ?? '') ? input.pattern : 'veins') as GlowPattern,
-    size: finite(input.size, 1, 0.5, 8),
+    size: finite(input.size, 1, 0.5, 16),
     wings: input.base === 'parasite' && input.wings,
   };
   const attacks = legalAttacks(anatomy, giant);

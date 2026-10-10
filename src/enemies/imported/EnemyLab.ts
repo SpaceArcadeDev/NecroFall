@@ -50,7 +50,7 @@ export async function startEnemyLab(): Promise<void> {
         <label>Tail Length<input id="el-tail" type="range" min="0.75" max="2" step="0.01"></label>
         <label>Tail Model<select id="el-tailBase"><option>crawler</option><option>parasite</option><option>behemoth</option></select></label>
         <label>Wings<input id="el-wings" type="checkbox"></label>
-        <label>Size<input id="el-size" type="range" min="0.5" max="6" step="0.1"></label>
+        <label>Size<input id="el-size" type="range" min="0.5" max="16" step="0.1"></label>
         <label>Chitin<input id="el-color" type="color"></label>
         <label>Accent<input id="el-accent" type="color"></label>
         <label>Glow<input id="el-glow" type="range" min="0" max="2.5" step="0.05"></label>
@@ -161,6 +161,8 @@ export async function startEnemyLab(): Promise<void> {
     const availableHeight = mobile ? panel.top - 70 : innerHeight - 130;
     const field = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * Math.min(availableHeight / innerHeight, availableWidth / innerHeight));
     const distance = size * 0.55 / Math.sin(field);
+    controls.maxDistance = Math.max(60, distance * 2);
+    camera.far = Math.max(250, distance * 4);
     camera.setViewOffset(innerWidth, innerHeight, mobile ? 0 : -(panel.right + 24) / 2, mobile ? (innerHeight - panel.top - 60) / 2 : 0, innerWidth, innerHeight);
     controls.target.copy(centre);
     camera.position.copy(centre).add(new THREE.Vector3(0.8, 0.45, 1).normalize().multiplyScalar(distance));

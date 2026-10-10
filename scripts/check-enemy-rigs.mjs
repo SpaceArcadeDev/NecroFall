@@ -214,7 +214,122 @@ try {
     assert.equal(disabled, 0, `${name}: pose/camera moved during shader-only check`);
     results.push({ pattern: name, animatedPixels: animated });
   }
+  const attacks = await page.evaluate(async () => {
+    const { legalAttacks } = await import('/src/enemies/imported/EnemyAnatomy.ts');
+    const lab = window.enemyLab;
+    const results = [];
+    document.querySelector('#el-speed').value = '0';
+    for (const base of ['crawler', 'parasite', 'behemoth']) {
+      await lab.setAnatomy({ ...lab.anatomy, base, headBase: base, tailBase: base, body: 1, head: 1, limbs: 1, tail: 1, length: 1, size: 2 });
+      lab.tick(1 / 60);
+      const bones = [];
+      lab.visual.root.traverse(object => { if (object.isBone) bones.push(object); });
+      const sample = (attack, phase) => {
+        lab.visual.locomotion.clock = 1;
+        lab.visual.update(1 / 60, 0, { flash: 0, frost: 0, stunned: false, enraged: false, ground: lab.ground, attack, attackPhase: phase });
+        return bones.map(bone => bone.quaternion.clone().normalize());
+      };
+      for (const attack of legalAttacks(lab.anatomy, true)) {
+        const neutral = sample(attack, 0);
+        const posed = sample(attack, 0.5);
+        const changed = Math.max(...posed.map((rotation, index) => rotation.angleTo(neutral[index])));
+        if (changed < 0.05) throw new Error(`${base}/${attack}: no procedural attack pose`);
+        const repeat = sample(attack, 0.5);
+        if (Math.max(...repeat.map((rotation, index) => rotation.angleTo(posed[index]))) > 1e-4) throw new Error(`${base}/${attack}: pose depends on playback history`);
+        const beforeStun = bones.map(bone => bone.quaternion.clone().normalize());
+        lab.visual.update(1 / 60, 0, { flash: 0, frost: 0, stunned: true, enraged: false, ground: lab.ground, attack, attackPhase: 0.8 });
+        if (bones.some((bone, index) => bone.quaternion.clone().normalize().angleTo(beforeStun[index]) > 1e-4)) throw new Error(`${base}/${attack}: stun did not freeze pose`);
+        results.push({ base, attack, changed });
+      }
+    }
+    return results;
+  });
+  results.push({ proceduralAttacks: attacks });
+  for (const base of ['crawler', 'parasite', 'behemoth']) {
+    await page.evaluate(async base => {
+      const lab = window.enemyLab;
+      await lab.setAnatomy({ ...lab.anatomy, base, headBase: base, tailBase: base, body: 1, head: 1, limbs: 1, tail: 1, length: 1, size: 2,
+        color: 0xe82779, accent: 0x5cffcc, pattern: 'cells' });
+      lab.tick(1 / 60);
+    }, base);
+    await page.click('#el-frame');
+    const renderSurface = async (tint, glow, visible = true) => {
+      await page.evaluate(({ tint, glow, visible }) => {
+        const lab = window.enemyLab;
+        lab.visual.root.visible = visible;
+        for (const material of lab.visual.flashMats) { material.uTintAmount.value = tint; material.uGlow.value = glow; material.uAggro.value = 1; }
+        lab.renderer.render(lab.scene, lab.camera);
+      }, { tint, glow, visible });
+      return page.screenshot();
+    };
+    const source = await sharp(await renderSurface(0, 0)).removeAlpha().raw().toBuffer();
+    const background = await sharp(await renderSurface(0, 0, false)).removeAlpha().raw().toBuffer();
+    const glowing = await renderSurface(0.25, 2.5);
+    await writeFile(`${directory}/${base}-texture-glow.png`, glowing);
+    const actual = await sharp(glowing).removeAlpha().raw().toBuffer();
+    let pixels = 0, originalWhite = 0, glowingWhite = 0, sourceSum = 0, actualSum = 0, sourceSquared = 0, actualSquared = 0, product = 0;
+    for (let offset = 0; offset < source.length; offset += 3) {
+      if (Math.abs(source[offset] - background[offset]) + Math.abs(source[offset + 1] - background[offset + 1]) + Math.abs(source[offset + 2] - background[offset + 2]) < 30) continue;
+      pixels++;
+      if (Math.min(...source.subarray(offset, offset + 3)) > 245) originalWhite++;
+      if (Math.min(...actual.subarray(offset, offset + 3)) > 245) glowingWhite++;
+      const before = source[offset] * 0.32 + source[offset + 1] * 0.56 + source[offset + 2] * 0.12;
+      const after = actual[offset] * 0.32 + actual[offset + 1] * 0.56 + actual[offset + 2] * 0.12;
+      sourceSum += before; actualSum += after; sourceSquared += before * before; actualSquared += after * after; product += before * after;
+    }
+    const correlation = (product - sourceSum * actualSum / pixels) / Math.sqrt((sourceSquared - sourceSum * sourceSum / pixels) * (actualSquared - actualSum * actualSum / pixels));
+    assert.ok(pixels > 1500 && correlation > 0.8, `${base}: texture contrast lost under glow (${correlation})`);
+    assert.ok(glowingWhite <= originalWhite + pixels * 0.005, `${base}: glow washed out the body`);
+    results.push({ base, textureCorrelation: correlation, pixels, originalWhite, glowingWhite });
+  }
+  for (const tier of ['boss', 'nexus']) {
+    const giant = await page.evaluate(async tier => {
+      const { generateEcology, factsFromSeed } = await import('/src/enemies/procedural/EcologyGenerator.ts');
+      const lab = window.enemyLab;
+      const genome = generateEcology(719, factsFromSeed(719, 2)).genomes.find(genome => genome.tier === tier);
+      await lab.setAnatomy(genome.anatomy);
+      document.querySelector('#el-speed').value = '1.5';
+      for (let frame = 0; frame < 360; frame++) lab.tick(1 / 60);
+      document.querySelector('#el-speed').value = '0';
+      for (let frame = 0; frame < 60; frame++) lab.tick(1 / 60);
+      return { tier, size: lab.anatomy.size, motion: lab.visual.locomotion.diagnostics() };
+    }, tier);
+    assert.ok(giant.motion.steps > 0 && giant.motion.feet.every(foot => Number.isFinite(foot.error) && foot.error < giant.size * 0.3), `${tier}: giant lost terrain contact ${JSON.stringify(giant)}`);
+    results.push(giant);
+    for (const [view, width, height] of [['desktop', 1440, 900], ['mobile', 390, 844]]) {
+      await page.setViewportSize({ width, height });
+      await page.click('#el-frame');
+      const framing = await page.evaluate(() => {
+        const lab = window.enemyLab;
+        const panel = document.querySelector('.enemy-lab aside');
+        panel.scrollTop = 0; panel.scrollLeft = 0;
+        lab.scene.updateMatrixWorld(true);
+        lab.renderer.render(lab.scene, lab.camera);
+        const bounds = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
+        const point = lab.visual.root.position.clone();
+        lab.visual.root.traverse(object => {
+          if (!object.isSkinnedMesh || !object.visible) return;
+          for (let vertex = 0; vertex < object.geometry.attributes.position.count; vertex++) {
+            object.getVertexPosition(vertex, point).applyMatrix4(object.matrixWorld).project(lab.camera);
+            const horizontal = (point.x + 1) * innerWidth / 2, vertical = (1 - point.y) * innerHeight / 2;
+            bounds.left = Math.min(bounds.left, horizontal); bounds.right = Math.max(bounds.right, horizontal);
+            bounds.top = Math.min(bounds.top, vertical); bounds.bottom = Math.max(bounds.bottom, vertical);
+          }
+        });
+        const mobile = innerWidth < 700;
+        return { bounds, area: { left: mobile ? 0 : panel.getBoundingClientRect().right, right: innerWidth,
+          top: document.querySelector('.enemy-lab header').getBoundingClientRect().bottom,
+          bottom: mobile ? panel.getBoundingClientRect().top : innerHeight - 32 } };
+      });
+      assert.ok(framing.bounds.left > framing.area.left && framing.bounds.right < framing.area.right && framing.bounds.top > framing.area.top && framing.bounds.bottom < framing.area.bottom,
+        `${tier}/${view}: giant clipped or covered by controls ${JSON.stringify(framing)}`);
+      const visible = await page.screenshot({ path: `${directory}/${tier}-giant-${view}.png` });
+      await page.evaluate(() => { const lab = window.enemyLab; lab.visual.root.visible = false; lab.renderer.render(lab.scene, lab.camera); });
+      assert.ok(await changedPixels(visible, await page.screenshot()) > (view === 'mobile' ? 500 : 1500), `${tier}/${view}: missing giant model`);
+      await page.evaluate(() => { const lab = window.enemyLab; lab.visual.root.visible = true; lab.renderer.render(lab.scene, lab.camera); });
+    }
+  }
   assert.deepEqual(errors, []);
   await writeFile(`${directory}/report.json`, JSON.stringify(results, null, 2));
-  console.log(`PASS: ${rules.count} genomes; 9 terrain courses; 18 graft combinations; 9 distinct moving forms; desktop/mobile pixels; 3 animated glow patterns`);
+  console.log(`PASS: ${rules.count} genomes; 9 terrain courses; 18 graft combinations; 9 moving forms; desktop/mobile pixels; 3 glow patterns; ${attacks.length} procedural attacks; texture retention at maximum glow`);
 } finally { await browser.close(); await server.close(); }

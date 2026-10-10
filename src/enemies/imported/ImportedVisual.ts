@@ -266,7 +266,7 @@ export class ImportedVisual {
       material.uPatternScale.value = 5 / template.height;
       if (!anatomy) continue;
       material.uTint.value.setHex(anatomy.color);
-      material.uTintAmount.value = 0.9;
+      material.uTintAmount.value = 0.25;
       material.uAccent.value.setHex(anatomy.accent);
       material.uGlow.value = anatomy.glow ?? 0.9;
       material.uPattern.value = ['veins', 'bands', 'cells'].indexOf(anatomy.pattern ?? 'veins');

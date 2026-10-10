@@ -162,8 +162,8 @@ const ROLE_STATS: Record<EcoRole, RoleBase> = {
   GUARDIAN: { hp: 200, speed: 5.6, damage: 18, attackRange: 2.9, attackCd: 2.0, radius: 1.3, xp: 32, scale: 2.1, species: 'brute' },
   HUNTER: { hp: 190, speed: 6.4, damage: 24, attackRange: 3.4, attackCd: 1.9, radius: 1.3, xp: 55, scale: 1.9, species: 'hunter' },
   APEX: { hp: 620, speed: 6.2, damage: 26, attackRange: 3.2, attackCd: 2.0, radius: 1.6, xp: 90, scale: 2.9, species: 'brute' },
-  BOSS: { hp: 980, speed: 5.6, damage: 30, attackRange: 3.6, attackCd: 2.1, radius: 1.9, xp: 160, scale: 4.0, species: 'brute' },
-  OVERSEER: { hp: 1450, speed: 5.2, damage: 34, attackRange: 3.8, attackCd: 2.2, radius: 2.2, xp: 260, scale: 5.4, species: 'brute' },
+  BOSS: { hp: 980, speed: 5.6, damage: 30, attackRange: 5.4, attackCd: 2.1, radius: 2.85, xp: 160, scale: 6.0, species: 'brute' },
+  OVERSEER: { hp: 1450, speed: 5.2, damage: 34, attackRange: 8.55, attackCd: 2.2, radius: 4.95, xp: 260, scale: 12.15, species: 'brute' },
 };
 
 const TIER_OF: Record<EcoRole, 'small' | 'large' | 'apex' | 'boss' | 'nexus'> = {

@@ -306,11 +306,13 @@ try {
   await page.waitForFunction(ids => ids.every(id => Boolean(window.necrofall.enemies.byId(id)?.imported)), guardians.map(guardian => guardian.id), { timeout: 60000 });
   const guardianModels = await page.evaluate(ids => ids.map(id => {
     const game = window.necrofall, enemy = game.enemies.byId(id);
-    return { id, model: enemy.imported.root.name, radius: +enemy.radius.toFixed(2), tier: enemy.genome.tier, bones: enemy.imported.root.getObjectByProperty('isSkinnedMesh', true)?.skeleton.bones.length ?? 0 };
+    return { id, model: enemy.imported.root.name, radius: +enemy.radius.toFixed(2), height: enemy.imported.locomotion.height,
+      scale: enemy.genome.scale, tier: enemy.genome.tier, bones: enemy.imported.root.getObjectByProperty('isSkinnedMesh', true)?.skeleton.bones.length ?? 0 };
   }), guardians.map(guardian => guardian.id));
   const models = new Set(guardianModels.map(guardian => guardian.model));
   assert.ok(['parasite-imported', 'crawler-imported', 'behemoth-imported'].every(model => models.has(model)), `all three imported bodies must guard beacons: ${JSON.stringify(guardianModels)}`);
   assert.ok(guardianModels.every(guardian => guardian.bones > 15), JSON.stringify(guardianModels));
+  assert.ok(guardianModels.every(guardian => guardian.height > 5.5 && guardian.radius > 2.5 && guardian.scale > 5.5), `Guardian size did not grow with collision: ${JSON.stringify(guardianModels)}`);
 
   const anatomicalCombat = await page.evaluate(() => {
     const game = window.necrofall, player = game.localPlayer;
@@ -423,6 +425,10 @@ try {
     const after = pelvis ? sample() : null;
     return {
       rootName: visual.root.name,
+      height: visual.locomotion.height,
+      radius: enemy.radius,
+      scale: enemy.genome.scale,
+      anatomySize: enemy.genome.anatomy.size,
       skinned: Boolean(skinned),
       pelvis: Boolean(pelvis),
       separateMembrane: visual.energy !== visual.carapace,
@@ -438,6 +444,8 @@ try {
   assert.equal(megaState.carapaceName, 'parasite:chitin');
   assert.equal(megaState.energyName, 'parasite:membrane');
   assert.ok(megaState.moved && megaState.drift < 1e-4, JSON.stringify(megaState));
+  assert.ok(megaState.height > Math.max(...guardianModels.map(guardian => guardian.height)) * 1.2, `Nexus must tower over Guardians: ${JSON.stringify({ megaState, guardianModels })}`);
+  assert.ok(megaState.radius > 4.4 && megaState.scale > 11 && megaState.anatomySize === megaState.scale, `Nexus size was clamped or collision did not grow: ${JSON.stringify(megaState)}`);
 
   assert.deepEqual(errors, [], 'runtime errors');
   console.log(JSON.stringify({ crawler, rig: { ...rig, bones: rig.bones.length }, animation, combat, damage, megaState }, null, 2));

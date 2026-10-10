@@ -37,6 +37,7 @@ export class TerrainRig {
   private readonly heads: THREE.Bone[] = [];
   private readonly arms: THREE.Bone[] = [];
   private readonly wings: THREE.Bone[] = [];
+  private readonly torso: THREE.Bone | undefined;
   private readonly previous = new THREE.Vector3();
   private readonly velocity = new THREE.Vector3();
   private readonly point = new THREE.Vector3();
@@ -55,6 +56,7 @@ export class TerrainRig {
     model.traverse(object => { if (object instanceof THREE.SkinnedMesh && object.userData.primaryRig) mesh = object; });
     if (!mesh) throw new Error(`${base}: missing skinned surface`);
     const original = mesh.skeleton;
+    this.torso = original.bones.find(bone => /^Spine$|^Spine_|^spine_|^Chest$|^chest_/i.test(bone.name));
     const bones = [...original.bones];
     const inverses = original.boneInverses.map(inverse => inverse.clone());
     const find = (name: string) => {
@@ -120,6 +122,8 @@ export class TerrainRig {
     this.velocity.addScaledVector(this.up, -this.velocity.dot(this.up));
     const speed = Math.min(this.velocity.length(), this.height * 12);
     const stride = this.height * 0.24;
+    const phase = motion.attackPhase ?? 0;
+    const strike = phase > 0 ? Math.sin(Math.min(1, phase) * Math.PI) : 0;
     const ground = motion.ground;
     let swinging = this.contacts.filter(foot => foot.progress < 1).length;
     const capacity = Math.max(1, Math.floor(this.contacts.length / 2));
@@ -158,14 +162,14 @@ export class TerrainRig {
         foot.planted.addScaledVector(this.up, Math.sin(foot.progress * Math.PI) * this.height * 0.13);
       }
       foot.target.position.copy(foot.planted);
+      if (motion.attack === 'stomp' && index === 0 && !motion.airborne) foot.target.position.addScaledVector(this.up, strike * this.height * 0.07);
       foot.target.parent!.worldToLocal(foot.target.position);
       foot.target.updateMatrixWorld(true);
     }
     for (const [bone, rest] of this.rest) bone.quaternion.copy(rest);
-    const phase = motion.attackPhase ?? 0;
-    const strike = phase > 0 ? Math.sin(Math.min(1, phase) * Math.PI) : 0;
     this.sway += (Math.min(1, speed / Math.max(0.1, this.height * 3)) - this.sway) * Math.min(1, dt * 5);
     this.axis.set(1, 0, 0);
+    if (this.torso && motion.attack === 'stomp') this.torso.quaternion.multiply(this.turn.setFromAxisAngle(this.axis, strike * 0.16));
     for (const head of this.heads) head.quaternion.multiply(this.turn.setFromAxisAngle(this.axis,
       Math.sin(this.clock * 1.5) * 0.015 + (motion.attack === 'bite' || motion.attack === 'spit' ? -strike * 0.32 : 0)));
     for (const arm of this.arms) arm.quaternion.multiply(this.turn.setFromAxisAngle(this.axis,

@@ -65,9 +65,9 @@ export const MAX_WATER_DEPTH = 0.35;
 /** Walking-wake ring buffer: ripple centres kept as one RGBA float row. */
 const TRAIL_SLOTS = 16;
 const TRAIL_TEXEL = 1 / TRAIL_SLOTS;
-const TRAIL_STEP = 0.8;
-const RIPPLE_SPEED = 1.25;
-const RIPPLE_WIDTH = 0.045;
+const TRAIL_STEP = 0.65;
+const RIPPLE_SPEED = 2.1;
+const RIPPLE_WIDTH = 0.075;
 
 export interface BasinSite {
   direction: THREE.Vector3;
@@ -88,6 +88,8 @@ export class Puddles {
   readonly mesh: THREE.Mesh;
   readonly count: number;
   readonly sites: BasinSite[];
+  private readonly waveStrength = uniform(1);
+  private readonly shoreStrength = uniform(1);
 
   /** Exact sampler of the RENDERED terrain mesh (see RenderedTerrain.ts). */
   private readonly renderedRadiusAt: RenderedRadiusAt;
@@ -230,12 +232,12 @@ export class Puddles {
         const age = this.timeUniform.sub(packed.w);
 
         const radius = age.mul(RIPPLE_SPEED);
-        const width = age.mul(0.012).add(RIPPLE_WIDTH);
+        const width = age.mul(0.025).add(RIPPLE_WIDTH);
         const delta = distance.sub(radius);
         const band = exp(delta.mul(delta).div(width.mul(width)).negate());
 
-        const fresh = smoothstep(0.0, 0.1, age).mul(smoothstep(0.35, 1.35, age).oneMinus());
-        const reach = smoothstep(0.5, 1.7, distance).oneMinus();
+        const fresh = smoothstep(0.0, 0.08, age).mul(smoothstep(0.8, 2.1, age).oneMinus());
+        const reach = smoothstep(0.9, 2.6, distance).oneMinus();
         total.assign(max(total, band.mul(fresh).mul(reach)));
       });
       return min(total, 1.0) as any;
@@ -245,27 +247,35 @@ export class Puddles {
     // (On gentle terrain a depth band spans many metres, so the only reliable
     // way to keep shores clean is low intensity.) The walking wake stays crisp.
     const waveDirectionA = vec3(0.82, 0.31, 0.48), waveDirectionB = vec3(-0.28, 0.87, 0.41);
-    const phaseA = positionWorld.dot(waveDirectionA).mul(2.2).sub(timeUniform.mul(1.05));
-    const phaseB = positionWorld.dot(waveDirectionB).mul(3.7).sub(timeUniform.mul(0.72));
+    const phaseA = positionWorld.dot(waveDirectionA).mul(2.2).sub(timeUniform.mul(0.3));
+    const phaseB = positionWorld.dot(waveDirectionB).mul(3.7).sub(timeUniform.mul(0.22));
     const slope = waveDirectionA.mul(phaseA.cos().mul(0.065)).add(waveDirectionB.mul(phaseB.cos().mul(0.035)));
     const up = positionWorld.normalize();
     const waveNormal = up.sub(slope.sub(up.mul(slope.dot(up)))).normalize();
     const viewDirection = cameraPosition.sub(positionWorld).normalize();
     const fresnel = waveNormal.dot(viewDirection).abs().oneMinus().pow(4);
-    const waveDetail = phaseA.sin().mul(0.5).add(0.5).pow(8)
-      .mul(phaseB.sin().mul(0.2).add(0.8)).mul(0.045);
-    const detailsMask = max(smoothstep(0.006, 0.055, depth).oneMinus().mul(0.12), waveDetail);
+    const alongCrest = positionWorld.dot(waveDirectionB).mul(1.25).add(phaseA.mul(0.5).sin().mul(1.4));
+    const waveDetail = smoothstep(0.91, 0.99, phaseA.sin())
+      .mul(smoothstep(0.15, 0.65, alongCrest.sin())).mul(smoothstep(0.035, 0.16, depth))
+      .mul(0.48).mul(this.waveStrength);
+    const shoreline = smoothstep(0.008, 0.07, depth).oneMinus()
+      .mul(smoothstep(-0.035, 0.008, depth)).mul(0.8).mul(this.shoreStrength);
+    const detailsMask = max(shoreline, waveDetail);
+    const liquid = generator.archetype.art!.waterSurface === 'liquid';
+    const waterColor = new THREE.Color(generator.archetype.art!.water);
+    if (liquid) waterColor.lerp(new THREE.Color('#249fc4'), 0.6);
 
     const material = new MeshDefaultMaterial({
       // folio: the detail pass is the foam — soft seafoam, never milk-white
-      colorNode: mix(color(generator.archetype.art!.water), color(generator.archetype.art!.horizon), 0.16),
+      colorNode: liquid ? color(waterColor) : mix(color(waterColor), color(generator.archetype.art!.horizon), 0.16),
+      normalNode: up,
       glowNode: generator.archetype.art!.waterSurface === 'lava' ? color(generator.archetype.art!.infection).mul(0.65) : undefined,
       alphaNode: detailsMask,
       alphaTest: 0,
       depthWrite: false,
       transparent: true,
       side: THREE.DoubleSide,
-      hasCoreShadows: false,
+      hasCoreShadows: liquid,
       hasDropShadows: true,
       hasLightBounce: false,
       hasFog: true,
@@ -282,16 +292,20 @@ export class Puddles {
       }
       const distortion = vec2(phaseA.cos(), phaseB.cos()).mul(smoothstep(0.02, 0.18, depth)).mul(0.0008);
       const transmitted = viewportSharedTexture(screenUV.add(distortion));
+      const luminance = vec3(0.2126, 0.7152, 0.0722);
+      const illumination = baseOutput.rgb.dot(luminance).div(color(waterColor).rgb.dot(luminance)).clamp(0.035, 1.2);
+      const waterTint = mix(baseOutput.rgb, color(waterColor).mul(illumination), 0.75);
+      const foamColor = color('#e0f3ee').mul(illumination);
       // contaminated tint over the screen mirror (radioactive puddle water)
-      const mirrored = mix(transmitted.rgb, vec3(baseOutput.rgb), smoothstep(0, 0.3, depth).mul(0.32).add(0.18));
+      const mirrored = mix(transmitted.rgb, waterTint, smoothstep(0, 0.3, depth).mul(0.25).add(0.55));
       const wet = smoothstep(-0.06, 0.02, depth).mul(smoothstep(0.84, 1.0, ring).oneMinus());
       // smooth foam compositing (a hard >0.5 cut turned every mask edge into a
       // solid white patch — the over-foamed shores)
-      const reflected = mix(mirrored, baseOutput.rgb.mul(1.15), fresnel.mul(0.28));
-      const foamed = mix(reflected, baseOutput.rgb, detailsMask);
+      const reflected = mix(mirrored, waterTint.mul(1.15), fresnel.mul(0.28));
+      const foamed = mix(reflected, foamColor, detailsMask);
       // walking wake: crisp rings on top of the water, not foam blobs
-      const rgb = mix(foamed, baseOutput.rgb.mul(1.08), (wake as any).mul(0.16));
-      return vec4(rgb, wet.mul(0.78));
+      const rgb = mix(foamed, foamColor, (wake as any).mul(0.68));
+      return vec4(rgb, wet.mul(0.94));
     })();
 
     this.mesh = new THREE.Mesh(geometry, material);
@@ -301,7 +315,7 @@ export class Puddles {
     this.mesh.name = 'puddles';
     this.mesh.userData.surface = generator.archetype.art!.waterSurface;
     this.mesh.userData.maxDepth = MAX_WATER_DEPTH;
-    this.mesh.userData.palette = generator.archetype.art!.water;
+    this.mesh.userData.palette = `#${waterColor.getHexString()}`;
     this.mesh.userData.riverVertices = riverVertices;
     this.mesh.userData.seaVertices = seaVertices;
   }

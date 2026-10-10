@@ -14,21 +14,24 @@ your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v
 
 ## Player Avatar
 
-The supplied white Chameleon character uses one skinned model and a 19-bone rig
+The rounded white avatar follows the supplied Chameleon style with one continuous
+skinned surface and a 19-bone rig
 (including two foot targets) in gameplay, home, customization, colony selection
 and lobbies. Its geometry is loaded once before player/menu construction; each
 avatar owns its geometry, materials and skeleton. Rest joints and accessory
 scales follow the imported anatomy, normalized to a 1.9 m neutral height.
 Procedural animation blends breathing and head movement, speed-driven running
 with knee/foot IK, airborne jump poses, alternating panic kicks during descent,
-and landing compression. Chest and shoulder pads glow in the colony color.
+and landing compression. The remodeled head, neck and shoulders have smooth
+transitions. Chest and shoulder glow follows the skin instead of using separate
+floating pads.
 Hats, backpacks and weapons follow head, chest and hand sockets; pets and cosmetic
 effects retain their existing controllers. Dash trails and decoys own separate
 skeletons so their captured poses do not follow the live player.
 
-The source was unrigged, with one arm overhead. Preparation repairs that side
-using the clean source half, retains the original head and white material,
-separates the neutral stance, and adds topology-aware blended skin weights.
+The source was unrigged, with one arm overhead. Preparation now sculpts a smooth
+rounded head and limbs with blended neck and shoulder joins, retains the original
+white material, and adds topology-aware blended skin weights.
 The generated GLB and provenance/joint metadata live in `src/player/assets/`.
 To regenerate, run `npm run prepare:avatar -- "path/to/source/avatar.glb"`;
 subsequent runs can use the ignored pristine `.asset-sources/player-avatar/`
@@ -65,9 +68,12 @@ profiles. Continuous directional wave normals provide gentle refraction and shee
 thin walking ripples fade without accumulating into bright trails. Frozen and volcanic profiles retain
 their ice and lava surfaces. Grass trails persist behind walkers and recover.
 Saffron Waste has 18 m-wide quicksand patches that reduce grounded movement to 30%
-at their centers; jumping or leaving restores normal movement. Enlarged dust devils
-and ion vortices launch players upward and outward, with a cooldown preventing
-repeated per-frame impulses. Gyres and blizzard pockets also slow grounded movement.
+at their centers; jumping or leaving restores normal movement. Quicksand stays
+separate from tornadoes, which have no quicksand-style ground patch. Dust devils
+and ion vortices launch players only on contact with their tapered, swaying funnel,
+including airborne contact; a cooldown prevents repeated per-frame impulses.
+Rendering and collision share the same shape and terrain-aligned transform.
+Gyres and blizzard pockets also slow grounded movement.
 Terrain, authored rocks, spikes and
 crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.

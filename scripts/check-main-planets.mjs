@@ -221,6 +221,15 @@ async function hazardInteractions(page) {
       const game = window.necrofall, world = game.envWorld, player = game.localPlayer, camera = game.cam.camera;
       window.hazardTick = game.ticker.update; game.ticker.update = () => game.rendering.render(0);
       const hazards = world.ecology.hazards;
+      const vortices = hazards.sites.filter(site => site.kind === 'vortex');
+      for (const quicksand of hazards.sites.filter(site => site.kind === 'quicksand')) {
+        if (vortices.some(vortex => vortex.position.distanceTo(quicksand.position) <= vortex.radius + quicksand.radius)) {
+          throw new Error('Quicksand overlaps a tornado');
+        }
+      }
+      for (const feature of world.ecology.features.filter(feature => feature.kind === 'vortex')) {
+        if (world.ecology.group.getObjectByName(`${feature.id}:ground`)) throw new Error('Tornado still has a quicksand-style ground patch');
+      }
       const site = hazards.sites.filter(site => site.kind === kind)
         .sort((first, second) => second.position.clone().normalize().dot(world.deps.system.sunDirection) - first.position.clone().normalize().dot(world.deps.system.sunDirection))[0];
       if (!site) throw new Error(`No ${kind} site`);
@@ -230,6 +239,7 @@ async function hazardInteractions(page) {
         player.grounded = true; player.momentum = 0; player.jumpLock = 0; player.recallHold = false;
       };
       let slowRatio = 1;
+      let safePassBy = true;
       if (kind === 'quicksand') {
         game.input.moveY = 1; game.input.moveX = 0;
         const originalApply = hazards.apply;
@@ -239,12 +249,18 @@ async function hazardInteractions(page) {
           slowRatio = run() / normalDistance;
         } finally { hazards.apply = originalApply; game.input.moveY = 0; }
       }
+      if (kind === 'vortex') {
+        reset(); player.position.set(3, 0, 0).applyMatrix4(site.frame); player.up.copy(player.position).normalize();
+        hazards.apply(player, 2);
+        safePassBy = player.grounded && player.velocity.length() === 0;
+        if (!safePassBy) throw new Error('Ground beside the visible tornado launched the player');
+      }
       reset(); player.updateLocal(1 / 60);
       const vertical = player.velocity.dot(up), sideways = player.velocity.clone().addScaledVector(up, -vertical).length();
       camera.position.copy(site.position).addScaledVector(up, kind === 'vortex' ? 16 : 19).addScaledVector(across, kind === 'vortex' ? 42 : 20);
       camera.up.copy(up); camera.lookAt(site.position.clone().addScaledVector(up, kind === 'vortex' ? 12 : 0)); camera.updateMatrixWorld(true);
       world.update(site.position, camera); game.lighting.update(site.position);
-      return { kind, radius: site.radius, height: site.height, slowRatio, vertical, sideways, grounded: player.grounded };
+      return { kind, radius: site.radius, height: site.height, slowRatio, safePassBy, vertical, sideways, grounded: player.grounded };
     }, kind);
     if (kind === 'quicksand') assert.ok(result.slowRatio > 0 && result.slowRatio < 0.7, JSON.stringify(result));
     else assert.ok(!result.grounded && result.vertical > 25 && result.sideways > 20 && result.height > 25, JSON.stringify(result));

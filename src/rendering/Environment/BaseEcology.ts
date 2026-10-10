@@ -8,7 +8,7 @@ import { BASE_ASSETS, BaseRocks, bakeRadialGeometry, normalisedAsset } from './B
 import type { PlanetWorldDependencies } from './PlanetRenderer';
 import { createRenderedRadiusAt } from '../../planet/RenderedTerrain';
 import type { Puddles } from './Puddles';
-import { PlanetHazards } from '../../planet/PlanetHazards';
+import { PlanetHazards, VORTEX, vortexRadiusAt } from '../../planet/PlanetHazards';
 
 export class BaseEcology {
   readonly group = new Group();
@@ -16,12 +16,12 @@ export class BaseEcology {
   mushroomCount = 0;
   readonly hazards: PlanetHazards;
 
-  private constructor(radiusAt: (direction: Vector3) => number) {
-    this.hazards = new PlanetHazards(radiusAt);
+  private constructor(radiusAt: (direction: Vector3) => number, time: () => number) {
+    this.hazards = new PlanetHazards(radiusAt, time);
   }
 
   static async create(deps: PlanetWorldDependencies, rocks: BaseRocks, water: Puddles): Promise<BaseEcology> {
-    const result = new BaseEcology(createRenderedRadiusAt(deps.generator));
+    const result = new BaseEcology(createRenderedRadiusAt(deps.generator), () => deps.time.value);
     const art = deps.generator.archetype.art!;
     result.group.name = 'base-ecology';
     for (const [index, spec] of BASE_FEATURES[art.id].entries()) {
@@ -84,7 +84,9 @@ export class BaseEcology {
       }) : scatterPlacements(deps.surface, deps.generator, { count: 7, salt: 11009 + index * 379,
         aboveWater: aquatic ? -1000 : 0.2, maxSlope: spec.kind === 'quicksand' ? 0.22 : 0.45, scaleMin: size, scaleMax: size,
         attemptsPerInstance: 400, excludeDirection: deps.spawnDirection, excludeRadius: 14 + size * 5,
-        accept: sample => !rocks.blocked(sample.up.x, sample.up.y, sample.up.z) && water.waterDepthAt(sample.up) < 0.02 });
+        accept: sample => !rocks.blocked(sample.up.x, sample.up.y, sample.up.z) && water.waterDepthAt(sample.up) < 0.02
+          && (spec.kind !== 'quicksand' || this.hazards.sites.every(site => site.kind !== 'vortex'
+            || sample.point.distanceTo(site.position) > site.radius + size * 5)) });
       this.features.push({ id: spec.id, name: spec.name, kind: spec.kind, count: placements.length, sites: placements.map(placement => placement.position.toArray()) });
       for (const placement of placements) {
         const frame = placement.matrix.clone();
@@ -92,15 +94,16 @@ export class BaseEcology {
         frame.setPosition(up.clone().multiplyScalar(aquatic ? water.surfaceRadiusAt(up) + 0.04 : radiusAt(up)));
         if (spec.kind === 'quicksand' || spec.kind === 'vortex' || spec.kind === 'whirlpool' || spec.kind === 'blizzard') {
           this.hazards.add(spec.kind, up.clone().multiplyScalar(radiusAt(up)),
-            placement.scale * (spec.kind === 'blizzard' ? 10 : 5), spec.kind === 'vortex' ? placement.scale * 16 : spec.kind === 'blizzard' ? placement.scale * 12 : 1.1);
+            placement.scale * (spec.kind === 'blizzard' ? 10 : spec.kind === 'vortex' ? VORTEX.baseRadius + VORTEX.flare + VORTEX.sway : 5),
+            spec.kind === 'vortex' ? placement.scale * VORTEX.height : spec.kind === 'blizzard' ? placement.scale * 12 : 1.1, frame);
         }
-        if (spec.kind === 'quicksand' || spec.kind === 'vortex') {
+        if (spec.kind === 'quicksand') {
           const geometry = new RingGeometry(0, 5, 64, 16).rotateX(-Math.PI / 2);
           const patchPosition = attribute('patchPosition', 'vec3');
           const material = new SurfaceMaterial({
             colorNode: mix(color(art.ground).mul(0.48), color(art.highland),
               sin(patchPosition.xz.length().mul(5).sub(deps.time.mul(1.2))).mul(0.16).add(0.35)),
-            alphaNode: smoothstep(3.5, 5, patchPosition.xz.length()).oneMinus().mul(spec.kind === 'vortex' ? 0.5 : 0.92),
+            alphaNode: smoothstep(3.5, 5, patchPosition.xz.length()).oneMinus().mul(0.92),
             transparent: true, depthWrite: false, hasLightBounce: false, side: DoubleSide,
           });
           const local = geometry.attributes.position;
@@ -112,7 +115,7 @@ export class BaseEcology {
           geometry.computeVertexNormals(); geometry.computeBoundingSphere();
           const patch = new Mesh(geometry, material);
           patch.name = `${spec.id}:ground`; this.group.add(patch);
-          if (spec.kind === 'quicksand') continue;
+          continue;
         }
         if (spec.kind === 'volcano') {
           const profile = [[0, 0], [4.8, 0], [3.7, 0.7], [2.5, 2.6], [1.9, 2.9], [1.45, 1.4], [0, 1.4]].map(([radius, height]) => new Vector2(radius, height));
@@ -129,13 +132,16 @@ export class BaseEcology {
           const mesh = new Mesh(new LatheGeometry(profile, 64), material);
           mesh.matrix.copy(frame); mesh.matrixAutoUpdate = false; mesh.name = spec.id; this.group.add(mesh);
         } else if (spec.kind === 'vortex') {
-          const profile = Array.from({ length: 18 }, (_, level) => new Vector2(1.2 + (level / 17) ** 1.5 * 3.7, level / 17 * 16));
+          const profile = Array.from({ length: 18 }, (_, level) => {
+            const height = level / 17 * VORTEX.height;
+            return new Vector2(vortexRadiusAt(height), height);
+          });
           const material = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: DoubleSide, fog: false, toneMapped: false });
-          const height = attribute('position', 'vec3').y.div(16);
+          const height = attribute('position', 'vec3').y.div(VORTEX.height);
           const swirl = sin(positionLocal.x.atan(positionLocal.z).mul(7).sub(height.mul(28)).add(deps.time.mul(2.4)));
           material.colorNode = mix(color(art.rock), color(art.landform === 'faults' ? art.infection : art.highland), 0.35);
           material.opacityNode = smoothstep(-0.4, 0.9, swirl).mul(0.6).add(0.12).mul(smoothstep(0, 0.06, height)).mul(smoothstep(0.75, 1, height).oneMinus()).mul(0.8);
-          material.positionNode = positionLocal.add(vec3(sin(height.mul(5).add(deps.time.mul(0.25))).mul(height).mul(1.5), 0, 0));
+          material.positionNode = positionLocal.add(vec3(sin(height.mul(VORTEX.bend).add(deps.time.mul(VORTEX.frequency))).mul(height).mul(VORTEX.sway), 0, 0));
           const mesh = new Mesh(new LatheGeometry(profile, 36), material); mesh.matrix.copy(frame); mesh.matrixAutoUpdate = false; mesh.name = spec.id; this.group.add(mesh);
         } else {
           const size = new Vector3(13, spec.id === 'fumaroles' ? 6 : 2.8, 9);

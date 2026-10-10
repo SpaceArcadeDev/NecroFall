@@ -4,7 +4,11 @@ import { createServer } from 'vite';
 import { chromium } from '@playwright/test';
 import sharp from 'sharp';
 
-const server = await createServer({ cacheDir: '.test-shots/vite-avatar', server: { host: '127.0.0.1', port: 5205, watch: null, hmr: false } });
+const runtimeModule = '/avatar-test-three.js';
+const server = await createServer({ cacheDir: '.test-shots/vite-avatar',
+  plugins: [{ name: 'avatar-test-runtime', resolveId: id => id === runtimeModule ? id : undefined,
+    load: id => id === runtimeModule ? 'export * from "three";' : undefined }],
+  server: { host: '127.0.0.1', port: 5205, watch: null, hmr: false } });
 await server.listen();
 const directory = '.test-shots/player-avatar';
 await mkdir(directory, { recursive: true });
@@ -23,11 +27,17 @@ async function verifyAvatar() {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.stack));
+  page.on('console', message => {
+    if (message.type() !== 'error' || /404|favicon|auth-proxy/.test(message.text())) return;
+    if (/THREE\.|WebGPU|shader|GPUValidation/i.test(message.text())) errors.push(message.text());
+    else (report.consoleMessages ??= []).push(message.text());
+  });
   await page.goto(server.resolvedUrls.local[0]);
   await page.waitForFunction(() => Boolean(window.necrofallShell), {}, { timeout: 60000 });
   report.rig = await page.evaluate(async () => {
-    const THREE = await import('/node_modules/three/build/three.webgpu.js');
+    const THREE = await import('/avatar-test-three.js');
     const { PlayerRig } = await import('/src/player/PlayerRig.ts');
+    const anatomy = await fetch('/src/player/assets/chameleon.json').then(response => response.json());
     const { buildPlayerModel } = await import('/src/player/Player.ts');
     const { AvatarAccessories, disposeObject } = await import('/src/customization/AvatarAccessories.ts');
     const { defsOf } = await import('/src/customization/AccessoryCatalog.ts');
@@ -40,6 +50,8 @@ async function verifyAvatar() {
     check(rig.skeleton.bones.length === 19, 'Missing player bones');
     check(rig.root.userData.avatarRevision === 'chameleon-rig-v1' && rig.root.userData.sourceSHA256 === 'f716aa4e404d26b2baaf612386d0c7cc9730d039b0d9b9eeea8e824ae1b142d1', 'Incorrect source avatar');
     const attributes = rig.mesh.geometry.attributes;
+    check(attributes.position.count === anatomy.vertices, 'Separate geometry added to the skin surface');
+    check(rig.mesh.geometry.groups[1].count > 0, 'Missing skin-following glow regions');
     let blendedVertices = 0;
     for (let vertex = 0; vertex < attributes.position.count; vertex++) {
       let sum = 0;
@@ -85,7 +97,7 @@ async function verifyAvatar() {
         check(rig.skeleton.bones.every(bone => bone.matrixWorld.elements.every(Number.isFinite)), `${state}: non-finite pose`);
       }
       check(rig.state === state, `Incorrect state ${state}`);
-      check(maxStretch < 5, `${state}: stretched skin triangles (${maxStretch})`);
+      check(maxStretch < 3.5, `${state}: stretched skin triangles (${maxStretch})`);
       poses[state] = { kneeRange: Math.max(...knees) - Math.min(...knees), thighRange: Math.max(...thighs) - Math.min(...thighs), maxStretch, points };
     }
     check(poses.run.kneeRange > 0.4, 'Run has no knee articulation');
@@ -355,7 +367,7 @@ async function verifyAvatar() {
   });
   assert.deepEqual(errors, [], 'Browser runtime errors');
   await writeFile(`${directory}/report.json`, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ bones: report.rig.bones, catalog: Object.fromEntries(Object.entries(report.rig.catalog).map(([key, value]) => [key, value.length])), weapons: report.rig.weapons, menus: report.menus.length, gameplay: report.gameplay, webglPixels: report.webglPixels }, null, 2));
+  console.log(JSON.stringify({ bones: report.rig.bones, catalog: Object.fromEntries(Object.entries(report.rig.catalog).map(([key, value]) => [key, value.length])), weapons: report.rig.weapons, menus: report.menus.length, gameplay: report.gameplay, webglPixels: report.webglPixels, consoleMessages: report.consoleMessages ?? [] }, null, 2));
 }
 try {
   await verifyAvatar();

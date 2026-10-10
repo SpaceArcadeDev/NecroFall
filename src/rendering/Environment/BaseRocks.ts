@@ -38,7 +38,19 @@ export function normalisedAsset(root: Group, mountain = false): { geometry: Buff
     parts.push({ geometry, source: Array.isArray(object.material) ? object.material[0] : object.material }); source.dispose();
   });
   const center = bounds.getCenter(new Vector3()), height = Math.max(0.001, bounds.max.y - bounds.min.y);
-  for (const part of parts) { part.geometry.translate(-center.x, -bounds.min.y, -center.z); part.geometry.scale(1 / height, 1 / height, 1 / height); part.geometry.computeBoundingBox(); }
+  for (const part of parts) {
+    part.geometry.translate(-center.x, -bounds.min.y, -center.z);
+    part.geometry.scale(1 / height, 1 / height, 1 / height);
+    if (mountain) {
+      const positions = part.geometry.attributes.position;
+      for (let vertex = 0; vertex < positions.count; vertex++) {
+        const elevation = positions.getY(vertex), spread = 1.5 + 0.65 * (1 - elevation) ** 2;
+        positions.setXYZ(vertex, positions.getX(vertex) * spread, elevation * 0.72, positions.getZ(vertex) * spread);
+      }
+      part.geometry.computeVertexNormals();
+    }
+    part.geometry.computeBoundingBox();
+  }
   return parts;
 }
 

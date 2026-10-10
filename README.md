@@ -23,8 +23,17 @@ an existing match preserves its seed.
 
 The system sun stays fixed in world space. Crossing the planet's terminator blends
 through warm twilight into the dark hemisphere; the sun does not follow the player.
-Water is limited to shallow basins (at most 0.35 m), with grounded walking wakes.
-Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes and
+Sun and halo tint, sky, clouds and fog warm together at sunrise and sunset, while
+stars fade into view at night. Mountains have broad, smoothly tapered foothills;
+rock spires are capped at 8 m so they do not compete with mountain silhouettes.
+Larger puddles, connected river channels and shallow coastal water share the same
+0.35 m depth limit and grounded walking wakes. Frozen and volcanic profiles retain
+their ice and lava surfaces. Grass trails persist behind walkers and recover.
+Saffron Waste has 18 m-wide quicksand patches that reduce grounded movement to 30%
+at their centers; jumping or leaving restores normal movement. Enlarged dust devils
+and ion vortices launch players upward and outward, with a cooldown preventing
+repeated per-frame impulses. Gyres and blizzard pockets also slow grounded movement.
+Terrain, authored rocks, spikes and
 crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.
 Two enemy bodies are imported base models rather than generated rigs: the insectoid-rig
@@ -58,7 +67,9 @@ npm run test:base-planets -- --visibility
 The main browser suite uses installed Edge (`BROWSER_CHANNEL` overrides it), starts
 its own local server, and writes captures to `.test-shots/main-planets/`. It covers
 all ten profiles, day/twilight/night, classic structures and Mega animation,
-mobile rotation, WebGL fallback, and fixed-clock grass/water trail pixel comparisons.
+mobile rotation, WebGL fallback, fixed-clock grass/water trail pixel comparisons,
+night-star visibility comparisons, and live-player quicksand and vortex interactions.
+Hazard captures include desktop, mobile portrait and mobile landscape views.
 `npm run test:enemy-models` boots a real solo match and checks both imported enemy base
 models end to end: the derived crawler rig (bones, normalized skin weights, advancing
 gait), the cell-shaded creature materials and their uniforms, and gameplay — the bodies
@@ -67,7 +78,8 @@ A/B of the same genome in `.test-shots/enemy-base-models/`; the frame cost of th
 imported bodies can be measured with `node scripts/measure-base-models.mjs` and the
 `?basemodels=0` A/B switch.
 The physics suite covers exact rendered terrain sampling, collision support,
-75-degree climbing, shallow water, trail lifetimes, twilight and classic seed rolls.
+75-degree climbing, mountain falloff, connected shallow water and its wakes, trail
+lifetimes, twilight, classic seed rolls and hazard drag/launch guards.
 These local tests do not certify physical-phone performance or live multiplayer/auth
 services. Local account login still requires the configuration described below.
 

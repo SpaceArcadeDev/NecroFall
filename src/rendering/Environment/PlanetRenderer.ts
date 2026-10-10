@@ -194,15 +194,16 @@ export class PlanetRenderer {
     // culls the planet behind the player. The planting itself is chunked (see Grass.plant) —
     // `ready` resolves when the sector meshes are in.
     onProgress?.(0.33, 'planting grass');
+    const blocked = (positionX: number, positionY: number, positionZ: number) => this.rocks.blocked(positionX, positionY, positionZ)
+      || this.ecology.hazards.blocksVegetation(positionX, positionY, positionZ);
     this.grass = new Grass(deps.surface, deps.nodes, deps.quality, deps.wind, deps.noises, this.puddles, deps.time,
-      (positionX, positionY, positionZ) => (this.rocks as BaseRocks).blocked(positionX, positionY, positionZ));
+      blocked);
     this.group.add(this.grass.root);
     await this.grass.ready;
     await nextLoop();
 
     // 4 — bushes (leaf-card canopies) — raised count + bigger sizes per user ask. Note there is
     // no see-through fade on bushes anymore (they are knee-high; only tree canopies need it).
-    const blocked = (positionX: number, positionY: number, positionZ: number) => (this.rocks as BaseRocks).blocked(positionX, positionY, positionZ);
     this.bushes = new Bushes(deps.preRenderer, deps.wind, deps.ticker, deps.surface, deps.generator, 420, spawnClear, this.obstacles, blocked);
     this.group.add(this.bushes.foliage.mesh);
     await nextLoop();
@@ -237,7 +238,7 @@ export class PlanetRenderer {
     await nextLoop();
 
     onProgress?.(0.78, 'planting spikes');
-    this.spikes = new Spikes(deps.surface, deps.generator, 74, spawnClear, this.obstacles);
+    this.spikes = new Spikes(deps.surface, deps.generator, 74, spawnClear, this.obstacles, blocked);
     if (this.spikes.mesh) this.group.add(this.spikes.mesh);
     await nextLoop();
 
@@ -352,7 +353,7 @@ export class PlanetRenderer {
     if (this.sky instanceof SystemSky) this.sky.update(focusPoint, camera);
     const elevation = focusPoint.dot(this.deps.system.sunDirection) / Math.max(0.001, focusPoint.length());
     this.daylight = daylightAt(elevation);
-    this.surfaceFog.copy(this.dayFog).lerp(this.sunsetFog, twilightAt(elevation) * 0.35).multiplyScalar(0.035 + this.daylight * 0.965);
+    this.surfaceFog.copy(this.dayFog).lerp(this.sunsetFog, twilightAt(elevation) * 0.65).multiplyScalar(0.035 + this.daylight * 0.965);
     (this.deps.fog.color.value as THREE.Color).copy(this.surfaceFog);
   }
 

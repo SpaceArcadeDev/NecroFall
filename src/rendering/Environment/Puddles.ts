@@ -49,17 +49,17 @@ import {
 import { hashBlur } from 'three/addons/tsl/display/hashBlur.js';
 import { PlanetSurface, createSurfaceSample } from '../../planet/PlanetSurface';
 import type { PlanetGenerator } from '../../planet/PlanetGenerator';
-import { createRenderedRadiusAt, type RenderedRadiusAt } from '../../planet/RenderedTerrain';
+import { createRenderedRadiusAt, createTerrainIndices, TERRAIN_RES_X, TERRAIN_RES_Y, type RenderedRadiusAt } from '../../planet/RenderedTerrain';
 import type { Noises } from './Noises';
 import { MeshDefaultMaterial } from '../materials/MeshDefaultMaterial';
 
 const THETA_SEGMENTS = 44;
 const RING_SEGMENTS = 7;
-const RIM_RADII = [1.8, 2.8, 4.0, 5.6];
+const RIM_RADII = [2.8, 4.0, 5.6, 7.5, 10];
 const SPOKES = 8;
-const MIN_RIM_DROP = 0.22; // metres — the centre must sit this far below its rim
-const TARGET_SITES = 120;
-const MAX_ATTEMPTS = 9000;
+const MIN_RIM_DROP = 0.12; // metres — the centre must sit this far below its rim
+const TARGET_SITES = 180;
+const MAX_ATTEMPTS = 14000;
 export const MAX_WATER_DEPTH = 0.35;
 
 /** Walking-wake ring buffer: ripple centres kept as one RGBA float row. */
@@ -182,6 +182,27 @@ export class Puddles {
       vertexBase += (RING_SEGMENTS + 1) * stride;
     }
 
+    const networkBase = vertexBase;
+    let riverVertices = 0, seaVertices = 0;
+    for (let row = 0; row <= TERRAIN_RES_Y; row++) for (let column = 0; column < TERRAIN_RES_X; column++) {
+      const vertical = Math.cos(row / TERRAIN_RES_Y * Math.PI), radial = Math.sqrt(Math.max(0, 1 - vertical * vertical));
+      const angle = (column / TERRAIN_RES_X - 0.5) * Math.PI * 2;
+      direction.set(radial * Math.cos(angle), vertical, radial * Math.sin(angle));
+      const floor = this.renderedRadiusAt(direction), depth = this.networkDepthAt(direction, floor);
+      const surfaceRadius = floor + Math.max(0.035, depth);
+      positions.push(direction.x * surfaceRadius, direction.y * surfaceRadius, direction.z * surfaceRadius);
+      depths.push(depth); rings.push(0); seeds.push(0);
+      if (depth > 0.02) {
+        if (floor < this.surface.waterLevel + 0.65) seaVertices++;
+        else riverVertices++;
+      }
+    }
+    const networkIndices = createTerrainIndices(TERRAIN_RES_X, TERRAIN_RES_Y);
+    for (let triangle = 0; triangle < networkIndices.length; triangle += 3) {
+      const first = networkBase + networkIndices[triangle], second = networkBase + networkIndices[triangle + 1], third = networkBase + networkIndices[triangle + 2];
+      if (Math.max(depths[first], depths[second], depths[third]) > -0.06) indices.push(first, second, third);
+    }
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
     geometry.setAttribute('aDepth', new THREE.BufferAttribute(new Float32Array(depths), 1));
@@ -278,6 +299,8 @@ export class Puddles {
     this.mesh.userData.surface = generator.archetype.art!.waterSurface;
     this.mesh.userData.maxDepth = MAX_WATER_DEPTH;
     this.mesh.userData.palette = generator.archetype.art!.water;
+    this.mesh.userData.riverVertices = riverVertices;
+    this.mesh.userData.seaVertices = seaVertices;
   }
 
   /**
@@ -308,6 +331,7 @@ export class Puddles {
       this.surface.sample(direction, sample);
       if (sample.slope > 0.34) continue;
       if (sample.wetness < 0.22 && sample.radiation < 0.4) continue; // humid or contaminated ground only
+      if (this.networkDepthAt(direction, this.renderedRadiusAt(direction)) > -0.12) continue;
 
       const centreRadius = sample.radius;
       let found: { radius: number; rimMin: number } | null = null;
@@ -378,20 +402,31 @@ export class Puddles {
    * painted a bare circle metres larger than the puddle itself. Measuring the actual waterline
    * means the lawn now walks right down to the water and tapers out there.
    */
+  private networkDepthAt(direction: THREE.Vector3, floor: number): number {
+    const seaLevel = this.surface.waterLevel + 0.65;
+    const river = this.generator.terrain.riverTAt(direction.x, direction.y, direction.z);
+    const streamDepth = (river - 0.55) * 0.85 - smoothstepCpu(seaLevel + 8, seaLevel + 18, floor);
+    return Math.min(MAX_WATER_DEPTH, Math.max(seaLevel - floor, streamDepth));
+  }
+
   waterDepthAt(direction: THREE.Vector3): number {
+    const floor = this.renderedRadiusAt(direction);
+    const networkDepth = this.networkDepthAt(direction, floor);
     let best: BasinSite | null = null;
     let bestDot = -2;
     for (const site of this.sites) {
       const dot =
         direction.x * site.direction.x + direction.y * site.direction.y + direction.z * site.direction.z;
-      if (dot <= site.reachCos) continue;
+      if (dot <= site.waterCos) continue;
       if (dot > bestDot) {
         bestDot = dot;
         best = site;
       }
     }
-    if (!best) return -Infinity;
-    return Math.min(MAX_WATER_DEPTH, best.waterLevel - this.renderedRadiusAt(direction));
+    if (!best) return networkDepth;
+    const edge = Math.acos(Math.min(1, bestDot)) * this.surface.radius / best.radius;
+    const basinDepth = Math.min(MAX_WATER_DEPTH, best.waterLevel - floor) * (1 - smoothstepCpu(0.82, 1, edge));
+    return Math.max(networkDepth, basinDepth);
   }
 
   surfaceRadiusAt(direction: THREE.Vector3): number {
@@ -424,22 +459,9 @@ export class Puddles {
     }
     const direction = this.trailScratch.copy(focusPoint).normalize();
 
-    let wadingDepth = 0;
-    let wadingSite: BasinSite | null = null;
     const playerRadius = focusPoint.length();
-    for (const site of this.sites) {
-      if (direction.dot(site.direction) < site.reachCos) continue;
-      // must be AT the water surface — flying/jumping over a puddle leaves no wake
-      if (playerRadius > this.renderedRadiusAt(direction) + 0.75) continue;
-      // visible depth — the wake follows the water the camera shows
-      const waterDepth = Math.min(MAX_WATER_DEPTH, site.waterLevel - this.renderedRadiusAt(direction));
-      if (waterDepth > 0.045 && waterDepth > wadingDepth) {
-        wadingDepth = waterDepth;
-        wadingSite = site;
-      }
-    }
-
-    if (!wadingSite) {
+    const wadingDepth = this.waterDepthAt(direction);
+    if (wadingDepth <= 0.045 || playerRadius > this.renderedRadiusAt(direction) + 0.75) {
       state.started = false;
       return;
     }

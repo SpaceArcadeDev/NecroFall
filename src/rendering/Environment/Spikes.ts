@@ -24,7 +24,8 @@ export class Spikes {
   readonly mesh: THREE.InstancedMesh | null;
   readonly spikeCount: number;
 
-  constructor(surface: PlanetSurface, generator: PlanetGenerator, clusterTarget = 74, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles) {
+  constructor(surface: PlanetSurface, generator: PlanetGenerator, clusterTarget = 74, spawnClear?: { direction: THREE.Vector3; radius: number }, obstacles?: PlanetObstacles,
+    blocked?: (positionX: number, positionY: number, positionZ: number) => boolean) {
     const clusters = scatterPlacements(surface, generator, {
       count: clusterTarget,
       salt: 77,
@@ -38,6 +39,7 @@ export class Spikes {
       attemptsPerInstance: 14,
       excludeDirection: spawnClear?.direction,
       excludeRadius: spawnClear?.radius,
+      accept: sample => !blocked?.(sample.up.x, sample.up.y, sample.up.z),
     });
 
     const random = generator.rand(78);
@@ -97,6 +99,7 @@ export class Spikes {
         // each spike leans on its own — up to ±46° off the group's axis
         dummy.rotation.set(0, random() * Math.PI * 2, 0);
         dummy.scale.set(scale * (0.8 + random() * 0.4), scale * (0.9 + random() * 0.8), scale * (0.8 + random() * 0.4));
+        dummy.scale.y = Math.min(dummy.scale.y, 8 / (2.4 * cluster.scale));
         dummy.updateMatrix();
 
         local.multiplyMatrices(cluster.matrix, dummy.matrix);

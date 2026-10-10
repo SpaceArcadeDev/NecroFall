@@ -1672,11 +1672,12 @@ export class Player {
     const wishLen = _wish.length();
     if (wishLen > 0.001) _wish.multiplyScalar(1 / wishLen);
 
+    const environmentSpeed = g.envWorld?.ecology.hazards.apply(this, dt) ?? 1;
     const slope = planet.slopeAt(this.position);
     const slopeMul = 1 / (1 + Math.max(0, slope - 0.3) * 1.1);
     // dash momentum raises the target speed itself, so the body is driven to hold the extra pace
     // instead of only being shoved to it for a frame
-    const maxSpeed = (this.moveSpeed + this.momentum) * (this.grounded ? slopeMul : 0.92);
+    const maxSpeed = (this.moveSpeed + this.momentum) * (this.grounded ? slopeMul : 0.92) * environmentSpeed;
 
     // tangential velocity drive (momentum preserving)
     _tmp.copy(this.velocity).addScaledVector(this.up, -this.velocity.dot(this.up));

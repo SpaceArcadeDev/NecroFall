@@ -2,6 +2,13 @@ import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import avatarUrl from './assets/chameleon.glb?url';
+import anatomy from './assets/chameleon.json';
+
+const asset = await new GLTFLoader().loadAsync(avatarUrl);
+const sourceMesh = asset.scene.getObjectByName('ChameleonAvatar') as THREE.SkinnedMesh;
+if (!sourceMesh?.isSkinnedMesh) throw new Error('Chameleon avatar skin is missing');
 
 export interface PlayerMotion {
   speed: number;
@@ -14,23 +21,23 @@ export interface PlayerMotion {
 
 export class PlayerRig {
   readonly root = new THREE.Group();
-  readonly hips = this.joint('Hips', this.root, 0, 0.82, 0);
-  readonly spine = this.joint('Spine', this.hips, 0, 0.19, 0);
-  readonly chest = this.joint('Chest', this.spine, 0, 0.2, 0);
-  readonly neck = this.joint('Neck', this.chest, 0, 0.26, 0);
-  readonly head = this.joint('Head', this.neck, 0, 0.21, 0);
-  readonly armL = this.joint('UpperArm_L', this.chest, -0.43, 0.14, 0);
-  readonly elbowL = this.joint('Forearm_L', this.armL, 0, -0.29, 0);
-  readonly handL = this.joint('Hand_L', this.elbowL, 0, -0.25, 0);
-  readonly armR = this.joint('UpperArm_R', this.chest, 0.43, 0.14, 0);
-  readonly elbowR = this.joint('Forearm_R', this.armR, 0, -0.29, 0);
-  readonly handR = this.joint('Hand_R', this.elbowR, 0, -0.25, 0);
-  readonly legL = this.joint('Thigh_L', this.hips, -0.19, 0, 0);
-  readonly kneeL = this.joint('Shin_L', this.legL, 0, -0.36, 0);
-  readonly footL = this.joint('Foot_L', this.kneeL, 0, -0.34, 0);
-  readonly legR = this.joint('Thigh_R', this.hips, 0.19, 0, 0);
-  readonly kneeR = this.joint('Shin_R', this.legR, 0, -0.36, 0);
-  readonly footR = this.joint('Foot_R', this.kneeR, 0, -0.34, 0);
+  readonly hips = this.joint('Hips', this.root);
+  readonly spine = this.joint('Spine', this.hips);
+  readonly chest = this.joint('Chest', this.spine);
+  readonly neck = this.joint('Neck', this.chest);
+  readonly head = this.joint('Head', this.neck);
+  readonly armL = this.joint('UpperArm_L', this.chest);
+  readonly elbowL = this.joint('Forearm_L', this.armL);
+  readonly handL = this.joint('Hand_L', this.elbowL);
+  readonly armR = this.joint('UpperArm_R', this.chest);
+  readonly elbowR = this.joint('Forearm_R', this.armR);
+  readonly handR = this.joint('Hand_R', this.elbowR);
+  readonly legL = this.joint('Thigh_L', this.hips);
+  readonly kneeL = this.joint('Shin_L', this.legL);
+  readonly footL = this.joint('Foot_L', this.kneeL);
+  readonly legR = this.joint('Thigh_R', this.hips);
+  readonly kneeR = this.joint('Shin_R', this.legR);
+  readonly footR = this.joint('Foot_R', this.kneeR);
   readonly headMount = new THREE.Group();
   readonly backMount = new THREE.Group();
   readonly weaponMount = new THREE.Group();
@@ -39,8 +46,12 @@ export class PlayerRig {
   readonly skeleton: THREE.Skeleton;
   readonly accent: THREE.MeshLambertMaterial;
   state: 'idle' | 'run' | 'jump' | 'fall' = 'idle';
-  private readonly targetL = this.joint('FootTarget_L', this.root, -0.19, 0.12, 0);
-  private readonly targetR = this.joint('FootTarget_R', this.root, 0.19, 0.12, 0);
+  private readonly targetL = this.joint('FootTarget_L', this.root);
+  private readonly targetR = this.joint('FootTarget_R', this.root);
+  private readonly hipsHeight = this.hips.position.y;
+  private readonly chestHeight = this.chest.position.y;
+  private readonly ankleHeight = this.targetR.position.y;
+  private readonly ankleWidth = this.targetR.position.x;
   private readonly solver: CCDIKSolver;
   private clock = 0;
   private phase = 0;
@@ -53,24 +64,22 @@ export class PlayerRig {
 
   constructor(color: number) {
     this.root.name = 'PlayerRig';
-    this.root.userData.avatarRevision = 'rounded-rig-v1';
+    this.root.userData.avatarRevision = 'chameleon-rig-v1';
+    this.root.userData.sourceSHA256 = anatomy.sourceSHA256;
     this.accent = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.8 });
     const materials = [
-      new THREE.MeshLambertMaterial({ color: 0x34434b }),
-      new THREE.MeshLambertMaterial({ color: 0xb9c9c9 }),
+      (sourceMesh.material as THREE.MeshStandardMaterial).clone(),
       this.accent,
-      new THREE.MeshLambertMaterial({ color: 0x101c25 }),
-      new THREE.MeshLambertMaterial({ color: 0xe1efed }),
     ];
     this.root.updateMatrixWorld(true);
-    const bones: THREE.Bone[] = [];
-    this.root.traverse(object => { if (object instanceof THREE.Bone) bones.push(object); });
+    const bones = anatomy.joints.map(joint => this.root.getObjectByName(joint.name) as THREE.Bone);
     this.skeleton = new THREE.Skeleton(bones);
-    const surfaces: THREE.BufferGeometry[][] = materials.map(() => []);
+    const surfaces: THREE.BufferGeometry[][] = [[sourceMesh.geometry.clone()], []];
     const shell = (bone: THREE.Bone, material: number, size: [number, number, number], offset: [number, number, number], shape?: THREE.BufferGeometry) => {
       const source = shape ?? new THREE.SphereGeometry(1, 16, 12);
       const geometry = source.index ? source : mergeVertices(source);
       if (geometry !== source) source.dispose();
+      geometry.deleteAttribute('uv');
       geometry.scale(...size).translate(...offset).applyMatrix4(bone.matrixWorld);
       const count = geometry.attributes.position.count;
       const indices = new Uint16Array(count * 4);
@@ -83,42 +92,15 @@ export class PlayerRig {
       geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
       surfaces[material].push(geometry);
     };
-    shell(this.hips, 0, [0.29, 0.17, 0.2], [0, 0, 0]);
-    shell(this.spine, 0, [0.255, 0.27, 0.18], [0, 0.02, 0]);
-    shell(this.chest, 1, [0.35, 0.28, 0.235], [0, 0.02, 0]);
-    shell(this.chest, 3, [0.27, 0.145, 0.07], [0, 0.06, 0.204]);
-    shell(this.chest, 2, [0.222, 0.084, 0.036], [0, 0.075, 0.264], new RoundedBoxGeometry(2, 2, 2, 3, 0.55));
-    for (const side of [-1, 1]) {
-      shell(this.hips, 1, [0.13, 0.105, 0.075], [side * 0.17, 0.015, 0.155]);
-    }
-    shell(this.neck, 0, [0.115, 0.12, 0.115], [0, 0.02, 0]);
-    shell(this.head, 1, [0.244, 0.222, 0.237], [0, 0, 0]);
-    shell(this.head, 3, [0.216, 0.112, 0.1], [0, 0.012, 0.171]);
-    shell(this.head, 2, [0.17, 0.029, 0.018], [0, 0.015, 0.265]);
-    shell(this.head, 4, [0.125, 0.047, 0.04], [0, -0.144, 0.166]);
-    for (const [arm, elbow, hand, leg, knee, foot, side] of [
-      [this.armL, this.elbowL, this.handL, this.legL, this.kneeL, this.footL, -1],
-      [this.armR, this.elbowR, this.handR, this.legR, this.kneeR, this.footR, 1],
-    ] as const) {
-      shell(arm, 0, [0.095, 0.19, 0.1], [0, -0.135, 0]);
-      shell(arm, 1, [0.18, 0.15, 0.182], [side * 0.012, 0.005, 0]);
-      shell(arm, 2, [0.183, 0.153, 0.185], [side * 0.012, 0.005, 0], new THREE.SphereGeometry(1, 24, 8, 0, Math.PI * 2, 0, 1.05));
-      shell(elbow, 0, [0.092, 0.095, 0.095], [0, 0, 0]);
-      shell(elbow, 1, [0.115, 0.143, 0.12], [0, -0.13, 0.012]);
-      shell(hand, 0, [0.094, 0.092, 0.096], [0, -0.028, 0.015]);
-      shell(leg, 0, [0.13, 0.22, 0.13], [0, -0.16, 0]);
-      shell(leg, 1, [0.132, 0.175, 0.1], [0, -0.13, 0.068]);
-      shell(knee, 0, [0.105, 0.106, 0.11], [0, 0, 0]);
-      shell(knee, 1, [0.12, 0.182, 0.13], [0, -0.16, 0.017]);
-      shell(knee, 4, [0.102, 0.086, 0.06], [0, -0.016, 0.092]);
-      shell(foot, 0, [0.14, 0.1, 0.224], [0, -0.016, 0.065]);
-      shell(foot, 1, [0.131, 0.076, 0.16], [0, 0.013, 0.107]);
+    shell(this.chest, 1, [0.11, 0.044, 0.012], [0, -0.015, 0.16], new RoundedBoxGeometry(2, 2, 2, 3, 0.55));
+    for (const [arm, side] of [[this.armL, -1], [this.armR, 1]] as const) {
+      shell(arm, 1, [0.086, 0.033, 0.105], [side * 0.005, 0.08, 0]);
     }
     const merged = surfaces.map(surface => mergeGeometries(surface)!);
     const geometry = mergeGeometries(merged, true)!;
     for (const surface of [...surfaces.flat(), ...merged]) surface.dispose();
     this.mesh = new THREE.SkinnedMesh(geometry, materials);
-    this.mesh.name = 'RoundedPlayerArmor';
+    this.mesh.name = 'ChameleonAvatar';
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -127,12 +109,14 @@ export class PlayerRig {
     this.headMount.name = 'headMount';
     this.backMount.name = 'backMount';
     this.weaponMount.name = 'weaponMount';
+    this.headMount.scale.setScalar(anatomy.headRadius / 0.244);
     this.head.add(this.headMount);
-    this.backMount.position.set(0, -0.06, -0.28);
+    this.backMount.position.set(0, -0.06, anatomy.backDepth);
+    this.backMount.scale.setScalar(0.82);
     this.chest.add(this.backMount);
-    this.weaponMount.position.set(0, 0.02, 0.22);
+    this.weaponMount.position.set(0, -0.015, 0.10);
     this.handR.add(this.weaponMount);
-    this.pack = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.15, 4, 12), materials[0]);
+    this.pack = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.15, 4, 12), new THREE.MeshLambertMaterial({ color: 0x34434b }));
     this.pack.scale.set(1.25, 1, 0.6);
     this.pack.name = 'DefaultPack';
     this.backMount.add(this.pack);
@@ -148,10 +132,12 @@ export class PlayerRig {
     })));
   }
 
-  private joint(name: string, parent: THREE.Object3D, x: number, y: number, z: number): THREE.Bone {
+  private joint(name: string, parent: THREE.Object3D): THREE.Bone {
     const bone = new THREE.Bone();
     bone.name = name;
-    bone.position.set(x, y, z);
+    const joint = anatomy.joints.find(joint => joint.name === name)!;
+    const origin = anatomy.joints.find(joint => joint.name === parent.name)?.position ?? [0, 0, 0];
+    bone.position.fromArray(joint.position).sub(new THREE.Vector3().fromArray(origin));
     parent.add(bone);
     return bone;
   }
@@ -176,10 +162,10 @@ export class PlayerRig {
     const frantic = Math.sin(this.clock * 20);
     const forward = motion.forward ?? 1;
     const strafe = motion.strafe ?? 0;
-    this.hips.position.y = 0.79 + Math.abs(stride) * 0.035 * this.run - this.landing;
+    this.hips.position.y = this.hipsHeight - 0.03 + Math.abs(stride) * 0.035 * this.run - this.landing;
     this.hips.rotation.set(0, stride * 0.065 * this.run, -strafe * 0.07 * this.run);
     this.spine.rotation.set(0.12 * this.run * forward - 0.13 * this.air, stride * -0.1 * this.run, Math.sin(this.clock * 1.1) * 0.014);
-    this.chest.position.y = 0.2 + breathe * 0.004;
+    this.chest.position.y = this.chestHeight + breathe * 0.004;
     this.chest.rotation.set(breathe * 0.012, stride * -0.08 * this.run, 0);
     this.head.rotation.set(-0.07 * this.run + 0.12 * this.panic, Math.sin(this.clock * 0.7) * 0.065 * (1 - this.run), -frantic * 0.04 * this.panic);
     for (const [arm, elbow, hand, leg, knee, foot, target, side] of [
@@ -196,8 +182,8 @@ export class PlayerRig {
       hand.rotation.set(0, 0, -side * this.panic * 0.18);
       leg.rotation.set(-0.12 - this.air * (0.32 + side * 0.18) + kick * 0.65 * this.panic, 0, -side * 0.1 * this.air);
       knee.rotation.set(0.24 + this.air * (0.85 - side * 0.2) + Math.max(0, -kick) * 0.85 * this.panic, 0, 0);
-      target.position.set(side * 0.19 + swing * 0.2 * this.run * strafe,
-        0.12 + lift * 0.2 * this.run, swing * 0.3 * this.run * forward);
+      target.position.set(side * this.ankleWidth + swing * 0.2 * this.run * strafe,
+        this.ankleHeight + lift * 0.2 * this.run, swing * 0.3 * this.run * forward);
       foot.rotation.set(0, 0, 0);
     }
     this.root.updateMatrixWorld(true);

@@ -14,8 +14,11 @@ your network) to play together. Up to **9 players**, **3 per colony** — a 3v3v
 
 ## Player Avatar
 
-The rounded armored avatar uses one skinned model and a 19-bone rig (including two
-foot targets) in gameplay, home, customization, colony selection and lobbies.
+The supplied white Chameleon character uses one skinned model and a 19-bone rig
+(including two foot targets) in gameplay, home, customization, colony selection
+and lobbies. Its geometry is loaded once before player/menu construction; each
+avatar owns its geometry, materials and skeleton. Rest joints and accessory
+scales follow the imported anatomy, normalized to a 1.9 m neutral height.
 Procedural animation blends breathing and head movement, speed-driven running
 with knee/foot IK, airborne jump poses, alternating panic kicks during descent,
 and landing compression. Chest and shoulder pads glow in the colony color.
@@ -23,13 +26,23 @@ Hats, backpacks and weapons follow head, chest and hand sockets; pets and cosmet
 effects retain their existing controllers. Dash trails and decoys own separate
 skeletons so their captured poses do not follow the live player.
 
-`npm run test:player-avatar` checks skin binding, joint motion, all 93 catalog
+The source was unrigged, with one arm overhead. Preparation repairs that side
+using the clean source half, retains the original head and white material,
+separates the neutral stance, and adds topology-aware blended skin weights.
+The generated GLB and provenance/joint metadata live in `src/player/assets/`.
+To regenerate, run `npm run prepare:avatar -- "path/to/source/avatar.glb"`;
+subsequent runs can use the ignored pristine `.asset-sources/player-avatar/`
+backup without an argument. The original download is not modified.
+
+`npm run test:player-avatar` checks source identity, normalized skin weights,
+deformation limits, joint motion, all 93 catalog
 items/effects, five weapons, keyboard running/jumping, remote motion snapshots,
 colony swaps and clone isolation. It captures desktop, portrait and landscape
 menus with body-framing and visible-pixel assertions, plus WebGL and glowing-pad
 comparisons, under `.test-shots/player-avatar/`. Run `npm run build` for the
 production check. These tests do not certify physical phones or live multiplayer
 services; remote animation is verified with locally replayed snapshots.
+`npm run test:player-avatar -- --rig-only` runs the focused rig and motion captures.
 
 ## Base Planets
 

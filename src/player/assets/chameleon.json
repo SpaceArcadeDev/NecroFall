@@ -1,0 +1,197 @@
+{
+  "sourceSHA256": "f716aa4e404d26b2baaf612386d0c7cc9730d039b0d9b9eeea8e824ae1b142d1",
+  "sourceName": "meccha-chameleon-white-character/source/avatar.glb",
+  "preparation": "Closed neutral body from the source clean side; original head and material retained; overhead arm repaired by symmetry.",
+  "height": 1.9,
+  "bounds": {
+    "min": [
+      -0.4381413757801056,
+      0,
+      -0.19701412320137024
+    ],
+    "max": [
+      0.4380934536457062,
+      1.899999976158142,
+      0.19696012139320374
+    ]
+  },
+  "bytes": 1538232,
+  "vertices": 25697,
+  "weightError": 4.470348358154297e-8,
+  "blendedVertices": 13725,
+  "joints": [
+    {
+      "name": "Hips",
+      "parent": null,
+      "position": [
+        0,
+        0.7983515994325668,
+        0
+      ]
+    },
+    {
+      "name": "Spine",
+      "parent": "Hips",
+      "position": [
+        0,
+        1.0720721478331505,
+        0
+      ]
+    },
+    {
+      "name": "Chest",
+      "parent": "Spine",
+      "position": [
+        0,
+        1.3571977190837587,
+        0
+      ]
+    },
+    {
+      "name": "Neck",
+      "parent": "Chest",
+      "position": [
+        0,
+        1.5054630161340752,
+        0
+      ]
+    },
+    {
+      "name": "Head",
+      "parent": "Neck",
+      "position": [
+        0,
+        1.7107534274345129,
+        0
+      ]
+    },
+    {
+      "name": "UpperArm_L",
+      "parent": "Chest",
+      "position": [
+        -0.33302666722071034,
+        1.3571977190837587,
+        0
+      ]
+    },
+    {
+      "name": "Forearm_L",
+      "parent": "UpperArm_L",
+      "position": [
+        -0.3569772152057614,
+        1.0378570792830777,
+        0
+      ]
+    },
+    {
+      "name": "Hand_L",
+      "parent": "Forearm_L",
+      "position": [
+        -0.3569772152057614,
+        0.7071114166323722,
+        0
+      ]
+    },
+    {
+      "name": "UpperArm_R",
+      "parent": "Chest",
+      "position": [
+        0.33302666722071034,
+        1.3571977190837587,
+        0
+      ]
+    },
+    {
+      "name": "Forearm_R",
+      "parent": "UpperArm_R",
+      "position": [
+        0.3569772152057614,
+        1.0378570792830777,
+        0
+      ]
+    },
+    {
+      "name": "Hand_R",
+      "parent": "Forearm_R",
+      "position": [
+        0.3569772152057614,
+        0.7071114166323722,
+        0
+      ]
+    },
+    {
+      "name": "Thigh_L",
+      "parent": "Hips",
+      "position": [
+        -0.15054630162032112,
+        0.7983515994325668,
+        0
+      ]
+    },
+    {
+      "name": "Shin_L",
+      "parent": "Thigh_L",
+      "position": [
+        -0.14826529705031624,
+        0.39917579968171535,
+        0
+      ]
+    },
+    {
+      "name": "Foot_L",
+      "parent": "Shin_L",
+      "position": [
+        -0.13457926963028705,
+        0.07071114160101476,
+        0
+      ]
+    },
+    {
+      "name": "Thigh_R",
+      "parent": "Hips",
+      "position": [
+        0.15054630162032112,
+        0.7983515994325668,
+        0
+      ]
+    },
+    {
+      "name": "Shin_R",
+      "parent": "Thigh_R",
+      "position": [
+        0.14826529705031624,
+        0.39917579968171535,
+        0
+      ]
+    },
+    {
+      "name": "Foot_R",
+      "parent": "Shin_R",
+      "position": [
+        0.13457926963028705,
+        0.07071114160101476,
+        0
+      ]
+    },
+    {
+      "name": "FootTarget_L",
+      "parent": null,
+      "position": [
+        -0.13457926963028705,
+        0.07071114160101476,
+        0
+      ]
+    },
+    {
+      "name": "FootTarget_R",
+      "parent": null,
+      "position": [
+        0.13457926963028705,
+        0.07071114160101476,
+        0
+      ]
+    }
+  ],
+  "headRadius": 0.203009406730433,
+  "backDepth": -0.15967031990034058
+}

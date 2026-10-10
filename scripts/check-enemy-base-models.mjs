@@ -75,7 +75,7 @@ async function focus(page, find, options = {}) {
     const forward = up.clone().cross(side).normalize();
     const camera = game.cam.camera;
     const size = Math.max(3, enemy.radius * 4) + (padding ?? 0);
-    const distance = size * 0.9 / Math.tan(camera.fov * Math.PI / 360);
+    let distance = size * 0.9 / Math.tan(camera.fov * Math.PI / 360);
     const centre = mid
       ? enemy.position.clone().lerp(new Function('game', `return (${mid})(game)`)(game).position, 0.5).addScaledVector(up, enemy.radius * 0.7)
       : enemy.position.clone().addScaledVector(up, enemy.radius * 0.7);
@@ -87,10 +87,17 @@ async function focus(page, find, options = {}) {
       }
     }
     let chosen = forward.clone().multiplyScalar(-1).addScaledVector(up, 0.4).normalize();
+    let clearView = false;
     for (const direction of directions) {
       const candidate = centre.clone().addScaledVector(direction, distance);
       const ray = new Ray(candidate, centre.clone().sub(candidate).normalize());
-      if (!game.envWorld.obstacles.meshTree.raycastFirst(ray, DoubleSide, 0, distance)) { chosen = direction; break; }
+      if (!game.envWorld.obstacles.meshTree.raycastFirst(ray, DoubleSide, 0, distance)) { chosen = direction; clearView = true; break; }
+    }
+    // No clear line from any orbit angle (a wall, a canyon, a forest): look down from above — the
+    // sky is always open, and the surface clamp below keeps the camera out of the terrain.
+    if (!clearView) {
+      chosen.copy(up);
+      distance *= 1.25;
     }
     // Clear the combat state the probe may have picked up before the freeze, so the capture shows
     // the body itself rather than a hit flash.
@@ -99,10 +106,15 @@ async function focus(page, find, options = {}) {
     enemy.iceAmt = 0;
     enemy.imported?.update(0, 0, { flash: 0, frost: 0, stunned: false, enraged: false });
     camera.position.copy(centre).addScaledVector(chosen, distance);
+    // Never leave the camera inside a hill: clamp it above the drawn surface along its own
+    // direction, exactly like the main-planets suite does.
+    const cameraDirection = camera.position.clone().normalize();
+    const floor = game.envWorld.deps.surface.radiusAt(cameraDirection);
+    camera.position.setLength(Math.max(camera.position.length(), floor + 2.5));
     camera.up.copy(up);
     camera.lookAt(centre);
     camera.updateMatrixWorld(true);
-    return { ok: true, id: enemy.id, radius: enemy.radius, distance };
+    return { ok: true, id: enemy.id, radius: enemy.radius, distance, clearView };
   }, { find, mid: options.mid ?? null, padding: options.padding ?? 0 });
 }
 
@@ -262,7 +274,43 @@ try {
   });
   assert.ok(damage.ready, 'a fresh crawler must build its imported body');
   assert.ok(damage.hpDropped && damage.flashed, JSON.stringify(damage));
-  assert.ok(damage.uniforms.flash > 0.1 && damage.uniforms.frost > 0.1, JSON.stringify(damage));  assert.equal(damage.alive, false, 'the imported body must die like any other enemy');
+  assert.ok(damage.uniforms.flash > 0.1 && damage.uniforms.frost > 0.1, JSON.stringify(damage));
+  assert.equal(damage.alive, false, 'the imported body must die like any other enemy');
+
+  // ---------------------------------------------------------------- Beacon Guardians
+  // The four Beacon Guardians must field the imported bodies: they alternate between the two
+  // models, so a match shows both — and every guardian is a real boss (stun pool, plate, roar).
+  const guardians = await page.evaluate(async () => {
+    const { Vector3 } = await import('/node_modules/three/build/three.webgpu.js');
+    const game = window.necrofall, player = game.localPlayer;
+    const up = player.position.clone().normalize();
+    const side = new Vector3(0, 1, 0).cross(up).normalize();
+    const forward = up.clone().cross(side).normalize();
+    const spawned = [];
+    for (let towerIdx = 0; towerIdx < 4; towerIdx++) {
+      const direction = side.clone().applyAxisAngle(up, towerIdx * 0.9);
+      const position = player.position.clone().addScaledVector(direction, 22);
+      game.planet.projectToSurface(position);
+      const boss = game.enemies.spawnBoss(towerIdx, 'beacon', position);
+      boss.name = `guardian-${towerIdx}`;
+      spawned.push({ id: boss.id, genome: boss.genome.idx, species: boss.genome.species, tier: boss.genome.tier, isBoss: boss.isBoss, stun: boss.stunMax > 0 });
+    }
+    return spawned;
+  });
+  assert.equal(guardians.length, 4);
+  assert.ok(guardians.every(guardian => guardian.tier === 'boss' && guardian.isBoss && guardian.stun), JSON.stringify(guardians));
+  await page.waitForFunction(ids => ids.every(id => Boolean(window.necrofall.enemies.byId(id)?.imported)), guardians.map(guardian => guardian.id), { timeout: 60000 });
+  const guardianModels = await page.evaluate(ids => ids.map(id => {
+    const game = window.necrofall, enemy = game.enemies.byId(id);
+    return { id, model: enemy.imported.root.name, radius: +enemy.radius.toFixed(2), tier: enemy.genome.tier, bones: enemy.imported.root.getObjectByProperty('isSkinnedMesh', true)?.skeleton.bones.length ?? 0 };
+  }), guardians.map(guardian => guardian.id));
+  const models = new Set(guardianModels.map(guardian => guardian.model));
+  assert.ok(models.has('parasite-imported') && models.has('crawler-imported'), `both imported bodies must guard beacons: ${JSON.stringify(guardianModels)}`);
+  assert.ok(guardianModels.every(guardian => guardian.bones > 15), JSON.stringify(guardianModels));
+
+  const guardianShot = await focus(page, `game => game.enemies.enemies.find(enemy => enemy.name === 'guardian-0') ?? null`, { padding: 2.5 });
+  assert.ok(guardianShot.ok, JSON.stringify(guardianShot));
+  await capture(page, 'beacon-guardian-imported');
   // A/B capture: the same genome, once with the imported base model and once with the pooled
   // procedural rig it replaced — both parked on open ground, same light, same frame.
   const ab = await page.evaluate(async () => {
@@ -302,8 +350,9 @@ try {
     return Boolean(procedural);
   }, ab.ids);
   assert.ok(reverted);
-  assert.ok((await focus(page, `game => game.enemies.enemies.find(enemy => enemy.name === 'ab-imported') ?? null`,
-    { mid: `game => game.enemies.enemies.find(enemy => enemy.name === 'ab-procedural') ?? null`, padding: 4.5 })).ok);
+  const abShot = await focus(page, `game => game.enemies.enemies.find(enemy => enemy.name === 'ab-imported') ?? null`,
+    { mid: `game => game.enemies.enemies.find(enemy => enemy.name === 'ab-procedural') ?? null`, padding: 4.5 });
+  assert.ok(abShot.ok, JSON.stringify(abShot));
   await capture(page, 'crawler-base-model-ab');
 
   // ---------------------------------------------------------------- Mega Necrophage (parasite)

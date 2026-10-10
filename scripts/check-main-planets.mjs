@@ -271,9 +271,17 @@ try {
       const mega = game.enemies.spawnBoss(4, 'nexus', position);
       return { mega: mega.id, radius: mega.radius, hp: mega.hp, freeroam: game.freeroamMode,
         towers: game.towers.towers.map(tower => ({ kind: tower.kind, state: tower.state })),
-        // Only the Nexus Overseer wears the parasite; crawler-species bodies wear their own
-        // imported model, and no other body may pick up an imported visual at all.
-        otherImported: game.enemies.enemies.filter(enemy => enemy.genome.tier !== 'nexus' && enemy.imported && enemy.imported.root.name !== 'crawler-imported').length };
+        // Imported bodies are owned by the Nexus Overseer (parasite), the Beacon Guardians
+        // (alternating parasite / crawler) and crawler-species Necrophages (crawler) — nothing
+        // else may pick one up.
+        otherImported: game.enemies.enemies.filter(enemy => {
+          const model = enemy.imported?.root.name;
+          if (!model) return false;
+          const guardian = enemy.genome.tier === 'boss';
+          return model === 'parasite-imported'
+            ? enemy.genome.tier !== 'nexus' && !guardian
+            : enemy.genome.species !== 'crawler' && !guardian;
+        }).length };
     });
     assert.equal(state.freeroam, false);
     assert.equal(state.towers.length, 5);

@@ -34,12 +34,13 @@ or other new license is asserted for these existing assets.
 - Source: the project owner's Tripo-generated crawler GLB
   (`src/enemies/base_models/crawler.glb`; raw source and hashes are recorded in
   `.asset-sources/crawler/source.glb` and `crawler.json`).
-- Modified for NECROFALL: welded and simplified to the mobile triangle budget,
+- Modified for NECROFALL: base colour repainted into the game's violet-chitin /
+  venom-gland palette, welded and simplified to the mobile triangle budget,
   textures resized to WebP, yaw/scale normalization baked in, meshopt
   compression, and a skeleton + skin weights derived from the geometry at load
   (`src/enemies/imported/AutoRig.ts`) because the source ships without a rig.
-  Shaded through the game's cell-shaded creature material and presented as
-  crawler-species Necrophages.
+  Shaded through the game's cell-shaded creature material and presented as the
+  Beacon Guardians and crawler-species Necrophages.
 
 ## Poly Haven Environment Sources
 

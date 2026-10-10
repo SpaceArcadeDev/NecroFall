@@ -6,8 +6,8 @@
   "sourceSHA256": "db53cee40f099217fa422fded9484495544984468beb5aa73e3800365702b75b",
   "sourceTriangles": 286732,
   "triangles": 16000,
-  "bytes": 540928,
-  "sha256": "5a5b04721c5ae336da7c07320c5af6383bcf69546b8e981ac41b5602bde19c35",
+  "bytes": 622976,
+  "sha256": "7e4a2b9b042cfcee76d43f088337ef36bac49ebf6cf2a9b2dc2098d2fa440032",
   "bounds": {
     "min": [
       -0.36032852899290785,
@@ -29,6 +29,7 @@
   ],
   "modifications": [
     "welded, simplified to the mobile budget",
+    "base colour repainted into the NECROFALL chitin palette",
     "textures resized to WebP",
     "yaw/scale normalization baked in",
     "meshopt compression"

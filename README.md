@@ -27,13 +27,16 @@ Water is limited to shallow basins (at most 0.35 m), with grounded walking wakes
 Grass trails persist behind walkers and recover. Terrain, authored rocks, spikes and
 crystals provide shape-based capsule collisions and top support;
 steep upward-facing slopes remain climbable while vertical walls block movement.
-Two enemy bodies are imported base models rather than generated rigs: the Nexus Overseer's
-**Mega Necrophage** (the insectoid rig, with its baked walk clip) and the **crawler**
+Two enemy bodies are imported base models rather than generated rigs: the insectoid-rig
+**Mega Necrophage** (the Nexus Overseer, with its baked walk clip) and the **crawler**
 (`src/enemies/base_models/crawler.glb`). The crawler ships as a static mesh, so the engine
 derives its skeleton and skin weights from the geometry on load (`src/enemies/imported/`) and
-drives a procedural prowl gait; both surfaces are rebuilt as cell-shaded node materials that
-share the world's sun, ambient, fog and the `?cel=0` A/B switch. Towers, bases, shields,
-pads and the other enemy rigs retain their gameplay.
+drives a procedural prowl gait. Both surfaces are rebuilt as cell-shaded node materials that
+share the world's sun, ambient, fog and the `?cel=0` A/B switch, and both ship with a
+NECROFALL palette repaint (violet chitin, venom-green glands). They appear as the **Nexus
+Overseer**, as the four **Beacon Guardians** (which alternate between the two bodies, so every
+match fields both) and across the crawler species in the swarm. Towers, bases, shields, pads
+and the other enemy rigs retain their gameplay.
 
 The preserved gallery is at [/base-planets.html](base-planets.html), with
 [concepts.html](concepts.html) retained for compatibility. Both pages ship in

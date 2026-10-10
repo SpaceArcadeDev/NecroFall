@@ -71,13 +71,16 @@ export function importedMaterial(source: THREE.MeshStandardMaterial, membrane: b
     const radialUp = wp.normalize();
     const viewDir = (NECRO_UNIFORMS.uCamPos as any).sub(wp).normalize();
 
-    // Cel lighting: the quantised sun ramp + hemisphere ambient + the world's rim tint — the
-    // same three reads the procedural carapace and energy materials are built from.
+    // Cel lighting: the sun term rides the QUANTISED ramp, but with a FLOOR — the darkest band
+    // keeps half the sun instead of going black (the same reason the terrain's ladder bottoms out
+    // at 0.72 and the base-planets enemy model at 0.37: a stepped look, never a dead silhouette).
+    // The hemisphere ambient, slope shading and rim tint are the world's own reads.
     const ramp = celQuantize(n.dot(NECRO_UNIFORMS.uSunDir as any).clamp(0, 1));
+    const banded = ramp.mul(0.5).add(0.5);
     const hemi = n.dot(radialUp).mul(0.5).add(0.5).clamp(0, 1);
     const ambient = mix(NECRO_UNIFORMS.uGroundColor, NECRO_UNIFORMS.uSkyColor, hemi);
     const tinted = mix(base, uState, uStateAmount.mul(0.75));
-    const lit = tinted.mul(ambient.add(NECRO_UNIFORMS.uSunColor.mul(ramp))).toVar();
+    const lit = tinted.mul(ambient.add(NECRO_UNIFORMS.uSunColor.mul(banded))).toVar();
     const slope = radialUp.dot(n).clamp(0, 1).oneMinus();
     lit.assign(lit.mul(mix(1.0, 0.82, slope)));
     const rim = n.dot(viewDir).clamp(0, 1).oneMinus().pow(3);

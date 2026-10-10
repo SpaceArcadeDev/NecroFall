@@ -57,6 +57,37 @@ const countTriangles = document => document.getRoot().listMeshes().reduce((sum, 
   sum + mesh.listPrimitives().reduce((subtotal, primitive) =>
     subtotal + (primitive.getIndices()?.getCount() ?? primitive.getAttribute('POSITION').getCount()) / 3, 0), 0);
 
+/**
+ * NECROFALL chitin palette — the three-point repaint the Mega Necrophage's insectoid rig already
+ * received, so both imported bodies read in the same graphic register:
+ *
+ *   deep indigo shell  →  violet plates  →  pale venom glands
+ *
+ * The authored detail survives as LUMINANCE and is remapped onto the palette (with the same 1.35
+ * contrast lift the concept assets use), which keeps the painted plating, the gland blisters and
+ * the cell structure readable while replacing the muddy photographic colours with the game's
+ * saturated, cel-shaded set.
+ */
+const CHITIN_PALETTE = [[20, 18, 30], [104, 58, 112], [176, 236, 128]];
+
+async function paintChitin(image) {
+  const { data, info } = await sharp(image).resize(TEXTURE_SIZE, TEXTURE_SIZE, { fit: 'inside', withoutEnlargement: true })
+    .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const [shadow, midtone, highlight] = CHITIN_PALETTE;
+  for (let index = 0; index < data.length; index += info.channels) {
+    const luminance = (data[index] * 0.24 + data[index + 1] * 0.63 + data[index + 2] * 0.13) / 255;
+    // Levels first: the source is a DARK low-contrast photo texture (median luminance 0.22,
+    // p90 0.50), so the ramp is stretched over its real range — plating sinks into the indigo
+    // shadow, the venom glands climb into the bright green.
+    const value = Math.min(1, Math.max(0, (luminance - 0.1) / 0.5));
+    const first = value < 0.5 ? shadow : midtone;
+    const second = value < 0.5 ? midtone : highlight;
+    const blend = value < 0.5 ? value * 2 : (value - 0.5) * 2;
+    for (let channel = 0; channel < 3; channel++) data[index + channel] = Math.round(first[channel] + (second[channel] - first[channel]) * blend);
+  }
+  return sharp(data, { raw: info }).webp({ quality: 94, alphaQuality: 100 }).toBuffer();
+}
+
 function assertGameBounds(document) {
   const bounds = getBounds(document.getRoot().listScenes()[0]);
   assert(bounds.min.every(Number.isFinite) && bounds.max.every(Number.isFinite), 'Invalid model bounds');
@@ -112,8 +143,6 @@ async function main() {
   }
 
   // Materials: ONE chitin surface, world-lit and cel-banded by the runtime (see ImportedVisual).
-  // The painted texture is already on the Necrophall palette (violet chitin, acid-green venom),
-  // so it is preserved — only resized to a WebP the GPU can sample cheaply.
   for (const material of document.getRoot().listMaterials()) {
     material.setName('crawler:chitin');
     material.setMetallicFactor(0.06).setRoughnessFactor(0.6);
@@ -121,9 +150,14 @@ async function main() {
     for (const extension of material.listExtensions()) material.setExtension(extension.extensionName, null);
   }
   for (const texture of document.getRoot().listTextures()) {
-    const usedAsBase = document.getRoot().listMaterials().some(material => material.getBaseColorTexture() === texture);
-    const size = usedAsBase || texture === document.getRoot().listMaterials()[0]?.getNormalTexture() ? TEXTURE_SIZE : 512;
-    texture.setImage(await sharp(texture.getImage()).resize(size, size, { fit: 'inside' }).webp({ quality: 92 }).toBuffer()).setMimeType('image/webp');
+    const base = document.getRoot().listMaterials().some(material => material.getBaseColorTexture() === texture);
+    const size = base || document.getRoot().listMaterials().some(material => material.getNormalTexture() === texture) ? TEXTURE_SIZE : 512;
+    // The base colour is repainted into the NECROFALL chitin palette; everything else is merely
+    // resized to a WebP the GPU can sample cheaply.
+    const image = base
+      ? await paintChitin(texture.getImage())
+      : await sharp(texture.getImage()).resize(size, size, { fit: 'inside' }).webp({ quality: 92 }).toBuffer();
+    texture.setImage(image).setMimeType('image/webp');
     texture.setName(`crawler:${document.getRoot().listTextures().indexOf(texture)}`).setURI('');
   }
 
@@ -153,7 +187,7 @@ async function main() {
     sha256: createHash('sha256').update(bytes).digest('hex'),
     bounds: finalBounds,
     conventions: ['faces +Z', 'height 1.0', 'feet on y = 0', 'centered on x/z', 'material crawler:chitin'],
-    modifications: ['welded, simplified to the mobile budget', 'textures resized to WebP', 'yaw/scale normalization baked in', 'meshopt compression'],
+    modifications: ['welded, simplified to the mobile budget', 'base colour repainted into the NECROFALL chitin palette', 'textures resized to WebP', 'yaw/scale normalization baked in', 'meshopt compression'],
   };
   writeFileSync(reportFile, JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ sourceTriangles, ...report, bytes: `${(bytes.length / 1024).toFixed(0)} KB` }, null, 2));

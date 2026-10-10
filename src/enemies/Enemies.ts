@@ -232,12 +232,14 @@ const HUNTER_CURVE_FLOOR = 300;
 
 /**
  * How tall an imported base model stands for a body of this radius (world units, before the
- * enemy group's own mitosis/elite scale). The parasite towers — it IS the Nexus Overseer's
- * megafauna silhouette — while the crawler matches the procedural crawler's proportions (its
- * 1.65 : 1 length-to-height gives it roughly the same footprint the generated rig occupies).
+ * enemy group's own mitosis/elite scale). The Nexus Overseer keeps its megafauna floor; every
+ * other carrier (Beacon Guardians included) scales off its own collision radius, so the body
+ * always matches the fight it belongs to — and the crawler's 1.65 : 1 length-to-height keeps
+ * its footprint in line with the generated rig it replaced.
  */
-export function importedHeight(model: ImportedModelId, radius: number): number {
-  return model === 'parasite' ? Math.max(5, radius * 1.7) : Math.max(0.8, radius * 2.5);
+export function importedHeight(model: ImportedModelId, radius: number, tier: string): number {
+  if (model === 'parasite') return tier === 'nexus' ? Math.max(5, radius * 1.7) : Math.max(2.2, radius * 2.3);
+  return Math.max(0.8, radius * 2.5);
 }
 
 interface Dot {
@@ -508,7 +510,7 @@ export class Enemy {
     if (!model || this.imported || this.importedLoading === this.group) return;
     const group = this.group;
     this.importedLoading = group;
-    void ImportedVisual.create(model, importedHeight(model, this.radius)).then(visual => {
+    void ImportedVisual.create(model, importedHeight(model, this.radius, this.genome.tier)).then(visual => {
       if (!this.alive || group !== this.group) { visual.dispose(); return; }
       for (const child of group.children) if (child !== this.fxToxin) child.visible = false;
       group.add(visual.root); this.imported = visual;

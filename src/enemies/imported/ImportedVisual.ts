@@ -25,13 +25,20 @@ import { readSwitches } from '../../rendering/DebugSwitches';
 export type ImportedModelId = 'parasite' | 'crawler';
 
 /**
- * Which imported base model (if any) stands in for a genome's procedural body: the Nexus
- * Overseer always wears the Mega Necrophage, and crawler-species Necrophages wear the
- * cell-shaded crawler base model. Every other genome keeps its generated rig.
+ * Which imported base model (if any) stands in for a genome's procedural body:
+ *
+ *   nexus      the Nexus Overseer is ALWAYS the Mega Necrophage;
+ *   boss       the four Beacon Guardians alternate between the two imported bodies (their genome
+ *              indices are consecutive), so every match fields two of each — and a guardian still
+ *              reads as one of the big imported monsters while it guards its Beacon;
+ *   crawler    crawler-species Necrophages wear the cell-shaded crawler base model.
+ *
+ * Every other genome keeps its generated rig, and `?basemodels=0` disables the whole layer.
  */
-export function importedModelFor(genome: { species: string; tier: string }): ImportedModelId | null {
+export function importedModelFor(genome: { species: string; tier: string; idx: number }): ImportedModelId | null {
   if (!importedBaseModelsEnabled()) return null;
   if (genome.tier === 'nexus') return 'parasite';
+  if (genome.tier === 'boss') return genome.idx % 2 === 0 ? 'parasite' : 'crawler';
   if (genome.species === 'crawler') return 'crawler';
   return null;
 }

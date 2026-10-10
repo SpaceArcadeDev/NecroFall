@@ -25,7 +25,7 @@ const reports = [];
 const directory = '.test-shots/main-planets';
 await mkdir(directory, { recursive: true });
 
-async function capture(page, name) {
+async function capture(page, name, checkScene = true) {
   await page.waitForFunction(() => {
     const game = window.necrofall, bounds = game.renderer.domElement.getBoundingClientRect();
     return Math.abs(bounds.width - innerWidth) < 1 && Math.abs(bounds.height - innerHeight) < 1
@@ -36,7 +36,7 @@ async function capture(page, name) {
   try {
     const image = await page.screenshot({ path: `${directory}/${name}.png` });
     const stats = await sharp(image).stats();
-    assert.ok(stats.channels.slice(0, 3).some(channel => channel.stdev > 8), `${name}: blank canvas`);
+    if (checkScene) assert.ok(stats.channels.slice(0, 3).some(channel => channel.stdev > 8), `${name}: blank canvas`);
     return image;
   } finally { await style.evaluate(node => node.remove()); }
 }
@@ -116,6 +116,82 @@ async function surfaceTrails(page) {
     results.push({ effect, ...state, channels, mean });
     console.log(`${effect}: live-world trail changes ${channels} pixel channels and restores when expired`);
   }
+  return results;
+}
+
+async function nightStars(page, name) {
+  await inspect(page, 'night');
+  await page.evaluate(() => {
+    const game = window.necrofall, camera = game.cam.camera;
+    window.nightStarState = { update: game.ticker.update, rotation: camera.quaternion.clone() };
+    game.ticker.update = () => game.rendering.render(0);
+    camera.lookAt(camera.position.clone().addScaledVector(game.localPlayer.position.clone().normalize(), 100));
+    camera.updateMatrixWorld(true);
+    game.envWorld.sky.stars.visible = false;
+  });
+  const before = await sharp(await capture(page, `${name}-stars-off`, false)).removeAlpha().raw().toBuffer();
+  await page.evaluate(() => { window.necrofall.envWorld.sky.stars.visible = true; });
+  const after = await sharp(await capture(page, `${name}-stars-on`, false)).removeAlpha().raw().toBuffer();
+  let visiblePixels = 0;
+  for (let index = 0; index < before.length; index += 3) {
+    if (Math.max(after[index] - before[index], after[index + 1] - before[index + 1], after[index + 2] - before[index + 2]) > 25) visiblePixels++;
+  }
+  assert.ok(visiblePixels > 60, `${name}: stars not visibly rendered (${visiblePixels} pixels)`);
+  await page.evaluate(() => {
+    const game = window.necrofall;
+    game.ticker.update = window.nightStarState.update;
+    game.cam.camera.quaternion.copy(window.nightStarState.rotation); game.cam.camera.updateMatrixWorld(true);
+  });
+  console.log(`${name}: ${visiblePixels} visible night-star pixels`);
+  return visiblePixels;
+}
+
+async function hazardInteractions(page) {
+  const results = [];
+  for (const kind of ['quicksand', 'vortex']) {
+    const result = await page.evaluate(kind => {
+      const game = window.necrofall, world = game.envWorld, player = game.localPlayer, camera = game.cam.camera;
+      window.hazardTick = game.ticker.update; game.ticker.update = () => game.rendering.render(0);
+      const hazards = world.ecology.hazards;
+      const site = hazards.sites.filter(site => site.kind === kind)
+        .sort((first, second) => second.position.clone().normalize().dot(world.deps.system.sunDirection) - first.position.clone().normalize().dot(world.deps.system.sunDirection))[0];
+      if (!site) throw new Error(`No ${kind} site`);
+      const up = site.position.clone().normalize(), across = up.clone().cross({ x: 0, y: 1, z: 0 }).normalize();
+      const reset = () => {
+        player.position.copy(site.position); player.up.copy(up); player.velocity.set(0, 0, 0);
+        player.grounded = true; player.momentum = 0; player.jumpLock = 0; player.recallHold = false;
+      };
+      let slowRatio = 1;
+      if (kind === 'quicksand') {
+        game.input.moveY = 1; game.input.moveX = 0;
+        const originalApply = hazards.apply;
+        const run = () => { reset(); for (let frame = 0; frame < 30; frame++) player.updateLocal(1 / 60); return player.position.distanceTo(site.position); };
+        try {
+          hazards.apply = () => 1; const normalDistance = run(); hazards.apply = originalApply;
+          slowRatio = run() / normalDistance;
+        } finally { hazards.apply = originalApply; game.input.moveY = 0; }
+      }
+      reset(); player.updateLocal(1 / 60);
+      const vertical = player.velocity.dot(up), sideways = player.velocity.clone().addScaledVector(up, -vertical).length();
+      camera.position.copy(site.position).addScaledVector(up, kind === 'vortex' ? 16 : 19).addScaledVector(across, kind === 'vortex' ? 42 : 20);
+      camera.up.copy(up); camera.lookAt(site.position.clone().addScaledVector(up, kind === 'vortex' ? 12 : 0)); camera.updateMatrixWorld(true);
+      world.update(site.position, camera); game.lighting.update(site.position);
+      return { kind, radius: site.radius, height: site.height, slowRatio, vertical, sideways, grounded: player.grounded };
+    }, kind);
+    if (kind === 'quicksand') assert.ok(result.slowRatio > 0 && result.slowRatio < 0.7, JSON.stringify(result));
+    else assert.ok(!result.grounded && result.vertical > 25 && result.sideways > 20 && result.height > 25, JSON.stringify(result));
+    const before = await capture(page, `hazard-${kind}-desktop`);
+    await page.evaluate(() => { window.necrofall.envWorld.deps.time.value += 1; });
+    const after = await capture(page, `hazard-${kind}-animated`);
+    assert.notDeepEqual(before, after, `${kind}: animation is frozen`);
+    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      await page.setViewportSize(viewport); await capture(page, `hazard-${kind}-${viewport.width}`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.evaluate(() => { window.necrofall.ticker.update = window.hazardTick; });
+    results.push(result);
+  }
+  console.log(`Player hazard interactions: ${JSON.stringify(results)}`);
   return results;
 }
 
@@ -210,7 +286,7 @@ try {
       assert.equal(data.base, id);
       assert.equal(data.enemies, 0);
       assert.equal(data.frameErrors, 0);
-      assert.equal(data.features.length, 3);
+      assert.equal(data.features.length, id === 'saffron-waste' ? 4 : 3);
       assert.ok(data.features.every(feature => feature.count > 0), `${id}: missing feature placement`);
       assert.equal(data.system.activeSeed, seed);
       assert.ok(data.sun.every((value, index) => Math.abs(value - data.direction[index]) < 1e-10));
@@ -233,9 +309,11 @@ try {
       const night = await inspect(page, 'night');
       assert.ok(night.day < 0.1 && night.sun < 0.1);
       await capture(page, `${id}-night`);
+      const starPixels = await nightStars(page, id);
+      const hazards = id === 'saffron-waste' ? await hazardInteractions(page) : undefined;
       const trails = id === 'cinderbloom' ? await surfaceTrails(page) : undefined;
-      reports.push({ id, seed, ...data, daylight, twilight, night, trails });
-      console.log(`${id}: freeroam, movement, three recipes, fixed sun and twilight passed`);
+      reports.push({ id, seed, ...data, daylight, twilight, night, trails, starPixels, hazards });
+      console.log(`${id}: freeroam, movement, base recipes, fixed sun and twilight passed`);
       assert.deepEqual(errors, [], `${id}: runtime errors`);
     } catch (error) {
       await capture(page, `${id}-failure`).catch(() => {});
@@ -382,6 +460,8 @@ try {
       page.on('console', message => { if (message.type() === 'error' && !/404|favicon|auth-proxy/.test(message.text())) errors.push(message.text()); });
       await start(page, seeds.get(variant.id), 'freeroam', variant.query);
       await inspect(page, 'day'); await capture(page, `${variant.name}-day`);
+      await inspect(page, 'twilight'); await capture(page, `${variant.name}-twilight`);
+      await nightStars(page, variant.name);
       await inspect(page, 'orbit'); await capture(page, `${variant.name}-whole-planet`);
       if (variant.name === 'mobile') {
         await page.setViewportSize({ width: 844, height: 390 });

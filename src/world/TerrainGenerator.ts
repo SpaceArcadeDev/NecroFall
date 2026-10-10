@@ -23,7 +23,6 @@ interface Massif {
   direction: THREE.Vector3;
   radiusSquared: number;
   height: number;
-  terrace: number;
 }
 
 /** Landmark flattened for the hot loop. */
@@ -115,12 +114,11 @@ export class TerrainGenerator {
       const direction = anchors[index]?.dir.clone() ?? new THREE.Vector3(
         Math.cos(azimuth) * horizontal, vertical, Math.sin(azimuth) * horizontal,
       );
-      const spread = geology.range(0.2, 0.3);
+      const spread = geology.range(0.34, 0.48);
       this.massifs.push({
         direction,
         radiusSquared: spread * spread,
-        height: geology.range(24, 42) * (arch.biome === 'FROZEN' ? 1.15 : 1),
-        terrace: arch.biome === 'DESERT' ? 0.75 : geology.range(0.25, 0.5),
+        height: geology.range(17, 28) * (arch.biome === 'FROZEN' ? 1.1 : 1),
       });
     }
   }
@@ -190,9 +188,9 @@ export class TerrainGenerator {
       if (chordSquared >= massif.radiusSquared) continue;
       const distance = Math.sqrt(chordSquared / massif.radiusSquared);
       const warped = clamp(distance + wob * 0.12 * distance, 0, 1);
-      const dome = Math.pow(1 - warped * warped, 2);
-      const shelf = 1 - smoothstep(0.28, 1, warped);
-      h += massif.height * (dome * (1 - massif.terrace) + shelf * massif.terrace);
+      const peak = (Math.exp(-3 * warped * warped) - Math.exp(-3)) / (1 - Math.exp(-3));
+      const foothills = 1 - smoothstep(0.72, 1, warped);
+      h += massif.height * peak * foothills;
     }
 
     // ---- broad valleys (deepened with the mountains so the silhouette alternates peak/valley)

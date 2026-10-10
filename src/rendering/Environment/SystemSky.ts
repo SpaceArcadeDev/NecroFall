@@ -65,12 +65,16 @@ export class SystemSky {
     const clouds = new DataTexture(pixels, width, height, RGBAFormat); clouds.wrapS = RepeatWrapping;
     clouds.minFilter = clouds.magFilter = LinearFilter; clouds.needsUpdate = true; air.map = clouds;
     const cloud = texture(clouds, uv().add(vec2(clock.mul(0.0007), 0))).r.smoothstep(0.48, 0.68);
-    const sky = mix(color('#030611'), mix(color(art.horizon), color(art.sky), horizon), this.day);
-    const cloudColor = mix(color(art.rock).mul(0.055), color(art.horizon).mul(0.95), this.day);
     const towardSun = positionLocal.normalize().dot(uniform(system.sunDirection)).max(0);
-    const sunset = towardSun.pow(2).mul(horizon.oneMinus()).mul(this.twilight);
-    air.colorNode = mix(mix(sky, cloudColor, cloud.mul(0.66)), color(TWILIGHT_COLOR), sunset.mul(0.62))
-      .add(color(system.sunColor).mul(towardSun.pow(12)).mul(this.twilight).mul(0.19));
+    const sunset = horizon.oneMinus().mul(this.twilight);
+    const horizonColor = mix(color('#bd7893'), color(TWILIGHT_COLOR), towardSun.sqrt());
+    const daySky = mix(color(art.horizon), color(art.sky), horizon);
+    const sky = mix(mix(color('#02040c'), daySky, this.day), horizonColor, sunset.mul(0.82));
+    const cloudColor = mix(mix(color(art.rock).mul(0.025), color(art.horizon).mul(0.95), this.day),
+      mix(color('#bd7893'), color('#ffd19a'), towardSun), this.twilight.mul(0.8));
+    const sunTint = mix(color(system.sunColor), color(TWILIGHT_COLOR), this.twilight.mul(0.9));
+    air.colorNode = mix(sky, cloudColor, cloud.mul(0.58))
+      .add(sunTint.mul(towardSun.pow(12)).mul(this.twilight).mul(0.28));
     this.atmosphere = new Mesh(new SphereGeometry(1450, 32, 16), air);
     this.mesh.add(this.atmosphere);
     const random = new Rand(system.descriptor.seed ^ 0x918ac31), starPositions: number[] = [], starColors: number[] = [];
@@ -78,11 +82,11 @@ export class SystemSky {
     for (let star = 0; star < 2400; star++) {
       const axisY = random.next() * 2 - 1, angle = random.next() * Math.PI * 2, radial = Math.sqrt(1 - axisY * axisY);
       starPositions.push(radial * Math.cos(angle), axisY, radial * Math.sin(angle));
-      tint.set(['#e5f0ff', '#fff0cf', '#b8dded'][star % 3]).multiplyScalar(0.35 + random.next() * 0.65);
+      tint.set(['#e5f0ff', '#fff0cf', '#b8dded'][star % 3]).multiplyScalar(0.6 + random.next() * 0.4);
       starColors.push(tint.r, tint.g, tint.b);
     }
     const stars = new BufferGeometry(); stars.setAttribute('position', new Float32BufferAttribute(starPositions, 3)); stars.setAttribute('color', new Float32BufferAttribute(starColors, 3));
-    this.stars = new Points(stars, new PointsMaterial({ size: 1.6, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false }));
+    this.stars = new Points(stars, new PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, depthWrite: false, fog: false, toneMapped: false }));
     this.stars.name = 'system-stars'; this.stars.frustumCulled = false; this.mesh.add(this.stars);
     const neighbours = system.bodies.filter(body => body !== system.active)
       .sort((first, second) => first.position.distanceToSquared(system.active.position) - second.position.distanceToSquared(system.active.position)).slice(0, 4);
@@ -99,11 +103,11 @@ export class SystemSky {
       this.mesh.add(globe); this.bodies.push({ mesh: globe, position: body.position, radius: body.radius });
     }
     const sunMaterial = new MeshBasicNodeMaterial({ color: system.sunColor, fog: false, toneMapped: false, depthWrite: true });
-    sunMaterial.colorNode = color(system.sunColor).mul(2.5);
+    sunMaterial.colorNode = sunTint.mul(mix(2.5, 1.15, this.twilight));
     const sun = new Mesh(new SphereGeometry(1, 40, 24), sunMaterial); sun.name = 'system-sun'; this.mesh.add(sun);
     this.bodies.push({ mesh: sun, position: system.sunPosition, radius: system.sunRadius });
     const haloMaterial = new MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false, toneMapped: false });
-    haloMaterial.colorNode = color(system.sunColor).mul(0.5);
+    haloMaterial.colorNode = sunTint.mul(mix(0.5, 0.85, this.twilight));
     haloMaterial.opacityNode = normalWorld.dot(uniform(system.sunDirection)).abs().oneMinus().pow(3).mul(0.2);
     const halo = new Mesh(new SphereGeometry(1, 32, 24), haloMaterial); this.mesh.add(halo);
     this.bodies.push({ mesh: halo, position: system.sunPosition, radius: system.sunRadius * 1.08 });
@@ -120,7 +124,7 @@ export class SystemSky {
     const atmosphere = 1 - MathUtils.smoothstep(observer.length(), this.radius * 1.35, this.radius * 3);
     this.day.value = daylightAt(elevation) * atmosphere;
     this.twilight.value = twilightAt(elevation) * atmosphere;
-    this.stars.material.opacity = (1 - this.day.value) * 0.85;
+    this.stars.material.opacity = 1 - MathUtils.smoothstep(this.day.value, 0.02, 0.48);
     this.stars.position.copy(observer); this.stars.scale.setScalar(skyDistance * 1.1); this.stars.updateMatrix();
     this.atmosphere.position.copy(observer); this.atmosphere.scale.setScalar(Math.min(1400, far * 0.95) / 1450); this.atmosphere.updateMatrix();
     for (const body of this.bodies) {

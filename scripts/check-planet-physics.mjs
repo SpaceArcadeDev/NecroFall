@@ -90,11 +90,33 @@ try {
   const { Grass } = await server.ssrLoadModule('/src/rendering/Environment/Grass.ts');
   const globals = new WorldGlobals(); WorldGlobals.current = globals;
   const planet = new PlanetGenerator(makePlanetSpec(23, 0, 118)); globals.basePlanet = planet.archetype.art;
+  const massifs = [...planet.terrain.massifs];
+  let steepestMountain = 0;
+  for (const massif of massifs) {
+    assert.ok(Math.sqrt(massif.radiusSquared) >= 0.34);
+    const tangent = massif.direction.clone().cross(new Vector3(0, 1, 0)).normalize();
+    let previousHeight = massif.height;
+    for (let step = 0; step <= 120; step++) {
+      const direction = massif.direction.clone().applyAxisAngle(tangent, step * 0.005);
+      planet.terrain.massifs.length = 0;
+      const floor = planet.radiusAt(direction.x, direction.y, direction.z);
+      planet.terrain.massifs.push(massif);
+      const rise = planet.radiusAt(direction.x, direction.y, direction.z) - floor;
+      if (step > 0) steepestMountain = Math.max(steepestMountain, Math.abs(rise - previousHeight) / (0.005 * planet.radius));
+      previousHeight = rise;
+    }
+    assert.equal(previousHeight, 0, 'Mountain must blend back into its surrounding terrain');
+  }
+  planet.terrain.massifs.splice(0, planet.terrain.massifs.length, ...massifs);
+  assert.ok(steepestMountain < 1.3, `Abrupt mountain flank: ${steepestMountain}`);
+  console.log(`Mountain foothills: 10 profiles blend to zero, maximum rise/run ${steepestMountain.toFixed(3)}`);
   const surface = new PlanetSurface(planet, { waterLevel: 117, reliefMin: 90, reliefMax: 165 });
   const clock = uniform(1), map = new DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
   const noises = { perlin: map, samplePatch: () => 0.9, sample: () => 0.5 };
   const water = new Puddles(surface, planet, noises, clock);
   assert.ok(water.sites.length > 0);
+  assert.ok(water.mesh.userData.seaVertices > 100, 'Missing shallow coastline');
+  assert.ok(water.mesh.userData.riverVertices > 100, 'Missing river channels');
   assert.ok(!('ocean' in water));
   const depths = water.mesh.geometry.attributes.aDepth;
   for (let vertex = 0; vertex < depths.count; vertex++) assert.ok(depths.getX(vertex) <= MAX_WATER_DEPTH + 1e-6);
@@ -103,6 +125,22 @@ try {
   assert.equal(water.trailCursor, 1);
   assert.ok(water.waterDepthAt(site.direction) <= MAX_WATER_DEPTH);
   console.log(`Shallow basins: ${water.sites.length}, depth <= ${MAX_WATER_DEPTH} m, grounded wake sample passed`);
+  const waterPositions = water.mesh.geometry.attributes.position;
+  let riverWake = false, seaWake = false;
+  for (let vertex = waterPositions.count - 1; vertex >= 0 && !(riverWake && seaWake); vertex--) {
+    const wetPoint = new Vector3().fromBufferAttribute(waterPositions, vertex), direction = wetPoint.clone().normalize();
+    if (water.waterDepthAt(direction) < 0.1) continue;
+    const sea = water.renderedRadiusAt(direction) < surface.waterLevel + 0.65;
+    if (sea ? seaWake : riverWake) continue;
+    const previous = water.trailCursor;
+    water.trackWalkerTrail(sea ? 'sea-walker' : 'river-walker', wetPoint);
+    assert.equal(water.trailCursor, previous + 1);
+    water.trackWalkerTrail('airborne', wetPoint.clone().setLength(wetPoint.length() + 3));
+    assert.equal(water.trailCursor, previous + 1, 'Airborne player leaves water ripples');
+    if (sea) seaWake = true; else riverWake = true;
+  }
+  assert.ok(riverWake && seaWake);
+  console.log(`Connected water: ${water.mesh.userData.riverVertices} river vertices, ${water.mesh.userData.seaVertices} sea vertices, both support grounded wakes`);
 
   const quality = { level: 0, grassSubdivisions: () => 4, events: { on() {} } };
   const nodes = { terrainNode: () => vec4(0.5, 0.8, 0.2, 0.6), colorNode: () => color('#739c52') };
@@ -119,6 +157,32 @@ try {
   assert.ok(grass.trailMin.value.x > grass.trailMax.value.x);
   grass.dispose(); water.dispose(); map.dispose();
   console.log('Grass trails: persist behind walker, reject airborne samples, recover after expiry');
+  const { PlanetHazards } = await server.ssrLoadModule('/src/planet/PlanetHazards.ts');
+  const hazards = new PlanetHazards(() => 118);
+  const body = {
+    alive: true, grounded: true, position: new Vector3(0, 118, 0), velocity: new Vector3(12, 2, 0),
+    edgeBoost(direction, speed, lift) {
+      this.velocity.addScaledVector(direction, speed).addScaledVector(this.position.clone().normalize(), lift);
+      this.grounded = false;
+    },
+  };
+  hazards.add('quicksand', body.position, 9, 1.1);
+  assert.ok(Math.abs(hazards.apply(body, 1 / 60) - 0.3) < 1e-9);
+  assert.ok(body.velocity.x < 12); assert.equal(body.velocity.y, 2);
+  body.grounded = false; body.position.y = 122;
+  assert.equal(hazards.apply(body, 1 / 60), 1, 'Quicksand affects airborne players');
+  body.position.set(12, 118, 0).setLength(118); body.grounded = true;
+  assert.equal(hazards.apply(body, 1 / 60), 1, 'Slow persists outside quicksand');
+  hazards.add('vortex', new Vector3(0, 118, 0), 9, 29);
+  body.position.set(0, 118, 0); body.velocity.set(0, 0, 0);
+  hazards.apply(body, 1 / 60);
+  assert.equal(body.grounded, false); assert.equal(body.velocity.y, 32);
+  assert.ok(Math.hypot(body.velocity.x, body.velocity.z) > 25);
+  const launched = body.velocity.clone();
+  hazards.apply(body, 1 / 60); assert.ok(body.velocity.equals(launched), 'Vortex impulse stacks every frame');
+  body.position.y = 160; hazards.apply(body, 2); assert.ok(body.velocity.equals(launched));
+  body.alive = false; body.position.y = 118; hazards.apply(body, 2); assert.ok(body.velocity.equals(launched));
+  console.log('Hazards: grounded quicksand drag, jump/exit recovery, radial vortex lift and outward throw, cooldown, altitude and death guards');
   console.log('PASS: planet physics and interaction regressions');
 } finally { await server.close(); }
 process.exit(0);

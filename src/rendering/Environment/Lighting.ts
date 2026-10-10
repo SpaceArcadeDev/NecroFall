@@ -167,13 +167,13 @@ export class Lighting implements LightingGlobals {
     const direction = this.scratchDirection.copy(this.directionUniform.value as THREE.Vector3);
     const elevation = focus.dot(direction) / Math.max(0.001, focus.length());
     const day = daylightAt(elevation), twilight = twilightAt(elevation);
-    this.daylightColor.copy(this.sunColor).lerp(this.sunsetColor, twilight * 0.78);
+    this.daylightColor.copy(this.sunColor).lerp(this.sunsetColor, twilight * 0.9);
     (this.colorUniform.value as THREE.Color).copy(this.daylightColor);
     this.light.color.copy(this.daylightColor);
     this.light.intensity = 4.2 * THREE.MathUtils.smoothstep(elevation, -0.1, 0.48);
     if (this.fill) {
       this.fill.intensity = this.fillIntensity * (0.035 + day * 0.22);
-      this.fill.color.copy(this.fillColor).lerp(this.sunsetColor, twilight * 0.35);
+      this.fill.color.copy(this.fillColor).lerp(this.sunsetColor, twilight * 0.55);
     }
     if (this.rim) this.rim.intensity = this.rimIntensity * (0.025 + day * 0.055);
     // stable light basis

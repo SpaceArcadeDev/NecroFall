@@ -10,6 +10,7 @@
 import Peer, { DataConnection } from 'peerjs';
 import { clamp } from '../utils/Utils';
 import type { SavedRun } from './Session';
+import { snapshotBacklogged } from './SnapshotBackpressure';
 
 export type NetMessage = { t: string } & Record<string, any>;
 
@@ -941,6 +942,12 @@ export class NetworkManager {
     this.sendTo(this.hostId, msg);
   }
 
+  hasRecipients(): boolean {
+    if (this.relay) return true;
+    for (const conn of this.conns.values()) if (conn.open) return true;
+    return false;
+  }
+
   broadcast(msg: NetMessage, exceptId?: string): void {
     if (this.relay) {
       this.relay.broadcast(msg, exceptId);
@@ -950,6 +957,7 @@ export class NetworkManager {
     for (const [id, conn] of this.conns) {
       if (id === skipPeer || id === this.peerId) continue;
       if (!conn.open) continue;
+      if (snapshotBacklogged(conn, msg)) continue;
       try {
         conn.send(msg);
         this.noteTraffic(msg);

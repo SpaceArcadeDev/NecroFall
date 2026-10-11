@@ -149,7 +149,12 @@ export function selectMeshModule(model: THREE.Object3D, kind: MeshModule, keep: 
 export class ModuleJoin {
   readonly mesh: THREE.Mesh;
   private readonly bindings: { surface: BoundarySurface; vertex: number }[] = [];
+  private readonly samples: { surface: BoundarySurface; point: THREE.Vector3; rest: THREE.Vector3;
+    influences: { matrix: THREE.Matrix4; weight: number }[] }[] = [];
+  private readonly skinTransforms: { skeleton: THREE.Skeleton; index: number; matrix: THREE.Matrix4 }[] = [];
+  private readonly sampleIndices: number[] = [];
   private readonly point = new THREE.Vector3();
+  private readonly skinPoint = new THREE.Vector3();
   private readonly inverse = new THREE.Matrix4();
 
   constructor(host: ModuleBoundary, donor: ModuleBoundary, source: THREE.MeshStandardMaterial, kind: MeshModule) {
@@ -166,6 +171,35 @@ export class ModuleJoin {
         this.bindings.push(ends[0], ends[1], nearest[1], nearest[0]);
         indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
       }
+    }
+    const sampleMaps = new Map<BoundarySurface, Map<number, number>>();
+    const skeletonMaps = new Map<THREE.Skeleton, Map<number, THREE.Matrix4>>();
+    for (const binding of this.bindings) {
+      let vertices = sampleMaps.get(binding.surface);
+      if (!vertices) { vertices = new Map(); sampleMaps.set(binding.surface, vertices); }
+      let index = vertices.get(binding.vertex);
+      if (index === undefined) {
+        index = this.samples.length;
+        vertices.set(binding.vertex, index);
+        const { skeleton, geometry } = binding.surface.probe;
+        let matrices = skeletonMaps.get(skeleton);
+        if (!matrices) { matrices = new Map(); skeletonMaps.set(skeleton, matrices); }
+        const influences: { matrix: THREE.Matrix4; weight: number }[] = [];
+        for (let slot = 0; slot < 4; slot++) {
+          const weight = geometry.attributes.skinWeight.getComponent(binding.vertex, slot);
+          if (weight === 0) continue;
+          const joint = geometry.attributes.skinIndex.getComponent(binding.vertex, slot);
+          let matrix = matrices.get(joint);
+          if (!matrix) {
+            matrix = new THREE.Matrix4(); matrices.set(joint, matrix);
+            this.skinTransforms.push({ skeleton, index: joint, matrix });
+          }
+          influences.push({ matrix, weight });
+        }
+        this.samples.push({ surface: binding.surface, point: new THREE.Vector3(),
+          rest: new THREE.Vector3().fromBufferAttribute(geometry.attributes.position, binding.vertex), influences });
+      }
+      this.sampleIndices.push(index);
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(this.bindings.length * 3), 3));
@@ -187,10 +221,21 @@ export class ModuleJoin {
   update(): void {
     this.inverse.copy(this.mesh.matrixWorld).invert();
     const positions = this.mesh.geometry.attributes.position;
-    this.bindings.forEach((binding, index) => {
-      sampleBoundary(binding.surface, binding.vertex, this.point).applyMatrix4(this.inverse);
-      positions.setXYZ(index, this.point.x, this.point.y, this.point.z);
-    });
+    for (const transform of this.skinTransforms) {
+      transform.matrix.multiplyMatrices(transform.skeleton.bones[transform.index].matrixWorld, transform.skeleton.boneInverses[transform.index]);
+    }
+    for (const sample of this.samples) {
+      this.point.copy(sample.rest).applyMatrix4(sample.surface.mesh.bindMatrix);
+      sample.point.set(0, 0, 0);
+      for (const influence of sample.influences) {
+        sample.point.addScaledVector(this.skinPoint.copy(this.point).applyMatrix4(influence.matrix), influence.weight);
+      }
+      sample.point.applyMatrix4(sample.surface.mesh.bindMatrixInverse).applyMatrix4(sample.surface.mesh.matrixWorld).applyMatrix4(this.inverse);
+    }
+    for (let index = 0; index < this.sampleIndices.length; index++) {
+      const point = this.samples[this.sampleIndices[index]].point;
+      positions.setXYZ(index, point.x, point.y, point.z);
+    }
     positions.needsUpdate = true;
     this.mesh.geometry.computeVertexNormals();
   }

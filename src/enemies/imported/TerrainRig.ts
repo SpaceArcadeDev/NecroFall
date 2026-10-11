@@ -43,6 +43,7 @@ export class TerrainRig {
   private readonly point = new THREE.Vector3();
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly targetPoint = new THREE.Vector3();
+  private readonly targetInverse = new THREE.Matrix4();
   private readonly turn = new THREE.Quaternion();
   private readonly axis = new THREE.Vector3(1, 0, 0);
   private started = false;
@@ -113,7 +114,8 @@ export class TerrainRig {
     dt = Math.min(dt, 0.05);
     this.clock += dt;
     this.root.updateWorldMatrix(true, true);
-    this.root.getWorldPosition(this.point);
+    this.point.setFromMatrixPosition(this.root.matrixWorld);
+    if (this.contacts.length) this.targetInverse.copy(this.contacts[0].target.parent!.matrixWorld).invert();
     if (!this.started) { this.previous.copy(this.point); this.started = true; }
     this.velocity.copy(this.point).sub(this.previous).divideScalar(dt);
     const teleported = this.point.distanceTo(this.previous) > this.height * 3;
@@ -125,13 +127,14 @@ export class TerrainRig {
     const phase = motion.attackPhase ?? 0;
     const strike = phase > 0 ? Math.sin(Math.min(1, phase) * Math.PI) : 0;
     const ground = motion.ground;
-    let swinging = this.contacts.filter(foot => foot.progress < 1).length;
+    let swinging = 0;
+    for (const foot of this.contacts) if (foot.progress < 1) swinging++;
     const capacity = Math.max(1, Math.floor(this.contacts.length / 2));
     const firstFoot = this.nextFoot;
     for (let offset = 0; offset < this.contacts.length; offset++) {
       const index = (firstFoot + offset) % this.contacts.length;
       const foot = this.contacts[index];
-      this.root.localToWorld(foot.wanted.copy(foot.home));
+      foot.wanted.copy(foot.home).applyMatrix4(this.root.matrixWorld);
       foot.wanted.addScaledVector(this.velocity, Math.min(0.12, stride / Math.max(0.01, speed)));
       if (ground) {
         if (!ground(foot.wanted, this.up, this.height * 0.3, this.targetPoint)) {
@@ -164,7 +167,7 @@ export class TerrainRig {
       }
       foot.target.position.copy(foot.planted);
       if (motion.attack === 'stomp' && index === 0 && !motion.airborne) foot.target.position.addScaledVector(this.up, strike * this.height * 0.07);
-      foot.target.parent!.worldToLocal(foot.target.position);
+      foot.target.position.applyMatrix4(this.targetInverse);
       foot.target.updateMatrixWorld(true);
     }
     for (const [bone, rest] of this.rest) bone.quaternion.copy(rest);

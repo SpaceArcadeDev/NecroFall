@@ -6162,6 +6162,7 @@ export class Game {
    * server's own tick time is not observable from a browser, so a non-host reports 0.
    */
   private publishSnapshot(now: number): void {
+    if (!this.net.hasRecipients()) return;
     const players: PlayerNet[] = [];
     for (const p of this.players.values()) players.push(p.toNet(now));
     const started = performance.now();

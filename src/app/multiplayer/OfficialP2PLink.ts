@@ -21,6 +21,7 @@
 // serve; SpacetimeDB never gates a frame (the provider sends through whichever
 // path is live, fire-and-forget).
 import Peer, { DataConnection } from 'peerjs';
+import { snapshotBacklogged } from '../../networking/SnapshotBackpressure';
 
 export interface LinkSeat {
   seatId: number;
@@ -113,6 +114,7 @@ export class OfficialP2PLink {
       return false;
     }
     try {
+      if (typeof msg === 'object' && msg !== null && snapshotBacklogged(conn, msg)) return true;
       conn.send(msg);
       return true;
     } catch {
